@@ -9,6 +9,7 @@ mod grass;
 mod landscape_pipeline_test;
 mod landscape_textures;
 mod lens_flare;
+mod mips;
 mod props;
 mod sky_envmap;
 pub use common::sky_preset;

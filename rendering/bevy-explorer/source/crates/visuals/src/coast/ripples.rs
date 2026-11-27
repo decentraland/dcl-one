@@ -8,6 +8,7 @@ use bevy::{
 };
 
 use super::random;
+use crate::mips::byte_mips;
 
 pub(super) const SIZE: usize = 256;
 
@@ -39,7 +40,7 @@ pub(super) fn image() -> Image {
         .map(|i| height_field(Vec2::new((i % SIZE) as f32, (i / SIZE) as f32) / SIZE as f32))
         .collect();
     let height = |x: usize, y: usize| heights[(y % SIZE) * SIZE + x % SIZE];
-    let mut level: Vec<[u8; 2]> = (0..SIZE * SIZE)
+    let level: Vec<[u8; 2]> = (0..SIZE * SIZE)
         .map(|i| {
             let (x, y) = (i % SIZE, i / SIZE);
             let slope = Vec2::new(
@@ -51,29 +52,8 @@ pub(super) fn image() -> Image {
                 .map(|v| ((v.clamp(-1.0, 1.0) * 0.5 + 0.5) * 255.0).round() as u8)
         })
         .collect();
-    let mut bytes = Vec::new();
-    let mut size = SIZE;
-    loop {
-        bytes.extend(level.iter().flatten().copied());
-        if size == 1 {
-            break;
-        }
-        let half = size / 2;
-        level = (0..half * half)
-            .map(|i| {
-                let origin = i / half * 2 * size + i % half * 2;
-                std::array::from_fn(|channel| {
-                    ((([origin, origin + 1, origin + size, origin + size + 1]
-                        .into_iter()
-                        .map(|p| u32::from(level[p][channel]))
-                        .sum::<u32>())
-                        + 2)
-                        / 4) as u8
-                })
-            })
-            .collect();
-        size = half;
-    }
+    let mut bytes: Vec<u8> = level.into_iter().flatten().collect();
+    let levels = byte_mips::<2>(&mut bytes, (SIZE, SIZE), None);
     let mut image = Image::new_fill(
         Extent3d {
             width: SIZE as u32,
@@ -86,7 +66,7 @@ pub(super) fn image() -> Image {
         RenderAssetUsages::RENDER_WORLD,
     );
     // `Image::new` only takes the first level
-    image.texture_descriptor.mip_level_count = SIZE.ilog2() + 1;
+    image.texture_descriptor.mip_level_count = levels;
     image.data = Some(bytes);
     image.sampler = ImageSampler::Descriptor(ImageSamplerDescriptor {
         address_mode_u: ImageAddressMode::Repeat,

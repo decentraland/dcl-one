@@ -1,5 +1,5 @@
-//! The landscape's ground splat, ground and sand colours and cliff rock textures, embedded from
-//! unity-explorer (`crates/assets/LANDSCAPE_NOTICE.md`). They tile every few metres over ground
+//! The landscape's ground splat, ground and sand colours and cliff rock textures, embedded in the
+//! build (sources in `crates/assets/LANDSCAPE_NOTICE.md`). They tile every few metres over ground
 //! seen out to the horizon, so each gets a mip chain as it loads (the PNG and JPEG loaders build
 //! none, and without one the distance shimmers) and a repeating, trilinear sampler.
 
@@ -14,6 +14,8 @@ use bevy::{
     prelude::*,
     render::render_resource::{Extent3d, ShaderDefVal, TextureDimension, TextureFormat},
 };
+
+use crate::mips::box_mips;
 
 /// The splat covers this many metres of ground and repeats beyond them.
 pub(crate) const GROUND_SPLAT_METRES: u32 = 1024;
@@ -45,16 +47,13 @@ impl Plugin for LandscapeTexturesPlugin {
         app.init_resource::<LandscapeTextures>()
             .init_resource::<ScatterGround>()
             .add_event::<LandscapeTexturesReplaced>()
-            .add_systems(Update, resolve_textures.in_set(ResolveLandscapeTextures));
+            .add_systems(Update, resolve_textures);
     }
 }
 
 /// Sent in a frame in which a file replaced its stand-in.
 #[derive(Event)]
 pub(crate) struct LandscapeTexturesReplaced;
-
-#[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
-struct ResolveLandscapeTextures;
 
 /// A prepared material keeps the texture views it was prepared with, and a texture replaced
 /// under the same handle does not prepare it again. So every material of type `M`, which binds
@@ -64,7 +63,7 @@ pub(crate) fn rebind_on_replace<M: Asset>(app: &mut App) {
         Update,
         touch_all::<M>
             .run_if(on_event::<LandscapeTexturesReplaced>)
-            .after(ResolveLandscapeTextures),
+            .after(resolve_textures),
     );
 }
 
@@ -271,31 +270,22 @@ pub(crate) fn add_mips(image: &mut Image, kind: TexelKind) -> bool {
         warn!("no mips for a {format:?} landscape texture");
         return false;
     }
-    let Some(top) = image.data.as_ref() else {
+    let Some(mut bytes) = image.data.clone() else {
         return false;
     };
-    let (mut width, mut height) = (image.width() as usize, image.height() as usize);
-    let (texels, _) = top.as_chunks::<4>();
-    let mut level: Vec<Vec4> = texels.iter().map(|texel| decode(texel, kind)).collect();
-    let mut bytes = top.clone();
-    let mut levels = 1;
-    while width > 1 || height > 1 {
-        let (half_width, half_height) = ((width / 2).max(1), (height / 2).max(1));
-        level = (0..half_width * half_height)
-            .map(|i| {
-                let (x, y) = (i % half_width * 2, i / half_width * 2);
-                let (x1, y1) = ((x + 1).min(width - 1), (y + 1).min(height - 1));
-                (level[y * width + x]
-                    + level[y * width + x1]
-                    + level[y1 * width + x]
-                    + level[y1 * width + x1])
-                    * 0.25
-            })
-            .collect();
-        bytes.extend(level.iter().flat_map(|&texel| encode(texel, kind)));
-        (width, height) = (half_width, half_height);
-        levels += 1;
-    }
+    let size = (image.width() as usize, image.height() as usize);
+    let top: Vec<Vec4> = bytes
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .map(|texel| decode(texel, kind))
+        .collect();
+    let levels = box_mips(
+        top,
+        size,
+        |texels| texels.into_iter().sum::<Vec4>() * 0.25,
+        |level| bytes.extend(level.iter().flat_map(|&texel| encode(texel, kind))),
+    );
     image.data = Some(bytes);
     image.texture_descriptor.mip_level_count = levels;
     true
@@ -338,7 +328,7 @@ const SCATTER_SPLAT_LEVEL: u32 = 2;
 pub(crate) struct ScatterGround(pub(crate) Option<Arc<GroundGreen>>);
 
 /// The green of the splat-weighted ground and sand colour at every 4 m corner of the splat's
-/// tile, as unity-explorer's flower and reed scatter reads it: the splat at its 4 m level, the
+/// tile, as the flower and reed scatter reads it: the splat at its 4 m level, the
 /// ground and sand colours at their full level and laid at the splat's tiling, not the ground's.
 /// The scatter tests that green against its flower and reed limits.
 #[derive(Debug, PartialEq)]

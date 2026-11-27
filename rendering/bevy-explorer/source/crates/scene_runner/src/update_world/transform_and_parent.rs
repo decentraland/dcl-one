@@ -34,7 +34,31 @@ pub struct TransformAndParentPlugin;
 
 impl Plugin for TransformAndParentPlugin {
     fn build(&self, app: &mut App) {
-        configure_post_update_sets(app);
+        app.configure_sets(
+            PostUpdate,
+            (
+                PostUpdateSets::EarlyTransformPropagate,
+                PostUpdateSets::EarlyBillboard,
+                PostUpdateSets::ColliderUpdate,
+                PostUpdateSets::PlayerUpdate,
+                PostUpdateSets::CameraUpdate,
+                PostUpdateSets::InverseKinematics,
+                PostUpdateSets::SpringBones,
+                PostUpdateSets::Nametag,
+                PostUpdateSets::AttachSync,
+                PostUpdateSets::Billboard,
+                PostUpdateSets::CameraFit,
+            )
+                .chain()
+                .after(GltfLinkSet)
+                .after(anim_last_system!())
+                .before(TransformSystem::TransformPropagate)
+                .before(process_scene_lifecycle),
+        );
+        app.configure_sets(
+            PostUpdate,
+            PostUpdateSets::CameraFit.after(CameraUpdateSystem),
+        );
 
         app.add_crdt_lww_interface::<DclTransformAndParent>(
             SceneComponentId::TRANSFORM,
@@ -60,36 +84,6 @@ impl Plugin for TransformAndParentPlugin {
             propagate_transforms.in_set(PostUpdateSets::EarlyTransformPropagate),
         );
     }
-}
-
-/// The order of the PostUpdate sets around transform propagation, the collider update and the
-/// camera, all before the realm's scene lifecycle.
-pub fn configure_post_update_sets(app: &mut App) {
-    app.configure_sets(
-        PostUpdate,
-        (
-            PostUpdateSets::EarlyTransformPropagate,
-            PostUpdateSets::EarlyBillboard,
-            PostUpdateSets::ColliderUpdate,
-            PostUpdateSets::PlayerUpdate,
-            PostUpdateSets::CameraUpdate,
-            PostUpdateSets::InverseKinematics,
-            PostUpdateSets::SpringBones,
-            PostUpdateSets::Nametag,
-            PostUpdateSets::AttachSync,
-            PostUpdateSets::Billboard,
-            PostUpdateSets::CameraFit,
-        )
-            .chain()
-            .after(GltfLinkSet)
-            .after(anim_last_system!())
-            .before(TransformSystem::TransformPropagate)
-            .before(process_scene_lifecycle),
-    );
-    app.configure_sets(
-        PostUpdate,
-        PostUpdateSets::CameraFit.after(CameraUpdateSystem),
-    );
 }
 
 pub(crate) fn process_transform_and_parent_updates(

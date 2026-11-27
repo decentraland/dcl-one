@@ -1,6 +1,6 @@
-//! Where a parcel's grass blades, flowers and reeds stand: unity-explorer's GPU scatter, run on
-//! the CPU once per parcel. Every value comes from an integer hash of the parcel corner and a grid
-//! cell, so a parcel always scatters the same way.
+//! Where a parcel's grass blades, flowers and reeds stand, worked out on the CPU once per parcel.
+//! Every value comes from an integer hash of the parcel corner and a grid cell, so a parcel always
+//! scatters the same way.
 
 use bevy::math::{IVec2, Vec2};
 

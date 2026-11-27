@@ -291,51 +291,6 @@ fn rising_ground_lifts_the_player_before_collisions_resolve() {
     assert_eq!(app.world().resource::<SeenByCollisions>().0, Some(ground));
 }
 
-/// The textured ground compiles in every pipeline it is drawn with: the main pass, the prepasses
-/// and shadows. Needs a GPU, so `#[ignore]`d and skipped by CI:
-///
-/// ```text
-/// cargo test -p visuals ground_shader_compiles -- --ignored --nocapture
-/// ```
-#[test]
-#[ignore = "needs a GPU; run with --ignored"]
-fn ground_shader_compiles() {
-    use crate::{landscape_pipeline_test, landscape_textures::LandscapeTextures};
-
-    let mut app = landscape_pipeline_test::app();
-    embed_shaders(&mut app);
-    app.add_plugins(MaterialPlugin::<TerrainFlatMaterial>::default());
-    app.finish();
-    app.cleanup();
-
-    let world = app.world_mut();
-    let textures = world.resource::<LandscapeTextures>().clone();
-    let steps = TerrainSurface::default().image();
-    world
-        .resource_mut::<Assets<Image>>()
-        .insert(TERRAIN_TEXTURE.id(), steps);
-    let mesh = world
-        .resource_mut::<Assets<Mesh>>()
-        .add(ground_mesh(ground_segments, 0));
-    let flat = world
-        .resource_mut::<Assets<TerrainFlatMaterial>>()
-        .add(TerrainFlatMaterial {
-            base: StandardMaterial {
-                alpha_mode: AlphaMode::Mask(0.5),
-                ..default()
-            },
-            extension: TerrainExtension::new(&textures),
-        });
-    world.spawn((Mesh3d(mesh), MeshMaterial3d(flat), Transform::default()));
-
-    landscape_pipeline_test::assert_pipelines_compile(
-        &mut app,
-        Vec3::new(0.0, 3.0, 6.0),
-        Vec3::ZERO,
-        &["terrain_flat.wgsl"],
-    );
-}
-
 /// The shortest Landscape Distance still displaces the hills across the `RING_CELL` rings.
 #[test]
 fn hill_reach_never_below_832() {
@@ -510,7 +465,7 @@ fn terrain_vertex_compiles() {
 /// window: a rock (`soft_shadows.wgsl`), the ground (`terrain_flat.wgsl`), a cliff
 /// (`coast_cliff.wgsl`) and the ocean (`coast_water.wgsl`) in front of a camera with the
 /// prepasses and a shadowing light. The grass's override is compiled by `grass_wind_compiles`.
-/// Needs a GPU, so `#[ignore]`d and skipped by CI:
+/// Needs a GPU, so `#[ignore]`d; CI runs it in its GPU step, and locally:
 ///
 /// ```text
 /// cargo test -p visuals soft_shadow_pipelines_compile -- --ignored --nocapture
@@ -632,17 +587,20 @@ fn landscape_schedule_is_acyclic() {
     use common::sets::RealmLifecycle;
     use scene_runner::{
         initialize_scene::process_scene_lifecycle,
-        update_world::transform_and_parent::configure_post_update_sets,
+        update_world::{transform_and_parent::TransformAndParentPlugin, CrdtExtractors},
+        SceneLoopSchedule,
     };
 
     let mut app = App::new();
     app.add_plugins((MinimalPlugins, AssetPlugin::default()))
         .init_asset::<Shader>()
         .init_asset::<Mesh>()
-        .init_asset::<Image>();
+        .init_asset::<Image>()
+        .init_resource::<CrdtExtractors>()
+        .init_resource::<SceneLoopSchedule>();
     // the explorer's own order of the transform, collider and camera sets, before the realm's
     // scene lifecycle
-    configure_post_update_sets(&mut app);
+    TransformAndParentPlugin.build(&mut app);
     app.add_systems(PostUpdate, process_scene_lifecycle.in_set(RealmLifecycle));
     TerrainPlugin.build(&mut app);
     crate::grass::GrassPlugin.build(&mut app);

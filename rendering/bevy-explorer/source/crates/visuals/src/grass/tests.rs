@@ -65,7 +65,7 @@ fn scatter_is_deterministic() {
     );
 }
 
-/// High is unity-explorer's 256 blades a parcel and 16 flowers of each kind, or 16 reeds on
+/// High is 256 blades a parcel and 16 flowers of each kind, or 16 reeds on
 /// sand; the lower settings scale them all down, Off has nothing. Flowers and reeds grow on
 /// different ground, so one parcel holds both only where the two meet.
 #[test]
@@ -106,20 +106,18 @@ fn scatter_counts_per_setting() {
     assert!(set.reeds.iter().all(|reed| reed.offset.x < 8.0));
 }
 
-/// Reach is the Landscape Distance up to 180 m.
+/// Reach is the Landscape Distance up to the distance grass is drawn at.
 #[test]
-fn reach_capped_at_180() {
-    assert_eq!(grass_reach(7000.0), 180.0);
-    assert_eq!(grass_reach(500.0), 180.0);
+fn reach_capped_at_the_draw_distance() {
+    assert_eq!(MAX_REACH, 100.0 + 8.0 * SQRT_2);
+    assert_eq!(grass_reach(7000.0), MAX_REACH);
+    assert_eq!(grass_reach(500.0), MAX_REACH);
     assert_eq!(grass_reach(100.0), 100.0);
     // along one row of empty parcels, a parcel carries grass when its square comes within reach
     let player = Vec2::splat(8.0);
     let mut row = grass_parcels(player, grass_reach(7000.0), |parcel| parcel.y == 0);
     row.sort_by_key(|parcel| parcel.x);
-    assert_eq!(
-        row,
-        (-11..=11).map(|x| IVec2::new(x, 0)).collect::<Vec<_>>()
-    );
+    assert_eq!(row, (-7..=7).map(|x| IVec2::new(x, 0)).collect::<Vec<_>>());
 }
 
 /// When more than 256 empty parcels are in reach, the nearest 256 carry grass.
@@ -367,7 +365,7 @@ fn a_density_change_rebuilds_meshes_in_place() {
     assert!(grass_parcels_of(&mut app).is_empty());
 }
 
-/// A tuft is two crossed cards the size of unity-explorer's grass card, each reading its own
+/// A tuft is two crossed cards, each reading its own
 /// strip of the blade mask from root to tip, and every vertex of a parcel's mesh carries where
 /// it reads the mask.
 #[test]
@@ -407,7 +405,8 @@ fn a_tuft_is_two_crossed_cards() {
 }
 
 /// The grass material compiles in every pipeline it is drawn with: the main pass and the
-/// prepasses (it casts no shadows). Needs a GPU, so `#[ignore]`d and skipped by CI:
+/// prepasses (it casts no shadows). Needs a GPU, so `#[ignore]`d; CI runs it in its GPU step,
+/// and locally:
 ///
 /// ```text
 /// cargo test -p visuals grass_wind_compiles -- --ignored --nocapture

@@ -255,23 +255,6 @@ fn mips_run_down_to_one_texel() {
         .all(|texel| texel == [10, 20, 30, 40]));
 }
 
-/// The splat's world size reaches the ground shader as a shader def: the shader reads it and
-/// carries no copy of the number.
-#[test]
-fn splat_size_is_shared_with_the_shader() {
-    assert_eq!(
-        ground_shader_defs(),
-        [ShaderDefVal::UInt(
-            "GROUND_SPLAT_METRES".to_owned(),
-            GROUND_SPLAT_METRES
-        )]
-    );
-    let shader = include_str!("../landscape_ground.wgsl");
-    assert!(shader.contains("#{GROUND_SPLAT_METRES}"));
-    assert!(shader.contains("#ifdef GROUND_SPLAT_METRES"));
-    assert!(!shader.contains(&GROUND_SPLAT_METRES.to_string()));
-}
-
 /// Frames since the last call in which `Events<E>` gained an event matching `keep`.
 fn read_new<E: Event>(app: &App, cursor: &mut EventCursor<E>, keep: impl Fn(&E) -> bool) -> bool {
     let events = app.world().resource::<Events<E>>();

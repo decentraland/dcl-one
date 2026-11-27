@@ -56,7 +56,7 @@ fn around(turns: f32) -> Vec3 {
     Vec3::new(cos, 0.0, sin)
 }
 
-/// A tuft built as unity-explorer's grass card: two crossed quads 0.64 m wide and 0.27 m tall,
+/// A tuft: two crossed quads 0.64 m wide and 0.27 m tall,
 /// each showing one strip of the blade mask. 8 vertices and 4 triangles.
 pub(crate) fn blade_mesh() -> Shape {
     const HEIGHT: f32 = 0.27;

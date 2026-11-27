@@ -1,4 +1,4 @@
-// The ground's colour, as unity-explorer paints its landscape: a splat map tiled over the world
+// The ground's colour: a splat map tiled over the world
 // weights a ground texture (red) against a sand texture (green). The weights are used as stored,
 // not normalised; the splat's blue and alpha channels are empty.
 
@@ -16,19 +16,12 @@ const DETAIL_SPAN: f32 = 8192.0;
 const GROUND_TILING: f32 = 2048.0;
 const SAND_TILING: f32 = 4096.0;
 
-struct GroundSample {
-    // linear base colour
-    albedo: vec3<f32>,
-    // surface detail normal in tangent space, z up. The reference ground blends normal maps
-    // under its splat but never applies them to its lighting, so the detail is flat.
-    normal: vec3<f32>,
-}
-
 // `world_xz` is the bevy world position's xz. Every texture is laid with u along +x and v along
 // bevy +z: with unity's z negated and its v flipped (unity's v runs up the image, bevy's down),
 // that puts each texel on the same spot of the world as the reference. Takes implicit
-// derivatives, so call it in uniform control flow, before any discard or branch.
-fn ground_albedo_normal(world_xz: vec2<f32>) -> GroundSample {
+// derivatives, so call it in uniform control flow, before any discard or branch. Returns the
+// linear base colour; the ground has no detail normal, it is lit by the terrain's normal alone.
+fn ground_albedo(world_xz: vec2<f32>) -> vec3<f32> {
     let splat = textureSample(
         ground_splat,
         ground_splat_sampler,
@@ -44,10 +37,10 @@ fn ground_albedo_normal(world_xz: vec2<f32>) -> GroundSample {
         sand_colour_sampler,
         world_xz * (SAND_TILING / DETAIL_SPAN),
     ).rgb;
-    return GroundSample(ground * splat.r + sand * splat.g, vec3(0.0, 0.0, 1.0));
+    return ground * splat.r + sand * splat.g;
 }
 
-// The colour unity-explorer's scatter gives the grass, flower or reed rooted at `world_xz`: the
+// The colour of the grass, flower or reed rooted at `world_xz`: the
 // ground and sand colours under the splat's weights, with all three textures laid at the splat's
 // tiling and read at their full level. Stretched that far the colours change over metres, so the
 // instances of a patch share its colour. Takes no derivatives.

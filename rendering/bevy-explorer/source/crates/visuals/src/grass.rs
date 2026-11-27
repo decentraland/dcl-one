@@ -1,5 +1,5 @@
-//! Grass blades, flowers and reeds on the empty parcels around the player, scattered as
-//! unity-explorer's GPU scatter places them and bent by the wind. Each parcel merges its instances
+//! Grass blades, flowers and reeds on the empty parcels around the player, scattered by a fixed
+//! hash of each parcel and bent by the wind. Each parcel merges its instances
 //! into one mesh for the grass tufts and one for the flowers and reeds, built once when the parcel
 //! appears and again only when the density or the ground they read changes. The vertex shader
 //! stands each instance on the terrain, so heights never rebuild a mesh.
@@ -18,7 +18,8 @@ use bevy::{
         mesh::{Indices, MeshVertexBufferLayoutRef, PrimitiveTopology},
         primitives::Aabb,
         render_resource::{
-            AsBindGroup, RenderPipelineDescriptor, ShaderRef, SpecializedMeshPipelineError,
+            AsBindGroup, RenderPipelineDescriptor, ShaderDefVal, ShaderRef,
+            SpecializedMeshPipelineError,
         },
         view::VisibilityRange,
     },
@@ -51,8 +52,8 @@ pub(crate) mod scatter;
 mod tests;
 
 /// Grass reaches no farther than this from the player, in metres, whatever the Landscape
-/// Distance.
-const MAX_REACH: f32 = 180.0;
+/// Distance: as far as a parcel is drawn.
+const MAX_REACH: f32 = FADE_END as f32 + PARCEL_HALF_DIAGONAL;
 /// At most this many parcels carry grass: the nearest, when more are in reach.
 const MAX_PARCELS: usize = 256;
 /// A parcel within this many metres of the player gets its meshes in the frame it appears, so
@@ -60,9 +61,11 @@ const MAX_PARCELS: usize = 256;
 /// frame, nearest first, so a teleport spreads its work.
 const BUILD_AT_ONCE_WITHIN: f32 = 48.0;
 const BUILDS_PER_FRAME: usize = 16;
-/// Instances shrink away by this many metres from the camera (`grass_wind.wgsl`'s `FADE`); a
-/// parcel whose centre is farther than this plus its half-diagonal draws nothing.
-const FADE_END: f32 = 100.0;
+/// Instances start to shrink at this many metres from the camera, and are gone by `FADE_END`;
+/// both reach the shader as shader defs. A parcel whose centre is farther than `FADE_END` plus its
+/// half-diagonal draws nothing.
+const FADE_START: u32 = 50;
+const FADE_END: u32 = 100;
 const PARCEL_HALF_DIAGONAL: f32 = 8.0 * SQRT_2;
 /// Widest instance reach from its root at the largest scale, with the wind's lean, in metres.
 const SWAY_PADDING: f32 = 1.0;
@@ -183,12 +186,22 @@ impl MaterialExtension for GrassExtension {
         _layout: &MeshVertexBufferLayoutRef,
         _key: MaterialExtensionKey<Self>,
     ) -> Result<(), SpecializedMeshPipelineError> {
-        descriptor.vertex.shader_defs.extend(ground_shader_defs());
+        descriptor.vertex.shader_defs.extend(grass_shader_defs());
         if let Some(fragment) = descriptor.fragment.as_mut() {
-            fragment.shader_defs.extend(ground_shader_defs());
+            fragment.shader_defs.extend(grass_shader_defs());
         }
         Ok(())
     }
+}
+
+/// The splat size, the fade distances and the mask's cutoff, so the shader carries no copy of
+/// them.
+fn grass_shader_defs() -> impl Iterator<Item = ShaderDefVal> {
+    ground_shader_defs().into_iter().chain([
+        ShaderDefVal::UInt("GRASS_FADE_START".to_owned(), FADE_START),
+        ShaderDefVal::UInt("GRASS_FADE_END".to_owned(), FADE_END),
+        ShaderDefVal::UInt("GRASS_MASK_CUT".to_owned(), mask::CUT.into()),
+    ])
 }
 
 /// The material every parcel's grass draws with, and the instance shapes.
@@ -497,7 +510,7 @@ fn build_parcels(
                 MeshMaterial3d(assets.material.clone()),
                 aabb,
                 NotShadowCaster,
-                VisibilityRange::abrupt(0.0, FADE_END + PARCEL_HALF_DIAGONAL),
+                VisibilityRange::abrupt(0.0, MAX_REACH),
                 ChildOf(entity),
             ));
         }

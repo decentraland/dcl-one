@@ -13,7 +13,7 @@
     #import bevy_pbr::pbr_functions::{apply_pbr_lighting, main_pass_post_lighting_processing};
     #import bevy_pbr::{mesh_view_bindings::{lights, view}, shadows};
     #import "embedded://shaders/shadow_softening.wgsl"::soften_directional_shadow
-    #import "embedded://visuals/landscape_ground.wgsl"::ground_albedo_normal
+    #import "embedded://visuals/landscape_ground.wgsl"::ground_albedo
 #endif
 
 #import "embedded://visuals/terrain_params.wgsl"::terrain
@@ -64,7 +64,7 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) {
 #else
 fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> FragmentOutput {
     // sampled before the discard, in uniform control flow
-    let ground = ground_albedo_normal(in.world_position.xz);
+    let ground = ground_albedo(in.world_position.xz);
 #endif
     if beyond_coast(in.world_position.xz, terrain.coast) {
         discard;
@@ -84,7 +84,7 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
 #else // PREPASS_PIPELINE
     var out: FragmentOutput;
     var pbr_input = pbr_input_from_standard_material(in, is_front);
-    pbr_input.material.base_color = vec4(ground.albedo, 1.0);
+    pbr_input.material.base_color = vec4(ground, 1.0);
     out.color = main_pass_post_lighting_processing(pbr_input, apply_pbr_lighting(pbr_input));
     return out;
 #endif // PREPASS_PIPELINE

@@ -46,7 +46,7 @@
 @group(2) @binding(109) var blade_mask: texture_2d<f32>;
 @group(2) @binding(110) var blade_mask_sampler: sampler;
 
-// The wind, as unity-explorer's grass material sets it.
+// The wind.
 // (1, 0, 1) in unity x/z, normalised, with unity's z negated
 const WIND_DIRECTION: vec2<f32> = vec2(0.70710677, -0.70710677);
 const WIND_STRENGTH: f32 = 0.128;
@@ -57,8 +57,8 @@ const GUST_SPEED: f32 = 5.0;
 const GUST_STRENGTH: f32 = 0.055;
 const SWINGING: f32 = 0.194;
 const FLUTTER: f32 = 0.559;
-// instances shrink away between these distances from the camera, in metres (grass.rs FADE_END)
-const FADE: vec2<f32> = vec2(50.0, 100.0);
+// instances shrink away between these distances from the camera, in metres
+const FADE: vec2<f32> = vec2(f32(#{GRASS_FADE_START}), f32(#{GRASS_FADE_END}));
 
 // How this shader reads those values (its own choices):
 // radians of sway phase per metre along the wind, so neighbours sway out of step as a wave
@@ -68,8 +68,8 @@ const SWAY_WAVENUMBER: f32 = 0.35;
 const FLUTTER_RATE: f32 = 4.0;
 const FLUTTER_SHARE: f32 = 0.25;
 const TAU: f32 = 6.2831855;
-// a grass card shows where the mask reaches this, as unity-explorer's grass material cuts
-const MASK_CUTOFF: f32 = 0.5;
+// a grass card shows where the mask reaches the texel value the mask's mips keep the coverage at
+const MASK_CUTOFF: f32 = f32(#{GRASS_MASK_CUT}) / 255.0;
 // An instance is lit by the terrain's slope across this many metres to each side of its root.
 // The ground's own normal turns so much from one metre to the next that neighbouring tufts lit
 // by it stand out from each other as light and dark patches.
@@ -239,8 +239,7 @@ override fn ambient::ambient_light(world_position: vec4<f32>, world_normal: vec3
 }
 #endif
 
-// The colours, as unity-explorer's grass and flower materials set them. A tuft is its patch of
-// ground's colour from root to tip, as unity-explorer draws it.
+// The colours. A tuft is its patch of ground's colour from root to tip.
 // a flower's or reed's colour blends this far toward the ground's at its root, fading out by
 // this share of its height
 const FLOWER_COLOUR_MAP_STRENGTH: f32 = 0.241;
@@ -283,8 +282,8 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
     pbr_input.N = normal;
     pbr_input.world_normal = normal;
     // Lit as seen from straight above its slope, wherever the camera is: bevy's diffuse light
-    // and its highlight both change with the view direction, and unity-explorer's grass, its
-    // highlights off, looks the same from every angle.
+    // and its highlight both change with the view direction, which shows on the flat cards as a
+    // sheen coming and going as the camera turns.
     pbr_input.V = normal * VIEW_ALONG_NORMAL;
 
     var out: FragmentOutput;

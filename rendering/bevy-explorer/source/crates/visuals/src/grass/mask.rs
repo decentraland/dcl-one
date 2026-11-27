@@ -10,12 +10,14 @@ use bevy::{
     render::render_resource::{Extent3d, TextureDimension, TextureFormat},
 };
 
+use crate::mips::byte_mips;
+
 pub(crate) const BLADE_MASK: Handle<Image> = weak_handle!("fa3afe51-f8f1-4c36-b54d-736618ef8821");
 
 /// Texels along each side of the mask.
 const SIZE: usize = 512;
-/// A texel at or above this is blade (`grass_wind.wgsl`'s `MASK_CUTOFF`).
-const CUT: u8 = 128;
+/// A texel at or above this is blade; the grass shader cuts the cards at it.
+pub(crate) const CUT: u8 = 128;
 /// The mask rises from 0 to 1 over this many texels across a blade's edge, so the cut stays a
 /// clean line when a card fills the screen.
 const EDGE: f32 = 4.0;
@@ -130,55 +132,11 @@ fn texel(x: usize, y: usize) -> u8 {
     (cover * 255.0) as u8
 }
 
-/// The share of `level` that passes the cut once scaled by `scale`.
-fn kept(level: &[u8], scale: f32) -> f32 {
-    let passing = level
-        .iter()
-        .filter(|value| f32::from(**value) * scale >= f32::from(CUT))
-        .count();
-    passing as f32 / level.len() as f32
-}
-
 pub(crate) fn image() -> Image {
-    let mut level: Vec<u8> = (0..SIZE * SIZE)
+    let mut bytes: Vec<u8> = (0..SIZE * SIZE)
         .map(|i| texel(i % SIZE, i / SIZE))
         .collect();
-    let coverage = kept(&level, 1.0);
-    let mut bytes = Vec::new();
-    let mut size = SIZE;
-    loop {
-        bytes.extend_from_slice(&level);
-        if size == 1 {
-            break;
-        }
-        let half = size / 2;
-        let mut next: Vec<u8> = (0..half * half)
-            .map(|i| {
-                let origin = i / half * 2 * size + i % half * 2;
-                let sum: u32 = [origin, origin + 1, origin + size, origin + size + 1]
-                    .into_iter()
-                    .map(|texel| u32::from(level[texel]))
-                    .sum();
-                (sum / 4) as u8
-            })
-            .collect();
-        // plain averaging thins the blades away with distance: each level is scaled so as much
-        // of it passes the cut as of the first
-        let (mut low, mut high) = (0.25, 4.0);
-        for _ in 0..10 {
-            let scale = (low + high) * 0.5;
-            if kept(&next, scale) < coverage {
-                low = scale;
-            } else {
-                high = scale;
-            }
-        }
-        for value in &mut next {
-            *value = (f32::from(*value) * high).min(255.0) as u8;
-        }
-        level = next;
-        size = half;
-    }
+    let levels = byte_mips::<1>(&mut bytes, (SIZE, SIZE), Some((0, CUT)));
     let mut image = Image::new_fill(
         Extent3d {
             width: SIZE as u32,
@@ -190,7 +148,7 @@ pub(crate) fn image() -> Image {
         TextureFormat::R8Unorm,
         RenderAssetUsages::RENDER_WORLD,
     );
-    image.texture_descriptor.mip_level_count = SIZE.ilog2() + 1;
+    image.texture_descriptor.mip_level_count = levels;
     image.data = Some(bytes);
     image.sampler = ImageSampler::Descriptor(ImageSamplerDescriptor {
         mag_filter: ImageFilterMode::Linear,
@@ -204,9 +162,15 @@ pub(crate) fn image() -> Image {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::mips::share_reaching;
 
     fn is_blade(x: usize, y: usize) -> bool {
         texel(x, y) >= CUT
+    }
+
+    /// The share of `level` that passes the cut.
+    fn kept(level: &[u8]) -> f32 {
+        share_reaching(level.as_chunks::<1>().0, 0, CUT)
     }
 
     /// Each strip is one mass at the root, most of the card wide, breaking into many spikes
@@ -228,7 +192,7 @@ mod tests {
         let level: Vec<u8> = (0..SIZE * SIZE)
             .map(|i| texel(i % SIZE, i / SIZE))
             .collect();
-        let coverage = kept(&level, 1.0);
+        let coverage = kept(&level);
         assert!((0.4..0.6).contains(&coverage), "coverage {coverage}");
     }
 
@@ -261,12 +225,12 @@ mod tests {
         let image = image();
         assert_eq!(image.texture_descriptor.mip_level_count, 10);
         let bytes = image.data.unwrap();
-        let first = kept(&bytes[..SIZE * SIZE], 1.0);
+        let first = kept(&bytes[..SIZE * SIZE]);
         let mut start = SIZE * SIZE;
         // down to 32 texels a side, below which one texel is too large a share
         for size in [256, 128, 64, 32] {
             let level = &bytes[start..start + size * size];
-            let cover = kept(level, 1.0);
+            let cover = kept(level);
             assert!(
                 (cover - first).abs() < 0.03,
                 "{size}: {cover} against {first}"

@@ -1073,12 +1073,12 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
     they sit uncompressed on the GPU (RGBA8 with mips, about 28 MB for the five), where Unity's
     import compresses them.
   - Until a texture has loaded, and for good if it fails to decode, its one-texel stand-in is
-    drawn: the ground in its former flat green, the rock in
-    its former grey. Unity has no such state; its textures ship in the build.
+    drawn: the ground flat green, the rock grey. Unity has no such state; its textures ship in
+    the build.
 - **Grass, flowers and reeds** are placed by unity-explorer's scatter rules (its hash, its 16 by
   16 jittered grid of 256 grass instances a parcel, 16 flowers of each of two kinds where the
-  ground is not sandy, 16 reeds shared out over the sandy 4 m cells), its 180 m and 256-parcel
-  limits and its wind and fade values, and differ in these ways.
+  ground is not sandy, 16 reeds shared out over the sandy 4 m cells), its 256-parcel limit and
+  its wind and fade values, and differ in these ways.
   - The meshes and the grass mask are built in code, and the wind and colour shader is written
     from the meaning of the material's values: Unity's grass and flower meshes, textures and
     shader come from commercial packages that cannot be redistributed. A grass instance is built
@@ -1094,8 +1094,9 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
     grid to 128 and 64 instances a parcel (flowers and reeds in proportion) by an ordered
     dither, and Off grows nothing.
   - Grass grows on the parcels whose square comes within the reach of the player, the nearest
-    256, where Unity takes those in the camera's view. Only parcels the realm has confirmed empty
-    and that lie inside the coast carry grass.
+    256, where Unity takes those in the camera's view out to 180 m. The reach is the distance a
+    parcel is drawn at, 100 m plus half its diagonal, so no parcel is built that is never drawn.
+    Only parcels the realm has confirmed empty and that lie inside the coast carry grass.
   - Instances stand upright, where Unity tilts each to the terrain's normal. They are lit as
     the slope they stand on: with the ground material's surface values and the normal of the
     terrain across 4 m to each side of their root (four more height samples per vertex), so a
