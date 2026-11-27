@@ -33,26 +33,27 @@ and main-thread time each frame there is spare time, whether or not the player c
   after tokio's rounding), which the scene drains only at a tick, and past which the oldest are
   dropped with no resynchronization: a lost join or leave shows a missing or ghost player when
   the player returns. A busy island can send more than that in two seconds, so a rate alone
-  does not bound the loss. `GlobalCrdtState::sent` counts the updates delivered to each host:
-  every update sent, plus, when a scene spawns, the updates since its snapshot that the native
-  forwarder replays to every scene of the context (`count_replayed`, at most the receiver's
-  capacity). Each dispatch records the count of the scene's own context
+  does not bound the loss. `GlobalCrdtState::sent` counts the updates sent to the context's
+  hosts. Each dispatch records the count of the scene's own context
   (`CrdtContexts::try_for_scene_hash`) on the scene (`global_updates_read`), and a capped
   scene with `GLOBAL_UPDATE_BACKLOG_DUE` (250) or more delivered since is due whatever its band.
-  Only that scene is released. A replay starts at the spawning scene's snapshot, taken before its
-  script downloads, so it can hold up to 1,024 entries, some of which the capped scene already
-  read. It sits behind the scene's unread updates, so an overflow drops the oldest unread
-  updates only when the replay holds them again. A unique update is lost only after more than
-  1,024 minus the unread count (at least 774) arrive before the scene ticks. The scene is due
+  Only that scene is released. An update is lost only after more than 1,024 arrive before the
+  scene ticks, 774 more than the 250 that make it due. The scene is due
   once 250 are unread, but it is then ordered by the queue's key like any other, so under
   scene-thread pressure it can wait frames while more arrive; the margin holds while it is sent
   within those 774. The count is taken when an update enters the broadcast, not when the host
   receives it: the native forwarder interleaves ticks and queued updates in either order, so a
   tick can reach the host before updates already counted as read, which stay unseen by the
-  check until the next dispatch. The margin absorbs that unless the forwarder is far behind,
-  most likely right after a replay. Updates sent between a spawn and the forwarder's swap are
-  replayed uncounted. Each backend reports what a spawn replays (`replayed_global_updates`): the
-  native forwarder what the new receiver holds, the web relay nothing.
+  check until the next dispatch. The margin absorbs that unless the forwarder is far behind.
+- **A scene subscribes to global updates at spawn.** Its initial store is seeded with the
+  global state when it starts loading, and its receiver is taken when it spawns, after its
+  script has downloaded, with the store brought to the global state of that moment: the players
+  who left meanwhile removed, newer components taken (`refresh_global_state`). The native
+  forwarder, which swaps one receiver per context and forwards what the new one holds to every
+  scene of the context, then has only the updates sent between the subscription and its swap to
+  forward again, which the scenes apply idempotently. Subscribing at load start would hold every
+  update sent while the script downloads, up to 1,024, and send them to every live scene a
+  second time, past the count above.
 - **Unread peer messages make a scene due too.** A scene's inbound message queues, the string
   and binary buses (1,024 each) and the topic inbox (645), also drain only at a tick, and drop
   new messages when full. `SceneMessageTraffic::delivered_to` counts the peer messages handed
@@ -97,10 +98,8 @@ and main-thread time each frame there is spare time, whether or not the player c
 - A scene 16 m or more behind the camera delivers up to a second of changes in one reply.
   Whether that hitches when the camera turns is open until main-thread and scene-thread time are
   measured at a dense spot with and without the cap.
-- On native, a spawn whose replay holds 250 or more updates makes every capped scene due in
-  the same frame. Walking through a busy area spawns scenes often, so the release can take back
-  part of the saving there; the measurement reports the panel's `released` count to show how
-  much, and whether replayed copies need a threshold of their own.
+- Walking through a busy area, the global-update release can take back part of the saving;
+  the measurement reports the panel's `released` count to show how much.
 - On the client every scene shares one crdt context, so the global-update release follows the
   island's update rate: at about 500 updates a second every capped scene is due about every
   half second, and the 1/s and 0.5/s caps act as about 2/s where the island is busiest. A scene

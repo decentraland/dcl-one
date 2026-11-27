@@ -194,9 +194,9 @@ farthest band keeps a slow tick because a scene drains its channels only while t
 full channel drops messages. For global updates a rate is not enough: a scene's host holds at
 most `SCENE_GLOBAL_UPDATE_CAPACITY` of them between its ticks, so a capped scene with
 `GLOBAL_UPDATE_BACKLOG_DUE` (a quarter of the capacity) delivered since its last dispatch
-(`GlobalCrdtState::sent`, which includes the updates a spawning scene's receiver replays to the
-whole context where the backend replays them, `replayed_global_updates`, against the count it
-recorded then) is due whatever its band. Its inbound message queues (string and binary buses,
+(`GlobalCrdtState::sent` against the count it recorded then) is due whatever its band. A scene
+subscribes to global updates when it spawns, not when it starts loading, so the native
+forwarder's swap forwards no backlog to the other scenes of its context. Its inbound message queues (string and binary buses,
 topic inbox) are bounded too, so a capped scene with `SCENE_MESSAGE_BACKLOG_DUE` peer messages
 handed to them since its last dispatch (`SceneMessageTraffic::delivered_to`) is due as well.
 The behind cap applies from 16 m on, since nearer the

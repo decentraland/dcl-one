@@ -65,12 +65,6 @@ pub fn queue_scene(data: SceneInitializationData) -> bool {
         .is_some()
 }
 
-pub fn replayed_global_updates(
-    _receiver: &tokio::sync::broadcast::Receiver<GlobalCrdtStateUpdate>,
-) -> u64 {
-    0
-}
-
 pub fn spawn_scene(
     initial_crdt_store: CrdtStore,
     scene_context: CrdtContext,

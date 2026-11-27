@@ -1551,11 +1551,10 @@ mod player_scenes_tests {
         world.run_system_once(update_scene_priority).unwrap();
         assert!(!queued(&world).contains(&east));
 
-        // another scene spawns, and the host replays one update to every scene of the context
         world
             .get_mut::<GlobalCrdtState>(crdt)
             .unwrap()
-            .count_replayed(1);
+            .update_time(TimeOfDay::default());
         world.run_system_once(update_scene_priority).unwrap();
         assert!(queued(&world).contains(&east));
         // its dispatch counts the release and reads the backlog, so the next frame holds it again

@@ -388,14 +388,6 @@ pub async fn renderer_ipc_in(mut stream: RecvHalf) {
     }
 }
 
-pub fn replayed_global_updates(
-    receiver: &tokio::sync::broadcast::Receiver<GlobalCrdtStateUpdate>,
-) -> u64 {
-    receiver
-        .len()
-        .min(common::structs::SCENE_GLOBAL_UPDATE_CAPACITY.next_power_of_two()) as u64
-}
-
 pub fn spawn_scene(
     initial_crdt_store: CrdtStore,
     scene_context: CrdtContext,

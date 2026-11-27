@@ -18,10 +18,9 @@ use common::{
     partition::{scene_partition, Tier},
     sets::{PostUpdateSets, RealmLifecycle},
     structs::{
-        server_mode, AppConfig, AppError, CurrentRealm, EditorMode, GlobalCrdtStateUpdate,
-        IVec2Arg, NearbyVoiceDisabled, PlayerParcelChanged, PreviewMode, PrimaryCamera,
-        ReadsMapPins, SceneJsFile, SceneLoadDistance, SceneMeta, SceneTime, StartupScenes,
-        WorldHold,
+        server_mode, AppConfig, AppError, CurrentRealm, EditorMode, IVec2Arg, NearbyVoiceDisabled,
+        PlayerParcelChanged, PreviewMode, PrimaryCamera, ReadsMapPins, SceneJsFile,
+        SceneLoadDistance, SceneMeta, SceneTime, StartupScenes, WorldHold,
     },
     terrain::{Occupancy, TerrainChange, TerrainTargets, BORDER_PADDING},
     util::{TaskExt, TryPushChildrenEx},
@@ -62,10 +61,10 @@ use crate::{
 };
 
 #[cfg(not(target_arch = "wasm32"))]
-use dcl_deno_ipc::{replayed_global_updates, spawn_scene};
+use dcl_deno_ipc::spawn_scene;
 
 #[cfg(target_arch = "wasm32")]
-use dcl_wasm::{replayed_global_updates, spawn_scene};
+use dcl_wasm::spawn_scene;
 
 #[derive(Default)]
 pub struct CrdtLoader;
@@ -150,10 +149,11 @@ pub enum SceneLoading {
         crdt: Option<Handle<SerializedCrdtStore>>,
     },
     Javascript {
-        global_updates: Option<tokio::sync::broadcast::Receiver<GlobalCrdtStateUpdate>>,
+        /// The entities of the global state the scene's initial store was seeded with.
+        global_entities: HashSet<SceneEntityId>,
         scene_origin: Vec3,
-        // the context the receiver was subscribed to, so the ipc stream tag can never
-        // disagree with the stream it labels
+        // the context the initial store was seeded from and the scene subscribes to at spawn,
+        // so the ipc stream tag can never disagree with the stream it labels
         crdt_context: Entity,
     },
     Failed,
@@ -497,7 +497,8 @@ pub(crate) fn load_scene_javascript(
             debug!("{root:?} waiting for crdt context");
             continue;
         };
-        let (mut initial_crdt, global_updates) = global_scene.subscribe(scene_origin);
+        let (mut initial_crdt, _) = global_scene.subscribe(scene_origin);
+        let global_entities = store_entities(&initial_crdt);
 
         // set initial realm info
         let base_url = realm
@@ -628,7 +629,7 @@ pub(crate) fn load_scene_javascript(
         commands.entity(root).try_insert((
             SceneInitialData { js: h_code },
             SceneLoading::Javascript {
-                global_updates: Some(global_updates),
+                global_entities,
                 scene_origin,
                 crdt_context,
             },
@@ -701,6 +702,34 @@ pub struct TestingData {
 #[derive(Component)]
 pub struct SuperUserScene;
 
+/// The entities `store` holds a component of.
+fn store_entities(store: &CrdtStore) -> HashSet<SceneEntityId> {
+    store
+        .lww
+        .values()
+        .flat_map(|state| state.last_write.keys())
+        .chain(store.go.values().flat_map(|state| state.0.keys()))
+        .copied()
+        .collect()
+}
+
+/// Bring the global part of a scene's initial `store`, seeded with the entities
+/// `seeded_entities`, to `global_state`: the entities `global_state` no longer holds are removed,
+/// and its newer components replace the seeded ones.
+fn refresh_global_state(
+    store: &mut CrdtStore,
+    seeded_entities: &HashSet<SceneEntityId>,
+    global_state: CrdtStore,
+) {
+    let current = store_entities(&global_state);
+    let removed = seeded_entities
+        .difference(&current)
+        .copied()
+        .collect::<HashSet<_>>();
+    store.clean_up(&removed);
+    store.merge_newer(global_state);
+}
+
 pub(crate) fn initialize_scene(
     mut commands: Commands,
     scene_updates: Res<SceneUpdates>,
@@ -721,7 +750,7 @@ pub(crate) fn initialize_scene(
     editor_mode: Res<EditorMode>,
     portable_scenes: Res<PortableScenes>,
     mobile_ui: Res<MobileUiEmulation>,
-    mut crdt_contexts: Query<&mut GlobalCrdtState>,
+    crdt_contexts: Query<&GlobalCrdtState>,
 ) {
     for (root, mut state, initial_data, mut context, super_user) in loading_scenes.iter_mut() {
         if !matches!(state.as_mut(), SceneLoading::Javascript { .. })
@@ -754,14 +783,22 @@ pub(crate) fn initialize_scene(
 
         let thread_sx = SceneResponseSender::new(context.scene_id, scene_updates.sender.clone());
 
-        let (global_updates, scene_origin, crdt_context) = match *state {
+        let (global_entities, scene_origin, crdt_context) = match *state {
             SceneLoading::Javascript {
-                ref mut global_updates,
+                ref mut global_entities,
                 scene_origin,
                 crdt_context,
-            } => (global_updates.take().unwrap(), scene_origin, crdt_context),
+            } => (std::mem::take(global_entities), scene_origin, crdt_context),
             _ => panic!("bad state"),
         };
+
+        // subscribed at spawn, the receiver holds only updates sent from here on
+        let Ok(global_scene) = crdt_contexts.get(crdt_context) else {
+            fail("the scene's crdt context is gone");
+            continue;
+        };
+        let (global_state, global_updates) = global_scene.subscribe(scene_origin);
+        refresh_global_state(&mut context.crdt_store, &global_entities, global_state);
 
         let crdt_component_interfaces = CrdtComponentInterfaces(HashMap::from_iter(
             crdt_component_interfaces
@@ -787,8 +824,6 @@ pub(crate) fn initialize_scene(
             scene_context.platform = Some("mobile".to_owned());
         }
 
-        let replayed = replayed_global_updates(&global_updates);
-
         let wake = SceneWake::default();
         let (main_sx, kill_guard) = spawn_scene(
             context.crdt_store.clone(),
@@ -805,11 +840,6 @@ pub(crate) fn initialize_scene(
             wake.clone(),
         );
 
-        if replayed > 0 {
-            if let Ok(mut crdt) = crdt_contexts.get_mut(crdt_context) {
-                crdt.count_replayed(replayed);
-            }
-        }
         context.inspected = inspected;
         // set last_sent so the scene doesn't get extreme starvation priority
         // when it first becomes eligible after initialization completes

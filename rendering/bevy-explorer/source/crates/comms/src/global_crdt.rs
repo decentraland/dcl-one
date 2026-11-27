@@ -458,15 +458,9 @@ impl GlobalCrdtState {
         (store, self.int_sender.subscribe())
     }
 
-    /// The updates delivered to each of this context's scene hosts since it was created: every
-    /// update sent, plus those replayed to every scene when a scene spawns
-    /// (`count_replayed`).
+    /// The updates sent to this context's scene hosts since it was created.
     pub fn sent(&self) -> u64 {
         self.sent
-    }
-
-    pub fn count_replayed(&mut self, replayed: u64) {
-        self.sent += replayed;
     }
 
     pub fn set_bounds(&mut self, min: IVec2, max: IVec2) {
