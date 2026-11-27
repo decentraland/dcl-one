@@ -1891,10 +1891,12 @@ Invariants:
 ## Builder collection lifecycle workload
 
 The builder's lifecycle routes (`services/catalyst/builder/src/collections/lifecycle.rs`,
+`services/catalyst/builder/src/collections/publish_third_party.rs`,
 `services/catalyst/builder/src/terms.rs`) are rare writes by a collection's
 owner or managers: a lock and a terms acceptance per publication, a delete
-per abandoned draft, and the old builder web's publish call every five
-seconds until the chain holds the collection.
+per abandoned draft, the old builder web's publish call every five seconds
+until the chain holds the collection, and a third-party publish per batch
+of items a provider's manager submits for curation.
 
 Tables and what they hold:
 
@@ -1908,7 +1910,8 @@ Tables and what they hold:
   acceptance names at most as many hashes as its collection has items, each
   at most 64 ASCII letters and digits. A new acceptance deletes the row the
   warehouse already took and merges into the one it hasn't (its hashes, then
-  the new ones it lacks, the newest 40,000 kept), so no acceptance is lost
+  the new ones it lacks, the newest kept up to the collection's item count
+  and at most 40,000), so no acceptance is lost
   before it is forwarded. A delivery marks the row forwarded only while its
   body is still the one sent. Only the terms route inserts, updates and
   deletes its rows, and only its forward reads and updates them; no other
@@ -1916,13 +1919,20 @@ Tables and what they hold:
   SQL.
   A delete of the collection keeps the rows (no foreign key). The schema has
   no role that narrows who reads it beyond those statements.
+- `builder.slot_usage_cheques`, `builder.item_curations`,
+  `builder.collection_curations`: a third-party publish writes one cheque
+  (its signature, salt and quantity, a salt used once per provider by
+  `UNIQUE (third_party_id, salt)`), a pending curation of each named item and
+  a new pending curation of the collection, all or nothing. A cheque outlives
+  its collection; the curations go with their item or collection.
 
 Statements:
 
 | Request | Statements | Index |
 | --- | --- | --- |
 | lock | the collection row `FOR UPDATE`, the decision, one update | `collections_pkey` |
-| delete | the collection row, then its items `FOR UPDATE ORDER BY id`; the decision; the items' contents, the items and the row deleted; the upload records no item names any more | `collections_pkey`, `items_collection_created_idx`, `item_contents_pkey`, `item_contents_hash_idx` |
+| delete | the collection row, then its items `FOR UPDATE ORDER BY id`; the decision; 503 when a standard collection's address differs from the one the RPC was asked about; the items' contents, the items and the row deleted; the upload records no item names any more | `collections_pkey`, `items_collection_created_idx`, `item_contents_pkey`, `item_contents_hash_idx` |
+| third-party publish | the collection row, then the provider's advisory lock, then the collection's named items `FOR UPDATE ORDER BY id`; the decision; the provider's submitted items counted against its allowance; the named items and their contents read; their files checked in one batch; the cheque inserted; one insert of the item curations; one of the collection curation | `collections_pkey`, `items_pkey`, `item_contents_pkey`, `collections_linked_contract_key`, `slot_usage_cheques_third_party_salt_key` |
 | publish | the collection's items in creation order, the copy's row and item ids for its contract; to assign ids, the rows locked as for a delete and one update per item | `items_collection_created_idx`, `shop.collections` and `shop.items` primary keys |
 | terms | the collection's item count; one delete of the signer's forwarded row of the event; one read of its waiting row; one insert or update of it; one update when the forward succeeds | `items_collection_created_idx`, `terms_acceptances_collection_signer_event_idx`, `terms_acceptances_pkey` |
 | terms forward pass | claims at most 50 due rows `FOR UPDATE SKIP LOCKED`, one update per delivered row | `terms_acceptances_due_idx` |
@@ -1937,6 +1947,10 @@ Invariants:
   transaction and never holds a connection.
 - A delete leaves no upload record that no item names, and touches no row
   of another collection.
+- A third-party publish takes the collection, then the provider, then only
+  that collection's items, and counts the provider's free slots under the
+  provider's lock, so concurrent publishes of one provider spend each slot
+  once and no publish locks another collection's item.
 - The forward is at least once: at most six attempts, the wait doubling from
   a minute; a row the warehouse took is never claimed again.
 
