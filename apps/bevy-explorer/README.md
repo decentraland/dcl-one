@@ -113,8 +113,11 @@ Cargo files, the web tools, the build cache tools or this workflow change; on ma
 the web build's latest successful main execution. Integration guards compare its list of crate
 directories with `Cargo.lock`, so a new path dependency fails there until the list names it. The
 Test Suite runs the same crate's host tests.
+*Movement scene* type-checks the movement scene (`rendering/bevy-explorer/source/movement-scene`) and
+runs its unit tests in Node.js. It runs when the scene's directory or this workflow changes; on
+main it compares with the web build's latest successful main execution.
 
-The build jobs (*Test Suite*, *Headless Smoke*, *Clippy*, *Relay wake in the browser*, the web build) start beside *Integration guards* and the
+The build jobs (*Test Suite*, *Headless Smoke*, *Clippy*, *Relay wake in the browser*, *Movement scene*, the web build) start beside *Integration guards* and the
 format checks. When one of those checks fails on a pull request from this repository, the *Stop the build jobs*
 job cancels the run; a pull request from a fork runs to the end, because its token cannot cancel a run.
 
