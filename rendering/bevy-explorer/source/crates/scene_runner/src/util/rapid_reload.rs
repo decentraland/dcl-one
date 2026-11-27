@@ -100,7 +100,7 @@ impl Target {
         interval: f64,
         realm: &str,
         parcel: Option<&str>,
-        ready: bool,
+        running: bool,
     ) -> Step {
         if self.realm != realm {
             return Step::Stop("Realm changed");
@@ -112,13 +112,13 @@ impl Target {
             if now >= deadline {
                 return Step::Stop("Target did not finish reloading");
             }
-            if ready {
+            if running {
                 self.awaiting_until = None;
                 self.next = now + interval;
             }
             return Step::Wait;
         }
-        if !ready {
+        if !running {
             return Step::Stop("Target is no longer running");
         }
         if now < self.next {
@@ -182,7 +182,7 @@ fn command(
                 input.reply_ok("Rapid scene reload is already running");
                 return;
             }
-            let Some(hash) = targets.ready_hash(&live).filter(|_| realm.connected) else {
+            let Some(hash) = targets.running_hash(&live).filter(|_| realm.connected) else {
                 input.reply_failed("No running parcel scene in a connected realm");
                 return;
             };
@@ -227,18 +227,21 @@ fn tick(
     } else if !realm.connected {
         Step::Stop("Realm disconnected")
     } else {
-        let ready = targets.ready_hash(&live) == Some(target.hash.as_str());
+        // the target's worker runs, not the settling waits' readiness: a cycle restarts the
+        // scene `interval` after its worker started, mid-load when the interval is shorter than
+        // the load, and a scene the editor freezes at tick 3 is never ready and still cycles
+        let running = targets.running_hash(&live) == Some(target.hash.as_str());
         target.step(
             time.elapsed_secs_f64(),
             interval,
             &realm.about_url,
             targets.parcel_hash(),
-            ready,
+            running,
         )
     };
     match step {
         Step::Reload => {
-            if reload_hash(&mut live, &target.hash) {
+            if reload_hash(&mut live, &target.hash).is_some() {
                 state.cycles += 1;
                 state.status = "Waiting for scene to restart";
             } else {

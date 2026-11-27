@@ -10,11 +10,12 @@ use avatar::animate::{is_emoting, ActiveEmote, MaskedEmote};
 use base64::{prelude::BASE64_STANDARD, Engine};
 use bevy::{
     prelude::*,
-    render::view::screenshot::{Screenshot, ScreenshotCaptured},
+    render::view::screenshot::Screenshot,
     tasks::{IoTaskPool, Task},
     window::PrimaryWindow,
 };
 use common::{
+    frame::{Encoding, Scale, JPEG_QUALITY},
     inputs::SystemAction,
     sets::SceneSets,
     structs::{CurrentRealm, PrimaryCamera, PrimaryUser, SystemAudio},
@@ -24,7 +25,7 @@ use comms::{
     global_crdt::ForeignPlayer,
     profile::{CurrentUserProfile, UserProfile},
 };
-use image::{codecs::jpeg::JpegEncoder, imageops::FilterType, DynamicImage};
+use image::DynamicImage;
 use input_manager::{InputManager, InputPriority};
 use ipfs::IpfsAssetServer;
 use scene_runner::vec3_to_parcel;
@@ -41,7 +42,6 @@ use crate::{
     storage::{lookup_place, upload_photo, CameraReelStorage, UploadError, UploadResponse},
 };
 
-pub const JPEG_QUALITY: u8 = 75;
 /// The HUD's capture animation flies a small copy of the photo to the gallery icon.
 const PREVIEW_WIDTH: u32 = 320;
 const PREVIEW_HEIGHT: u32 = 180;
@@ -347,15 +347,7 @@ fn start_capture(
         parcel,
     ));
 
-    let (sender, receiver) = tokio::sync::oneshot::channel();
-    let mut sender = Some(sender);
-    commands.spawn(Screenshot::window(window_entity)).observe(
-        move |mut trigger: Trigger<ScreenshotCaptured>| {
-            if let Some(sender) = sender.take() {
-                let _ = sender.send(std::mem::take(&mut trigger.0));
-            }
-        },
-    );
+    let receiver = common::frame::read_back(&mut commands, Screenshot::window(window_entity));
     commands.entity(camera_entity).insert((
         CapturingPhoto,
         PendingPhoto {
@@ -401,12 +393,8 @@ fn finish_capture(
         .entity(entity)
         .remove::<(CapturingPhoto, PendingPhoto)>();
     let frame = shot.frame;
-    let encode = IoTaskPool::get().spawn_compat(async move {
-        let dynamic = image
-            .try_into_dynamic()
-            .map_err(|e| format!("the frame cannot be read: {e:?}"))?;
-        encode_photo(&dynamic, frame)
-    });
+    let encode = IoTaskPool::get()
+        .spawn_compat(async move { encode_photo(&common::frame::pixels(image)?, frame) });
     commands.entity(entity).insert(EncodingPhoto {
         encode,
         encoded: None,
@@ -421,18 +409,20 @@ pub fn encode_photo(screen: &DynamicImage, frame: Vec2) -> Result<EncodedPhoto, 
     let crop_h = ((height as f32 * frame.y).round() as u32).clamp(1, height);
     let x = (width - crop_w) / 2;
     let y = (height - crop_h) / 2;
-    let cropped = screen.crop_imm(x, y, crop_w, crop_h).to_rgb8();
-    let photo = image::imageops::resize(&cropped, PHOTO_WIDTH, PHOTO_HEIGHT, FilterType::Triangle);
-    let preview =
-        image::imageops::resize(&photo, PREVIEW_WIDTH, PREVIEW_HEIGHT, FilterType::Triangle);
-    let mut jpeg = Vec::new();
-    JpegEncoder::new_with_quality(&mut jpeg, JPEG_QUALITY)
-        .encode_image(&photo)
-        .map_err(|e| format!("JPEG encode failed: {e}"))?;
-    let mut preview_jpeg = Vec::new();
-    JpegEncoder::new_with_quality(&mut preview_jpeg, PREVIEW_JPEG_QUALITY)
-        .encode_image(&preview)
-        .map_err(|e| format!("preview encode failed: {e}"))?;
+    let cropped = DynamicImage::ImageRgb8(screen.crop_imm(x, y, crop_w, crop_h).to_rgb8());
+    let photo = Scale::Exact {
+        width: PHOTO_WIDTH,
+        height: PHOTO_HEIGHT,
+    }
+    .apply(cropped);
+    let jpeg = common::frame::encode(&photo, Encoding::Jpeg(JPEG_QUALITY))?;
+    let preview = Scale::Exact {
+        width: PREVIEW_WIDTH,
+        height: PREVIEW_HEIGHT,
+    }
+    .apply(photo);
+    let preview_jpeg = common::frame::encode(&preview, Encoding::Jpeg(PREVIEW_JPEG_QUALITY))
+        .map_err(|e| format!("preview: {e}"))?;
     Ok(EncodedPhoto { jpeg, preview_jpeg })
 }
 

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { describe, test } from 'node:test'
 import { pathToFileURL } from 'node:url'
-import { ConsoleError, FakeConsole, commandOf, normalizeLine, redact, redactLine, scrubCredentials, secretsOf } from '../driver/console.ts'
+import { ConsoleError, FakeConsole, commandOf, normalizeLine, quoteWord, redact, redactLine, scrubCredentials, secretsOf } from '../driver/console.ts'
 import { WEB_DRIVER } from '../driver/paths.ts'
 
 describe('normalizeLine', () => {
@@ -23,6 +23,16 @@ describe('normalizeLine', () => {
   test('counts whitespace as the engine does', () => {
     assert.equal(normalizeLine('chat\u0085Nearby\u3000hi'), '/chat Nearby hi')
     assert.equal(normalizeLine('chat Nearby a\ufeffb'), '/chat Nearby a\ufeffb')
+  })
+
+  test('quoteWord quotes what the engine would split or unquote', () => {
+    assert.equal(quoteWord('plain'), 'plain')
+    assert.equal(quoteWord(''), '""')
+    assert.equal(quoteWord('a b'), '"a b"')
+    assert.equal(quoteWord('a\u0085b'), '"a\u0085b"')
+    assert.equal(quoteWord('say "hi"'), '"say \\"hi\\""')
+    assert.equal(quoteWord('C:\\frames'), 'C:\\frames')
+    assert.equal(quoteWord('C:\\my frames'), '"C:\\\\my frames"')
   })
 
   test('commandOf is the name without the slash', () => {

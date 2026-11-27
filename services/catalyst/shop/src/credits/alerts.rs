@@ -23,6 +23,8 @@
 //!   chargeback clawing it back, or matching no paid purchase yet (the Stripe
 //!   webhook's transaction); an item purchase settled on chain (the
 //!   settlement's transaction).
+//! - **The daily summary** (`daily_summary.rs`): one row per closed UTC day,
+//!   queued by its own job the morning after.
 //!
 //! A row is unique per (kind, key), so detecting the same case again adds
 //! nothing. The job claims due rows for a lease, posts each (no redirect
@@ -119,7 +121,17 @@ pub(crate) async fn record(
     dedupe_key: &str,
     payload: Value,
 ) -> sqlx::Result<()> {
-    sqlx::query(
+    queue(conn, kind, dedupe_key, payload).await.map(drop)
+}
+
+/// [`record`], and whether it added the row.
+pub(crate) async fn queue(
+    conn: &mut PgConnection,
+    kind: &str,
+    dedupe_key: &str,
+    payload: Value,
+) -> sqlx::Result<bool> {
+    let added = sqlx::query(
         "INSERT INTO credits.alerts (kind, dedupe_key, payload, created_at, next_attempt_at) \
          VALUES ($1, $2, $3, $4, $4) ON CONFLICT (kind, dedupe_key) DO NOTHING",
     )
@@ -129,7 +141,7 @@ pub(crate) async fn record(
     .bind(now())
     .execute(conn)
     .await?;
-    Ok(())
+    Ok(added.rows_affected() == 1)
 }
 
 /// Queues [`CAP_NEAR_LIMIT`] for `salt` in the caller's transaction when its
@@ -730,6 +742,7 @@ pub(crate) fn render(kind: &str, payload: &Value, shop: &str) -> String {
             text("paymentIntent").replace('`', "'"),
         ),
         PURCHASE_SETTLED => settled_message(&[payload], shop),
+        super::daily_summary::DAILY_SUMMARY => super::daily_summary::message(payload),
         other => format!("Credits alert {other}: {payload}"),
     }
 }
@@ -743,7 +756,7 @@ fn pack_credited(payload: &Value) -> String {
     let credits = whole_credits(raw);
     let cents = payload["chargedCents"].as_i64().unwrap_or(0);
     let quantity = payload["quantity"].as_i64().unwrap_or(1);
-    let fee = round_div(cents * STRIPE_FEE_PER_MILLE, 1000) + STRIPE_FEE_FIXED_CENTS;
+    let fee = stripe_fee_cents(cents, 1);
     let spread = match credits {
         Some(credits) if cents > 0 => {
             let spread = cents - credits * 10 - fee;
@@ -972,8 +985,14 @@ fn credits_text(text: &str) -> String {
     }
 }
 
+/// Stripe's estimated fee on `payments` card payments charging `cents` in
+/// all.
+pub(super) fn stripe_fee_cents(cents: i64, payments: i64) -> i64 {
+    round_div(cents * STRIPE_FEE_PER_MILLE, 1000) + STRIPE_FEE_FIXED_CENTS * payments
+}
+
 /// `n / d` rounded half away from zero; 0 for a zero `d`.
-fn round_div(n: i64, d: i64) -> i64 {
+pub(super) fn round_div(n: i64, d: i64) -> i64 {
     if d == 0 {
         return 0;
     }
@@ -983,7 +1002,7 @@ fn round_div(n: i64, d: i64) -> i64 {
 }
 
 /// Tenths as a one-decimal number.
-fn tenths(tenths: i64) -> String {
+pub(super) fn tenths(tenths: i64) -> String {
     let sign = if tenths < 0 { "-" } else { "" };
     let abs = tenths.unsigned_abs();
     format!("{sign}{}.{}", abs / 10, abs % 10)
@@ -1011,7 +1030,7 @@ pub(super) fn usd(cents: i64) -> String {
 
 /// 18-decimal MANA to at most four decimals, truncated: a settlement figure
 /// is never rounded up.
-fn mana(wei: &str) -> String {
+pub(super) fn mana(wei: &str) -> String {
     let Ok(wei) = U256::from_str(wei) else {
         return "an unknown amount of".to_string();
     };

@@ -528,6 +528,42 @@
     height: 14px;
   }
 
+  /* Web catalogue cards reserve a fixed minimum height as their grid columns change width. */
+  .skeletonCatalogue {
+    min-height: 300px;
+  }
+
+  .skeletonCatalogue .skeletonTile {
+    flex: 1;
+    min-height: 0;
+    aspect-ratio: auto;
+  }
+
+  .skeletonCatalogue .skeletonInfo {
+    flex: 0 0 112px;
+    min-height: 0;
+    justify-content: center;
+    gap: 6px;
+  }
+
+  .skeletonCatalogue .skeletonBar:not(.skeletonBarShort) {
+    width: 100%;
+  }
+
+  .skeletonCatalogue .skeletonBarShort {
+    max-width: 75%;
+  }
+
+  @media (max-width: 720px) {
+    .skeletonCatalogue {
+      min-height: 250px;
+    }
+
+    .skeletonCatalogue .skeletonInfo {
+      flex-basis: 114px;
+    }
+  }
+
   @keyframes shop-card-sweep {
     from {
       background-position-x: 100%;

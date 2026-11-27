@@ -1,7 +1,10 @@
 import assert from 'node:assert/strict'
+import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import path from 'node:path'
 import { describe, test } from 'node:test'
 import { ConsoleError, FakeConsole, commandOf, redactLine } from '../driver/console.ts'
-import { type CommandRecord, Explorer, parseLiveScenes, parsePortables, parseSmartWearables, type WorldState } from '../driver/explorer.ts'
+import { type CaptureSequence, type CommandRecord, Explorer, parseLiveScenes, parsePortables, parseSmartWearables, saveCaptureFrames, type WorldState } from '../driver/explorer.ts'
 import { enterWorld } from '../driver/session.ts'
 
 function world(overrides: Partial<WorldState> = {}): string {
@@ -35,7 +38,36 @@ describe('Explorer', () => {
     assert.deepEqual(fake.lines, ['/connectivity_state', '/connectivity_retry'])
   })
 
-  test('teleport waits for a new arrival in the world', async () => {
+  const settled = {
+    location: [10, 20],
+    arrived: true,
+    sceneReady: true,
+    sceneHash: 'bafy',
+    sceneState: 'running',
+    ticksWaited: 4,
+    renderedFrames: 2,
+    settleMs: 900,
+    settled: true
+  }
+
+  test('teleport waits once, inside the engine, and reads the world it arrived in', async () => {
+    let arrivals = 1
+    const fake = new FakeConsole({
+      world_state: () => world({ arrivals }),
+      teleport: () => {
+        arrivals = 2
+        return JSON.stringify(settled)
+      }
+    })
+    const explorer = new Explorer(fake)
+    const state = await explorer.teleport(10, 20, { timeoutMs: 5000 })
+    assert.equal(state.arrivals, 2)
+    assert.equal(state.teleport.sceneReady, true)
+    // one read for the count before, one after the engine's reply: no poll
+    assert.deepEqual(fake.lines, ['/world_state', '/teleport 10 20 --wait --timeout-seconds 5', '/world_state'])
+  })
+
+  test('teleport follows a wait the engine ended before the landing', async () => {
     let arrivals = 1
     let teleported = false
     let reads = 0
@@ -45,22 +77,122 @@ describe('Explorer', () => {
         if (teleported && reads > 2) arrivals = 2
         return world({ arrivals, inWorld: arrivals === 2 || !teleported })
       },
-      teleport: (line) => {
+      teleport: () => {
         teleported = true
-        return `new location: ${line.slice(10)}`
+        return JSON.stringify({ ...settled, arrived: false, sceneReady: false, settled: false, warning: 'timed out after 5 s. Waiting for the player to land.' })
       }
     })
-    const explorer = new Explorer(fake)
-    const state = await explorer.teleport(10, 20, { timeoutMs: 5000 })
+    const state = await new Explorer(fake).teleport(10, 20, { timeoutMs: 5000 })
     assert.equal(state.arrivals, 2)
-    assert.deepEqual(fake.sent('teleport'), ['/teleport 10 20'])
+    assert.equal(state.teleport.arrived, false)
     assert.ok(fake.sent('world_state').length >= 3)
   })
 
-  test('teleport times out with the last state when the player never arrives', async () => {
-    const fake = new FakeConsole({ world_state: () => world({ arrivals: 1, inWorld: false }), teleport: 'new location: (1, 2)' })
+  test('a teleport timeout is sent in seconds as given, inside the engine\'s range', async () => {
+    const fake = Object.assign(new FakeConsole({ world_state: () => world({ arrivals: 1 }), teleport: JSON.stringify(settled) }), {
+      commandTimeoutMs: 400_000
+    })
     const explorer = new Explorer(fake)
-    await assert.rejects(explorer.teleport(1, 2, { timeoutMs: 300 }), /timed out after 300 ms waiting for the arrival at 1,2; last: .*"inWorld":false/)
+    await explorer.teleport(1, 2, { timeoutMs: 300 })
+    await explorer.teleport(1, 2, { timeoutMs: 1500 })
+    // the transport would wait 380 s, the engine takes at most 300
+    await explorer.teleport(1, 2, { timeoutMs: 390_000 })
+    assert.deepEqual(fake.sent('teleport'), [
+      '/teleport 1 2 --wait --timeout-seconds 0.3',
+      '/teleport 1 2 --wait --timeout-seconds 1.5',
+      '/teleport 1 2 --wait --timeout-seconds 300'
+    ])
+  })
+
+  test('a settling wait with no time left is refused before anything is sent', async () => {
+    const fake = new FakeConsole({ world_state: () => world({ arrivals: 1 }), teleport: JSON.stringify(settled), reload: JSON.stringify(settled) })
+    const explorer = new Explorer(fake)
+    await assert.rejects(explorer.teleport(1, 2, { timeoutMs: 0 }), /above 0 ms; got 0/)
+    await assert.rejects(explorer.reload({ timeoutMs: -5 }), /above 0 ms; got -5/)
+    assert.deepEqual(fake.lines, [])
+  })
+
+  test('the engine waits at most 100 s of a longer teleport, under the command timeout', async () => {
+    let reads = 0
+    const fake = new FakeConsole({
+      world_state: () => world({ arrivals: ++reads > 1 ? 2 : 1, inWorld: true }),
+      teleport: JSON.stringify(settled)
+    })
+    await new Explorer(fake).teleport(1, 2, { timeoutMs: 180_000 })
+    assert.deepEqual(fake.sent('teleport'), ['/teleport 1 2 --wait --timeout-seconds 100'])
+  })
+
+  test('reload and scene state read the settling replies', async () => {
+    const fake = new FakeConsole({
+      reload: JSON.stringify({ reloaded: true, ...settled, hint: 'new scene' }),
+      scene_loading_state: JSON.stringify({
+        current: false,
+        stage: 'Running',
+        state: 'running',
+        isReady: true,
+        sceneHash: 'bafy',
+        playerParcel: [149, 149],
+        outOfWorld: false,
+        blockedBy: [],
+        unavailable: {},
+        spawned: 0,
+        definition: 0,
+        crdt: 0,
+        javascript: 0,
+        failed: 0,
+        running: 1,
+        blocked: 0,
+        broken: 0,
+        gltf: 0,
+        preloads: 0,
+        texturePreloads: 0,
+        settleWaits: 0
+      })
+    })
+    const explorer = new Explorer(fake)
+    assert.equal((await explorer.reload()).settled, true)
+    const state = await explorer.sceneState()
+    assert.equal(state.isReady, true)
+    assert.equal(state.sceneHash, 'bafy')
+    assert.deepEqual(state.playerParcel, [149, 149])
+    assert.equal(state.outOfWorld, false)
+    assert.deepEqual(state.blockedBy, [])
+    assert.deepEqual(fake.lines, ['/reload --current --wait', '/scene_loading_state'])
+  })
+
+  test('a settling wait stays under the transport\'s command timeout', async () => {
+    let reads = 0
+    const fake = Object.assign(
+      new FakeConsole({
+        world_state: () => world({ arrivals: ++reads > 1 ? 2 : 1, inWorld: true }),
+        teleport: JSON.stringify(settled),
+        reload: JSON.stringify({ reloaded: true, ...settled })
+      }),
+      { commandTimeoutMs: 50_000 }
+    )
+    const explorer = new Explorer(fake)
+    await explorer.teleport(1, 2, { timeoutMs: 180_000 })
+    await explorer.reload()
+    await explorer.reload({ timeoutMs: 5000 })
+    assert.deepEqual(fake.sent('teleport'), ['/teleport 1 2 --wait --timeout-seconds 30'])
+    assert.deepEqual(fake.sent('reload'), ['/reload --current --wait --timeout-seconds 30', '/reload --current --wait --timeout-seconds 5'])
+  })
+
+  // the arrival gets what the teleport's own reply left of the timeout
+  test('teleport times out with the last state when the player never arrives', async () => {
+    const fake = new FakeConsole({
+      world_state: () => world({ arrivals: 1, inWorld: false }),
+      // the engine's wait takes 150 of the 300 ms
+      teleport: () => new Promise((resolve) => setTimeout(() => resolve(JSON.stringify({ ...settled, arrived: false, settled: false })), 150))
+    })
+    const explorer = new Explorer(fake)
+    const error = await explorer.teleport(1, 2, { timeoutMs: 300 }).then(
+      () => assert.fail('the arrival never happens'),
+      (error: unknown) => error as Error
+    )
+    assert.match(error.message, /waiting for the arrival at 1,2; last: .*"inWorld":false/)
+    const left = Number(/timed out after (\d+) ms/.exec(error.message)?.[1])
+    assert.ok(left >= 0 && left <= 150, `the arrival waits what the teleport left, not the whole 300 ms: ${left}`)
   })
 
   test('community chat commands: the message, the channel edits, and the state', async () => {
@@ -525,6 +657,80 @@ describe('Explorer', () => {
     const started = Date.now()
     await explorer.profileDeployWindow()
     assert.ok(Date.now() - started >= 350, 'two deployments between reads fill a burst of two')
+  })
+
+  test('screenshot({}) asks for the JSON reply with the widest frame; the bare call stays raw', async () => {
+    const fake = new FakeConsole({ screenshot: (line) => (line === '/screenshot' ? Buffer.from('png').toString('base64') : JSON.stringify({ caption: 'c', image: '' })) })
+    const explorer = new Explorer(fake)
+    assert.equal((await explorer.screenshot()).toString(), 'png')
+    assert.equal((await explorer.screenshot({})).caption, 'c')
+    assert.deepEqual(fake.lines, ['/screenshot', '/screenshot --max-width 1920'])
+  })
+
+  test('captureState and captureFrame read the gate and one frame in memory', async () => {
+    const state = { holder: 'screenshot --count', framesTaken: 1, count: 3, worldOnly: true, framesInMemory: 0, bytesInMemory: 0 }
+    const fake = new FakeConsole({ screenshot: (line) => (line === '/screenshot --state' ? JSON.stringify(state) : Buffer.from('frame').toString('base64')) })
+    const explorer = new Explorer(fake)
+    assert.deepEqual(await explorer.captureState(), state)
+    assert.equal((await explorer.captureFrame('capture://2/frame-001.png')).toString(), 'frame')
+    assert.deepEqual(fake.lines, ['/screenshot --state', '/screenshot --frame capture://2/frame-001.png'])
+  })
+
+  test('saveCaptureFrames writes frames kept in memory and leaves a sequence on disk alone', async () => {
+    const frame = { width: 2, height: 1, bytes: 1, atSeconds: 0, intervalFromPreviousSeconds: null, engineFrame: 1, tick: 1, late: false }
+    const sequence = (stored: 'disk' | 'memory', paths: string[]): CaptureSequence => ({
+      directory: stored === 'memory' ? 'capture://3' : '/frames',
+      stored,
+      count: paths.length,
+      format: 'png',
+      worldOnly: false,
+      requestedIntervalSeconds: 0.1,
+      meanIntervalSeconds: 0.1,
+      late: 0,
+      screen: null,
+      parcel: null,
+      frames: paths.map((framePath, index) => ({ ...frame, index, path: framePath })),
+      note: ''
+    })
+    const fake = new FakeConsole({
+      screenshot: (line) => (line.startsWith('/screenshot --frame ') ? Buffer.from(line.split(' ')[2]!).toString('base64') : JSON.stringify(sequence('memory', ['capture://3/frame-000.png'])))
+    })
+    const frameReads = (): string[] => fake.sent('screenshot').filter((line) => line.includes(' --frame '))
+    const explorer = new Explorer(fake)
+    const dir = await mkdtemp(path.join(tmpdir(), 'capture-'))
+    try {
+      const saved = await saveCaptureFrames(explorer, sequence('memory', ['capture://3/frame-000.png', 'capture://3/frame-001.png']), dir)
+      assert.deepEqual(saved.frames.map((f) => f.savedTo), [path.join(dir, 'frame-000.png'), path.join(dir, 'frame-001.png')])
+      assert.equal(await readFile(path.join(dir, 'frame-001.png'), 'utf8'), 'capture://3/frame-001.png')
+      assert.deepEqual(frameReads(), ['/screenshot --frame capture://3/frame-000.png', '/screenshot --frame capture://3/frame-001.png'])
+
+      const onDisk = sequence('disk', ['/frames/frame-000.png'])
+      assert.equal(await saveCaptureFrames(explorer, onDisk, dir), onDisk)
+      assert.equal(frameReads().length, 2)
+
+      const viaOption = await explorer.captureSequence({ count: 1, saveTo: dir })
+      assert.equal(viaOption.frames[0]!.savedTo, path.join(dir, 'frame-000.png'))
+    } finally {
+      await rm(dir, { recursive: true, force: true })
+    }
+  })
+
+  test('screenshot with options reads the caption; captureSequence passes its flags', async () => {
+    const shot = { caption: '640x325 (screen 1600x813, frame 3200x1626) full-view capture', format: 'jpg', width: 640, image: Buffer.from('jpg').toString('base64') }
+    const fake = new FakeConsole({ screenshot: (line) => (line.includes(' --count ') ? '{"stored":"disk","frames":[]}' : JSON.stringify(shot)) })
+    const explorer = new Explorer(fake)
+    const read = await explorer.screenshot({ maxWidth: 640, jpg: true })
+    assert.equal(read.caption, shot.caption)
+    assert.equal(read.image.toString(), 'jpg')
+    await explorer.screenshot({ worldOnly: true })
+    await explorer.captureSequence({ count: 3, intervalSeconds: 0.1, maxWidth: 320, dir: '/tmp/a b' })
+    await explorer.captureSequence()
+    assert.deepEqual(fake.lines, [
+      '/screenshot --max-width 640 --jpg',
+      '/screenshot --world-only',
+      '/screenshot --count 3 --interval-seconds 0.1 --max-width 320 --dir "/tmp/a b"',
+      '/screenshot --count 5'
+    ])
   })
 
   test('a long reply is cut in the record, not in the result', async () => {

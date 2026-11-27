@@ -99,7 +99,7 @@ describe('when the home sections offer a mobile store download', () => {
           for (const section of measurements.sections) {
             expect(section.contains).toBe(true)
             expect(section.centered).toBe(true)
-            expect(section.height).toBe(64)
+            expect(section.height).toBe(56)
             expect(section.imageRatio).toBeCloseTo(store === 'google_play' ? 163 / 41 : 140 / 36, 2)
             expect(section.name).toBe(
               store === 'google_play' ? 'Get it on Google Play' : 'Download on the App Store'

@@ -28,14 +28,15 @@ pub(crate) fn normalize_query_string(qs: &str) -> String {
     pairs.join("&")
 }
 
-/// Answers come out of the 5 s memo keyed by the normalized query string. The
-/// memo is internal: as upstream, the response carries no `cache-control`.
+/// Answers come out of the 5 s memo keyed by the normalized query string,
+/// prefixed so no query string names another route's entry in the shared memo.
+/// The memo is internal: as upstream, the response carries no `cache-control`.
 pub async fn get_deployments(
     State(state): State<SharedState>,
     request: Request,
 ) -> AppResult<Response> {
     let query_string = request.uri().query().unwrap_or("").to_string();
-    let cache_key = normalize_query_string(&query_string);
+    let cache_key = format!("deployments:{}", normalize_query_string(&query_string));
     let state_in_fetch = state.clone();
 
     let response_bytes = state

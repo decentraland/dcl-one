@@ -65,6 +65,7 @@ pub(super) fn credits_settings(config: &Config) -> anyhow::Result<shop::credits:
             config.shop.mana_price_max_staleness_secs
         },
         credits_usd_pegged_feed_max_age_secs: config.shop.credits_usd_pegged_feed_max_age_secs,
+        daily_summary_hour_utc: config.shop.credits_daily_summary_hour_utc,
         checkout_fulfillment_mode: config.shop.checkout_fulfillment_mode.clone(),
         require_purchase_intent: config.shop.credits_require_purchase_intent,
         checkout_worker_interval_secs: config.shop.checkout_worker_interval_secs,

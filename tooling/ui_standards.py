@@ -35,12 +35,14 @@ SHARED_RELATIVE_TOOLING keep their paths.
 
 `--kit-ceiling` is a check: for every component kit under KIT_PATHS (app-owned
 kits whose consumers can already import library/ui/components) it fails when the
-number of tracked component files differs from what tooling/ui-kit-ceiling.json
-records, and when that file records a higher ceiling than the base revision's
-(`--base`, default: the merge base with origin/main). A kit may only shrink, and
-a smaller kit lowers its ceiling in the same change: `--write-kit-ceiling`
-records the current counts and refuses one above the recorded or the base
-ceiling (docs/adr/2026-11-24-library-ui-single-source.md).
+number of tracked component files is above what tooling/ui-kit-ceiling.json
+records or above the kit's count at the base revision (`--base`, default: the
+merge base with origin/main), and when that file records a higher ceiling than
+the base revision's. A kit may only shrink, whether or not a removal lowered the
+ceiling. After removing a component, `--write-kit-ceiling` records the current
+counts; it refuses one above the recorded or the base ceiling. A count below the
+ceiling passes, so two changes that lower the same ceiling cannot fail the
+default branch together (docs/adr/2026-11-24-library-ui-single-source.md).
 """
 import argparse
 import json
@@ -223,8 +225,10 @@ def added_lines(diff):
 
 
 def git(*args):
+    # Decode as UTF-8, not the locale encoding (cp1252 on Windows): Git writes paths as UTF-8. surrogateescape keeps
+    # the bytes of a path or source file that is not valid UTF-8, so the path still opens and the file is still checked.
     return subprocess.run(['git', '-c', 'core.quotePath=false', *args], cwd=ROOT, check=True,
-                          capture_output=True, text=True).stdout
+                          capture_output=True, encoding='utf-8', errors='surrogateescape').stdout
 
 
 def names(command, *args):
@@ -636,8 +640,9 @@ def base_kit_ceiling(base):
 
 
 def kit_issues(ceiling, current):
-    """Each kit that grew above its ceiling, each kit that shrank without lowering it, and each ceiling
-    entry that names no kit."""
+    """Each kit that grew above its ceiling and each ceiling entry that names no kit. A kit below its
+    ceiling passes: two changes that each remove a component from one kit record the same lower ceiling,
+    and the tree they leave together is below it."""
     issues = [f'{name}: the ceiling records a kit that is not in KIT_PATHS; run --write-kit-ceiling'
               for name in sorted(ceiling.keys() - current.keys())]
     for name, count in sorted(current.items()):
@@ -645,9 +650,6 @@ def kit_issues(ceiling, current):
         if count > recorded:
             issues.append(f'{name}: {count} component files, the ceiling is {recorded}; '
                           'add shared components to library/ui/components instead')
-        elif count < recorded:
-            issues.append(f'{name}: {count} component files, the ceiling is {recorded}; '
-                          'lower it with --write-kit-ceiling')
     return issues
 
 
@@ -655,6 +657,18 @@ def raised_ceilings(limits, values):
     """Each kit whose value is above the limit recorded for it. A kit without a limit is new and passes."""
     return [f'{name}: {value} is above the recorded ceiling of {limits[name]}; a ceiling is never raised'
             for name, value in sorted(values.items()) if name in limits and value > limits[name]]
+
+
+def base_kit_counts(base, paths=KIT_PATHS):
+    """The component files each kit holds at the base revision."""
+    return kit_counts(git('ls-tree', '-r', '--name-only', '-z', base, '--', *paths).split('\0'), paths)
+
+
+def grown_kits(earlier, before, current):
+    """Each kit the base revision already capped that now holds more component files than it did there,
+    so a kit cannot grow back into the room a removal left under its ceiling."""
+    return [f'{name}: {count} component files, the base revision has {before[name]}; a kit only shrinks'
+            for name, count in sorted(current.items()) if name in earlier and count > before.get(name, count)]
 
 
 def kit_ceiling(base, write=False):
@@ -674,7 +688,10 @@ def kit_ceiling(base, write=False):
         return issues
     if recorded is None:
         raise ValueError(f'{KIT_FILE} is missing')
-    return kit_issues(recorded, current) + raised_ceilings(earlier, recorded)
+    # A kit above its ceiling is reported once, by kit_issues.
+    within = {name: count for name, count in current.items() if count <= recorded.get(name, 0)}
+    grown = grown_kits(earlier, base_kit_counts(base), within) if earlier else []
+    return kit_issues(recorded, current) + raised_ceilings(earlier, recorded) + grown
 
 
 def main():
