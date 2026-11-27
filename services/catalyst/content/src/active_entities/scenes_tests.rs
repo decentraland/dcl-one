@@ -163,6 +163,22 @@ async fn active_scenes_lists_every_active_scene_with_its_parcels_and_base() {
     unseed(&pool, tag).await;
 }
 
+// The list shares its memo with `/deployments`, whose entries are keyed by the query string: no
+// query string names the list's entry.
+#[tokio::test]
+async fn a_deployments_query_does_not_fill_the_lists_memo() {
+    require_test_db!(Some(node) = TestNode::with_db("activescenes-memo").await);
+    node.state.sync.set_state(SyncState::Syncing);
+
+    let (status, _, _) = get(&node, "/content/deployments?active-scenes").await;
+    assert_eq!(status, StatusCode::OK);
+    let (status, headers, body) =
+        get_if_none_match(&node, "/content/entities/active/scenes", None).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(etag_of(&headers).len(), 66);
+    assert!(serde_json::from_slice::<Value>(&body).unwrap().is_array());
+}
+
 #[tokio::test]
 async fn active_scenes_is_unavailable_on_a_node_that_may_miss_scenes() {
     let bootstrapping = TestNode::without_db("activescenes-bootstrapping").await;

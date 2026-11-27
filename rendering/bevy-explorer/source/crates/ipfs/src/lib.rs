@@ -1636,7 +1636,7 @@ impl IpfsIo {
                         Duration::from_secs(10),
                     )
                     .await
-                    .map_err(active_fetch_error)?;
+                    .map_err(|e| fetch_error(e, "active-entities"))?;
                     let active_entities: ActiveEntitiesResponse =
                         serde_json::from_slice(&fetched.body).map_err(|e| anyhow!(e))?;
                     let mut res = Vec::default();
@@ -1685,10 +1685,11 @@ impl IpfsIo {
 
     /// Every active scene of the realm, from the content server's `GET /entities/active/scenes`
     /// (the content server of `endpoint`, else the realm's). An unchanged list is revalidated, not
-    /// downloaded again: natively the last one is kept with its `ETag` ([`ActiveScenesCache`]) and
-    /// asked for with `If-None-Match`, a `304` reusing it; on web the browser's HTTP cache does the
-    /// same. Older content servers do not serve it: the error then is a `status: 404 Not Found`,
-    /// and the caller resolves parcels with [`Self::active_entities`] instead.
+    /// downloaded again: natively the last list that parsed is kept in the disk cache with its
+    /// `ETag` ([`active_scenes_cache_key`]) and asked for with `If-None-Match`, a `304` reusing it;
+    /// on web the browser's HTTP cache does the same. Older content servers do not serve it: the
+    /// error then is a `status: 404 Not Found`, and the caller resolves parcels with
+    /// [`Self::active_entities`] instead.
     pub fn active_scenes(self: &Arc<Self>, endpoint: Option<&str>) -> ActiveScenesTask {
         let url = match endpoint {
             Some(url) => Some(url.to_owned()),
@@ -1700,40 +1701,57 @@ impl IpfsIo {
                 .map(|content| content.public_url.to_owned()),
         }
         .map(|url| format!("{url}/entities/active/scenes"));
-        let client = self.client.clone();
-        let cache = ActiveScenesCache::new(self.cache_path(), url.as_deref());
+        let io = self.clone();
         IoTaskPool::get().spawn_compat(async move {
             let url = url.ok_or(anyhow!("not connected"))?;
-            let cached = cache.read().await;
-            let mut request = client.get(url);
+            let key = CacheKey::Url(active_scenes_cache_key(&url));
+            let cached = io
+                .read_disk_cache(&key)
+                .await
+                .ok()
+                .flatten()
+                .and_then(split_kept_scene_list);
+            let mut request = io.client.get(url);
             if let Some((etag, _)) = &cached {
                 request = request.header(reqwest::header::IF_NONE_MATCH, etag.as_str());
             }
             let fetched =
                 platform::fetch(request, Duration::from_secs(30), Duration::from_secs(10)).await;
-            let (body, from_cache) = match (fetched, cached) {
+            match (fetched, cached) {
                 (Ok(fetched), _) => {
-                    if let Some(etag) = fetched
+                    let scenes = serde_json::from_slice(&fetched.body)?;
+                    let etag = fetched
                         .headers
                         .get(reqwest::header::ETAG)
-                        .and_then(|etag| etag.to_str().ok())
-                    {
-                        cache.write(etag, &fetched.body).await;
+                        .and_then(|etag| etag.to_str().ok());
+                    if let Some(etag) = etag.filter(|etag| !etag.contains('\n')) {
+                        if fetched.body.len() <= MAX_KEPT_SCENE_LIST {
+                            let kept = [etag.as_bytes(), b"\n", &fetched.body].concat();
+                            if let Err(e) = io.cache_bytes(key.name(), &kept).await {
+                                warn!("could not keep the active scene list: {e}");
+                            }
+                        }
                     }
-                    (fetched.body, false)
+                    Ok(ActiveSceneList {
+                        scenes,
+                        from_kept_copy: false,
+                    })
                 }
                 (Err(platform::FetchError::Status(status, _)), Some((_, body)))
                     if status == reqwest::StatusCode::NOT_MODIFIED =>
                 {
-                    (body, true)
+                    let scenes = serde_json::from_slice(&body);
+                    if scenes.is_err() {
+                        #[cfg(not(target_arch = "wasm32"))]
+                        let _ = io.forget_disk_cache(&key).await;
+                    }
+                    Ok(ActiveSceneList {
+                        scenes: scenes?,
+                        from_kept_copy: true,
+                    })
                 }
-                (Err(e), _) => return Err(active_fetch_error(e)),
-            };
-            let scenes = serde_json::from_slice(&body);
-            if scenes.is_err() && from_cache {
-                cache.forget().await;
+                (Err(e), _) => Err(fetch_error(e, "active scene list")),
             }
-            Ok(scenes?)
         })
     }
 
@@ -2067,7 +2085,16 @@ impl IpfsIo {
 }
 
 pub type ActiveEntityTask = Task<Result<Vec<EntityDefinition>, anyhow::Error>>;
-pub type ActiveScenesTask = Task<Result<Vec<ActiveScene>, anyhow::Error>>;
+pub type ActiveScenesTask = Task<Result<ActiveSceneList, anyhow::Error>>;
+
+/// The realm's active scenes ([`IpfsIo::active_scenes`]).
+#[derive(Debug)]
+pub struct ActiveSceneList {
+    pub scenes: Vec<ActiveScene>,
+    /// The server named the kept copy unchanged (`304`): only natively, as on web the browser's
+    /// HTTP cache revalidates out of sight.
+    pub from_kept_copy: bool,
+}
 
 /// One scene of `GET /entities/active/scenes`: `pointers` are all its parcels, `base` its
 /// `scene.base`.
@@ -2079,82 +2106,36 @@ pub struct ActiveScene {
     pub base: Option<String>,
 }
 
-/// The last active scene list of a content server and its `ETag`, kept natively under the cache
-/// folder as `active-scenes/<url>` (the tag, a newline, the body), apart from the hash-named files
-/// the cache trim and heal manage. The web build keeps none: the browser's HTTP cache revalidates
-/// the list.
-#[cfg(not(target_arch = "wasm32"))]
-struct ActiveScenesCache(Option<PathBuf>);
-#[cfg(target_arch = "wasm32")]
-struct ActiveScenesCache;
+/// The largest active scene list the disk cache keeps; a larger one is still used, and fetched whole
+/// each time.
+const MAX_KEPT_SCENE_LIST: usize = 32 * 1024 * 1024;
 
-impl ActiveScenesCache {
-    #[cfg(not(target_arch = "wasm32"))]
-    fn new(cache_root: Option<&Path>, url: Option<&str>) -> Self {
-        Self(cache_root.zip(url).map(|(root, url)| {
-            root.join("active-scenes")
-                .join(urlencoding::encode(url).as_ref())
-        }))
-    }
-
-    #[cfg(target_arch = "wasm32")]
-    fn new(_cache_root: Option<&Path>, _url: Option<&str>) -> Self {
-        Self
-    }
-
-    #[cfg(not(target_arch = "wasm32"))]
-    async fn read(&self) -> Option<(String, Vec<u8>)> {
-        let mut stored = async_fs::read(self.0.as_ref()?).await.ok()?;
-        let newline = stored.iter().position(|b| *b == b'\n')?;
-        let body = stored.split_off(newline + 1);
-        stored.pop();
-        Some((String::from_utf8(stored).ok()?, body))
-    }
-
-    #[cfg(target_arch = "wasm32")]
-    async fn read(&self) -> Option<(String, Vec<u8>)> {
-        None
-    }
-
-    /// Replaces the entry whole (written aside, then renamed over it); a failure keeps the old one.
-    #[cfg(not(target_arch = "wasm32"))]
-    async fn write(&self, etag: &str, body: &[u8]) {
-        let Some(file) = &self.0 else { return };
-        if etag.contains('\n') {
-            return;
-        }
-        let aside = file.with_extension("part");
-        let written = async {
-            if let Some(dir) = file.parent() {
-                async_fs::create_dir_all(dir).await?;
-            }
-            async_fs::write(&aside, [etag.as_bytes(), b"\n", body].concat()).await?;
-            async_fs::rename(&aside, file).await
-        }
-        .await;
-        if let Err(e) = written {
-            warn!("could not keep the active scene list at {file:?}: {e}");
-            let _ = async_fs::remove_file(&aside).await;
-        }
-    }
-
-    #[cfg(target_arch = "wasm32")]
-    async fn write(&self, _etag: &str, _body: &[u8]) {}
-
-    async fn forget(&self) {
-        #[cfg(not(target_arch = "wasm32"))]
-        if let Some(file) = &self.0 {
-            let _ = async_fs::remove_file(file).await;
-        }
-    }
+/// The disk cache name of the active scene list at `url`: a digest, so any url makes a valid file
+/// name. The entry holds the list's `ETag`, a newline and the body ([`split_kept_scene_list`]),
+/// and the cache trim counts it with the rest.
+fn active_scenes_cache_key(url: &str) -> String {
+    use base64::{prelude::BASE64_URL_SAFE_NO_PAD, Engine};
+    use multihash_codetable::MultihashDigest;
+    let digest =
+        multihash_codetable::Code::Sha2_256.digest(format!("active-scenes {url}").as_bytes());
+    BASE64_URL_SAFE_NO_PAD.encode(digest.digest())
 }
 
-fn active_fetch_error(e: platform::FetchError<reqwest::Error>) -> anyhow::Error {
+/// The `ETag` and body of a kept active scene list.
+fn split_kept_scene_list(mut kept: Vec<u8>) -> Option<(String, Vec<u8>)> {
+    let newline = kept.iter().position(|b| *b == b'\n')?;
+    let body = kept.split_off(newline + 1);
+    kept.pop();
+    Some((String::from_utf8(kept).ok()?, body))
+}
+
+/// A failed fetch of `what` as an error naming it.
+fn fetch_error(e: platform::FetchError<reqwest::Error>, what: &str) -> anyhow::Error {
     match e {
-        platform::FetchError::Headers => anyhow!("timed out awaiting active-entities headers"),
+        platform::FetchError::Headers => anyhow!("timed out awaiting {what} headers"),
         platform::FetchError::Send(e) => anyhow!(e),
         platform::FetchError::Status(s, _) => anyhow!("status: {s}"),
-        platform::FetchError::Stalled => anyhow!("active-entities response stalled"),
+        platform::FetchError::Stalled => anyhow!("{what} response stalled"),
         platform::FetchError::Body(e) => anyhow!(e),
     }
 }
@@ -2682,18 +2663,24 @@ mod tests {
             .any(|line| line.unwrap().is_empty()));
     }
 
-    // The active scene list is kept with its tag: asked again, the server names it unchanged
-    // (`304`, no body) and the kept list is the answer.
     #[cfg(not(target_arch = "wasm32"))]
-    #[tokio::test]
-    async fn an_unchanged_active_scene_list_is_revalidated_from_the_kept_copy() {
+    const A_SCENE_LIST: &str =
+        r#"[{"id":"bafyscene","pointers":["1,2"],"timestamp":1,"base":"1,2"}]"#;
+
+    /// A content server on loopback answering `requests` requests, the `n`th (from 0) with
+    /// `respond(n, its If-None-Match)`, a raw HTTP response. Returns its content url and the
+    /// `If-None-Match` of each request.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn scene_list_server(
+        requests: usize,
+        respond: fn(usize, Option<&str>) -> String,
+    ) -> (String, std::thread::JoinHandle<Vec<Option<String>>>) {
         use std::io::{BufRead, BufReader, Write};
-        use std::sync::Arc;
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let address = listener.local_addr().unwrap();
         let server = std::thread::spawn(move || {
             let mut asked = Vec::new();
-            for _ in 0..2 {
+            for n in 0..requests {
                 let (mut stream, _) = listener.accept().unwrap();
                 let headers: Vec<String> = BufReader::new(&stream)
                     .lines()
@@ -2705,26 +2692,38 @@ mod tests {
                         .strip_prefix("if-none-match: ")
                         .map(str::to_owned)
                 });
-                let response = if if_none_match.as_deref() == Some("\"v1\"") {
-                    "HTTP/1.1 304 Not Modified\r\nETag: \"v1\"\r\nConnection: close\r\n\r\n"
-                        .to_owned()
-                } else {
-                    let body =
-                        r#"[{"id":"bafyscene","pointers":["1,2"],"timestamp":1,"base":"1,2"}]"#;
-                    format!(
-                        "HTTP/1.1 200 OK\r\nETag: \"v1\"\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
-                        body.len()
-                    )
-                };
-                stream.write_all(response.as_bytes()).unwrap();
+                stream
+                    .write_all(respond(n, if_none_match.as_deref()).as_bytes())
+                    .unwrap();
                 asked.push(if_none_match);
             }
             asked
         });
+        // a long path: the cache names the entry by a digest, never by the url
+        let content = format!("http://{address}/{}/content", "a".repeat(300));
+        (content, server)
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    fn ok_with_tag(body: &str) -> String {
+        format!(
+            "HTTP/1.1 200 OK\r\nETag: \"v1\"\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+            body.len()
+        )
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    const NOT_MODIFIED: &str =
+        "HTTP/1.1 304 Not Modified\r\nETag: \"v1\"\r\nConnection: close\r\n\r\n";
+
+    /// An `IpfsIo` caching under a fresh folder, and that folder.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn ipfs_with_cache(name: &str) -> (std::sync::Arc<super::IpfsIo>, std::path::PathBuf) {
         bevy::tasks::IoTaskPool::get_or_init(bevy::tasks::TaskPool::new);
-        let cache = std::env::temp_dir().join(format!("active-scenes-{}", std::process::id()));
+        let cache = std::env::temp_dir().join(format!("{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&cache);
         std::fs::create_dir_all(&cache).unwrap();
-        let ipfs = Arc::new(super::IpfsIo::new(
+        let ipfs = std::sync::Arc::new(super::IpfsIo::new(
             false,
             Box::new(super::FileAssetReader::new("assets")),
             Some(cache.clone()),
@@ -2733,16 +2732,92 @@ mod tests {
             #[cfg(feature = "ipfs_debug")]
             tokio::sync::mpsc::unbounded_channel().0,
         ));
-        let content = format!("http://{address}/content");
+        (ipfs, cache)
+    }
 
-        for _ in 0..2 {
-            let scenes = ipfs.active_scenes(Some(&content)).await.unwrap();
+    // The active scene list is kept with its tag, in a file at the top of the cache folder (where
+    // the cache trim counts it): asked again, the server names it unchanged (`304`, no body) and
+    // the kept list is the answer.
+    #[cfg(not(target_arch = "wasm32"))]
+    #[tokio::test]
+    async fn an_unchanged_active_scene_list_is_revalidated_from_the_kept_copy() {
+        let (content, server) = scene_list_server(2, |_, if_none_match| match if_none_match {
+            Some("\"v1\"") => NOT_MODIFIED.to_owned(),
+            _ => ok_with_tag(A_SCENE_LIST),
+        });
+        let (ipfs, cache) = ipfs_with_cache("active-scenes-kept");
+
+        for from_kept_copy in [false, true] {
+            let list = ipfs.active_scenes(Some(&content)).await.unwrap();
+            assert_eq!(list.from_kept_copy, from_kept_copy);
+            let scenes = list.scenes;
             assert_eq!(scenes.len(), 1);
             assert_eq!(scenes[0].id, "bafyscene");
             assert_eq!(scenes[0].pointers, ["1,2"]);
             assert_eq!(scenes[0].base.as_deref(), Some("1,2"));
         }
         assert_eq!(server.join().unwrap(), [None, Some("\"v1\"".to_owned())]);
+        let kept: Vec<_> = std::fs::read_dir(&cache)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name())
+            .collect();
+        assert_eq!(
+            kept,
+            [std::ffi::OsString::from(super::active_scenes_cache_key(
+                &format!("{content}/entities/active/scenes")
+            ))]
+        );
+        let _ = std::fs::remove_dir_all(&cache);
+    }
+
+    // A list that does not parse is an error and is not kept: the next request asks for the list
+    // afresh.
+    #[cfg(not(target_arch = "wasm32"))]
+    #[tokio::test]
+    async fn an_active_scene_list_that_does_not_parse_is_not_kept() {
+        let (content, server) = scene_list_server(2, |n, _| match n {
+            0 => ok_with_tag("not a list"),
+            _ => ok_with_tag(A_SCENE_LIST),
+        });
+        let (ipfs, cache) = ipfs_with_cache("active-scenes-unparsed");
+
+        assert!(ipfs.active_scenes(Some(&content)).await.is_err());
+        assert_eq!(
+            ipfs.active_scenes(Some(&content))
+                .await
+                .unwrap()
+                .scenes
+                .len(),
+            1
+        );
+        assert_eq!(server.join().unwrap(), [None, None]);
+        let _ = std::fs::remove_dir_all(&cache);
+    }
+
+    // A kept list that no longer parses, revalidated as unchanged, is an error and is dropped: the
+    // next request asks for the list afresh.
+    #[cfg(not(target_arch = "wasm32"))]
+    #[tokio::test]
+    async fn a_kept_active_scene_list_that_no_longer_parses_is_dropped() {
+        let (content, server) = scene_list_server(2, |_, if_none_match| match if_none_match {
+            Some("\"v1\"") => NOT_MODIFIED.to_owned(),
+            _ => ok_with_tag(A_SCENE_LIST),
+        });
+        let (ipfs, cache) = ipfs_with_cache("active-scenes-spoilt");
+        let key = super::active_scenes_cache_key(&format!("{content}/entities/active/scenes"));
+        std::fs::write(cache.join(&key), b"\"v1\"\nnot a list").unwrap();
+
+        assert!(ipfs.active_scenes(Some(&content)).await.is_err());
+        assert!(!cache.join(&key).exists());
+        assert_eq!(
+            ipfs.active_scenes(Some(&content))
+                .await
+                .unwrap()
+                .scenes
+                .len(),
+            1
+        );
+        assert_eq!(server.join().unwrap(), [Some("\"v1\"".to_owned()), None]);
         let _ = std::fs::remove_dir_all(&cache);
     }
 

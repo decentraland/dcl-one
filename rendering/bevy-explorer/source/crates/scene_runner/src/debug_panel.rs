@@ -10,7 +10,7 @@ use serde_json::{json, Value};
 use crate::{
     asset_preload::plugin::{LoadingPreloadedAsset, PreloadedAsset},
     initialize_scene::{
-        CurrentSceneLoading, PointerResult, SceneLoading, SuperUserScene, PARCEL_SIZE,
+        CurrentSceneLoading, PointerResult, SceneList, SceneLoading, SuperUserScene, PARCEL_SIZE,
     },
     renderer_context::RendererSceneContext,
     scene_traffic::{Batch, SceneTraffic, Tick},
@@ -45,6 +45,7 @@ impl Plugin for SceneDebugPanelPlugin {
             .add_console_command::<SceneState, _>(scene_state)
             .add_console_command::<SceneContent, _>(scene_content)
             .add_console_command::<LoadingState, _>(loading_state)
+            .add_console_command::<SceneListState, _>(scene_list_state)
             .add_console_command::<PermissionsInForceState, _>(permissions_in_force_state)
             .add_console_command::<TextureState, _>(texture_state)
             .add_debug_section(DebugSection {
@@ -172,6 +173,19 @@ impl Plugin for SceneDebugPanelPlugin {
                     ("Broken scenes", "broken"),
                 ],
                 actions: &[("Reload current parcel scene", "/reload --current")],
+                inputs: &[],
+            })
+            .add_debug_section(DebugSection {
+                title: "Scene List",
+                query: "/scene_list_state",
+                fields: &[
+                    ("Realm scene list", "state"),
+                    ("Scenes placed", "scenes"),
+                    ("Served from the kept copy", "fromKeptCopy"),
+                    ("Answered in (ms)", "ms"),
+                    ("Fell back because", "reason"),
+                ],
+                actions: &[],
                 inputs: &[],
             })
             .add_debug_section(DebugSection {
@@ -689,6 +703,68 @@ fn loading_state(
 }
 
 #[derive(clap::Parser, ConsoleCommand)]
+#[command(name = "/scene_list_state")]
+struct SceneListState;
+
+/// What became of the realm's one-request scene list ([`SceneList`]).
+fn scene_list_state(
+    mut input: ConsoleCommand<SceneListState>,
+    list: Res<SceneList>,
+    realm: Res<common::structs::CurrentRealm>,
+    range: Res<common::structs::SceneLoadDistance>,
+) {
+    if input.take().is_none() {
+        return;
+    }
+    let not_placed = "Only once the list is placed.";
+    let reply = match &*list {
+        SceneList::Unasked => {
+            let state = if realm.address.is_empty() {
+                "Not asked: no realm"
+            } else if realm.config.lists_scenes() {
+                "Not asked: the realm lists its scenes"
+            } else if range.load.max(range.load_imposter) <= 0.0 {
+                "Not asked: nothing loads by distance"
+            } else {
+                "Not asked yet"
+            };
+            json!({"state": state, "unavailable": {"": "The list has not been asked for."}})
+        }
+        SceneList::Pending { asked_at, .. } => json!({
+            "state": "Pending",
+            "ms": asked_at.elapsed().as_millis() as u64,
+            "unavailable": {"": "Waiting for the list."},
+        }),
+        SceneList::Placed {
+            scenes,
+            from_kept_copy,
+            took,
+        } => {
+            let mut reply = json!({
+                "state": "Placed",
+                "scenes": scenes,
+                "ms": took.as_millis() as u64,
+                "unavailable": {"reason": "The list did not fall back."},
+            });
+            if cfg!(target_arch = "wasm32") {
+                reply["unavailable"]["fromKeptCopy"] =
+                    "On web the browser's cache revalidates the list out of sight.".into();
+            } else {
+                reply["fromKeptCopy"] = (*from_kept_copy).into();
+            }
+            reply
+        }
+        SceneList::FellBack { reason, took } => json!({
+            "state": "Fell back to resolving parcels by range",
+            "reason": reason,
+            "ms": took.as_millis() as u64,
+            "unavailable": {"scenes": not_placed, "fromKeptCopy": not_placed},
+        }),
+    };
+    input.reply_ok(reply.to_string());
+}
+
+#[derive(clap::Parser, ConsoleCommand)]
 #[command(name = "/texture_cache_state")]
 struct TextureState;
 
@@ -940,5 +1016,84 @@ mod tests {
         assert_eq!(report["from"]["updates"]["samples"][255], 1);
         assert_eq!(report["to"]["bytes"]["samples"][255], 0);
         assert_eq!(report["from"]["range"], json!([1, 1, 0]));
+    }
+
+    fn read_scene_list_state(list: SceneList, realm: common::structs::CurrentRealm) -> Value {
+        let mut app = App::new();
+        app.add_plugins(console::ConsolePlugin {
+            add_bevy_console: false,
+        })
+        .insert_resource(list)
+        .insert_resource(realm)
+        .insert_resource(common::structs::SceneLoadDistance {
+            load: 20.0,
+            unload: 10.0,
+            load_imposter: 0.0,
+        })
+        .add_console_command::<SceneListState, _>(scene_list_state);
+        let result = Arc::new(Mutex::new(None));
+        let responder: ConsoleResponder = {
+            let result = result.clone();
+            Arc::new(move |reply| *result.lock_ignore_poison() = Some(reply))
+        };
+        app.world_mut().send_event(ConsoleCommandEntered {
+            command_name: "/scene_list_state".into(),
+            args: Vec::new(),
+            responder: Some(responder),
+        });
+        app.update();
+        let reply = result.lock_ignore_poison().take().unwrap().unwrap();
+        serde_json::from_str(&reply).unwrap()
+    }
+
+    // The panel reads what became of the realm's scene list: how many scenes it placed, whether
+    // the kept copy answered, how long it took, or why it fell back.
+    #[test]
+    fn the_scene_list_section_reads_the_lists_outcome() {
+        let city = || common::structs::CurrentRealm {
+            address: "https://realm.example".to_owned(),
+            ..Default::default()
+        };
+
+        let placed = read_scene_list_state(
+            SceneList::Placed {
+                scenes: 24_424,
+                from_kept_copy: true,
+                took: std::time::Duration::from_millis(240),
+            },
+            city(),
+        );
+        assert_eq!(placed["state"], "Placed");
+        assert_eq!(placed["scenes"], 24_424);
+        assert_eq!(placed["fromKeptCopy"], true);
+        assert_eq!(placed["ms"], 240);
+        assert!(placed["unavailable"]["reason"].is_string());
+
+        let fell_back = read_scene_list_state(
+            SceneList::FellBack {
+                reason: "status: 404 Not Found".to_owned(),
+                took: std::time::Duration::from_millis(12),
+            },
+            city(),
+        );
+        assert_eq!(
+            fell_back["state"],
+            "Fell back to resolving parcels by range"
+        );
+        assert_eq!(fell_back["reason"], "status: 404 Not Found");
+        assert_eq!(fell_back["ms"], 12);
+        assert!(fell_back["scenes"].is_null());
+
+        let world = read_scene_list_state(
+            SceneList::Unasked,
+            common::structs::CurrentRealm {
+                config: common::structs::ServerConfiguration {
+                    scenes_urn: Some(vec!["urn:decentraland:entity:bafyscene".to_owned()]),
+                    ..Default::default()
+                },
+                ..city()
+            },
+        );
+        assert_eq!(world["state"], "Not asked: the realm lists its scenes");
     }
 }
