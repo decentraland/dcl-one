@@ -1293,7 +1293,7 @@ async fn catalog_reads_carry_as_of_and_prices_answer_503_past_their_budget() {
     mark("collections", 300).await.unwrap();
     mark("items", 5).await.unwrap();
     let interval = state.settings.market.mirror_interval.as_secs();
-    let (status, body) = get_json(app(), "/v1/catalog?first=1&onlyMinting=true").await;
+    let (status, body) = get_json(app(), "/v1/catalog?first=1").await;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(body["as_of"], marker("items").await.as_str());
     assert_eq!(
@@ -1324,8 +1324,8 @@ async fn catalog_reads_carry_as_of_and_prices_answer_503_past_their_budget() {
 
     mark("items", 120).await.unwrap();
     for uri in [
-        "/v1/catalog?first=1&onlyMinting=true",
-        "/v2/catalog?first=1&onlyMinting=true",
+        "/v1/catalog?first=1",
+        "/v2/catalog?first=1",
         "/v1/prices?category=wearable",
     ] {
         let (status, body) = get_json(app(), uri).await;
@@ -1345,22 +1345,15 @@ async fn catalog_reads_carry_as_of_and_prices_answer_503_past_their_budget() {
     assert_eq!(status, StatusCode::OK, "{body}");
     assert!(body["as_of"].is_string(), "{body}");
     let frozen = state_with_db(settings(false)).await.unwrap();
-    let (status, body) = get_json(
-        super::market_router(frozen.clone()),
-        "/v1/catalog?first=1&onlyMinting=true",
-    )
-    .await;
+    let (status, body) =
+        get_json(super::market_router(frozen.clone()), "/v1/catalog?first=1").await;
     assert_eq!(
         (status, body["source"].as_str()),
         (StatusCode::SERVICE_UNAVAILABLE, Some("items-mirror")),
         "the job off, the copy past its budget: {body}"
     );
     mark("items", 5).await.unwrap();
-    let (status, body) = get_json(
-        super::market_router(frozen),
-        "/v1/catalog?first=1&onlyMinting=true",
-    )
-    .await;
+    let (status, body) = get_json(super::market_router(frozen), "/v1/catalog?first=1").await;
     assert_eq!(status, StatusCode::OK, "the job off, a fresh copy: {body}");
     assert_eq!(body["as_of"], marker("items").await.as_str());
 

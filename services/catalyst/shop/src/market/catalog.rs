@@ -2,9 +2,10 @@
 //! Resale pages read the published legacy order book and NFT ownership
 //! on the same snapshot as the item rows. V2 also reads backed off-chain
 //! listings and mint offers at that snapshot's clock. Mint-only pages skip
-//! the legacy book. A node without a local book refuses a resale page
-//! with the `nft-index` readiness envelope. Owners and the suggested sort
-//! retain their existing catalog behavior.
+//! the legacy book. Listing filters and sorts require the book and report
+//! its named readiness error when unavailable. Ordinary pages can answer
+//! from the item catalogue and populate legacy listing fields when the
+//! book is published.
 
 use std::collections::HashMap;
 use std::sync::{Arc, LazyLock};
@@ -109,6 +110,7 @@ pub struct CatalogFilters {
     pub first: Option<i64>,
     pub skip: Option<i64>,
     pub sort_by: Option<CatalogSortBy>,
+    pub explicit_sort: bool,
     pub sort_direction: Option<CatalogSortDirection>,
     pub only_listing: bool,
     pub only_minting: bool,
@@ -137,6 +139,28 @@ pub struct CatalogFilters {
     pub urns: Vec<String>,
     pub ids: Vec<String>,
     pub include_social_emotes: Option<bool>,
+}
+
+impl CatalogFilters {
+    fn sorts_on_listings(&self) -> bool {
+        matches!(
+            self.sort_by,
+            Some(
+                CatalogSortBy::Cheapest
+                    | CatalogSortBy::MostExpensive
+                    | CatalogSortBy::RecentlyListed
+            )
+        )
+    }
+
+    fn needs_resales(&self) -> bool {
+        !self.only_minting
+            && (self.only_listing
+                || self.is_on_sale.is_some()
+                || self.min_price.is_some()
+                || self.max_price.is_some()
+                || (self.explicit_sort && self.sorts_on_listings()))
+    }
 }
 
 const DEFAULT_PAGE_SIZE: i64 = 20;
@@ -207,6 +231,7 @@ pub fn parse_catalog_filters(pairs: &[(String, String)]) -> Result<CatalogFilter
         sort_by: p
             .get_value("sortBy", SORT_BY_VALUES, Some("cheapest"))
             .and_then(|s| CatalogSortBy::parse(&s)),
+        explicit_sort: p.get_value("sortBy", SORT_BY_VALUES, None).is_some(),
         sort_direction: p
             .get_value("sortDirection", &["asc", "desc"], Some("asc"))
             .map(|s| {
@@ -706,7 +731,7 @@ pub fn v3_minter_expr() -> String {
     format!("(c.minters && ARRAY[{}]::text[])", list.join(", "))
 }
 
-fn build_offchain_orders_cte(b: &mut Builder, f: &CatalogFilters, books: Option<&CatalogBooks>) {
+fn build_offchain_orders_cte(b: &mut Builder, f: &CatalogFilters, books: Option<&CatalogScope>) {
     // Ethereum v1 token IDs are sequential. The collection's Issue gives the
     // wearable name used by its item URN, even for a resale on a v3 venue.
     let (item, joins) = if let Some(books) = books.filter(|_| !f.only_minting) {
@@ -715,12 +740,11 @@ fn build_offchain_orders_cte(b: &mut Builder, f: &CatalogFilters, books: Option<
                      AND n.network = 'ethereum' AND n.contract_address = u.contract_address_sent
                      AND n.token_id = {token}
               LEFT JOIN shop.collections c ON c.network = n.network AND c.contract_address = n.contract_address
-                     AND {collection_chain}
-              LEFT JOIN shop.items i ON i.network = n.network AND i.contract_address = n.contract_address
-                     AND i.urn = c.urn || ':' || n.wearable_id AND {item_chain}",
+                     AND c.chain_id = u.chain_id AND {collection_chain}
+              {wearable_item}",
             token = uint_or_null("u.token_id"),
             collection_chain = catalogue_chain_sql("c", books.catalogue),
-            item_chain = catalogue_chain_sql("i", books.catalogue),
+            wearable_item = legacy_wearable_item_join(books.catalogue),
         );
         (
             "CASE WHEN lower(u.network) = 'ethereum' AND u.type = 'public_nft_order' THEN i.item_id ELSE u.item_id END",
@@ -744,22 +768,23 @@ fn build_offchain_orders_cte(b: &mut Builder, f: &CatalogFilters, books: Option<
            FROM unified_trades u{joins} WHERE ({item}) IS NOT NULL"
     ));
     if f.only_minting {
-        b.push(" AND type = 'public_item_order'");
+        b.push(" AND u.type = 'public_item_order'");
     }
     if let Some(mn) = &f.min_price {
         let p = b.bind_string(mn.clone());
-        b.push(&format!(" AND amount_received >= {p}::numeric"));
+        b.push(&format!(" AND u.amount_received >= {p}::numeric"));
     }
     if let Some(mx) = &f.max_price {
         let p = b.bind_string(mx.clone());
-        b.push(&format!(" AND amount_received <= {p}::numeric"));
+        b.push(&format!(" AND u.amount_received <= {p}::numeric"));
     }
     b.push(" GROUP BY lower(u.network), u.chain_id, u.contract_address_sent, 4 )");
 }
 
-struct CatalogBooks {
+struct CatalogScope {
     catalogue: Catalogue,
     nets: Vec<ChainNet>,
+    reads_book: bool,
 }
 
 fn catalogue_chain_sql(alias: &str, catalogue: Catalogue) -> String {
@@ -771,11 +796,21 @@ fn catalogue_chain_sql(alias: &str, catalogue: Catalogue) -> String {
         String::new()
     };
     format!(
-        "{alias}.chain_id = CASE {alias}.network WHEN 'ethereum' THEN {ethereum} ELSE {matic} END{verification}"
+        "(({alias}.network = 'ethereum' AND {alias}.chain_id = {ethereum})
+          OR ({alias}.network = 'matic' AND {alias}.chain_id = {matic})){verification}"
     )
 }
 
 /// Concrete contract filters also bound the order aggregation.
+fn legacy_wearable_item_join(catalogue: Catalogue) -> String {
+    format!(
+        " LEFT JOIN shop.items i ON n.network = 'ethereum'
+          AND i.network = n.network AND i.contract_address = n.contract_address
+          AND i.urn = c.urn || ':' || n.wearable_id AND {}",
+        catalogue_chain_sql("i", catalogue),
+    )
+}
+
 fn listing_contracts(f: &CatalogFilters) -> Vec<String> {
     if !f.contract_addresses.is_empty() {
         return f
@@ -792,7 +827,13 @@ fn listing_contracts(f: &CatalogFilters) -> Vec<String> {
 
 /// Every legacy listing is bound to a token of the collection's served chain.
 /// A v1 token's Issue identifies the wearable by its name in the collection URN.
-fn build_legacy_orders_cte(b: &mut Builder, f: &CatalogFilters, books: &CatalogBooks, now_ms: i64) {
+fn build_legacy_orders_cte(
+    b: &mut Builder,
+    f: &CatalogFilters,
+    books: &CatalogScope,
+    now_ms: i64,
+    page_first: bool,
+) {
     let now = b.bind_i64(now_ms);
     let networks: Vec<String> = books
         .nets
@@ -809,21 +850,26 @@ fn build_legacy_orders_cte(b: &mut Builder, f: &CatalogFilters, books: &CatalogB
             FROM shop.legacy_order o
             JOIN shop.nft n USING (network, contract_address, token_id)
             JOIN shop.collections c USING (network, contract_address)
-            LEFT JOIN shop.items i
-              ON o.network = 'ethereum' AND i.network = o.network
-             AND i.contract_address = o.contract_address AND i.urn = c.urn || ':' || n.wearable_id
-             AND {item_chain}
+            {wearable_item}
             WHERE o.network = ANY({nets}) AND {collection_chain}
               AND o.status = 'open' AND o.expires_at > {now} AND {status} = 'open'
               AND CASE WHEN o.network = 'matic' THEN n.item_id ELSE i.item_id END IS NOT NULL",
-        item_chain = catalogue_chain_sql("i", books.catalogue),
+        wearable_item = legacy_wearable_item_join(books.catalogue),
         collection_chain = catalogue_chain_sql("c", books.catalogue),
         status = super::orders::book_status(false),
     ));
-    let contracts = listing_contracts(f);
-    if !contracts.is_empty() {
-        let contracts = b.bind_strings(&contracts);
-        b.push(&format!(" AND o.contract_address = ANY({contracts})"));
+    if page_first {
+        b.push(
+            " AND o.contract_address IN (SELECT contract_address FROM catalog_candidates)
+              AND (o.network, o.contract_address, CASE WHEN o.network = 'matic' THEN n.item_id ELSE i.item_id END)
+                  IN (SELECT network, contract_address, item_id FROM catalog_candidates)",
+        );
+    } else {
+        let contracts = listing_contracts(f);
+        if !contracts.is_empty() {
+            let contracts = b.bind_strings(&contracts);
+            b.push(&format!(" AND o.contract_address = ANY({contracts})"));
+        }
     }
     if let Some(value) = &f.min_price {
         let price = b.bind_string(value.clone());
@@ -887,7 +933,7 @@ fn build_where(
     f: &CatalogFilters,
     is_v2: bool,
     listings: &ListingValues,
-    books: Option<&CatalogBooks>,
+    books: Option<&CatalogScope>,
 ) {
     let mut parts: Vec<String> = vec!["items.search_is_collection_approved = true".to_string()];
     if let Some(books) = books {
@@ -1008,36 +1054,32 @@ fn build_where(
         let p = b.bind_string(id.to_string());
         parts.push(format!("items.item_id::text = {p}"));
     }
-    let mint_trade_price = if is_v2 {
-        "offchain_orders.open_item_trade_price"
-    } else {
-        "NULL::numeric"
-    };
+    let mint_price = mint_price_sql(is_v2);
     if let Some(mn) = &f.min_price {
         let p = b.bind_string(mn.clone());
-        let minting = format!(
-            "(items.price >= {p}::numeric AND items.price IS DISTINCT FROM '{MAX_NUMERIC_NUMBER}'::numeric AND {mint})"
-        );
-        if f.only_minting {
-            parts.push(format!("(items.price >= {p}::numeric AND items.price IS DISTINCT FROM '{MAX_NUMERIC_NUMBER}'::numeric)"));
+        parts.push(if f.only_minting {
+            format!("{mint_price} >= {p}::numeric")
         } else if f.only_listing {
-            parts.push(format!("{} >= {p}::numeric", listings.min));
+            format!("{} >= {p}::numeric", listings.min)
         } else {
-            parts.push(format!(
-                "({minting} OR {} >= {p}::numeric OR {mint_trade_price} >= {p}::numeric)",
+            format!(
+                "({mint_price} >= {p}::numeric OR {} >= {p}::numeric)",
                 listings.min
-            ));
-        }
+            )
+        });
     }
     if let Some(mx) = &f.max_price {
         let p = b.bind_string(mx.clone());
-        if f.only_minting {
-            parts.push(format!("items.price <= {p}::numeric"));
+        parts.push(if f.only_minting {
+            format!("{mint_price} <= {p}::numeric")
         } else if f.only_listing {
-            parts.push(format!("{} <= {p}::numeric", listings.max));
+            format!("{} <= {p}::numeric", listings.max)
         } else {
-            parts.push(format!("((items.price <= {p}::numeric AND {mint}) OR {} <= {p}::numeric OR {mint_trade_price} <= {p}::numeric)", listings.max));
-        }
+            format!(
+                "({mint_price} <= {p}::numeric OR {} <= {p}::numeric)",
+                listings.max
+            )
+        });
     }
     if f.only_listing {
         parts.push(format!("(NOT {mint} AND {} > 0)", listings.count));
@@ -1108,7 +1150,7 @@ pub fn expand_urn_network_forms(urns: &[String]) -> Vec<String> {
 fn build_order_by(b: &mut Builder, f: &CatalogFilters, is_v2: bool, listings: &ListingValues) {
     let sort_by = f.sort_by.unwrap_or(CatalogSortBy::Newest);
     if f.is_on_sale == Some(false) && sort_by != CatalogSortBy::Newest {
-        b.push(" ORDER BY items.contract_address, items.item_id ");
+        b.push(" ORDER BY items.contract_address, items.item_id, items.network ");
         return;
     }
     b.push(" ORDER BY ");
@@ -1135,16 +1177,31 @@ fn build_order_by(b: &mut Builder, f: &CatalogFilters, is_v2: bool, listings: &L
         (CatalogSortBy::Cheapest, _) => "min_price_num ASC NULLS LAST, items.first_listed_at DESC",
     };
     b.push(clause);
-    b.push(", items.contract_address ASC, items.item_id ASC ");
+    b.push(", items.contract_address ASC, items.item_id ASC, items.network ASC ");
 }
 
-fn min_max_price_cases(
-    b: &mut Builder,
-    f: &CatalogFilters,
-    is_v2: bool,
-    listings: &ListingValues,
-    books: Option<&CatalogBooks>,
-) {
+/// V2 uses the priced mint offer that the item card displays. V1 keeps the
+/// indexed mint price. Which resale legs were admitted cannot change it.
+fn mint_price_sql(is_v2: bool) -> String {
+    let v3 = v3_minter_expr();
+    let store_price = format!("NULLIF(items.price, '{MAX_NUMERIC_NUMBER}'::numeric)");
+    if is_v2 {
+        format!(
+            "(CASE WHEN items.available > 0 THEN CASE
+                    WHEN {v3} AND offchain_orders.open_item_trade_id IS NOT NULL
+                        THEN offchain_orders.open_item_trade_price
+                    WHEN items.search_is_store_minter THEN {store_price}
+                  END END)"
+        )
+    } else {
+        format!(
+            "(CASE WHEN items.available > 0 AND (items.search_is_store_minter OR {v3})
+                THEN {store_price} END)"
+        )
+    }
+}
+
+fn min_max_price_cases(b: &mut Builder, f: &CatalogFilters, is_v2: bool, listings: &ListingValues) {
     if f.only_listing {
         b.push(&format!(
             " {} AS min_price_num, {}::text AS min_price, {} AS max_price_num, {}::text AS max_price, ",
@@ -1152,39 +1209,21 @@ fn min_max_price_cases(
         ));
         return;
     }
-    let v3 = v3_minter_expr();
-    let mint = if books.is_some() {
-        "items.available > 0 AND items.search_is_store_minter = true".to_owned()
-    } else {
-        format!("items.available > 0 AND (items.search_is_store_minter = true OR {v3})")
-    };
-    let mut min_when = mint.clone();
-    let mut max_when = mint;
-    if let Some(mn) = &f.min_price {
+    let mint = mint_price_sql(is_v2);
+    let min_mint = if let Some(mn) = &f.min_price {
         let p = b.bind_string(mn.clone());
-        min_when.push_str(&format!(" AND items.price >= {p}::numeric"));
-    }
-    if let Some(mx) = &f.max_price {
-        let p = b.bind_string(mx.clone());
-        max_when.push_str(&format!(" AND items.price <= {p}::numeric"));
-    }
-    let trade = if is_v2 && books.is_some() {
-        format!(
-            "CASE WHEN items.available > 0 AND {v3} THEN offchain_orders.open_item_trade_price END"
-        )
-    } else if is_v2 {
-        "offchain_orders.open_item_trade_price".into()
+        format!("CASE WHEN {mint} >= {p}::numeric THEN {mint} END")
     } else {
-        "NULL::numeric".into()
+        mint.clone()
     };
-    let min = format!(
-        "LEAST(CASE WHEN {min_when} THEN NULLIF(items.price, '{MAX_NUMERIC_NUMBER}'::numeric) END, {}, {trade})",
-        listings.min
-    );
-    let max = format!(
-        "GREATEST(CASE WHEN {max_when} THEN NULLIF(items.price, '{MAX_NUMERIC_NUMBER}'::numeric) END, {}, {trade})",
-        listings.max
-    );
+    let max_mint = if let Some(mx) = &f.max_price {
+        let p = b.bind_string(mx.clone());
+        format!("CASE WHEN {mint} <= {p}::numeric THEN {mint} END")
+    } else {
+        mint
+    };
+    let min = format!("LEAST({min_mint}, {})", listings.min);
+    let max = format!("GREATEST({max_mint}, {})", listings.max);
     b.push(&format!(" {min} AS min_price_num, {min}::text AS min_price, {max} AS max_price_num, {max}::text AS max_price, "));
 }
 
@@ -1200,15 +1239,35 @@ pub fn build_catalog_query(
     build_catalog_page_query(f, is_v2, now, since, count, None)
 }
 
+fn catalog_item_joins(b: &mut Builder, is_v2: bool) {
+    b.push(" FROM shop.items items LEFT JOIN shop.collections c ON c.network = items.network AND c.contract_address = items.contract_address AND c.chain_id = items.chain_id ");
+    if is_v2 {
+        b.push(" LEFT JOIN offchain_orders ON offchain_orders.network = items.network AND offchain_orders.chain_id = items.chain_id AND offchain_orders.contract_address_sent = items.contract_address AND offchain_orders.item_id = items.item_id ");
+    }
+}
+
+fn catalog_limit(b: &mut Builder, f: &CatalogFilters) {
+    if f.first.is_some() || f.skip.is_some() {
+        let li = b.bind_i64(clamp_first(f.first, MAX_PAGE_LIMIT));
+        let oi = b.bind_i64(clamp_skip(f.skip));
+        b.push(&format!(" LIMIT {li} OFFSET {oi}"));
+    }
+}
+
 fn build_catalog_page_query(
     f: &CatalogFilters,
     is_v2: bool,
     now: chrono::NaiveDateTime,
     since: Option<chrono::NaiveDateTime>,
     count: bool,
-    books: Option<&CatalogBooks>,
+    scope: Option<&CatalogScope>,
 ) -> (String, PgArguments) {
     let mut b = Builder::new();
+    let page_first = !count
+        && scope.is_some_and(|s| s.reads_book)
+        && !f.needs_resales()
+        && !f.sorts_on_listings();
+    let books = scope.filter(|s| s.reads_book && (!count || f.needs_resales()));
     if is_v2 || books.is_some() {
         b.push("WITH ");
     }
@@ -1222,11 +1281,30 @@ fn build_catalog_page_query(
             &since_p,
             contracts_p.as_deref(),
         ));
-        build_offchain_orders_cte(&mut b, f, books);
+        build_offchain_orders_cte(&mut b, f, scope);
         b.push(if books.is_some() { ", " } else { " " });
     }
+    if page_first {
+        let listings = ListingValues::new(false, is_v2);
+        b.push(
+            "catalog_candidates AS MATERIALIZED (
+            SELECT items.network, items.chain_id, items.contract_address, items.item_id,
+                   COUNT(*) OVER()::int8 AS total",
+        );
+        catalog_item_joins(&mut b, is_v2);
+        build_where(&mut b, f, is_v2, &listings, scope);
+        build_order_by(&mut b, f, is_v2, &listings);
+        catalog_limit(&mut b, f);
+        b.push("), ");
+    }
     if let Some(books) = books {
-        build_legacy_orders_cte(&mut b, f, books, now.and_utc().timestamp_millis());
+        build_legacy_orders_cte(
+            &mut b,
+            f,
+            books,
+            now.and_utc().timestamp_millis(),
+            page_first,
+        );
     }
     let listings = ListingValues::new(books.is_some(), is_v2);
     if count {
@@ -1236,7 +1314,7 @@ fn build_catalog_page_query(
             "SELECT items.contract_address, items.item_id::text AS item_id, items.item_type, items.urn, items.creator, items.beneficiary, \
                     items.rarity, items.available::text AS available, items.price::text AS price, items.image, items.name, items.description, \
                     items.category, items.body_shapes, items.emote_loop, items.emote_has_sound, items.emote_has_geometry, items.emote_outcome_type, \
-                    items.search_is_store_minter, items.network, items.created_at, items.updated_at, items.reviewed_at, items.sold_at, ",
+                    items.search_is_store_minter, items.network, items.chain_id::bigint AS chain_id, items.created_at, items.updated_at, items.reviewed_at, items.sold_at, ",
         );
         b.push(&format!(
             "COALESCE({}, false) AS v3_minter, ",
@@ -1256,23 +1334,31 @@ fn build_catalog_page_query(
         } else {
             b.push(" items.first_listed_at, ");
         }
-        min_max_price_cases(&mut b, f, is_v2, &listings, books);
-        b.push(" COUNT(*) OVER()::int8 AS total ");
+        min_max_price_cases(&mut b, f, is_v2, &listings);
+        b.push(if page_first {
+            " catalog_candidates.total AS total "
+        } else {
+            " COUNT(*) OVER()::int8 AS total "
+        });
     }
-    b.push(" FROM shop.items items LEFT JOIN shop.collections c ON c.network = items.network AND c.contract_address = items.contract_address AND c.chain_id = items.chain_id ");
-    if is_v2 {
-        b.push(" LEFT JOIN offchain_orders ON offchain_orders.network = items.network AND offchain_orders.chain_id = items.chain_id AND offchain_orders.contract_address_sent = items.contract_address AND offchain_orders.item_id = items.item_id ");
-    }
+    catalog_item_joins(&mut b, is_v2);
     if books.is_some() {
         b.push(" LEFT JOIN legacy_orders ON legacy_orders.network = items.network AND legacy_orders.contract_address = items.contract_address AND legacy_orders.item_id = items.item_id ");
     }
-    build_where(&mut b, f, is_v2, &listings, books);
+    if page_first {
+        b.push(
+            " JOIN catalog_candidates ON catalog_candidates.network = items.network
+            AND catalog_candidates.chain_id = items.chain_id
+            AND catalog_candidates.contract_address = items.contract_address
+            AND catalog_candidates.item_id = items.item_id ",
+        );
+    } else {
+        build_where(&mut b, f, is_v2, &listings, scope);
+    }
     if !count {
         build_order_by(&mut b, f, is_v2, &listings);
-        if f.first.is_some() || f.skip.is_some() {
-            let li = b.bind_i64(clamp_first(f.first, MAX_PAGE_LIMIT));
-            let oi = b.bind_i64(clamp_skip(f.skip));
-            b.push(&format!(" LIMIT {li} OFFSET {oi}"));
+        if !page_first {
+            catalog_limit(&mut b, f);
         }
     }
     (b.sql, b.args)
@@ -1359,7 +1445,8 @@ fn row_to_item(r: &sqlx::postgres::PgRow) -> CatalogItem {
             },
         )
     };
-    let (network, chain_id) = super::wire::network_and_chain(&r.get::<String, _>("network"));
+    let network = super::wire::network_and_chain(&r.get::<String, _>("network")).0;
+    let chain_id = super::wire::wire_chain(r.get("chain_id"), network);
     let listings: Option<i64> = r.get("listings_count");
     CatalogItem {
         id: format!("{contract}-{item_id}"),
@@ -1406,7 +1493,7 @@ async fn fetch_page(
     read: &mut CatalogueRead,
     f: &CatalogFilters,
     is_v2: bool,
-    books: Option<&CatalogBooks>,
+    books: Option<&CatalogScope>,
 ) -> Result<(Vec<CatalogItem>, i64), Response> {
     // The read's clock: the trades check decided on the same instant.
     let now = read.now.naive_utc();
@@ -1439,13 +1526,15 @@ async fn fetch_page(
     Ok((rows.iter().map(row_to_item).collect(), total))
 }
 
-/// Use only the networks that can contribute items on this read's snapshot.
-async fn catalog_books(
+/// Scope item and listing evidence to what this page can return.
+async fn catalog_scope(
     state: &MarketplaceState,
     read: &mut CatalogueRead,
     f: &CatalogFilters,
-) -> Result<CatalogBooks, Response> {
-    if !super::owned_items::walks_here(state) {
+) -> Result<CatalogScope, Response> {
+    let walkers = super::owned_items::walks_here(state);
+    let needs_book = f.needs_resales();
+    if needs_book && !walkers {
         return Err(super::owned_items::not_ready(
             "this node does not walk the nft index required by the catalogue's legacy orders",
         ));
@@ -1462,29 +1551,81 @@ async fn catalog_books(
                     .is_none_or(|network| network.db_name() == net.db_name())
         })
         .collect();
-    let contracts = listing_contracts(f);
-    if f.network.is_none() && nets.len() > 1 && !contracts.is_empty() {
-        let matched: Vec<String> = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
-            "SELECT DISTINCT items.network FROM shop.items items
-             WHERE items.contract_address = ANY($1) AND items.search_is_collection_approved
-               AND {}",
-            catalogue_chain_sql("items", catalogue)
-        )))
-        .bind(&contracts)
-        .fetch_all(&mut *read.tx)
-        .await
-        .map_err(super::nft_reads::read_error)?;
+    if !f.contract_addresses.is_empty() || !f.ids.is_empty() || f.item_id.is_some() {
+        let mut b = Builder::new();
+        b.push("SELECT DISTINCT items.network");
+        catalog_item_joins(&mut b, false);
+        // Readiness is scoped to items that survive the request's metadata
+        // filters. Sale state may decide which of those items make the page.
+        let candidates = CatalogFilters {
+            is_on_sale: None,
+            min_price: None,
+            max_price: None,
+            only_listing: false,
+            only_minting: false,
+            ..f.clone()
+        };
+        let scope = CatalogScope {
+            catalogue,
+            nets: nets.clone(),
+            reads_book: false,
+        };
+        build_where(
+            &mut b,
+            &candidates,
+            false,
+            &ListingValues::new(false, false),
+            Some(&scope),
+        );
+        let contracts = listing_contracts(f);
+        if !contracts.is_empty() {
+            let contracts = b.bind_strings(&contracts);
+            b.push(&format!(" AND items.contract_address = ANY({contracts})"));
+        }
+        let matched: Vec<String> = sqlx::query_scalar_with(sqlx::AssertSqlSafe(b.sql), b.args)
+            .fetch_all(&mut *read.tx)
+            .await
+            .map_err(super::nft_reads::read_error)?;
         nets.retain(|net| matched.iter().any(|network| network == net.db_name()));
     }
-    super::orders::require_published_book(
+    let mut scope = CatalogScope {
+        catalogue,
+        nets,
+        reads_book: false,
+    };
+    if f.only_minting || !walkers || scope.nets.is_empty() {
+        return Ok(scope);
+    }
+    // Ordinary catalogue pages can omit the legacy listing cells when a
+    // required publication is withdrawn. SQL errors have their own envelope.
+    let book = super::orders::require_published_book(
         state,
         &mut read.tx,
-        &nets,
+        &scope.nets,
         read.now,
         super::orders::BookRoute::Catalog,
     )
-    .await?;
-    Ok(CatalogBooks { catalogue, nets })
+    .await;
+    match book {
+        Ok(()) => {}
+        Err(super::owned_items::ReadError::NotReady(..)) if !needs_book => return Ok(scope),
+        Err(error) => return Err(super::readers::index_source_error(error)),
+    }
+    let mut passes = Vec::new();
+    for &net in &scope.nets {
+        let verdict = catalogue::require_collections_on(&mut read.tx, state, net, read.now).await;
+        match verdict {
+            Ok(Some(at)) => passes.push((net, at)),
+            Ok(None) => {}
+            Err(super::owned_items::ReadError::NotReady(..)) if !needs_book => return Ok(scope),
+            Err(error) => return Err(super::readers::index_source_error(error)),
+        }
+    }
+    for (net, at) in passes {
+        read.note_collection_copy(net, at);
+    }
+    scope.reads_book = true;
+    Ok(scope)
 }
 
 async fn catalog_inner(
@@ -1501,16 +1642,19 @@ async fn catalog_inner(
     // that waits on another's fetch drops it first, and starts again if that
     // fetch failed. The stamp is the copy the page was read from.
     let page = loop {
+        if !filters.ids.is_empty()
+            && !filters
+                .ids
+                .iter()
+                .any(|id| super::wire::split_item_wire_id(id).is_some())
+        {
+            break Arc::new((Vec::new(), 0));
+        }
         // Every row carries the item's minter price: the money rule.
-        let needs = if filters.only_minting {
-            &[Mirror::Items][..]
-        } else {
-            &[Mirror::Items, Mirror::Collections][..]
-        };
         let mut read = match catalogue::preflight(
             &state,
             Purpose::Priced,
-            needs,
+            &[Mirror::Items],
             filters.network.map(Network::graph),
         )
         .await
@@ -1518,33 +1662,21 @@ async fn catalog_inner(
             Ok(read) => read,
             Err(envelope) => return envelope,
         };
-        let books = if filters.only_minting {
-            None
-        } else {
-            match catalog_books(&state, &mut read, &filters).await {
-                Ok(books) => Some(books),
-                Err(envelope) => return envelope,
-            }
+        let scope = match catalog_scope(&state, &mut read, &filters).await {
+            Ok(scope) => scope,
+            Err(envelope) => return envelope,
         };
         if is_v2 {
-            if let Some(books) = &books {
-                let now = read.now;
-                if let Err(error) = super::trades::ready_checked_for_networks_on(
-                    &state,
-                    &mut read.tx,
-                    &books.nets,
-                    now,
-                )
-                .await
-                {
-                    return error.into_response(super::nft_reads::read_error);
-                }
-            } else if let Err(envelope) = read.trades_ready(&state).await {
-                return envelope;
+            let now = read.now;
+            if let Err(error) =
+                super::trades::ready_checked_for_networks_on(&state, &mut read.tx, &scope.nets, now)
+                    .await
+            {
+                return error.into_response(super::nft_reads::read_error);
             }
         }
-        if is_v2 || books.is_some() {
-            match fetch_page(&state, &mut read, &filters, is_v2, books.as_ref()).await {
+        if is_v2 || scope.reads_book {
+            match fetch_page(&state, &mut read, &filters, is_v2, Some(&scope)).await {
                 Ok(page) => {
                     read.note(&state);
                     break Arc::new(page);
@@ -1557,7 +1689,7 @@ async fn catalog_inner(
         match state
             .catalog_cache
             .page_or_fetch_holding(key, &mut held, async |read: &mut CatalogueRead| {
-                fetch_page(&state, read, &filters, false, None)
+                fetch_page(&state, read, &filters, false, Some(&scope))
                     .await
                     .map(Arc::new)
             })
@@ -1884,17 +2016,10 @@ mod tests {
             !v2.contains("now()"),
             "no moving clock in the predicate: {v2}"
         );
-        assert_eq!(
-            v2.matches(&"NULLIF(".to_string()).count(),
-            4,
-            "the uint256-max sentinel of the LEAST arms never reaches the wire: {v2}"
-        );
-        assert!(
-            v2.contains(&format!(
-                "NULLIF(items.price, '{MAX_NUMERIC_NUMBER}'::numeric) END, offchain_orders.min_order_amount_received"
-            )),
-            "{v2}"
-        );
+        assert!(v2.contains(&format!(
+            "NULLIF(items.price, '{MAX_NUMERIC_NUMBER}'::numeric)"
+        )));
+        assert!(v2.contains("THEN offchain_orders.open_item_trade_price"));
         let (v1, _) = build_catalog_query(&f, false, now, None, false);
         assert!(!v1.contains("unified_trades"), "{v1}");
         assert!(v1.contains("NULL::text AS open_item_trade_id"), "{v1}");

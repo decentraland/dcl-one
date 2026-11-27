@@ -554,7 +554,9 @@ pub(super) async fn book_snapshot(
         let chain = state.settings.catalogue().chain_id(ChainNet::Ethereum);
         readers::require_land_on(&mut tx, state, chain).await?;
     }
-    require_published_book(state, &mut tx, &nets, now, route).await?;
+    require_published_book(state, &mut tx, &nets, now, route)
+        .await
+        .map_err(readers::index_source_error)?;
     if trades {
         super::trades::ready_checked_for_networks_on(state, &mut tx, &nets, now)
             .await
@@ -575,7 +577,7 @@ pub(super) async fn require_published_book(
     nets: &[ChainNet],
     now: DateTime<Utc>,
     route: BookRoute,
-) -> Result<(), Response> {
+) -> Result<(), owned_items::ReadError> {
     owned_items::check(
         conn,
         state.settings.catalogue(),
@@ -584,8 +586,7 @@ pub(super) async fn require_published_book(
         false,
         now,
     )
-    .await
-    .map_err(readers::index_source_error)?;
+    .await?;
     // The ownership the book and the v3 listings read (and the
     // book itself) as the published fold left them: a fold committed past it
     // but not published yet, whichever binary wrote it, is not read.
@@ -599,25 +600,27 @@ pub(super) async fn require_published_book(
             net,
             projections,
         )
-        .await
-        .map_err(read_error)?
+        .await?
         {
             UNPUBLISHED_FOLD_READS.handle(labels).increment(1);
-            return Err(owned_items::not_ready(&format!(
-                "the {} nft index holds a fold it has not published yet",
-                net.db_name()
-            )));
+            return Err(owned_items::ReadError::NotReady(
+                super::Source::NftIndex,
+                format!(
+                    "the {} nft index holds a fold it has not published yet",
+                    net.db_name()
+                ),
+            ));
         }
     }
     for &net in nets {
-        if !super::legacy_orders::caught_up(conn, net)
-            .await
-            .map_err(read_error)?
-        {
-            return Err(owned_items::not_ready(&format!(
-                "the {} legacy order book has not caught up with the published nft fold",
-                net.db_name()
-            )));
+        if !super::legacy_orders::caught_up(conn, net).await? {
+            return Err(owned_items::ReadError::NotReady(
+                super::Source::NftIndex,
+                format!(
+                    "the {} legacy order book has not caught up with the published nft fold",
+                    net.db_name()
+                ),
+            ));
         }
     }
     Ok(())

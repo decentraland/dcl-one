@@ -122,6 +122,14 @@ impl CatalogueRead {
             })
     }
 
+    /// Include the collection copy the order leg uses in the answer's stamp.
+    pub(super) fn note_collection_copy(&mut self, net: ChainNet, at: NaiveDateTime) {
+        self.mirror
+            .get_or_insert_with(MirrorCopy::default)
+            .passes
+            .push((Mirror::Collections, net.db_name().to_string(), at));
+    }
+
     /// The identity of what was read, for a memo key: every mirror pass on
     /// every network the read takes from the mirrors (not only the oldest,
     /// which a newer network's pass does not move), and each owned network's
@@ -478,7 +486,7 @@ pub(super) async fn require_collections_on(
     state: &MarketplaceState,
     net: ChainNet,
     now: DateTime<Utc>,
-) -> Result<(), super::owned_items::ReadError> {
+) -> Result<Option<NaiveDateTime>, super::owned_items::ReadError> {
     let states = read_states(tx).await?;
     let catalogue = states
         .iter()
@@ -491,7 +499,7 @@ pub(super) async fn require_collections_on(
             Purpose::Describe,
             now,
         )
-        .map(|_| ())
+        .map(|_| None)
         .map_err(|why| super::owned_items::ReadError::NotReady(Source::CollectionsIndex, why));
     }
     let network = match net {
@@ -514,7 +522,7 @@ pub(super) async fn require_collections_on(
         Purpose::Describe,
         now,
     )
-    .map(|_| ())
+    .map(|copy| copy.oldest(Some(Mirror::Collections)))
     .map_err(|(source, why)| super::owned_items::ReadError::NotReady(source, why))
 }
 

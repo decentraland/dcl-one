@@ -3938,19 +3938,28 @@ meanwhile never splits an answer. A reader that joins the open trades
 snapshot, at the read's instant. That instant also decides the rows' open
 trades, trade floor and coupon window, on every page of the read.
 
-Catalog v1 and v2 pages with resale fields also admit the legacy order book
-on the catalogue snapshot. The book must stand at the published NFT fold and
-have no queued refold or unacknowledged writes to orders or ownership. The
-page, its total and readiness use one clock. Rows must belong to the served
-chain, be open and unexpired, and still belong to the order's seller. The
-item is the NFT's folded item ID on Polygon and the collection URN plus the
-Issue's wearable ID on Ethereum v1. Each requested item takes the count,
-minimum and maximum price and newest listing time from its legacy orders.
-V2 combines those values with its backed v3 resales. Explicit contract or
-item ID scopes limit the legacy aggregation. Listing pages read the book
+Catalog v1 and v2 read resale listings from the legacy order book on the
+catalogue snapshot. The book must stand at the published NFT fold and have
+no queued refold or unacknowledged writes to orders or ownership. The request
+clock decides which orders have expired. Open orders must still belong to
+the seller. The item is the NFT's folded item ID on Polygon and the
+collection URN plus the Issue's wearable ID on Ethereum v1. The item and
+collection must belong to the served chain. The route admits the collection
+publication on each network used by the legacy leg, including its mirror
+pass when that network is mirrored.
+
+Listing filters, price bounds and explicit listing-dependent sorts need a published
+local book and return the required source's 503 while it is unavailable.
+Exact item and contract filters scope which networks the book must cover.
+An ordinary page can still use the admitted item catalogue when the book
+is unavailable. It leaves out the legacy listing contributions until that
+book can answer. When a sort does not depend on listings, the read selects
+the page and its count first and aggregates legacy listings for those items.
+The default cheapest sort uses the admitted listings to order the whole
+candidate set by the same price the page displays.
+V2 combines the legacy counts and prices with backed v3 resales. Explicit
+mint-only requests take the mint legs. V1 pages with a legacy leg read it
 on every request so a change of owner or expiry can take effect immediately.
-A node without a local book returns the `nft-index` readiness response for
-these pages. Mint-only requests skip the legacy book.
 
 The statement is uncached and probes primary keys only:
 `collection_projection (network)`, `chain_cursor (indexer, network)`,
