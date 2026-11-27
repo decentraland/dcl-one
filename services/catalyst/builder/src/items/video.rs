@@ -191,7 +191,12 @@ impl Videos {
     /// body must arrive within the deadline and the idle bound, and an upload
     /// behind the pace [`Videos::max_bytes`] needs to arrive by the deadline
     /// gives its place to a newcomer that earns it ([`Places`]).
-    pub fn admit(&self, signer: &str, source: Option<&str>) -> Result<VideoAdmission, Response> {
+    pub fn admit(
+        &self,
+        signer: &str,
+        source: Option<&str>,
+        declared: Option<u64>,
+    ) -> Result<VideoAdmission, Response> {
         let now = Instant::now();
         let at = now.into_std();
         for (spent, key) in [
@@ -213,6 +218,7 @@ impl Videos {
                 idle: self.idle_timeout,
                 most: self.max_bytes,
             },
+            declared,
         )?;
         Ok(VideoAdmission {
             place,
@@ -643,7 +649,7 @@ mod admission_tests {
 
     fn hold(videos: &Videos, wallet: &str, source: &str) -> VideoAdmission {
         videos
-            .admit(wallet, Some(source))
+            .admit(wallet, Some(source), None)
             .map_err(|refused| refused.status())
             .expect("a place")
     }
@@ -661,7 +667,7 @@ mod admission_tests {
             drop(upload);
         }
         assert!(
-            videos.admit("0xcreator", Some(&site(2))).is_ok(),
+            videos.admit("0xcreator", Some(&site(2)), None).is_ok(),
             "two finished uploads of under two hours each leave time in a four-hour day"
         );
     }
@@ -672,11 +678,11 @@ mod admission_tests {
     async fn a_wallet_uploads_one_video_at_a_time_and_its_hours_a_day() {
         let videos = Videos::default();
         let first = hold(&videos, "0xone", "203.0.113.3");
-        let second = videos.admit("0xone", Some("203.0.113.4"));
+        let second = videos.admit("0xone", Some("203.0.113.4"), None);
         assert_eq!(second.err().map(|r| r.status().as_u16()), Some(429));
         tokio::time::advance(WALLET_VIDEO_SECS_A_DAY + Duration::from_secs(1)).await;
         drop(first);
-        let later = videos.admit("0xone", Some("203.0.113.5"));
+        let later = videos.admit("0xone", Some("203.0.113.5"), None);
         let refused = later.err().expect("its day of uploading is spent");
         assert_eq!(refused.status().as_u16(), 429);
         assert!(
@@ -684,6 +690,6 @@ mod admission_tests {
                 .headers()
                 .contains_key(axum::http::header::RETRY_AFTER)
         );
-        assert!(videos.admit("0xtwo", Some("203.0.113.5")).is_ok());
+        assert!(videos.admit("0xtwo", Some("203.0.113.5"), None).is_ok());
     }
 }

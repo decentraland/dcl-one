@@ -685,13 +685,13 @@ mod router_tests {
         )
         .unwrap();
         let mut held: Vec<_> = (0..2)
-            .map(|n| state.videos.admit(&format!("0xwallet{n}"), None).ok())
+            .map(|n| state.videos.admit(&format!("0xwallet{n}"), None, None).ok())
             .collect();
         for upload in held.iter_mut().flatten() {
             upload.place().arrived(1_000_000).unwrap();
         }
         assert!(held.iter().all(Option::is_some));
-        assert!(state.videos.admit("0xwallet2", None).is_err());
+        assert!(state.videos.admit("0xwallet2", None, None).is_err());
     }
 
     #[test]

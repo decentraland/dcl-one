@@ -160,10 +160,12 @@ pub async fn post_item_files(
         idle: crate::items::places::IDLE_TIMEOUT,
         most: crate::UPLOAD_BODY_LIMIT as u64,
     };
-    let mut admission = match state
-        .file_uploads
-        .admit(signer.as_str(), source.as_deref(), timing)
-    {
+    let mut admission = match state.file_uploads.admit(
+        signer.as_str(),
+        source.as_deref(),
+        timing,
+        crate::limits::declared_length(request.headers()),
+    ) {
         Ok(admission) => admission,
         Err(busy) => return Ok(busy),
     };
@@ -222,7 +224,11 @@ pub async fn post_item_videos(
         return Err(video::too_large(state.videos.max_bytes));
     }
     let source = crate::limits::upload_source(request.headers());
-    let mut admission = match state.videos.admit(signer.as_str(), source.as_deref()) {
+    let declared = crate::limits::declared_length(request.headers());
+    let mut admission = match state
+        .videos
+        .admit(signer.as_str(), source.as_deref(), declared)
+    {
         Ok(admission) => admission,
         Err(busy) => return Ok(busy),
     };

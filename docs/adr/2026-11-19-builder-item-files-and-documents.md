@@ -86,7 +86,8 @@ The builder answers items as `github.com/decentraland/builder-server` at
   from the body's first read, so the budget checks before it count against
   neither. An upload is behind while it has received less, since that first
   read, than the pace the largest video needs to arrive in 20 minutes
-  (about 1.7 Mbit/s). While every
+  (about 1.7 Mbit/s), unless its request declares a `Content-Length` that,
+  at the rate it has kept, arrives within its 20 minutes. While every
   place is held and an upload is behind, a newcomer takes an extra place,
   one for each upload behind, and reads its body. It earns a place once it
   has received what that pace brings in 30 seconds (6,250,000 bytes for a
@@ -96,10 +97,13 @@ The builder answers items as `github.com/decentraland/builder-server` at
   first cuts nobody. One that hasn't earned its place 30 seconds after its
   first read ends with 429 and `Retry-After`, having cut nobody, so a place
   is taken only by an upload that keeps the pace. An
-  upload is behind from its first moment, with no grace: a grace would let
+  upload is behind from its body's first read, with no grace: a grace would let
   uploads that send nothing and restart inside it hold every place for
-  free. A small video on a slow link finishes while places are free, and
-  holding every place costs a sender that pace per place. The video must be an MP4 container (an `ftyp`
+  free. A small video on a slow link finishes, while places are free and
+  when it declares its length. Holding a place costs a sender that pace, or
+  the length its request declares within the 20 minutes; either way a place
+  is held at most 20 minutes and spends its wallet's and address's hours of
+  the day. The video must be an MP4 container (an `ftyp`
   box first, a `moov` box, boxes that end where the file does), whatever
   its part's name or content type says. Only then the node syncs the spool
   file, decides access again, checks that the item still names the hash at
