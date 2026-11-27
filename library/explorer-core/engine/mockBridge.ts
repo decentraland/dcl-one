@@ -489,6 +489,8 @@ const defaultBindings = (): BindingEntry[] => [
   [{ System: 'CameraRight' }, ['ArrowRight']],
   [{ System: 'CameraZoomIn' }, ['MouseWheel Up', 'Gamepad LeftTrigger']],
   [{ System: 'CameraZoomOut' }, ['MouseWheel Down', 'Gamepad RightTrigger']],
+  [{ System: 'CameraSwitchLevel' }, ['KeyV']],
+  [{ System: 'CameraSwapShoulder' }, ['Period']],
   [{ System: 'ScrollUp' }, ['MouseWheel Up', 'GamepadLeft Up']],
   [{ System: 'ScrollDown' }, ['MouseWheel Down', 'GamepadLeft Down']],
   [{ System: 'ScrollLeft' }, ['MouseWheel Left', 'GamepadLeft Left']],

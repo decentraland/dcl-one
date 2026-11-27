@@ -717,6 +717,22 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   better than a late answer. A share of the target frame, not a fixed time, keeps the cap the same
   part of the main thread at any frame rate. See [Interaction](interaction.md#scene-raycasts).
 
+- **The player camera's look speed is the engine's own.** The three zoom levels, their orbit
+  rings, fields of view, shoulder offsets and the 0.5 s blend between them are unity-explorer's.
+  The pointer still turns the camera through this engine's sensitivity and smoothing settings, so
+  the vertical travel across an orbit and the easing of a turn differ from unity-explorer's, which
+  runs each level's axes with their own gain, acceleration and deceleration.
+- **The camera's field of view does not widen while running.** unity-explorer adds up to 15
+  degrees in first and third person while the avatar runs.
+- **The zoom levels have no gamepad D-pad or stick binding.** unity-explorer steps the level with
+  D-pad up and down and cycles it with the right stick pressed down. Here the D-pad is the scene's
+  actions 1 and 3 and the right stick turns the camera, so the bumpers step the level, as they
+  zoomed before, and the cycle is the V key only.
+- **A scene that forces first person on a drone camera keeps the player's aim.** unity-explorer's
+  first-person camera then comes back with the aim it had when the player last left first person.
+  Here the camera has one aim, so first person looks along the heading and pitch the drone had.
+- **The Camera Zoom sensitivity setting scales photo mode only.** The player camera reads which
+  way the wheel turned, not how far, so the setting has nothing to scale there.
 - **Photo mode follows the engine's cursor convention.** unity-explorer's in-world camera has its
   own Lock/Unlock cursor actions. Here right-click toggles the lock as everywhere else, left-drag
   looks while the cursor is free (Unity's drag), and Escape closes photo mode. The gallery key (G,
@@ -741,8 +757,8 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   unity-explorer disables. Jump In treats a photo as taken in a World when the HUD's `worldOfRealm`
   accepts its realm, so hyphenated ENS names and Worlds-server realm URLs count, where
   unity-explorer's test is `^[a-zA-Z0-9.]+\.eth$` and sends those photos to a Genesis City parcel.
-- **The third-person camera collides with scene geometry.** It is pulled in front of the scene
-  colliders on both `CL_PHYSICS` and `CL_POINTER` and of the terrain, with unity-explorer's
+- **The third-person and drone cameras collide with scene geometry.** Each is pulled in front of
+  the scene colliders on both `CL_PHYSICS` and `CL_POINTER` and of the terrain, with unity-explorer's
   camera radius, distances and easing times. The layer rule is unity-explorer's, kept so a scene
   behaves the same in both clients: a physics-only collider, often an invisible wall, lets the
   camera through, where the avatar and the photo camera stop at any `CL_PHYSICS` collider. A

@@ -113,8 +113,9 @@ across workers:
 
 ## Shader and uniform hooks
 
-- `UserGlobal(f32)` resource surfaces as `globals.user_global`; `ViewUserValue(f32)` on a
-  camera surfaces as `view.user_value`.
+- `UserGlobal(f32)` resource surfaces as `globals.user_global`; `ViewUserValue(Vec4)` on a
+  camera surfaces as `view.user_value`, zero on a camera without it. The explorer puts the
+  player's camera focus there (xyz, with w 1) for the camera-to-player fade.
 - Light textures (upstream #18031): `PointLightTexture`, `SpotLightTexture`,
   `DirectionalLightTexture`, extended to multicolour cookies.
 - Unclipped-depth emulation is forced on WebGPU, where the feature may be declared but not work.

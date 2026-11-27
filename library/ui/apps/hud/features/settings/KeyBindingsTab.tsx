@@ -74,6 +74,8 @@ const CAMERA_ACTIONS: [ActionWire, string][] = [
   [{ System: 'CameraRight' }, 'Camera Right'],
   [{ System: 'CameraZoomIn' }, 'Camera Zoom In'],
   [{ System: 'CameraZoomOut' }, 'Camera Zoom Out'],
+  [{ System: 'CameraSwitchLevel' }, 'Camera Switch Zoom Level'],
+  [{ System: 'CameraSwapShoulder' }, 'Camera Swap Shoulder'],
   [{ System: 'RollLeft' }, 'Camera Roll Left'],
   [{ System: 'RollRight' }, 'Camera Roll Right']
 ]
