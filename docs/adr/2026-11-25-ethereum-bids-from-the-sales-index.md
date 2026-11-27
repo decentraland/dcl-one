@@ -23,6 +23,12 @@ catalogue scope, the seller rule, the statuses), with these differences:
 - The scope is the catalogue the nft index walks on the served chain plus
   that chain's LAND, Estate and names registrar, the assets the marketplace
   indexer kept bids on.
+- A seller inferred from the NFT log requires a shared NFT and sales block
+  hash at or after bid creation. Each walk supplies its tip and retained
+  checkpoints. This applies to stored sellers and transfers resolved on
+  the read. Sales acceptance events supply their own sellers. A read with
+  an unproven in-scope seller returns the `nft-index` envelope before
+  applying the seller filter or counting the bids.
 - A LAND or estate bid's seller, when the fold stored none, is the token's
   latest transfer before the bid in the land-authz log, read when the land
   index's published block reaches the bid's block. The nft walk does not
@@ -53,11 +59,14 @@ catalogue scope, the seller rule, the statuses), with these differences:
   subgraph on a walking node.
 - An upgraded node answers Ethereum bid reads with the `sales-index`
   envelope until the bid history repair completes.
-- Reads of the native Ethereum book need the land-authz index ready.
+- Reads of the native Ethereum book need the land-authz index ready. This
+  includes unfiltered `/v1/bids` and the activity bid legs when they read
+  that book together with other sources.
 - The sales walk records a checkpoint at each window end and keeps the
   newest 64. On Ethereum it passes every few seconds, about one block per
-  window, so the land cursor's block is normally one of them. While the land
-  walk is ahead of every block the sales walk has hashed, and its own
-  checkpoint is older than the sales walk's oldest, an open LAND or estate
-  bid in a read's scope answers `land-authz-index` until the sales walk
-  catches up, typically within one pass.
+  window near the head. The land recovery checkpoint is normally older
+  than that window. When the land cursor runs ahead of sales and the
+  retained checkpoints have no shared hash, a scoped LAND or estate bid
+  whose seller needs the transfer log returns `land-authz-index` until
+  sales catches up. A configuration that keeps LAND ahead can extend that
+  interval.

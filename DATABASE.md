@@ -5467,6 +5467,12 @@ the bid in `shop.nft_event`, when the nft walk's log reaches the bid's block
 and no backfill of the contract below its walk is owed
 (`shop.nft_contract`, the fold's own rule): a transfer the backfill has yet
 to add may be the latest.
+On Ethereum, a seller inferred from the NFT log needs a matching NFT and
+sales block hash at or after bid creation. The read compares each walk's
+tip and its retained checkpoints. The same proof covers both a seller
+stored by the sales fold and one looked up from a transfer on the read.
+An acceptance names its seller directly. A missing shared block returns
+`nft-index` before seller filtering or pagination.
 A LAND or estate bid's is the token's latest transfer before the bid in
 `land_authz.authz_event`, when the land index's published block reaches the
 bid's block (the nft walk does not read their transfers) and the land log is

@@ -10143,7 +10143,7 @@ async fn mirrored_land_and_estate_bids_use_the_land_owner_without_an_nft_publica
 }
 
 #[tokio::test]
-async fn an_ethereum_nft_bid_read_skips_the_land_cursor() {
+async fn a_mirrored_ethereum_nft_bid_read_skips_the_land_cursor() {
     let graph = serve_empty_graph().await;
     let Some((state, own)) = state_with_the_bid_book(&graph).await else {
         return;
@@ -10768,6 +10768,91 @@ async fn ethereum_bids_come_from_the_bid_book_with_land_sellers_from_the_land_in
     );
     let (_, body) = get(app(), &format!("{uri}&seller={CARL}")).await;
     assert_eq!(body["data"]["total"], 1, "{body}");
+    let names = super::nft_index::DCL_REGISTRAR;
+    // The two branches split at the transfer, before either bid. One bid
+    // has no stored seller and the other has the seller inferred by the fold.
+    sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
+        "INSERT INTO shop.chain_checkpoint (indexer, network, block_number, block_hash, block_time)
+         VALUES ('sales', 'ethereum', 39, '0x' || repeat('9', 64), 39),
+                ('nft', 'ethereum', 39, '0x' || repeat('9', 64), 39),
+                ('sales', 'ethereum', 40, '0x' || repeat('3', 64), 40),
+                ('nft', 'ethereum', 40, '0x' || repeat('4', 64), 40),
+                ('sales', 'ethereum', 50, '0x' || repeat('c', 64), 50);
+         UPDATE shop.chain_cursor SET last_block_hash = '0x' || repeat('b', 64)
+         WHERE indexer = 'nft' AND network = 'ethereum';
+         INSERT INTO shop.nft_event (network, block_number, log_index, block_time, kind, emitter,
+                                     contract_address, token_id, from_address, to_address)
+         VALUES ('ethereum', 40, 1, 40, 'transfer', '{wearables}', '{wearables}', 88, '{CREATOR}', '{CARL}'),
+                ('ethereum', 40, 2, 40, 'transfer', '{names}', '{names}', 89, '{CREATOR}', '{CARL}')"
+    )))
+    .execute(&pool)
+    .await
+    .unwrap();
+    bid(wearables.clone(), 88, None, 50, None).await;
+    bid(names.to_string(), 89, Some(CARL), 50, None).await;
+    bid(wearables.clone(), 90, Some(CARL), 50, None).await;
+    sqlx::query(
+        "UPDATE shop.nft_bid SET status = 'accepted' WHERE network = 'ethereum' AND token_id = 90",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    publish_bids(&pool, "ethereum").await;
+
+    for (contract, token) in [(wearables.as_str(), 88), (names, 89)] {
+        for seller in [CARL, WALLET_A] {
+            let scoped =
+                format!("{uri}&contractAddress={contract}&tokenId={token}&seller={seller}");
+            let (status, body) = get(app(), &scoped).await;
+            assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{scoped}: {body}");
+            assert_eq!(body["source"], "nft-index", "{scoped}: {body}");
+        }
+    }
+    let sold = format!("{uri}&contractAddress={wearables}&tokenId=90&status=sold&seller={CARL}");
+    let (status, body) = get(app(), &sold).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["data"]["total"], 1, "{body}");
+    assert_eq!(body["data"]["results"][0]["seller"], CARL, "{body}");
+
+    // The NFT walk rewinds and rejoins at the creation block. Its repair
+    // marker protects the stored seller until the sales fold rechecks it.
+    sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
+        "UPDATE shop.chain_checkpoint SET block_hash = '0x' || repeat('3', 64)
+         WHERE indexer = 'nft' AND network = 'ethereum' AND block_number = 40;
+         INSERT INTO shop.chain_checkpoint (indexer, network, block_number, block_hash, block_time)
+         VALUES ('nft', 'ethereum', 50, '0x' || repeat('c', 64), 50);
+         UPDATE shop.chain_cursor SET last_block_hash = '0x' || repeat('d', 64)
+         WHERE indexer = 'nft' AND network = 'ethereum';
+         UPDATE shop.nft_event SET to_address = '{WALLET_A}'
+         WHERE network = 'ethereum' AND block_number = 40 AND token_id IN (88, 89);
+         INSERT INTO shop.bid_seller_recheck (network, from_block) VALUES ('ethereum', 39)"
+    )))
+    .execute(&pool)
+    .await
+    .unwrap();
+    for (contract, token) in [(wearables.as_str(), 88), (names, 89)] {
+        for (seller, total) in [(WALLET_A, 1), (CARL, 0)] {
+            let scoped =
+                format!("{uri}&contractAddress={contract}&tokenId={token}&seller={seller}");
+            let (status, body) = get(app(), &scoped).await;
+            assert_eq!(status, StatusCode::OK, "{scoped}: {body}");
+            assert_eq!(body["data"]["total"], total, "{scoped}: {body}");
+            if total == 1 {
+                assert_eq!(body["data"]["results"][0]["seller"], WALLET_A, "{body}");
+            }
+        }
+    }
+    sqlx::raw_sql(
+        "DELETE FROM shop.nft_bid WHERE network = 'ethereum' AND token_id IN (88, 89, 90);
+         DELETE FROM shop.bid_seller_recheck WHERE network = 'ethereum' AND from_block = 39;
+         UPDATE shop.chain_cursor SET last_block_hash = '0x' || repeat('0', 64)
+         WHERE indexer = 'nft' AND network = 'ethereum'",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    publish_bids(&pool, "ethereum").await;
+
     // The native bid uses the transfer before creation. A mirrored bid on
     // the same parcel uses its current LAND owner, even while an unrelated
     // NFT ownership write awaits publication.

@@ -612,9 +612,9 @@ fn nft_unavailable(net: ChainNet, why: &str) -> Response {
 pub(super) struct SellerBounds {
     net: ChainNet,
     chain: i64,
-    /// The last block of the nft walk's log: a seller can be read from the
-    /// transfers of a bid at or below it.
-    nft_last: i64,
+    /// The NFT log's available height on Polygon, or the highest block
+    /// shared by the sales and NFT walks on Ethereum.
+    nft_through: i64,
     nft_rows_published: bool,
     /// The lowest point of an nft rewind the sales fold has not rechecked
     /// yet (`shop.bid_seller_recheck`): a seller the fold inferred for a bid
@@ -645,6 +645,44 @@ const LAND_ON_SALES_BRANCH_SQL: &str = "SELECT max(l.block) FROM land_authz.inde
        UNION ALL \
        SELECT 1 FROM shop.chain_checkpoint k \
        WHERE k.indexer = 'sales' AND k.network = 'ethereum' AND k.block_number = l.block AND k.block_hash = lower(l.hash))";
+
+/// The newest common point in the two Ethereum walks. Each side uses the
+/// checked tip and at most the 64 retained window ends. At the tip height the
+/// cursor hash takes precedence over the recovery points.
+const NFT_ON_SALES_BRANCH_SQL: &str = "
+    WITH nft (block_number, block_hash) AS (
+        SELECT $1::bigint, lower($2::text)
+        UNION ALL
+        SELECT block_number, block_hash FROM shop.chain_checkpoint
+        WHERE indexer = 'nft' AND network = 'ethereum' AND block_number < $1
+    ), sales (block_number, block_hash) AS (
+        SELECT $3::bigint, lower($4::text)
+        UNION ALL
+        SELECT block_number, block_hash FROM shop.chain_checkpoint
+        WHERE indexer = 'sales' AND network = 'ethereum' AND block_number < $3
+    )
+    SELECT max(nft.block_number) FROM nft JOIN sales USING (block_number, block_hash)";
+
+async fn nft_on_sales_branch(
+    conn: &mut PgConnection,
+    nft: &Cursor,
+    sales: &Cursor,
+) -> Result<i64, sqlx::Error> {
+    if nft.last_block == sales.last_block
+        && nft.last_block_hash.is_some()
+        && nft.last_block_hash == sales.last_block_hash
+    {
+        return Ok(nft.last_block);
+    }
+    let shared: Option<i64> = sqlx::query_scalar(NFT_ON_SALES_BRANCH_SQL)
+        .bind(nft.last_block)
+        .bind(nft.last_block_hash.as_deref())
+        .bind(sales.last_block)
+        .bind(sales.last_block_hash.as_deref())
+        .fetch_one(conn)
+        .await?;
+    Ok(shared.unwrap_or(-1))
+}
 
 /// The networks whose legacy bids a read of `f` takes from the book: none
 /// for an item (the contracts bid on tokens) or a network the filter cannot
@@ -718,7 +756,7 @@ pub(super) async fn bids_snapshot(
             chain_walk::cursor_with_rows_publication(&mut tx, INDEXER_SALES, net, &["nft_bid"])
                 .await
                 .map_err(read_error)?;
-        let Some((_, rows_published)) = sales.filter(|(c, _)| sales_published(c, chain, now))
+        let Some((sales, rows_published)) = sales.filter(|(c, _)| sales_published(c, chain, now))
         else {
             return Err(unavailable(
                 Source::SalesIndex,
@@ -786,10 +824,17 @@ pub(super) async fn bids_snapshot(
             }
             _ => -1,
         };
+        let nft_through = if net == ChainNet::Ethereum {
+            nft_on_sales_branch(&mut tx, &nft, &sales)
+                .await
+                .map_err(read_error)?
+        } else {
+            nft.last_block
+        };
         bounds.push(SellerBounds {
             net,
             chain,
-            nft_last: nft.last_block,
+            nft_through,
             nft_rows_published,
             recheck_from,
             land_through,
@@ -866,7 +911,10 @@ fn book_of(state: &MarketplaceState, net: ChainNet) -> Book {
                 },
                 land,
                 estate,
-                names: state.settings.catalogue().registrar().to_lowercase(),
+                names: deployments
+                    .and_then(|deployment| deployment.registrar())
+                    .unwrap_or_default()
+                    .to_lowercase(),
             }
         }
     }
@@ -884,7 +932,8 @@ impl Book {
     /// (`OFFSET 0` stops the planner turning it into a join), for the
     /// unresolved-seller check: as a join the planner takes the few bids
     /// that check reads for one row and compares each with the whole
-    /// catalogue. A page and a total join it.
+    /// catalogue. On Polygon the page and total can join the catalogue.
+    /// Ethereum also checks the fixed registries.
     fn catalogued(&self, probe: bool) -> String {
         let membership = super::catalogue::collection_membership_sql(self.net, self.chain);
         let barrier = if probe { " OFFSET 0" } else { "" };
@@ -900,18 +949,35 @@ impl Book {
         }
     }
 
-    /// A bid's seller now: the one the fold stored while it stands
-    /// ([`STORED_SELLER_STANDS`]), else the token's latest transfer before
+    /// An acceptance names its own seller. An inferred seller requires
+    /// coverage through bid creation on Ethereum's NFT branch and survives
+    /// only while no unprocessed NFT rewind takes that transfer away.
+    fn stored_seller_stands(&self) -> String {
+        let nft_branch = if self.net == ChainNet::Ethereum {
+            format!(
+                " AND (b.contract_address IN ('{}', '{}') OR b.created_block <= $2::bigint)",
+                self.land, self.estate
+            )
+        } else {
+            String::new()
+        };
+        format!(
+            "(b.status = 'accepted' OR (($3::bigint IS NULL OR b.created_block <= $3::bigint){nft_branch}))"
+        )
+    }
+
+    /// A bid's seller now: the one the fold stored while it stands,
+    /// else the token's latest transfer before
     /// the bid. For LAND and estates that is the land-authz log, when the
     /// land index's published block reaches the bid's block and that log is
     /// proven on the sales walk's branch through it
     /// ([`SellerBounds::land_through`]; the nft walk does not read their
     /// transfers); for any other token the nft walk's
-    /// log, when it reaches the bid's block (`$2`) and holds the contract's
+    /// log, when it covers the bid's block (`$2`) and holds the contract's
     /// whole history: no backfill of the contract below its walk is owed
     /// (`FOLD_BIDS_SQL`'s rule), since a transfer the backfill has yet to add
     /// may be the latest. NULL when neither proves one.
-    fn seller_now(&self, bounds: &SellerBounds) -> String {
+    fn seller_now(&self, bounds: &SellerBounds, stored_seller_stands: &str) -> String {
         let nft = format!(
             "(SELECT n.to_address FROM shop.nft_event n \
               WHERE n.network = '{net}' AND n.contract_address = b.contract_address AND n.token_id = b.token_id AND n.kind = 'transfer' \
@@ -938,7 +1004,7 @@ impl Book {
                 folded = bounds.land_through,
             )
         };
-        format!("COALESCE(CASE WHEN {STORED_SELLER_STANDS} THEN b.seller END, {inferred})")
+        format!("COALESCE(CASE WHEN {stored_seller_stands} THEN b.seller END, {inferred})")
     }
 
     /// The index whose log a bid lacking a seller waits on.
@@ -997,12 +1063,6 @@ fn scope(net: ChainNet, f: &BidFilters, now_ms: i64, binds: &mut Vec<String>) ->
     Some(sql)
 }
 
-/// Whether the stored seller of a bid stands: the fold inferred it from a
-/// transfer before any nft rewind it has not rechecked (`$3`), or an
-/// acceptance named it.
-const STORED_SELLER_STANDS: &str =
-    "($3::bigint IS NULL OR b.created_block <= $3::bigint OR b.status = 'accepted')";
-
 /// The bid book's order for `sort_by`, ties by id as [`sort_bids`] (bytes).
 fn book_order_by(sort_by: Option<BidSortBy>) -> &'static str {
     match sort_by {
@@ -1023,10 +1083,13 @@ enum Unresolved {
 impl Unresolved {
     fn envelope(self) -> Response {
         match self {
-            Self::Nft(net) => owned_items::not_ready(&format!(
-                "the {} nft index has not reached the block or the history of a bid in this read: its seller is not known yet",
-                net.db_name()
-            )),
+            Self::Nft(net) => nft_unavailable(
+                net,
+                &format!(
+                    "the {} nft index has not reached the block or the history of a bid in this read: its seller is not known yet",
+                    net.db_name()
+                ),
+            ),
             Self::Land => unavailable(
                 Source::LandAuthzIndex,
                 "the land-authz index has not reached the block of a LAND or estate bid in this read: its seller is not known yet",
@@ -1056,19 +1119,20 @@ async fn book_rows(
     let bind_all = |sql: String, binds: &[String]| {
         let mut q = sqlx::query(sqlx::AssertSqlSafe(sql))
             .bind(binds[0].clone())
-            .bind(bounds.nft_last.to_string())
+            .bind(bounds.nft_through.to_string())
             .bind(bounds.recheck_from.map(|b| b.to_string()));
         for b in &binds[1..] {
             q = q.bind(b.clone());
         }
         q
     };
-    let seller_now = book.seller_now(bounds);
-    // Only a bid the fold left without a seller (`nft_bid_seller_unknown_idx`)
-    // or whose stored seller a pending recheck sets aside can lack one now.
+    let stored_seller_stands = book.stored_seller_stands();
+    let seller_now = book.seller_now(bounds, &stored_seller_stands);
+    // A bid can lack a seller if the fold stored none, a rewind requires a
+    // recheck, or its creation lies beyond the shared branch.
     let unknown = format!(
         "SELECT (SELECT {} FROM shop.nft_bid b WHERE {scope} AND {} \
-           AND (b.seller IS NULL OR NOT {STORED_SELLER_STANDS}) AND {seller_now} IS NULL LIMIT 1) AS waits_on",
+           AND (b.seller IS NULL OR NOT {stored_seller_stands}) AND {seller_now} IS NULL LIMIT 1) AS waits_on",
         book.waits_on(),
         book.catalogued(true),
     );
