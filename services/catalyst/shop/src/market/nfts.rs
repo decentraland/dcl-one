@@ -538,10 +538,14 @@ fn parcels_of(v: Option<&Value>) -> Vec<EstateParcel> {
             a.iter()
                 // A parcel outside the `integer` range is not a parcel.
                 .filter_map(|p| {
-                    Some(EstateParcel {
-                        x: i32::try_from(readers::int_of(p, "x")).ok()?,
-                        y: i32::try_from(readers::int_of(p, "y")).ok()?,
-                    })
+                    let (x, y) = (readers::int_of(p, "x"), readers::int_of(p, "y"));
+                    match (i32::try_from(x), i32::try_from(y)) {
+                        (Ok(x), Ok(y)) => Some(EstateParcel { x, y }),
+                        _ => {
+                            tracing::warn!(x, y, "/v1/nfts: dropped an out-of-range estate parcel");
+                            None
+                        }
+                    }
                 })
                 .collect()
         })

@@ -2419,6 +2419,7 @@ async fn walk(
             return diverged(pool, source, ix, owner, at, out, started).await;
         }
         let header = reached.unwrap_or(after.value);
+        let reached_at = casts::to_i64(window.reached)?;
         // Accepted, not yet committed (the commit may still fail).
         source.accepted(&crate::chain_index::portal::compare::AcceptedView {
             chain_id: casts::to_u64(ix.chain_id())?,
@@ -2443,7 +2444,7 @@ async fn walk(
         ix.window_committed().await;
         out.logs += window.logs.len();
         out.rows_written += written;
-        out.indexed_to = casts::to_i64(window.reached)?;
+        out.indexed_to = reached_at;
         expected = (out.indexed_to, Some(header.hash.clone()));
         next = window.reached + 1;
         progress(format!(
