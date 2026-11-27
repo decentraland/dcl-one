@@ -1,9 +1,6 @@
-//! A collection's lifecycle as builder-server answers it: the owner's lock,
-//! the delete, the standard publish, and the check an address-changing save
-//! passes. Each write is one transaction that takes the collection row
-//! `FOR UPDATE`, then its items, and decides again inside it; a read of the
-//! Polygon RPC ([`super::deployment`]) runs before the transaction, never
-//! while it holds a connection.
+//! The check a standard save that changes a collection's address passes, as
+//! builder-server answers it: the Polygon RPC ([`super::deployment`]) is read
+//! before the save's transaction, never while it holds a connection.
 
 use crate::State;
 use crate::access::CollectionEdit;

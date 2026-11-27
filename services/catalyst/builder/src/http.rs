@@ -201,17 +201,6 @@ pub fn iso_timestamp<S: Serializer>(t: &DateTime<Utc>, s: S) -> Result<S::Ok, S:
     s.serialize_str(&iso(t))
 }
 
-/// `serialize_with` for an optional timestamp field (`null` when absent).
-pub fn iso_timestamp_opt<S: Serializer>(
-    t: &Option<DateTime<Utc>>,
-    s: S,
-) -> Result<S::Ok, S::Error> {
-    match t {
-        Some(t) => iso_timestamp(t, s),
-        None => s.serialize_none(),
-    }
-}
-
 /// A refusal the router answered itself (an extractor's, a method the route
 /// does not serve) in the envelope, with the status's own words instead of
 /// the parser's; an unusable JSON body is upstream's `Invalid request body`.
@@ -365,16 +354,10 @@ mod tests {
         struct Row {
             #[serde(serialize_with = "iso_timestamp")]
             at: DateTime<Utc>,
-            #[serde(serialize_with = "iso_timestamp_opt")]
-            maybe: Option<DateTime<Utc>>,
         }
         assert_eq!(
-            serde_json::to_value(Row {
-                at: whole,
-                maybe: None
-            })
-            .unwrap(),
-            json!({ "at": "2026-01-01T00:00:00.000Z", "maybe": null })
+            serde_json::to_value(Row { at: whole }).unwrap(),
+            json!({ "at": "2026-01-01T00:00:00.000Z" })
         );
     }
 }

@@ -17,7 +17,6 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
-use serde_json::{Value, json};
 use sqlx::PgConnection;
 
 use crate::chain_index::ChainIndex;
@@ -53,9 +52,6 @@ impl ThirdParties {
             .ok_or_else(unavailable)
     }
 }
-
-#[cfg(test)]
-impl ThirdParties {}
 
 fn unavailable() -> ApiError {
     ApiError::service_unavailable("The third party registry is not available. Try again later.")
@@ -108,22 +104,10 @@ pub fn has_manager(managers: &[String], address: &str) -> bool {
 pub struct Virtual {
     pub id: String,
     pub managers: Vec<String>,
-    pub raw_metadata: String,
     pub is_programmatic: bool,
 }
 
-const VIRTUAL: &str =
-    "SELECT id, managers, raw_metadata, is_programmatic FROM builder.virtual_third_parties";
-
-/// The virtual third party `id`.
-pub async fn virtual_by_id(conn: &mut PgConnection, id: &str) -> Result<Option<Virtual>, ApiError> {
-    Ok(
-        sqlx::query_as(sqlx::AssertSqlSafe(format!("{VIRTUAL} WHERE id = $1")))
-            .bind(id)
-            .fetch_optional(conn)
-            .await?,
-    )
-}
+const VIRTUAL: &str = "SELECT id, managers, is_programmatic FROM builder.virtual_third_parties";
 
 /// The name, description and linked contracts a virtual third party's
 /// `raw_metadata` holds (`tp:1:<name>:<description>[:<network>-<address>;...]`),
@@ -164,54 +148,11 @@ pub fn raw_metadata(name: &str, description: &str, contracts: &[LinkedContract])
     }
 }
 
-fn contracts_json(contracts: &[LinkedContract]) -> Value {
-    Value::Array(
-        contracts
-            .iter()
-            .map(|c| json!({ "address": c.address, "network": c.network }))
-            .collect(),
-    )
-}
-
-/// A registry record as `GET /v1/thirdParties` answers it.
-pub fn provider_view(p: &Provider) -> Value {
-    json!({
-        "id": p.id,
-        "root": p.root,
-        "managers": p.managers,
-        "maxItems": p.max_items,
-        "isApproved": p.is_approved,
-        "isProgrammatic": p.is_programmatic,
-        "name": p.name,
-        "description": p.description,
-        "contracts": contracts_json(&p.contracts),
-        "published": true,
-    })
-}
-
-/// A virtual third party as `GET /v1/thirdParties` answers it.
-pub fn virtual_view(v: &Virtual) -> Value {
-    let (name, description, contracts) = parse_raw_metadata(&v.raw_metadata);
-    json!({
-        "id": v.id,
-        "managers": v.managers,
-        "name": name,
-        "description": description,
-        "contracts": contracts_json(&contracts),
-        "maxItems": "0",
-        "isApproved": false,
-        "published": false,
-        "isProgrammatic": v.is_programmatic,
-        "root": "",
-    })
-}
-
-/// A provider `GET /v1/thirdParties` lists to a manager: its id, its view,
-/// whether it is programmatic, and its virtual third party's managers.
+/// A provider listed to a manager: its id, whether it is programmatic, and
+/// its virtual third party's managers.
 #[derive(Debug, Clone)]
 pub struct Listed {
     pub id: String,
-    pub view: Value,
     pub programmatic: bool,
     pub virtual_managers: Option<Vec<String>>,
 }
@@ -246,7 +187,6 @@ pub async fn managed_by(
         })
         .map(|p| Listed {
             id: p.id.clone(),
-            view: provider_view(p),
             programmatic: p.is_programmatic,
             virtual_managers: by_id.get(p.id.as_str()).map(|v| v.managers.clone()),
         })
@@ -258,7 +198,6 @@ pub async fn managed_by(
         {
             out.push(Listed {
                 id: v.id.clone(),
-                view: virtual_view(v),
                 programmatic: v.is_programmatic,
                 virtual_managers: Some(v.managers.clone()),
             });

@@ -50,7 +50,6 @@ pub struct CollectionDraft {
 pub struct ItemDraft {
     pub id: Uuid,
     pub name: String,
-    pub collection_id: Option<Uuid>,
     pub eth_address: Option<String>,
     #[serde(default)]
     pub description: String,
