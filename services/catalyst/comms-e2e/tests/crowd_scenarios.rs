@@ -1,6 +1,7 @@
 //! The crowd scenario against a real Pulse server in this process: it passes against a correct
 //! server on both transports, and fails, naming how many players saw everyone, against a server
 //! whose area of interest is smaller than the crowd.
+#![allow(clippy::unwrap_used, reason = "test support")]
 
 mod support;
 

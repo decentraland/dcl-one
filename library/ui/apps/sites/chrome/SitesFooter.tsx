@@ -4,6 +4,8 @@ import {
   useChromeNav,
   type ChromeNavigate
 } from '../../../components/AppChrome/chrome-nav'
+import { Button } from '../../../components/Button/Button'
+import { InputWebCreatorTools } from '../../../components/InputWebCreatorTools/InputWebCreatorTools'
 import wordmark from '../assets/dcl_name.svg'
 import { sitesFooterCopy, type SitesFooterCopy } from './footer-copy'
 import {
@@ -252,21 +254,23 @@ export default function SitesFooter({
           <div className={styles.news}>
             <p className={styles.newstitle}>{copy.newsletter.title}</p>
             <form className={styles.newsform} onSubmit={submitNewsletter} noValidate>
-              <input
-                className={styles.newsinput}
+              <InputWebCreatorTools
                 type="email"
+                label={copy.newsletter.emailLabel}
+                labelHidden
                 placeholder={copy.newsletter.placeholder}
-                aria-label={copy.newsletter.emailLabel}
                 value={email}
                 onChange={(e) => {
                   setEmail(e.target.value)
                   if (news.phase !== 'idle') setNews({ phase: 'idle' })
                 }}
                 disabled={news.phase === 'sending'}
+                action={
+                  <Button type="submit" size="lg" disabled={news.phase === 'sending'}>
+                    {news.phase === 'sending' ? copy.newsletter.sending : copy.newsletter.cta}
+                  </Button>
+                }
               />
-              <button type="submit" className={styles.newsbtn} disabled={news.phase === 'sending'}>
-                {news.phase === 'sending' ? copy.newsletter.sending : copy.newsletter.cta}
-              </button>
             </form>
             {news.phase === 'ok' && (
               <p className={`${styles.newsnote} ${styles.newsnoteOk}`} role="status">

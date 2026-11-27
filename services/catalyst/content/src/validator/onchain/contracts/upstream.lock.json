@@ -35,6 +35,28 @@
           "sha256": "164993f25e3346e9bed33e04900d685acc3bb45491f84b0154f0eb94e3bc9bb3"
         }
       }
+    },
+    {
+      "repository": "https://github.com/decentraland/collections-graph",
+      "revision": "ab6c58670d94bfbe774a0f56dadef1b541c53e8b",
+      "license": "The repository has no LICENSE file and no license field in package.json. It is Decentraland's own, like this one, and the extracted file holds factual catalogue data, not code; the Apache-2.0 LICENSE here covers the other sources.",
+      "files": {
+        "wearables-v1.json": {
+          "from": "src/data/wearablesV1/<name>.ts, each exported Wearable[] array, in the order getWearableV1Representation searches them (src/modules/metadata/wearable/index.ts): {collection, wearables: [{id, name, description, category, rarity, bodyShapes}]}",
+          "generator": "python3 tooling/collections-v1-data.py wearables <collections-graph checkout at the revision> services/catalyst/content/src/validator/onchain/contracts/wearables-v1.json",
+          "sha256": "3de8b8b46e6b0a5c0979eb3dcbe8fda45f8c463e077ec366d6766db11f799fe6"
+        }
+      }
+    },
+    {
+      "chain": "Ethereum mainnet (chain 1)",
+      "files": {
+        "collections-v1-symbols.json": {
+          "from": "symbol() of each collections-v1.json contract, one batched eth_call at block 26,501,583 (2026-11-26); a v1 collection's symbol is set by its constructor and never changes",
+          "generator": "ETH_RPC_URL=<ethereum rpc url> python3 tooling/collections-v1-data.py symbols services/catalyst/content/src/validator/onchain/contracts/collections-v1.json services/catalyst/content/src/validator/onchain/contracts/collections-v1-symbols.json (prints the block it read at)",
+          "sha256": "bc441ef5dddc424d6b04215c5cdcffc202ed44876b070c8f33265648edc2b3fe"
+        }
+      }
     }
   ],
   "license": {
@@ -45,6 +67,7 @@
   "normalization": "Values extracted from the published npm tarballs with JSON.stringify(value, null, 2) plus a trailing newline; the bytecode is the hex string as published plus a trailing newline.",
   "update_instructions": [
     "Install the pinned packages, re-extract the listed values as described in each files entry and update the sha256 values here.",
-    "Run cargo test -p catalyst-content validator::onchain, whose tests check the Rust call encodings against checker.abi.json."
+    "Run cargo test -p catalyst-content validator::onchain, whose tests check the Rust call encodings against checker.abi.json.",
+    "wearables-v1.json: check out decentraland/collections-graph at the new revision, run the generator command in its files entry, update the revision and sha256 here, then run cargo test -p catalyst-content collections_v1 and cargo test -p catalyst-shop collections_v1. collections-v1-symbols.json changes only with collections-v1.json: rerun its generator command."
   ]
 }

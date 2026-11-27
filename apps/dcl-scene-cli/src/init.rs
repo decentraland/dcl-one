@@ -1084,6 +1084,7 @@ fn resolve_kind(flag: Option<ProjectKind>) -> Result<ProjectKind> {
     Ok(ProjectKind::Scene)
 }
 
+#[allow(clippy::print_stdout, reason = "the CLI writes to the terminal")]
 fn prompt_kind() -> Result<ProjectKind> {
     println!("What would you like to create?");
     println!("  1) scene           a standard Decentraland scene (default)");

@@ -268,6 +268,18 @@ jobs:
         run: |
           nix develop .#ci --command \
             cargo clippy --manifest-path services/catalyst/Cargo.toml --locked --workspace --all-targets -- -D warnings
+      - name: Clippy with the TypeScript export types
+        env:
+          CARGO_TARGET_DIR: ${{ github.workspace }}/services/catalyst/target-clippy
+        # catalyst/ts turns on every crate's ts feature, which gates the export shapes and their tests.
+        run: |
+          nix develop .#ci --command \
+            cargo clippy --manifest-path services/catalyst/Cargo.toml --locked --workspace --all-targets --features catalyst/ts -- -D warnings
+      - name: No unused dependencies
+        # Reads sources only; services/catalyst covers cast-bot, and its gitignored target dirs are skipped.
+        run: |
+          nix build --inputs-from . nixpkgs#cargo-machete -o .cache/cargo-machete
+          .cache/cargo-machete/bin/cargo-machete services/catalyst library/dcl-* apps/dcl-scene-cli
   smoke:
     needs: changes
     if: ${{ !cancelled() && needs.changes.outputs.run != 'false' }}

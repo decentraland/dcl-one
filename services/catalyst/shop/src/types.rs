@@ -51,6 +51,28 @@ impl fmt::Display for ChainId {
     }
 }
 
+/// A chain id that does not fit the integer column it is stored in.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+#[error("chain id {0} does not fit its column")]
+pub struct ChainIdOverflow(pub u64);
+
+/// `id` as the `bigint` (`i64`) or `integer` (`i32`) column that stores it.
+pub fn chain_id_column<T: TryFrom<u64>>(id: u64) -> Result<T, ChainIdOverflow> {
+    T::try_from(id).map_err(|_| ChainIdOverflow(id))
+}
+
+impl From<ChainIdOverflow> for sqlx::Error {
+    fn from(e: ChainIdOverflow) -> Self {
+        sqlx::Error::Encode(Box::new(e))
+    }
+}
+
+impl From<ChainIdOverflow> for crate::evm::errors::ApiError {
+    fn from(e: ChainIdOverflow) -> Self {
+        Self::Internal(e.to_string())
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum ParseError {
     #[error("an address is 0x followed by 40 hex digits")]
@@ -1014,6 +1036,19 @@ pub enum SettlementOperation {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_chain_id_past_its_column_is_refused() {
+        assert_eq!(chain_id_column::<i32>(137), Ok(137));
+        assert_eq!(
+            chain_id_column::<i32>(1 << 31),
+            Err(ChainIdOverflow(1 << 31))
+        );
+        assert_eq!(
+            chain_id_column::<i64>(u64::MAX),
+            Err(ChainIdOverflow(u64::MAX))
+        );
+    }
 
     #[test]
     fn the_asset_type_codes_are_the_ones_from_code_reads() {

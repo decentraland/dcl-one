@@ -80,6 +80,7 @@ pub async fn code_to_composite(opts: &CodeToCompositeOptions) -> Result<()> {
     Ok(())
 }
 
+#[allow(clippy::print_stdout, reason = "the CLI writes to the terminal")]
 fn confirm(yes: bool) -> Result<bool> {
     if yes {
         return Ok(true);

@@ -630,7 +630,10 @@ struct Entry {
     content_hash: Option<String>,
 }
 
-#[allow(clippy::too_many_arguments)]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "one argument per recorded entry field"
+)]
 async fn record(
     conn: &mut PgConnection,
     signature_hash: &str,

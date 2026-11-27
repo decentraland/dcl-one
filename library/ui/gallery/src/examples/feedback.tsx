@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react'
+import { useContext, useRef, useState } from 'react'
 import {
   Button,
   ConnectionStatus,
@@ -6,6 +6,7 @@ import {
   ItemLabel,
   Modal,
   ModalActions,
+  ModalBackdrop,
   ModalCard,
   ModalShell,
   ModalTitle,
@@ -28,6 +29,7 @@ import {
   MaskIcon,
   ScrollThumb
 } from '@dcl/one-ui'
+import { EmbeddedCanvas } from '../embedded'
 import type { GalleryEntry } from '../registry'
 import { covers, people } from './data'
 import layout from './layout.module.css'
@@ -55,9 +57,11 @@ type ModalDemoProps = Omit<ModalProps, 'onClose' | 'actions'> & {
   actions?: readonly string[]
 }
 
-// A dialog is rendered only while it is open; the trigger opens it again after it closes.
+// A dialog is rendered only while it is open; the trigger opens it again after it closes. Inside the Showcase it
+// starts closed: opening on load would take the reviewer's focus partway down the page.
 function ModalDemo({ open: initiallyOpen = false, trigger, actions, ...props }: ModalDemoProps) {
-  const [open, setOpen] = useState(initiallyOpen)
+  const embedded = useContext(EmbeddedCanvas)
+  const [open, setOpen] = useState(initiallyOpen && !embedded)
   const close = () => setOpen(false)
   return (
     <>
@@ -81,6 +85,34 @@ function ModalDemo({ open: initiallyOpen = false, trigger, actions, ...props }: 
         />
       ) : null}
     </>
+  )
+}
+
+// The backdrop is fixed over its host's screen: here a box stands in for the screen (it contains fixed content), so
+// the example is drawn in place. The HUD's popup layer owns the focus, Escape and what a press on the scrim does.
+function ModalBackdropDemo({ tone }: { tone?: 'dim' | 'deep' }) {
+  return (
+    <div className={layout.screen}>
+      <ModalBackdrop tone={tone}>
+        <div className={layout.hudHost}>
+          <ModalShell
+            title="Report submitted"
+            ariaLabel="Report submitted"
+            modal={false}
+            width={320}
+            onClose={() => {}}
+            actionsAlign="end"
+            actions={
+              <Button appearance="hud" size="sm">
+                OK
+              </Button>
+            }
+          >
+            Thanks for helping keep Decentraland safe.
+          </ModalShell>
+        </div>
+      </ModalBackdrop>
+    </div>
   )
 }
 
@@ -115,8 +147,8 @@ export const feedbackEntries: GalleryEntry[] = [
     name: 'ModalCard',
     group: 'Feedback',
     summary:
-      "The Explorer HUD's dialog card and its parts: a title, a body and a row of actions. Its host owns the backdrop and the focus.",
-    components: ['ModalCard', 'ModalTitle', 'ModalActions', 'ModalShell'],
+      "The Explorer HUD's dialog card and its parts: a title, a body and a row of actions, and the backdrop a host opens it on. Its host owns the focus and Escape.",
+    components: ['ModalCard', 'ModalTitle', 'ModalActions', 'ModalShell', 'ModalBackdrop'],
     examples: [
       {
         id: 'shell',
@@ -188,6 +220,17 @@ export const feedbackEntries: GalleryEntry[] = [
             </ModalCard>
           </div>
         )
+      },
+      {
+        id: 'backdrop',
+        title:
+          'ModalBackdrop: the blurred scrim over a screen, with the card centred and scaled in',
+        render: () => <ModalBackdropDemo />
+      },
+      {
+        id: 'backdrop-deep',
+        title: 'ModalBackdrop, deep: darker and not blurred',
+        render: () => <ModalBackdropDemo tone="deep" />
       }
     ]
   },

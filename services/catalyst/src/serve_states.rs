@@ -137,7 +137,10 @@ pub(super) fn worlds_comms_online(livekit: &shared::livekit::LiveKit) -> bool {
 
 /// The upstream forwarder of one lane when `var` names an upstream (a public
 /// http(s) base URL that is not this node), its job spawned; `None` when unset.
-#[allow(clippy::too_many_arguments)]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the forwarder wires the shared node handles"
+)]
 pub(super) fn forwarder(
     var: &str,
     url: Option<&str>,
@@ -194,7 +197,10 @@ pub(super) fn reprocess_converter(
 /// permission core and job lifecycle; `worlds::app_router` owns their
 /// routes. `catalyst pulse` is the realtime process beside this one; they
 /// meet on `NATS_URL` and the room authority comms mounts.
-#[allow(clippy::too_many_arguments)]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the worlds state wires the shared node handles"
+)]
 pub(super) async fn worlds_states(
     config: &Config,
     pool: &sqlx::PgPool,
@@ -454,7 +460,10 @@ pub(super) struct CommsStage {
     pub(super) gatekeeper: crate::comms::gatekeeper::SharedState,
 }
 
-#[allow(clippy::too_many_arguments)]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the comms state wires the shared node handles"
+)]
 pub(super) async fn comms_states(
     config: &Config,
     pool: &sqlx::PgPool,
@@ -609,7 +618,10 @@ pub(super) fn social_analytics(
 /// `comms_states`) is also the social socket's voice runtime
 /// (`comms::gatekeeper::voice::rooms`), the local call that replaced the old
 /// `COMMS_GATEKEEPER_URL` hop.
-#[allow(clippy::too_many_arguments)]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the social state wires the shared node handles"
+)]
 pub(super) fn social_states(
     config: &Config,
     pool: &sqlx::PgPool,
@@ -819,6 +831,10 @@ pub(super) fn social_states(
                 deployment_max_lag: (config.social.badges_deployment_max_lag_secs > 0)
                     .then(|| Duration::from_secs(config.social.badges_deployment_max_lag_secs)),
                 items_mirror_enabled: config.marketplace.marketplace_mirrors_enabled,
+                polygon_owned: crate::settings::collections_owned(
+                    &config.marketplace.marketplace_collections_index_owns,
+                )
+                .is_ok_and(|owned| owned.contains(&shop::market::chain_walk::ChainNet::Matic)),
                 ..badges::jobs::ProcessorSettings::default()
             },
         },

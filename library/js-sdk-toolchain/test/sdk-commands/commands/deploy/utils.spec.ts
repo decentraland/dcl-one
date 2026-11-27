@@ -1,4 +1,5 @@
 import {
+  buildDeleteScenesFromWorldPayload,
   checkWorldDeploymentPermission,
   createFetchComponent,
   deployLinkerUri,
@@ -357,5 +358,20 @@ describe('when checking the world deployment permission', () => {
     it('should abort the request', () => {
       expect(error).toEqual(expect.objectContaining({ name: 'AbortError' }))
     })
+  })
+})
+
+describe('when building the payload that deletes a world\'s scenes', () => {
+  let worldName: string
+  let payload: string
+
+  beforeEach(() => {
+    worldName = 'My-World.dcl.eth'
+    payload = buildDeleteScenesFromWorldPayload(worldName)
+  })
+
+  it('should fold only the method and the path and sign the metadata verbatim', () => {
+    const [, , timestamp] = payload.split(':')
+    expect(payload).toBe(`delete:/entities/my-world.dcl.eth:${timestamp}:{}`)
   })
 })

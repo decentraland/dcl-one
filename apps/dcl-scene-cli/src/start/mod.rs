@@ -819,6 +819,7 @@ fn link_defaults(multi_instance: bool, skip_auth_screen: bool) -> Vec<&'static s
         .collect()
 }
 
+#[allow(clippy::print_stderr, reason = "the CLI writes to the terminal")]
 pub async fn start(opts: StartOptions) -> Result<()> {
     joinblock::set_dclenv(&opts.dclenv);
     let trunk_url = opts
@@ -1356,6 +1357,11 @@ struct SigningListener {
 }
 
 /// [`serve_signing`] on a listener already bound.
+#[allow(
+    clippy::print_stderr,
+    clippy::print_stdout,
+    reason = "the CLI writes to the terminal"
+)]
 async fn serve_signing_on(
     workspace: Workspace,
     SigningListener {

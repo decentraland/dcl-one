@@ -44,63 +44,11 @@
   gap: 12px;
 }
 
-.submit-hangout__fieldlabel {
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  font-size: 12px;
-  font-weight: 600;
-  color: rgba(255, 255, 255, 0.8);
-  flex: 1 1 180px;
-}
-
-.submit-hangout__fieldcheck {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 13px;
-  font-weight: 600;
-}
-
-.submit-hangout__field {
-  min-width: 0;
-  appearance: none;
-  border: 1px solid rgba(255, 255, 255, 0.22);
-  background: rgba(255, 255, 255, 0.08);
-  color: #fff;
-  border-radius: 8px;
-  padding: 8px 10px;
-  font-size: 14px;
-  font-weight: 500;
-}
-
 .submit-hangout__nav {
   display: flex;
   gap: 10px;
+  flex-wrap: wrap;
   justify-content: flex-end;
-}
-
-.submit-hangout__btn {
-  appearance: none;
-  border: 1px solid rgba(255, 255, 255, 0.28);
-  background: rgba(255, 255, 255, 0.1);
-  color: #fff;
-  border-radius: 999px;
-  padding: 9px 20px;
-  font-size: 14px;
-  font-weight: 700;
-  cursor: pointer;
-}
-
-.submit-hangout__btn:disabled {
-  opacity: 0.45;
-  cursor: not-allowed;
-}
-
-.submit-hangout__btn--primary {
-  background: #ff2d55;
-  border-color: #ff2d55;
 }
 
 .submit-hangout__hint {

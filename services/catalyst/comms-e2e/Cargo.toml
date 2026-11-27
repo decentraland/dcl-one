@@ -19,7 +19,6 @@ serde_json.workspace = true
 anyhow.workspace = true
 clap.workspace = true
 futures.workspace = true
-bytes.workspace = true
 prost.workspace = true
 url = { workspace = true, features = ["serde"] }
 toml.workspace = true
@@ -28,7 +27,6 @@ hex.workspace = true
 parking_lot.workspace = true
 reqwest.workspace = true
 rusty_enet.workspace = true
-web-transport-quinn.workspace = true
 # `wss://` to an API served over https; `ring` is the process TLS provider it installs
 rustls = { workspace = true, features = ["ring"] }
 tokio-tungstenite = { workspace = true, features = ["rustls-tls-webpki-roots"] }
@@ -45,3 +43,6 @@ axum.workspace = true
 catalyst-content = { path = "../content" }
 async-trait.workspace = true
 rcgen = "0.14.10"
+
+[lints]
+workspace = true

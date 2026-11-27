@@ -139,8 +139,21 @@ function isBinary(s: Setting): boolean {
   if (s.namedVariants.length === 2) return s.namedVariants.every((v) => /^(off|on)$/i.test(v.name))
   return s.namedVariants.length === 0 && s.maxValue - s.minValue <= 1 && s.stepSize >= 1
 }
+// Any named choice is a select, even a lone one: the engine's Microphone lists only System Default
+// until the browser reveals the inputs.
+function isSelect(s: Setting): boolean {
+  return !isBinary(s) && s.namedVariants.length > 0
+}
 function isSlider(s: Setting): boolean {
-  return !isBinary(s) && s.namedVariants.length < 2
+  return !isBinary(s) && !isSelect(s)
+}
+// The engine's Microphone choices follow the devices plugged in. On open the fields render the held
+// list first, and the re-read can bring new or renamed choices under the same value.
+function sameVariants(a: Setting, b: Setting): boolean {
+  return (
+    a.namedVariants.length === b.namedVariants.length &&
+    a.namedVariants.every((v, i) => v.name === b.namedVariants[i].name && v.description === b.namedVariants[i].description)
+  )
 }
 // Values are f32 widened to f64 on the way over, so 19.95 arrives as 19.950000762939453. Showing
 // them at f32's own precision drops the noise, and the trailing zeros with it. Display only.
@@ -174,7 +187,7 @@ function Control({ s, onSet, describedBy }: { s: Setting; onSet: (name: string, 
   if (isBinary(s)) {
     return <Switch appearance="hud" checked={s.value >= 1} disabled={locked} onCheckedChange={(c) => onSet(s.name, c ? 1 : 0)} label={s.name} labelHidden aria-describedby={describedBy} />
   }
-  if (s.namedVariants.length >= 2) {
+  if (isSelect(s)) {
     return (
       <Select
         variant="light"
@@ -219,7 +232,12 @@ const SettingField = memo(
       </div>
     )
   },
-  (prev, next) => prev.s.name === next.s.name && prev.s.value === next.s.value && prev.s.disabled === next.s.disabled && prev.onSet === next.onSet
+  (prev, next) =>
+    prev.s.name === next.s.name &&
+    prev.s.value === next.s.value &&
+    prev.s.disabled === next.s.disabled &&
+    sameVariants(prev.s, next.s) &&
+    prev.onSet === next.onSet
 )
 
 /** The chat settings kept by the HUD rather than the engine: translation (the language is the
