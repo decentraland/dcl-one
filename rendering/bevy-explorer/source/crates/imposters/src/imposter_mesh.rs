@@ -44,7 +44,7 @@ impl ImposterMesh {
             .with_scale((max - min).max(Vec3::splat(0.001)) * (1.0 + source_level as f32 / 1000.0));
 
         let unit = Self::default();
-        if target.as_ingredient {
+        if target.as_ingredient || source_level == target.level {
             return Some((transform, unit));
         }
 
@@ -182,7 +182,7 @@ mod tests {
     }
 
     #[test]
-    fn ready_tile_stays_inside_its_edges_during_display() {
+    fn ready_tiles_and_bake_ingredients_use_the_shared_cube() {
         let spec = ImposterSpec {
             scale: 32.0,
             region_min: Vec3::new(-64.0, 1.0, 0.0),
@@ -195,14 +195,9 @@ mod tests {
             as_ingredient: false,
         };
         let (transform, displayed) = ImposterMesh::render_proxy(&spec, 1, &target).unwrap();
-        assert_eq!(
-            transform.transform_point(displayed.min).xz(),
-            Vec2::new(-64.0, 0.0)
-        );
-        assert_eq!(
-            transform.transform_point(displayed.max).xz(),
-            Vec2::new(-32.0, 32.0)
-        );
+        assert_eq!(displayed.min, Vec3::splat(-0.5));
+        assert_eq!(displayed.max, Vec3::splat(0.5));
+        assert!(displayed.with_bake_attributes);
 
         target.as_ingredient = true;
         let (bake_transform, ingredient) = ImposterMesh::render_proxy(&spec, 1, &target).unwrap();

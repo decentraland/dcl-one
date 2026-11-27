@@ -144,8 +144,10 @@ the defs; a material extension's defs do not reach a separate material.
 Every shader change gets a test that compiles every pipeline variant off-screen, `#[ignore]`d
 because CI has no GPU. The `pipeline_test` crate holds the setup these tests share:
 
-1. `headless_app()`: a `DefaultPlugins` app with `WinitPlugin`, `LogPlugin` and
-   `PipelinedRenderingPlugin` disabled, no primary window and the embedded assets.
+1. `headless_app()`: a `DefaultPlugins` app with `WinitPlugin`, `LogPlugin`,
+   `GilrsPlugin` and `PipelinedRenderingPlugin` disabled, no primary window and
+   the embedded assets. The graphics-only harness skips gamepad discovery so
+   GPU tests can run without access to the host's input devices.
 2. A camera rendering to `render_target(&mut app)`, with `DepthPrepass` and `NormalPrepass`,
    and a shadowing `DirectionalLight`, so the prepass and shadow variants compile too.
 3. One entity per material and tag variant the change touches.

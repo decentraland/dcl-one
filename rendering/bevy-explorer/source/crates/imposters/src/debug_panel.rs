@@ -1,5 +1,5 @@
 use crate::{
-    debug_imposters::{install_debug_shaders, tag_new_tiles, update_tile_colors},
+    debug_imposters::ImposterDebugTintPlugin,
     render::{DebugImpostersEnabled, RetryImposter, SceneImposter},
 };
 use bevy::prelude::*;
@@ -11,18 +11,10 @@ pub(super) struct LodDebugPanelPlugin;
 
 impl Plugin for LodDebugPanelPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<LodOutlines>()
+        app.add_plugins(ImposterDebugTintPlugin)
+            .init_resource::<LodOutlines>()
             .add_console_command::<LodOutlinesCommand, _>(set_lod_outlines)
             .add_console_command::<DebugImpostersCommand, _>(toggle_debug_imposters)
-            .add_systems(Startup, install_debug_shaders)
-            .add_systems(
-                PostUpdate,
-                (
-                    tag_new_tiles,
-                    update_tile_colors.run_if(resource_changed::<DebugImpostersEnabled>),
-                )
-                    .chain(),
-            )
             .add_systems(
                 Update,
                 draw_lod_outlines.run_if(|show: Res<LodOutlines>| show.0),

@@ -1,4 +1,4 @@
-#import "dcl_imposters/boimp_vertex.wgsl" as boimp_vertex;
+#import dcl_imposters::boimp_vertex;
 #import boimp::shared::ImposterVertexOut;
 
 #ifdef PREPASS_PIPELINE

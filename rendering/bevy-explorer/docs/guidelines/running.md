@@ -209,8 +209,9 @@ frame-time snapshots, the frame-time breakdown and the memory tiers; a `performa
 build adds Render and Profiler, Bevy's per-pass render timings and the scope profiler
 ([profiling](profiling.md)).
 In **LOD**, **Debug imposters** colors the visible 3D proxies by the requested tile, so two
-neighbors sharing a fallback bake are distinguishable. The console command
-`/debug_imposters [true|false]` sets the same session toggle. `/lod_state` reports it as
+neighbors sharing a fallback bake are distinguishable. The toggle also enables imposter
+memory and state counters. Turning it off restores the original shaders. In any build,
+`/debug_imposters [true|false]` sets the same session toggle and `/lod_state` reports it as
 `debug_imposters`.
 The room, voice, rendering, media and avatar sections appear with the plugins that
 supply them. When several readings need the same scene, peer or sample, the panel
