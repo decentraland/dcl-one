@@ -1,5 +1,11 @@
 import type { HTMLAttributes, KeyboardEvent, ReactNode } from 'react'
-import { useLayoutEffect, useRef, type AnchorHTMLAttributes, type ComponentType } from 'react'
+import {
+  useLayoutEffect,
+  useRef,
+  useSyncExternalStore,
+  type AnchorHTMLAttributes,
+  type ComponentType
+} from 'react'
 import { Tabs } from '../Tabs/Tabs'
 import styles from './TabsBar.module.css'
 import { assertNavigationEntries, isPlainLinkClick } from '../../link.helpers'
@@ -28,9 +34,41 @@ type PanelTabsBarProps = {
   inset?: 'content'
   /** Scrolls sideways instead of overflowing, with room inside the scroller for the tabs' focus ring. */
   scrollable?: boolean
+  /**
+   * `vertical` stacks the tabs in a column from 1024px wide, as decentraland.org's help center does; narrower, they
+   * wrap onto rows. Up and Down move between the tabs as well as Left and Right, and `aria-orientation` follows the
+   * layout on screen. For the default appearance only.
+   */
+  orientation?: 'horizontal' | 'vertical'
 } & Omit<HTMLAttributes<HTMLDivElement>, 'children' | 'role' | 'aria-label'>
 
 const KEYS = new Set(['ArrowLeft', 'ArrowRight', 'Home', 'End'])
+const VERTICAL_KEYS = new Set([...KEYS, 'ArrowUp', 'ArrowDown'])
+const NEXT_KEYS = new Set(['ArrowRight', 'ArrowDown'])
+/* Matches the column breakpoint in TabsBar.module.css (.vertical). */
+const COLUMN_QUERY = '(min-width: 1024px)'
+
+function subscribeColumn(onChange: () => void) {
+  if (typeof window.matchMedia !== 'function') return () => {}
+  const query = window.matchMedia(COLUMN_QUERY)
+  query.addEventListener('change', onChange)
+  return () => query.removeEventListener('change', onChange)
+}
+const isColumn = () =>
+  typeof window.matchMedia !== 'function' || window.matchMedia(COLUMN_QUERY).matches
+const noopSubscribe = () => () => {}
+/** The server renders the desktop column; the client corrects it after hydration on narrow screens. */
+const isColumnOnServer = () => true
+
+/** Whether a vertical tab list is currently drawn as a column rather than wrapped rows. */
+function useColumnLayout(vertical: boolean) {
+  const column = useSyncExternalStore(
+    vertical ? subscribeColumn : noopSubscribe,
+    vertical ? isColumn : isColumnOnServer,
+    isColumnOnServer
+  )
+  return vertical && column
+}
 const HUD_VARIANT = {
   pill: 'hudPill',
   underline: 'hudUnderline',
@@ -48,17 +86,21 @@ function PanelTabsBar({
   fill = false,
   inset,
   scrollable = false,
+  orientation = 'horizontal',
   className,
   onKeyDown,
   ...rest
 }: PanelTabsBarProps) {
+  const vertical = orientation === 'vertical' && appearance !== 'hud'
+  const column = useColumnLayout(vertical)
+  const keys = vertical ? VERTICAL_KEYS : KEYS
   const look =
     appearance === 'hud'
       ? [styles[HUD_VARIANT[!variant || variant === 'compact' ? 'pill' : variant]], fill && styles.hudFill]
       : [styles[variant === 'compact' || variant === 'pill' ? variant : 'underline']]
   const handleKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
     onKeyDown?.(event)
-    if (event.defaultPrevented || !KEYS.has(event.key)) return
+    if (event.defaultPrevented || !keys.has(event.key)) return
     // A disabled tab is shown but skipped, like a static heading standing in the strip.
     const tabs = Array.from(event.currentTarget.querySelectorAll<HTMLElement>('[role="tab"]:not(:disabled)'))
     const current = tabs.indexOf(event.target as HTMLElement)
@@ -70,7 +112,7 @@ function PanelTabsBar({
         ? 0
         : event.key === 'End'
           ? last
-          : (current + (event.key === 'ArrowRight' ? 1 : -1) + tabs.length) % tabs.length
+          : (current + (NEXT_KEYS.has(event.key) ? 1 : -1) + tabs.length) % tabs.length
     const tab = tabs[next]!
     tab.focus()
     if (tab instanceof HTMLButtonElement) tab.click()
@@ -80,9 +122,11 @@ function PanelTabsBar({
       {...rest}
       role="tablist"
       aria-label={label || undefined}
+      aria-orientation={column ? 'vertical' : undefined}
       className={[
         styles.root,
         ...look,
+        vertical && styles.vertical,
         inset === 'content' && styles.insetContent,
         scrollable && styles.scrollable,
         className

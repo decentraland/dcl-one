@@ -24,6 +24,21 @@
     gap: var(--dcl-space-16);
   }
 
+  /* Not in Figma: decentraland.org's help center tabs, a column 8px apart from 1024px. Narrower, the tabs wrap
+     onto rows with the variant's own gap. Matches COLUMN_QUERY in TabsBar.tsx. */
+  .vertical {
+    flex-wrap: wrap;
+  }
+
+  @media (min-width: 1024px) {
+    .vertical {
+      flex-direction: column;
+      flex-wrap: nowrap;
+      align-items: flex-start;
+      gap: var(--dcl-space-8);
+    }
+  }
+
   /* After the variants, so it replaces their inline padding. */
   .insetContent {
     padding-inline: var(--dcl-space-16);

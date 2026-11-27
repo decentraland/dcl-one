@@ -16448,7 +16448,7 @@
     },
     {
       "path": "library/ui/apps/sites/help/HelpTabs.tsx",
-      "sha256": "242373be0225d9481f3074165d3a96e69e71a67465282979e3b7d2c4725cb8bf"
+      "sha256": "0f9211b6a6f569d3f16f2e3698fd9b80a748cf63fad98e43391d7f41c57ba7ba"
     },
     {
       "path": "library/ui/apps/sites/home/CatchTheVibe.module.css",
@@ -17464,7 +17464,7 @@
     },
     {
       "path": "library/ui/components/TabsBar/TabsBar.module.css",
-      "sha256": "f37be88aca6407349dc2bc531ee52e7b2843c0352698e1a63e207e99b0827061"
+      "sha256": "e32cbba3bd0463baf0a3c50235a6fe4cee87de74aec03173c487e37f31d21acd"
     },
     {
       "path": "library/ui/components/TabsBar/TabsBar.module.css.d.ts",
@@ -17472,7 +17472,7 @@
     },
     {
       "path": "library/ui/components/TabsBar/TabsBar.tsx",
-      "sha256": "b11c7bb428b2d568df48bdea98622f398d11d1fcef24f2d78ad87902d185c0ef"
+      "sha256": "9f8a10a1d0f7d111808ad67f6bc17127c7dd53cfbd6c5e6f6c841a3e2f011fdb"
     },
     {
       "path": "library/ui/components/Tag/Tag.module.css",

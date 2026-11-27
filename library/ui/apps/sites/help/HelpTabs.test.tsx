@@ -44,8 +44,10 @@ describe('HelpTabs', () => {
   })
 
   describe('when it renders', () => {
-    it('should name the tab list and mark only the active tab selected and in the tab order', () => {
-      expect(screen.getByRole('tablist', { name: 'Help Center' })).toBeTruthy()
+    it('should name the vertical tab list and mark only the active tab selected and in the tab order', () => {
+      expect(
+        screen.getByRole('tablist', { name: 'Help Center' }).getAttribute('aria-orientation')
+      ).toBe('vertical')
       const tabs = screen.getAllByRole('tab')
       expect(tabs.map((tab) => tab.textContent)).toEqual(['FAQ', 'CREATOR FUND', 'SUPPORT UPDATES'])
       expect(tabs.map((tab) => tab.getAttribute('aria-selected'))).toEqual([
@@ -95,8 +97,17 @@ describe('HelpTabs', () => {
       expect(onChange).toHaveBeenLastCalledWith('updates')
     })
 
-    it('should ignore keys the tab list does not handle', async () => {
+    it('should move focus and the selection with Down and Up, wrapping at the ends', async () => {
       await user.keyboard('{ArrowDown}')
+      expect(document.activeElement).toBe(screen.getByRole('tab', { name: 'CREATOR FUND' }))
+      expect(onChange).toHaveBeenLastCalledWith('fund')
+      await user.keyboard('{ArrowUp}{ArrowUp}')
+      expect(document.activeElement).toBe(screen.getByRole('tab', { name: 'SUPPORT UPDATES' }))
+      expect(onChange).toHaveBeenLastCalledWith('updates')
+    })
+
+    it('should ignore keys the tab list does not handle', async () => {
+      await user.keyboard('{PageDown}')
       expect(onChange).not.toHaveBeenCalled()
       expect(document.activeElement).toBe(screen.getByRole('tab', { name: 'FAQ' }))
     })

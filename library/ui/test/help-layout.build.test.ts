@@ -16,6 +16,9 @@ type Geometry = {
   tabs: Box
   panel: Box
   tabTops: number[]
+  tabLefts: number[]
+  tabHeights: number[]
+  orientation: string | null
   /** Scrolled to the end of the page, where the sticky banner rests in its own place. */
   contentBottom: number
   bannerTop: number
@@ -76,7 +79,10 @@ async function layoutAt(width: number, height = 1024): Promise<Geometry> {
       title:box(document.querySelector('main h1')),
       tabs:box(document.querySelector('[role="tablist"]')),
       panel:box(document.querySelector('[role="tabpanel"]')),
-      tabTops:[...document.querySelectorAll('[role="tab"]')].map((tab)=>Math.round(tab.getBoundingClientRect().top))
+      tabTops:[...document.querySelectorAll('[role="tab"]')].map((tab)=>Math.round(tab.getBoundingClientRect().top)),
+      tabLefts:[...document.querySelectorAll('[role="tab"]')].map((tab)=>Math.round(tab.getBoundingClientRect().left)),
+      tabHeights:[...document.querySelectorAll('[role="tab"]')].map((tab)=>Math.round(tab.getBoundingClientRect().height)),
+      orientation:document.querySelector('[role="tablist"]').getAttribute('aria-orientation')
     }
   })()`)
 }
@@ -144,6 +150,30 @@ describe('when the help center renders', () => {
         expect(geometry.status.bottom).toBeLessThanOrEqual(geometry.panel.top)
         expect(geometry.status.right).toBeCloseTo(geometry.panel.right, 0)
         expect(geometry.panel.width).toBeGreaterThan(500)
+      }
+    )
+  })
+
+  describe('and the viewport is a desktop', () => {
+    it.each([1024, 1280, 1440])(
+      'should stack the tabs in a vertical column 8px apart at %ipx, as decentraland.org does',
+      async (width) => {
+        const geometry = await layoutAt(width)
+        expect(geometry.orientation).toBe('vertical')
+        expect(new Set(geometry.tabLefts).size).toBe(1)
+        const pitch = geometry.tabTops.slice(1).map((top, index) => top - geometry.tabTops[index]!)
+        expect(pitch).toEqual(geometry.tabHeights.slice(1).map((height) => height + 8))
+      }
+    )
+  })
+
+  describe('and the viewport is narrower than a desktop', () => {
+    it.each([390, 768, 1023])(
+      'should lay the tabs in rows and drop the vertical orientation at %ipx',
+      async (width) => {
+        const geometry = await layoutAt(width)
+        expect(geometry.orientation).toBeNull()
+        expect(geometry.tabTops[1]).toBe(geometry.tabTops[0])
       }
     )
   })

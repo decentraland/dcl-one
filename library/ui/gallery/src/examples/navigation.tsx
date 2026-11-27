@@ -197,6 +197,27 @@ function PanelTabsDemo({ variant }: { variant: 'underline' | 'compact' | 'pill' 
   )
 }
 
+function VerticalTabsDemo() {
+  const [selected, setSelected] = useState('faq')
+  return (
+    <TabsBar label="Vertical tabs" variant="pill" orientation="vertical">
+      {[
+        ['faq', 'FAQ'],
+        ['fund', 'Creator fund'],
+        ['updates', 'Support updates']
+      ].map(([id, label]) => (
+        <Tabs
+          key={id}
+          label={label!}
+          variant="pill"
+          selected={selected === id}
+          onClick={() => setSelected(id!)}
+        />
+      ))}
+    </TabsBar>
+  )
+}
+
 // Selecting runs the tabs' selection motion; a demo link selects in place instead of navigating the canvas.
 function stay(event: MouseEvent) {
   if ((event.target as Element).closest('a')) event.preventDefault()
@@ -500,6 +521,12 @@ export const navigationEntries: GalleryEntry[] = [
       },
       { id: 'compact', title: 'Panel, compact', render: () => <PanelTabsDemo variant="compact" /> },
       { id: 'pill', title: 'Panel, pill', render: () => <PanelTabsDemo variant="pill" /> },
+      {
+        id: 'vertical',
+        title: 'Panel, pill, vertical',
+        note: 'A column from 1024px, where Up and Down move between the tabs; narrower, the tabs wrap onto rows.',
+        render: () => <VerticalTabsDemo />
+      },
       {
         id: 'navigation-create',
         title: 'Navigation, create page',
