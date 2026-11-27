@@ -61,16 +61,13 @@ function readInput() {
     input.x = Math.sign(input.x);
     input.z = Math.sign(input.z);
   }
-  input.limit = isGliding ? glidingSpeed
-    : inputSystem.isPressed(InputAction.IA_MODIFIER) ? sprintSpeed
-    : inputSystem.isPressed(InputAction.IA_WALK) ? walkSpeed
-    : jogSpeed;
-  input.grounded = grounded;
-  if (!isGliding) input.limit *= slopeSpeedFactor();
-  gait = input.x === 0 && input.z === 0 ? 'idle'
-    : inputSystem.isPressed(InputAction.IA_MODIFIER) ? 'run'
+  const keys = inputSystem.isPressed(InputAction.IA_MODIFIER) ? 'run'
     : inputSystem.isPressed(InputAction.IA_WALK) ? 'walk'
     : 'jog';
+  input.limit = isGliding ? glidingSpeed : keys === 'run' ? sprintSpeed : keys === 'walk' ? walkSpeed : jogSpeed;
+  input.grounded = grounded;
+  if (!isGliding) input.limit *= slopeSpeedFactor();
+  gait = input.x === 0 && input.z === 0 ? 'idle' : keys;
 }
 
 // The slope comes from the capsule's walkable contact (on a step edge, the edge), else from the ground under the centre.

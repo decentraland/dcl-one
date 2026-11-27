@@ -18,13 +18,10 @@ export const settings = {
   // Horizontal speed (m/s) above which we leave idle and play walk/run.
   moveGate: 0.1,
   sprintThreshold: 9.5,          // h-speed boundary: jog clip below, run clip above
-  // Cross-fade time (s) into each clip. Locomotion blends are ~0.2 (smooth gait
-  // changes); air/jump phase transitions are short so the brief one-shot clips
-  // (Start/Mid/End ~0.2-0.4s) aren't swallowed by the blend.
+  // Cross-fade time (s) into each locomotion clip (smooth gait changes).
   transWalk: 0.2,
   transRun: 0.2,
   transIdle: 0.2,
-  transAir: 0.1, // jump phases / glide / double-jump / landing
   // --- Glide pose selection ---
   // Turn rate (deg/s) at which the glide bank reaches its full angle (GLIDE_TILT_FULL_ANGLE).
   glideLeanRate: 300,

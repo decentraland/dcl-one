@@ -1,10 +1,7 @@
-// Source: decentraland/unity-explorer at 6ec741fc72,
-// Explorer/Assets/DCL/AvatarRendering/AvatarShape/Assets/Animator/CharacterAnimator.controller (line numbers below).
-// The reference client's avatar animator, its base layer, as data for animator.ts: the states and transitions with the
-// values its asset has, each with the line of its entry in that asset. The parameters come from the movement model
-// (index.ts), set as the reference client sets them.
-// Not here: the emote states and transitions (the engine plays emotes), Rotation State, Hit_Wall_Walk and AFK_Action
-// (no parameter of the scene starts them). Where the scene departs from the reference, the entry says why.
+// The avatar animator's base layer as data for animator.ts: its states, with their clips, blend trees, speeds and tags,
+// and its transitions, with their conditions, durations, exit times, offsets and interruption sources. The parameters
+// come from the movement model (index.ts).
+// Not here: emotes (the engine plays them) and states that no parameter of the scene starts.
 import { AnimatorController, Condition, Transition, Tree } from './animator';
 
 // The engine reads jumps, the glide and the stun for its jump timing and network state from these exact file names
@@ -24,18 +21,17 @@ const clip = (tier: string, part: string) => ANIM + (part === 'End' && tier === 
 // The jump states' 1D trees on MovementBlend: Jump_* at 1, Jog_Jump_* at 2, Run_Jump_* at 3.
 const tierTree = (part: string, at = [1, 2, 3]): Tree =>
   ({ param: 'MovementBlend', children: TIERS.map((t, i) => ({ clip: clip(t, part), at: at[i] })) });
-// A landing while the glider is open plays the tier's End with the glider closing embedded: the reference client
-// closes its glider prop apart from the animator.
+// A landing while the glider is open plays the tier's End with the glider closing embedded: the glider is part of the
+// avatar's clips, so only the landing clip can close it.
 const GLIDER_CLOSING: Record<string, string> = {
   [clip('Jump', 'End')]: ANIM + 'Gliding_Idle_Jump_EndRig.glb',
   [clip('Jog_Jump', 'End')]: ANIM + 'Gliding_Jog_Jump_EndRig.glb',
   [clip('Run_Jump', 'End')]: ANIM + 'Gliding_Run_Jump_EndRig.glb',
 };
 
-// A transition (line of its entry, destination, conditions, duration: s when fixed, else a fraction of the source
-// state's length).
-const tr = (line: number, to: string, when: Condition[], duration: number, fixed: boolean, o: Partial<Transition> = {}):
-  Transition => ({ line, to, when, duration, fixed, ...o });
+// A transition (destination, conditions, duration: s when fixed, else a fraction of the source state's length).
+const tr = (to: string, when: Condition[], duration: number, fixed: boolean, o: Partial<Transition> = {}): Transition =>
+  ({ to, when, duration, fixed, ...o });
 const GROUNDED: Condition = ['IsGrounded', 'if'];
 const AIRBORNE: Condition = ['IsGrounded', 'ifNot'];
 const STUNNED: Condition = ['IsStunned', 'if'];
@@ -69,125 +65,120 @@ export const CHARACTER_ANIMATOR: AnimatorController = {
     [GLIDE_POSE.forward]: looped(s(238)), [GLIDE_POSE.idle]: looped(s(238)),
     [GLIDE_START]: once(s(68)), [GLIDE_END]: once(s(16)),
   },
-  // Scene: no jump state while the glider is open (NOT_GLIDING): the glider is embedded in the glide clips.
+  // No jump state while the glider is open (NOT_GLIDING): the glider is embedded in the glide clips, which a jump clip
+  // would replace.
   any: [
-    tr(2959, 'Jump', [['Jump', 'if'], ['JumpCount', 'less', 2], NOT_GLIDING], 0.1310842, true,
+    tr('Jump', [['Jump', 'if'], ['JumpCount', 'less', 2], NOT_GLIDING], 0.1310842, true,
       { offset: 0.3291167, interruption: DEST, noSelf: true }),
-    tr(2906, 'Double Jump', [['Jump', 'if'], ['JumpCount', 'greater', 1], NOT_GLIDING], 0.05, true),
-    tr(2781, 'Gliding_Start', [['StartGliding', 'if']], 0.05, true),
+    tr('Double Jump', [['Jump', 'if'], ['JumpCount', 'greater', 1], NOT_GLIDING], 0.05, true),
+    tr('Gliding_Start', [['StartGliding', 'if']], 0.05, true),
   ],
   states: {
-    // The locomotion tree (L2036): the scene picks its clip by the horizontal speed (index.ts).
+    // The locomotion tree: the scene picks its clip by the horizontal speed (index.ts), and the tree times its
+    // transitions.
     Movement: {
-      line: 884, tag: 'Movement',
+      tag: 'Movement',
       motion: {
         scene: 'locomotion',
         tree: { param: 'MovementBlend', children: Object.values(LOCOMOTION).map((c, i) => ({ clip: c, at: i })) },
       },
       transitions: [
-        // Jog_Stop (L3077) is never reached: this transition and its own back are muted.
-        tr(2686, 'Jog_Stop', [['MovementBlend', 'less', 1], ['MovementBlend', 'greater', 0.9]], 0.24999994, true,
-          { offset: 0.15320888, mute: true }),
-        tr(3186, 'Up', [['IsJumping', 'if']], 0.06466603, false),
-        tr(2303, 'Down', [['IsFalling', 'if']], 0.29039198, false, { offset: 0.007114472, interruption: DEST }),
+        tr('Up', [['IsJumping', 'if']], 0.06466603, false),
+        tr('Down', [['IsFalling', 'if']], 0.29039198, false, { offset: 0.007114472, interruption: DEST }),
       ],
     },
     Jump: {
-      line: 3631, tag: 'Jumping', motion: tierTree('Start'),
+      tag: 'Jumping', motion: tierTree('Start'),
       transitions: [
-        tr(3287, 'Up', [], 0.18402585, false, { exitTime: 0.8144884, interruption: DEST }),
-        tr(917, 'Grounded', [GROUNDED], 0.021802306, false, { offset: 0.017173447 }),
+        tr('Up', [], 0.18402585, false, { exitTime: 0.8144884, interruption: DEST }),
+        tr('Grounded', [GROUNDED], 0.021802306, false, { offset: 0.017173447 }),
       ],
     },
-    // The rise loops (tree L2463) never lead: Up To Down interrupts the cross-fade into Up on the next update, so the
-    // scene keeps Jump's clip.
+    // Up keeps Jump's clip: Up To Down interrupts the cross-fade into Up on the next update, so a clip of Up's own
+    // would never lead.
     Up: {
-      line: 430, tag: 'Jumping', motion: 'previous',
-      transitions: [tr(2934, 'Up To Down', [['IsJumping', 'ifNot']], 0.06453482, true, { interruption: DEST })],
+      tag: 'Jumping', motion: 'previous',
+      transitions: [tr('Up To Down', [['IsJumping', 'ifNot']], 0.06453482, true, { interruption: DEST })],
     },
     'Up To Down': {
-      line: 3371, tag: 'Jumping', motion: tierTree('Mid'),
+      tag: 'Jumping', motion: tierTree('Mid'),
       transitions: [
-        tr(1404, 'Grounded', [GROUNDED], 0.021802306, false, { offset: 0.017173447 }),
-        tr(81, 'Down', [], 0.21651052, false, { exitTime: 0.5, interruption: DEST }),
+        tr('Grounded', [GROUNDED], 0.021802306, false, { offset: 0.017173447 }),
+        tr('Down', [], 0.21651052, false, { exitTime: 0.5, interruption: DEST }),
       ],
     },
-    // The fall loops' tree (L316: Jump_Fall_Loop at 1.7) inside the slide tree (L3015); the scene has no slide
-    // (SlideBlend 0).
+    // The fall loops' tree, Jump_Fall_Loop at 1.7. The scene has no slide (SlideBlend 0).
     Down: {
-      line: 3399, tag: 'Jumping', motion: tierTree('Fall_Loop', [1.7, 2, 3]),
+      tag: 'Jumping', motion: tierTree('Fall_Loop', [1.7, 2, 3]),
       transitions: [
-        tr(103, 'Grounded', [GROUNDED], 0.062423754, false),
-        tr(1183, 'Long Fall', [['IsLongFall', 'if'], ['SlideBlend', 'less', 0.5]], 0.33667788, false, { interruption: SRC }),
+        tr('Grounded', [GROUNDED], 0.062423754, false),
+        tr('Long Fall', [['IsLongFall', 'if'], ['SlideBlend', 'less', 0.5]], 0.33667788, false, { interruption: SRC }),
       ],
     },
-    // Long_Fall_Loop in the slide tree (L3046).
     'Long Fall': {
-      line: 3236, tag: 'Jumping', motion: { clip: LONG_FALL },
+      tag: 'Jumping', motion: { clip: LONG_FALL },
       transitions: [
-        tr(698, 'Hard Landing', [GROUNDED, STUNNED], 0.058513165, true),
-        tr(1429, 'Down', [['IsLongFall', 'ifNot'], AIRBORNE], 0.25, true),
-        tr(856, 'Grounded', [GROUNDED, ['IsStunned', 'ifNot']], 0.062423754, false),
+        tr('Hard Landing', [GROUNDED, STUNNED], 0.058513165, true),
+        tr('Down', [['IsLongFall', 'ifNot'], AIRBORNE], 0.25, true),
+        tr('Grounded', [GROUNDED, ['IsStunned', 'ifNot']], 0.062423754, false),
       ],
     },
-    // Its transitions go to the Jump State machine's exit, which returns to Movement.
+    // Its transitions end the jump states and return to Movement.
     Grounded: {
-      line: 377, tag: 'Jumping', motion: tierTree('End'), variant: { when: [['IsGliding', 'if']], clips: GLIDER_CLOSING },
+      tag: 'Jumping', motion: tierTree('End'), variant: { when: [['IsGliding', 'if']], clips: GLIDER_CLOSING },
       transitions: [
-        tr(1379, 'Movement', [['MovementBlend', 'greater', 0.5]], 0.35801375, false, { offset: 0.025870794 }),
-        tr(751, 'Movement', [], 0.39824668, false, { exitTime: 0.4778491 }),
+        tr('Movement', [['MovementBlend', 'greater', 0.5]], 0.35801375, false, { offset: 0.025870794 }),
+        tr('Movement', [], 0.39824668, false, { exitTime: 0.4778491 }),
       ],
     },
     'Hard Landing': {
-      line: 590, tag: 'Jumping', motion: { clip: HARD_LANDING.enter },
-      transitions: [tr(3527, 'Hard Landing Loop', [], 0.15, true, { exitTime: 1 })],
+      tag: 'Jumping', motion: { clip: HARD_LANDING.enter },
+      transitions: [tr('Hard Landing Loop', [], 0.15, true, { exitTime: 1 })],
     },
     'Hard Landing Loop': {
-      line: 4, motion: { clip: HARD_LANDING.loop },
-      transitions: [tr(2174, 'Hard Landing Exit', [['IsStunned', 'ifNot']], 0.05, true, { interruption: SRC })],
+      motion: { clip: HARD_LANDING.loop },
+      transitions: [tr('Hard Landing Exit', [['IsStunned', 'ifNot']], 0.05, true, { interruption: SRC })],
     },
     'Hard Landing Exit': {
-      line: 2147, speed: 1.2, motion: { clip: HARD_LANDING.exit },
-      transitions: [tr(1009, 'Movement', [], 0.14, true, { exitTime: 0.2, interruption: SRC })],
+      speed: 1.2, motion: { clip: HARD_LANDING.exit },
+      transitions: [tr('Movement', [], 0.14, true, { exitTime: 0.2, interruption: SRC })],
     },
-    // 2D cartesian tree (L203): MovementBlend 1..3 by JumpVariation 0 (plain) or 1 (Right), each at 0.7.
+    // 2D cartesian tree: MovementBlend 1..3 by JumpVariation 0 (plain) or 1 (Right), each at 0.7.
     'Double Jump': {
-      line: 773,
       motion: {
         param: 'MovementBlend', param2: 'JumpVariation',
         children: ['Base', 'Jog', 'Run'].flatMap((t, i) =>
           [0, 1].map((v) => ({ clip: DOUBLE_JUMP(v ? `${t}_Right` : t), at: [i + 1, v] as [number, number], timeScale: 0.7 }))),
       },
       transitions: [
-        tr(2856, 'Down', [AIRBORNE], 0.1, true, { exitTime: 0.778, interruption: SRC }),
-        tr(1523, 'Grounded', [GROUNDED], 0.1, true),
+        tr('Down', [AIRBORNE], 0.1, true, { exitTime: 0.778, interruption: SRC }),
+        tr('Grounded', [GROUNDED], 0.1, true),
       ],
     },
     Gliding_Start: {
-      line: 507, motion: { clip: GLIDE_START },
+      motion: { clip: GLIDE_START },
       transitions: [
-        tr(670, 'Hard Landing', [GROUNDED, STUNNED], 0.1, true),
-        tr(457, 'Grounded', [GROUNDED], 0.1, true),
-        // Scene: the End before the loop when both are due on one update (the reference lists the loop first, and its
-        // End interrupts the loop's cross-fade on the next update, so the loop's pose would only flash).
-        tr(1354, 'Gliding_End', [NOT_GLIDING], 0.1, true, { interruption: SRC }),
-        tr(355, 'Gliding Loop', [], 0.05, true, { exitTime: 1, interruption: SRC }),
+        tr('Hard Landing', [GROUNDED, STUNNED], 0.1, true),
+        tr('Grounded', [GROUNDED], 0.1, true),
+        // The End before the loop when both are due on one update: the End would interrupt the loop's cross-fade on
+        // the next update, so the loop's pose would only flash.
+        tr('Gliding_End', [NOT_GLIDING], 0.1, true, { interruption: SRC }),
+        tr('Gliding Loop', [], 0.05, true, { exitTime: 1, interruption: SRC }),
       ],
     },
-    // The 2D directional tree (L1263) on GlideBlend and MovementBlend: the scene picks the forward or the idle pose by
-    // the horizontal speed (index.ts).
+    // The glide pose: the scene picks the forward or the idle pose by the horizontal speed (index.ts).
     'Gliding Loop': {
-      line: 956, motion: { scene: 'glidePose' },
+      motion: { scene: 'glidePose' },
       transitions: [
-        tr(405, 'Grounded', [GROUNDED], 0.1, true),
-        tr(1457, 'Gliding_End', [NOT_GLIDING], 0.1, true, { interruption: SRC }),
+        tr('Grounded', [GROUNDED], 0.1, true),
+        tr('Gliding_End', [NOT_GLIDING], 0.1, true, { interruption: SRC }),
       ],
     },
     Gliding_End: {
-      line: 3474, cycleOffset: 0.05, motion: { clip: GLIDE_END },
+      cycleOffset: 0.05, motion: { clip: GLIDE_END },
       transitions: [
-        tr(1690, 'Down', [], 0.1, true, { exitTime: 1, interruption: SRC }),
-        tr(726, 'Grounded', [GROUNDED], 0.1, true),
+        tr('Down', [], 0.1, true, { exitTime: 1, interruption: SRC }),
+        tr('Grounded', [GROUNDED], 0.1, true),
       ],
     },
   },

@@ -68,7 +68,7 @@ const RUN_CLIP_SPEED = 10;
 const MOVE_BLEND_RATE = 5;
 const FALLING_SPEED = -3; // m/s: below it an ungrounded avatar falls
 const LONG_FALLING_SPEED = -8; // m/s: below it the fall is a long fall
-const EMOTE_MOVE_BLEND = 0.1; // movement blend above which a requested emote waits
+export const EMOTE_MOVE_BLEND = 0.1; // movement blend above which a requested emote waits
 
 // Every GLB clip the scene can drive, pre-loaded by a single AssetLoad entity in main(): otherwise the first use of a
 // clip hitches while its GLB streams in (most visible on the first jump/glide of a session).
@@ -162,8 +162,8 @@ var prevJumpStartHeight: number | undefined = undefined;
 // sound to drops of >0.5m so stepping off a small curb stays silent.
 var maxUngroundedY = -Infinity;
 var wasJumpingOrFalling = false;
-// Mirror of the engine's currently-active scene animation state. Read in
-// initFrame; consulted in selectAnimation to decide when to stop the landing.
+// The engine's report of the scene animation it plays, read in initFrame: the glide pose swap and the footsteps read
+// its playback time.
 var activeAnimationState: AvatarAnimationState | undefined = undefined;
 // Last-observed playback phase of the currently-active scene animation, used to
 // detect when the clip wrapped past a footstep trigger time since the previous
@@ -182,7 +182,7 @@ var jumpVariation = 0;
 var prevGlideProp = GlideProp.CLOSED;
 
 // --- Animation state ---
-// The reference client's base layer (character-animator.ts), advanced once per tick from the parameters above.
+// The avatar animator's base layer (character-animator.ts), advanced once per tick from the parameters above.
 const animator = new Animator(CHARACTER_ANIMATOR);
 
 // --- Glide turn rate ---
@@ -254,6 +254,31 @@ function stepTriggered(prev: number, cur: number, duration: number, triggers: nu
   return false;
 }
 
+// A jump starts when the model counts one more jump since the ground, or launches one it has not counted yet. An air
+// jump counts from its press. A walk off a ledge counts once the coyote window has passed, because from then on the
+// model allows no ground jump, so the fall starts the jump states as a jump does.
+// `seen`: the jumps the animation counted last tick. Returns this tick's count and whether a jump state starts.
+export function countJumps(
+  seen: number, modelJumps: number, isDoubleJump: boolean, jumpStartHeight: number | undefined, newJump: boolean,
+): { jumps: number; trigger: boolean } {
+  const jumps = Math.max(modelJumps, isDoubleJump ? 2 : jumpStartHeight !== undefined ? 1 : 0);
+  return { jumps, trigger: jumps > seen || (newJump && !isDoubleJump) };
+}
+
+// The animation's IsGliding: the glider is open from the start of its opening until it starts closing.
+export function gliderOpen(prop: GlideProp): boolean {
+  return prop === GlideProp.OPENING || prop === GlideProp.GLIDING;
+}
+
+// A requested emote waits until the avatar stands: grounded, out of the jump states (the landing until its blend into
+// locomotion is over, the hard landing's start until its loop has blended in), and with the movement blend at most
+// EMOTE_MOVE_BLEND. A jump state being blended into holds it too, so an emote never cuts into a landing that has
+// started.
+export function emoteWaits(animator: Animator, jumpingOrFalling: boolean, moveBlend: number): boolean {
+  const jumpState = animator.tag === 'Jumping' || CHARACTER_ANIMATOR.states[animator.state].tag === 'Jumping';
+  return jumpState || jumpingOrFalling || moveBlend > EMOTE_MOVE_BLEND;
+}
+
 function selectAnimation(): MovementAnimation {
   const jumpingOrFalling = jumpStartHeight !== undefined || !grounded;
   const newJump = jumpStartHeight !== undefined && prevJumpStartHeight === undefined;
@@ -271,12 +296,9 @@ function selectAnimation(): MovementAnimation {
   const horizontalSpeed = Math.sqrt(velocity.x * velocity.x + velocity.z * velocity.z);
 
   updateAnimationParameters(horizontalSpeed);
-  // A jump starts when the model counts one more since the ground (an air jump from its press; a fall past the grace
-  // window counts as one), or launches one it has not counted yet.
-  const jumps = Math.max(jumpCount(), isDoubleJump ? 2 : jumpStartHeight !== undefined ? 1 : 0);
-  const jumpTrigger = jumps > animJumps || (newJump && !isDoubleJump);
+  const { jumps, trigger: jumpTrigger } = countJumps(animJumps, jumpCount(), isDoubleJump, jumpStartHeight, newJump);
   animJumps = jumps;
-  // step(0.5, random) as the reference client draws it, here only for the air jump that reads it
+  // drawn only for the air jump, the one state that reads it
   if (jumpTrigger && jumps > 1) jumpVariation = Math.random() < 0.5 ? 0 : 1;
   const startGliding = glideProp === GlideProp.OPENING && prevGlideProp !== GlideProp.OPENING;
   prevGlideProp = glideProp;
@@ -292,7 +314,7 @@ function selectAnimation(): MovementAnimation {
     // the model may count the touchdown a frame after this one: landingStuns() tells it before
     IsStunned: stunned() || landingStuns(),
     StartGliding: startGliding,
-    IsGliding: glideProp === GlideProp.OPENING || glideProp === GlideProp.GLIDING,
+    IsGliding: gliderOpen(glideProp),
   }, tickTime);
   const animation: MovementAnimation = pose.scene === 'locomotion' ? locomotionAnimation(horizontalSpeed)
     : pose.scene === 'glidePose' ? glidePoseAnimation(horizontalSpeed, pose.entered)
@@ -301,12 +323,8 @@ function selectAnimation(): MovementAnimation {
     animation.transitionSeconds = pose.blend;
     if (pose.seek !== undefined) animation.playbackTime = pose.seek * CHARACTER_ANIMATOR.clips[animation.src].length;
   }
-  // A requested emote waits, as in the reference client, until the avatar stands: grounded, out of the jump states
-  // (the landing until its blend into locomotion is over, the hard landing's start until its loop has blended in), and
-  // with the movement blend at most EMOTE_MOVE_BLEND. A published animation that is not idle holds the request back.
-  // Scene: a jump state being blended into holds it too (the reference client reads only the state blended from).
-  const jumpState = animator.tag === 'Jumping' || CHARACTER_ANIMATOR.states[animator.state].tag === 'Jumping';
-  if (jumpState || jumpingOrFalling || moveBlend > EMOTE_MOVE_BLEND) animation.idle = false;
+  // A published animation that is not idle holds a requested emote back.
+  if (emoteWaits(animator, jumpingOrFalling, moveBlend)) animation.idle = false;
   const sounds = [
     ...(newJump ? [pickRandom(JUMP_SOUNDS)] : []),
     ...(justLanded && drop > 0.5 ? [pickRandom(LAND_SOUNDS)] : []),
@@ -358,7 +376,7 @@ function locomotionAnimation(horizontalSpeed: number): MovementAnimation {
     };
   }
 
-  // A stop settles straight into idle, as in the reference client, which never plays a stop clip.
+  // A stop settles straight into idle: there is no stop clip.
   return {
     src: LOCOMOTION.idle,
     speed: 1.0,

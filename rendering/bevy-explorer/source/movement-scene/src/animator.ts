@@ -1,9 +1,9 @@
 // A small state-machine animator for a player whose renderer plays one clip at a time: each update it returns the
 // current state's clip and how to cross-fade into it, and the engine blends from the clip before. The state machine is
 // data (AnimatorController: states, Any State transitions, conditions on parameters, durations, exit times, offsets,
-// interruption sources); this file holds only the rules that run it, the reference avatar animator's:
+// interruption sources); this file holds only the rules that run it:
 // - Any State transitions come first and may start whenever their conditions hold; one that may not transition to
-//   itself (noSelf) is skipped when its destination is the current state. Muted transitions are never taken.
+//   itself (noSelf) is skipped when its destination is the current state.
 // - The other candidates are the current state's transitions, in their order. While the cross-fade into the state
 //   still runs at the start of an update, only the transition's interruption source may start one: the destination's
 //   own transitions ('destination'), the source state's ('source', the running transition excepted), or none (absent).
@@ -11,8 +11,8 @@
 // - An exit time is a normalized time of the source state (its length is the clip's over the state's speed, from the
 //   transition offset). Below 1 it recurs every cycle; from 1 it is taken once. It is taken on the update that crosses
 //   it, but not while a cross-fade runs: a crossing inside the cross-fade waits for the next cycle, one after its end
-//   is taken even on the update that ends it (the reference animator updates every rendered frame, so a crossing just
-//   after the end does not wait for a cycle there).
+//   is taken even on the update that ends it (an update can span several rendered frames, so the crossing can fall in
+//   a frame after the end).
 // - A duration is seconds, or a fraction of the source state's length when not fixed; the offset is where the
 //   destination starts (normalized), the destination state's cycle offset added.
 // - A trigger counts for the update it is set in.
@@ -35,8 +35,6 @@ export type Transition = {
   offset?: number;
   interruption?: 'source' | 'destination';
   noSelf?: boolean;
-  mute?: boolean;
-  line: number; // of the transition's entry in the reference animator asset
 };
 
 export type Child = { clip: string; at: number | [number, number]; timeScale?: number };
@@ -50,11 +48,9 @@ export type State = {
   speed?: number;
   cycleOffset?: number;
   tag?: string;
-  // clips the state plays in place of its own when it starts with these conditions holding (a variant of the
-  // scene's that the reference animator does not have)
+  // clips the state plays in place of its own when it starts with these conditions holding
   variant?: { when: Condition[]; clips: Record<string, string> };
   transitions: Transition[];
-  line: number;
 };
 
 export type AnimatorController = {
@@ -126,7 +122,7 @@ export class Animator {
     // exit times count from the end of the cross-fade
     const exitFrom = blending ? this.blend + EPS : before;
     for (const [tr, owner, timed] of candidates) {
-      if (tr.mute || (tr.noSelf && tr.to === this.state)) continue;
+      if (tr.noSelf && tr.to === this.state) continue;
       if (!(tr.when ?? []).every((c) => holds(c, p))) continue;
       if (tr.exitTime !== undefined && (!timed || !this.exitCrossed(tr, exitFrom, t))) continue;
       const ownerLength = owner === this.state ? this.stateLength(p) : this.fromLength;
