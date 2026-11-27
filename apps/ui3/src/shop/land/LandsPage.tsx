@@ -8,8 +8,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useNavigate, useSearchParams } from "react-router";
 
-import { Button, EmptyState } from "@dcl/one-ui";
-import ManaMark from "../../atoms/ManaMark";
+import { Button, EmptyState, ShopManaMark } from "@dcl/one-ui";
 import type { ShopClient } from "@shop/api/shop";
 import { chainLabel, gasTokenSymbol } from "@shop/model/chain";
 import { reasonText } from "@shop/payment/copy";
@@ -507,7 +506,7 @@ export function LandFiltersPanel({ filters, onChange, client }: { filters: LandF
   type RangeKey = "minPrice" | "maxPrice" | "minEstateSize" | "maxEstateSize" | "minDistanceToPlaza" | "maxDistanceToPlaza";
   const field = (key: RangeKey, label: string, placeholder: string, mana = false) => (
     <span className={`shop-lb-input${mana ? " shop-lb-input--mana" : ""}`}>
-      {mana ? <ManaMark size={14} network="ethereum" /> : null}
+      {mana ? <ShopManaMark size={14} network="ethereum" /> : null}
       <input
         type="number"
         min={0}
