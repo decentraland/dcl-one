@@ -6,8 +6,7 @@ import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
 import { lazy, Suspense, useEffect, useMemo, useState, type ReactNode } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router";
 
-import { Button } from "@dcl/one-ui";
-import EmptyState from "../../../components/EmptyState";
+import { Button, EmptyState } from "@dcl/one-ui";
 import BrowseLayout from "../../discovery/components/BrowseLayout";
 import FilterBar, { type SortOption } from "../../discovery/components/FilterBar";
 import { CategoryFilter, subCategoryLabel } from "../../discovery/components/Filters";
@@ -285,7 +284,7 @@ export function BidsSection({ address, bidId = null }: { address: string; bidId?
       ) : query.isError ? (
         <LoadFailure error={query.error} what="Your bids" onRetry={() => void query.refetch()} />
       ) : rows.length === 0 ? (
-        <EmptyState variant="inline" title={tab === "received" ? (showArchived ? "No archived bids" : "No bids on your items yet") : "You have not placed any bids"} data-testid="shop-empty" />
+        <EmptyState appearance="shop" titleAs="h2" variant="inline" title={tab === "received" ? (showArchived ? "No archived bids" : "No bids on your items yet") : "You have not placed any bids"} data-testid="shop-empty" />
       ) : (
         <ul className="mk-list">
           {rows.map((bid) => (

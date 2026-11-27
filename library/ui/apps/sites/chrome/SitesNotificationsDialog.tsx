@@ -7,6 +7,7 @@ import {
   NotificationsReward,
   NotificationsItemAirdropped
 } from '../../../foundations/icons/notifications'
+import { CloseButton } from '../../../components/CloseButton/CloseButton'
 import type { NavBarLinkProps } from '../../../components/NavBar/NavBar'
 import styles from './SitesNotificationsDialog.module.css'
 
@@ -119,17 +120,15 @@ export default function SitesNotificationsDialog({
     >
       <div className={styles.heading}>
         <h2 id={titleId}>Notifications</h2>
-        <button
-          type="button"
+        <CloseButton
+          variant="plain"
           className={styles.close}
           aria-label="Close"
           onClick={() => {
             if (isPopover && openerRef.current?.isConnected) openerRef.current.focus()
             onClose()
           }}
-        >
-          <span aria-hidden="true">×</span>
-        </button>
+        />
       </div>
       {state === 'loading' ? <p role="status">Loading notifications…</p> : null}
       {state === 'error' ? (

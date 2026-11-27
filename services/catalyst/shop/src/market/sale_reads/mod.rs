@@ -393,7 +393,7 @@ async fn require_polygon_cursor(
            AND c.last_block_hash IS NOT NULL AND (c.last_block>p.block_number OR c.last_block_hash=p.block_hash)",
     )
     .bind(indexer)
-    .bind(start_block as i64)
+    .bind(i64::try_from(start_block).map_err(|_| unavailable(source, "the Polygon index start block is out of range"))?)
     .bind((now - chain_walk::READY_WINDOW).naive_utc())
     .bind(now.naive_utc())
     .fetch_optional(&mut *snap.transaction)

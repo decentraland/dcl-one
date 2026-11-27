@@ -2,9 +2,9 @@
 // show search results, a place or an event.
 
 import type { NavmapSnapshot } from '@explorer-core/features/map/navmap'
-import { MaskIcon } from '../../../design/MaskIcon'
 import { PANEL_ART } from '../mapArt'
 import styles from './MapPanel.module.css'
+import { MaskIcon } from '@dcl/one-ui'
 
 export function RightPanel({
   snapshot,

@@ -36,7 +36,10 @@ impl SignedWrite {
 /// a `nonce` (neither is required). The hash of a request
 /// without a nonce is its signer, timestamp and body, so an identical resend
 /// is logged once and never refused.
-#[allow(clippy::too_many_arguments)]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "one argument per audited request field"
+)]
 pub(super) async fn record_signed_request(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     headers: &HeaderMap,

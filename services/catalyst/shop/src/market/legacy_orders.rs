@@ -31,10 +31,12 @@
 //! without it: a replica on an earlier binary folds the nft index during a
 //! rollout and never writes the book. A rewind deletes the orders of the
 //! tokens whose events it deletes and lowers the book's marker, and the
-//! rebuild that follows restores those that remain. The schema's seed
-//! statement fills a database that predates the table with the same rules,
-//! up to what the nft fold had folded (`fold_through`), and records that
-//! block. The marker also names the branch: the hash of the nft walk's
+//! rebuild that follows restores those that remain. A database that
+//! predates the table gets it empty and with no marker: the book does not
+//! stand, readers refuse it, and the first nft fold after the upgrade
+//! refolds it whole in its own transaction (the schema run reads no log: a
+//! whole book is a statement of minutes, past the run's statement limit).
+//! The marker also names the branch: the hash of the nft walk's
 //! recovery point at its block. Every binary's rewind drops the recovery
 //! points past its target, so a branch an earlier binary rewound and
 //! republished at the same height brings another hash. A book whose point no
@@ -42,7 +44,7 @@
 //! next fold deletes the network's orders and refolds them whole, as it does
 //! on a rebuild, so no order of a lost branch survives. A reader serves the
 //! book only while it stands and its marker reaches the published nft fold
-//! ([`caught_up`]).
+//! ([`readiness_on`]).
 
 use sqlx::PgConnection;
 
@@ -181,46 +183,59 @@ pub async fn fold(conn: &mut PgConnection, net: ChainNet, since: i64) -> sqlx::R
     Ok(written)
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum Readiness {
+    Published,
+    Behind,
+    RefoldQueued,
+}
+
 /// Whether `net`'s order book may be read beside the published nft fold on
 /// `conn`'s snapshot: it stands (its marker's recovery point keeps the hash
 /// it recorded) and its marker, written in the fold's transaction, is the
-/// nft cursor's published `folded_block`. False while the book has not
+/// nft cursor's published `folded_block`. It is behind while the book has not
 /// caught up with nft folds that ran without it, when an earlier binary
 /// rewound the walk under it, and between a fold's commit and its
 /// publication: the rows then already hold the next fold, which is not
 /// published yet (the walk publishes only after its head reads, which can
 /// stall). A walk that advanced without folding leaves the book at the
-/// published block, which stays readable. Also false while `net` has a
+/// published block, which stays readable. A separate outcome names a
 /// refold queued (`shop.legacy_order_refold`): a writer changed an order
 /// event the book has already folded, and an earlier binary can republish
 /// the same height without folding it, so the book is read again only once
 /// a fold of this binary has taken it. Another network's queue does not
 /// withhold this one.
-pub async fn caught_up(conn: &mut PgConnection, net: ChainNet) -> sqlx::Result<bool> {
-    let stands: Option<i64> = sqlx::query_scalar(STANDS_SQL)
+pub(super) async fn readiness_on(
+    conn: &mut PgConnection,
+    net: ChainNet,
+) -> sqlx::Result<Readiness> {
+    let through: Option<i64> = sqlx::query_scalar(STANDS_SQL)
         .bind(net.db_name())
         .bind(super::chain_walk::INDEXER_NFT)
         .fetch_optional(&mut *conn)
         .await?;
-    let Some(through) = stands else {
-        return Ok(false);
-    };
+    if through.is_none()
+        || !super::chain_walk::holds_published_fold_on(
+            conn,
+            super::chain_walk::INDEXER_NFT,
+            net,
+            through,
+        )
+        .await?
+    {
+        return Ok(Readiness::Behind);
+    }
     let queued: bool = sqlx::query_scalar(
         "SELECT EXISTS (SELECT 1 FROM shop.legacy_order_refold WHERE network = $1)",
     )
     .bind(net.db_name())
-    .fetch_one(&mut *conn)
+    .fetch_one(conn)
     .await?;
-    if queued {
-        return Ok(false);
-    }
-    super::chain_walk::holds_published_fold_on(
-        conn,
-        super::chain_walk::INDEXER_NFT,
-        net,
-        Some(through),
-    )
-    .await
+    Ok(if queued {
+        Readiness::RefoldQueued
+    } else {
+        Readiness::Published
+    })
 }
 
 /// Deletes `net`'s orders of the tokens (`contracts[i]`, `tokens[i]`) a
@@ -377,7 +392,7 @@ mod tests {
 
     async fn stands(pool: &PgPool) -> bool {
         let mut tx = pool.begin().await.unwrap();
-        let caught = caught_up(&mut tx, ChainNet::Matic).await.unwrap();
+        let caught = readiness_on(&mut tx, ChainNet::Matic).await.unwrap() == Readiness::Published;
         tx.rollback().await.unwrap();
         caught
     }
@@ -389,36 +404,6 @@ mod tests {
         .fetch_optional(pool)
         .await
         .unwrap()
-    }
-
-    /// The schema's two seed statements (the book's marker, then the book).
-    async fn seed(pool: &PgPool) {
-        sqlx::query("DELETE FROM shop.legacy_order")
-            .execute(pool)
-            .await
-            .unwrap();
-        sqlx::query("DELETE FROM shop.legacy_order_cursor")
-            .execute(pool)
-            .await
-            .unwrap();
-        let statements = crate::db::schema_migrate::statements(crate::db::SCHEMA_SQL);
-        for table in ["shop.legacy_order_cursor", "shop.legacy_order"] {
-            let seed = statements
-                .iter()
-                .find(|s| s.starts_with(&format!("INSERT INTO {table} ")))
-                .unwrap_or_else(|| panic!("the schema seeds {table}"));
-            assert_eq!(
-                crate::db::schema_migrate::classify(seed),
-                Some(crate::db::schema_migrate::Step::FollowUp(
-                    crate::db::schema_migrate::Object::Relation(table.into())
-                )),
-                "the seed runs only in the run that creates {table}"
-            );
-            sqlx::raw_sql(sqlx::AssertSqlSafe(seed.clone()))
-                .execute(pool)
-                .await
-                .unwrap();
-        }
     }
 
     async fn fold_matic(pool: &PgPool, since: i64) -> u64 {
@@ -548,83 +533,30 @@ mod tests {
         db.drop().await;
     }
 
+    /// The upgrade: the table arrives empty and with no marker over a log
+    /// the nft fold has folded and published through 100. The book does not
+    /// stand, so no reader takes it; the next fold, an incremental one by
+    /// the nft fold's own marker, refolds it whole and it stands.
     #[tokio::test]
-    async fn the_schema_seed_fills_the_same_book_as_the_fold() {
-        let Some(db) = crate::market::tests::support::OwnDb::create("legacy_orders_seed").await
+    async fn an_upgraded_database_reads_no_book_until_its_first_fold_refolds_it() {
+        let Some(db) = crate::market::tests::support::OwnDb::create("legacy_orders_upgrade").await
         else {
             return;
         };
         seed_log(&db.pool, 100).await;
         nft_cursor(&db.pool, 100, Some(100), Some(100)).await;
-        seed(&db.pool).await;
-        assert_eq!(book(&db.pool).await, expected());
+        assert_eq!(book(&db.pool).await, Vec::new());
+        assert_eq!(book_through(&db.pool).await, None);
+        assert!(!stands(&db.pool).await, "no marker: not read");
+        fold_matic(&db.pool, 100).await;
+        assert_eq!(book(&db.pool).await, expected(), "refolded whole");
         assert_eq!(book_through(&db.pool).await, Some(100));
         assert!(stands(&db.pool).await);
         assert_eq!(
             fold_matic(&db.pool, 100).await,
             0,
-            "an incremental fold over the standing seed changes nothing"
+            "an incremental fold over the standing book changes nothing"
         );
-        fold_matic(&db.pool, -1).await;
-        assert_eq!(
-            book(&db.pool).await,
-            expected(),
-            "a whole refold writes the book the seed wrote"
-        );
-        db.drop().await;
-    }
-
-    /// The upgrade while the walk is ahead of the fold: an order created at
-    /// 90, the nft fold through (and published at) 100, its cancellation
-    /// walked at 101. The seed stops at what the fold folded, so the book
-    /// holds the order open beside ownership at 100; the next fold takes the
-    /// cancellation and moves the book's marker to the walk's block.
-    #[tokio::test]
-    async fn the_seed_stops_at_the_nft_fold_and_the_next_fold_takes_the_rest() {
-        let Some(db) = crate::market::tests::support::OwnDb::create("legacy_orders_ahead").await
-        else {
-            return;
-        };
-        let (m1, _) = markets();
-        order_event(
-            &db.pool,
-            90,
-            "order_created",
-            m1,
-            1,
-            0xa,
-            SELLER,
-            None,
-            Some(100),
-        )
-        .await;
-        order_event(
-            &db.pool,
-            101,
-            "order_cancelled",
-            m1,
-            1,
-            0xa,
-            SELLER,
-            None,
-            None,
-        )
-        .await;
-        nft_cursor(&db.pool, 101, Some(100), Some(100)).await;
-        seed(&db.pool).await;
-        let status = |rows: Vec<Row>| rows.into_iter().map(|r| r.1).collect::<Vec<_>>();
-        assert_eq!(
-            status(book(&db.pool).await),
-            vec!["open"],
-            "not a cancellation the fold has not folded"
-        );
-        assert_eq!(book_through(&db.pool).await, Some(100));
-        let mut tx = db.pool.begin().await.unwrap();
-        assert!(caught_up(&mut tx, ChainNet::Matic).await.unwrap());
-        tx.rollback().await.unwrap();
-        fold_matic(&db.pool, 100).await;
-        assert_eq!(status(book(&db.pool).await), vec!["cancelled"]);
-        assert_eq!(book_through(&db.pool).await, Some(101));
         db.drop().await;
     }
 
@@ -680,7 +612,7 @@ mod tests {
         )
         .await;
         nft_on(&db.pool, 0, 100, Some(100), Some(100)).await;
-        seed(&db.pool).await;
+        fold_matic(&db.pool, -1).await;
         let ids = |rows: Vec<Row>| rows.into_iter().map(|r| (r.0, r.1)).collect::<Vec<_>>();
         assert_eq!(
             ids(book(&db.pool).await),
@@ -732,8 +664,9 @@ mod tests {
         seed_log(&db.pool, 100).await;
         nft_cursor(&db.pool, 100, Some(40), Some(40)).await;
         let mut tx = db.pool.begin().await.unwrap();
-        assert!(
-            !caught_up(&mut tx, ChainNet::Matic).await.unwrap(),
+        assert_eq!(
+            readiness_on(&mut tx, ChainNet::Matic).await.unwrap(),
+            Readiness::Behind,
             "the book (20) trails the published fold (40)"
         );
         tx.rollback().await.unwrap();
@@ -907,6 +840,7 @@ mod tests {
                 crate::market::chain_walk::INDEXER_NFT,
                 ChainNet::Matic,
                 &["nft"],
+                None,
             )
             .await
             .unwrap();

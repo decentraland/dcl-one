@@ -7,6 +7,14 @@
 //! `sql_capture` statement budgets are not carried (no capture hook in v2);
 //! the observable results they guarded are.
 
+#![allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    clippy::cast_possible_wrap,
+    clippy::cast_precision_loss,
+    reason = "test fixtures use small literal values"
+)]
+
 use std::collections::HashMap;
 use std::str::FromStr;
 use std::sync::Arc;
@@ -322,7 +330,10 @@ struct StateCfg {
     admin_token: Option<&'static str>,
     writes_enabled: bool,
     daily_studio_deposit_limit_cents: Option<i64>,
+    studio_grant_max_cents: Option<i64>,
     revenue_events: Option<Arc<dyn super::events::RevenueEvents>>,
+    eip1654: Option<Arc<dyn crate::auth::eip1654::Eip1654Validator>>,
+    require_bound_body: bool,
 }
 
 impl Default for StateCfg {
@@ -337,7 +348,10 @@ impl Default for StateCfg {
             admin_token: None,
             writes_enabled: true,
             daily_studio_deposit_limit_cents: None,
+            studio_grant_max_cents: None,
             revenue_events: None,
+            eip1654: None,
+            require_bound_body: false,
         }
     }
 }
@@ -359,6 +373,8 @@ fn state_with(pool: PgPool, cfg: StateCfg, market: FakeMarket, broker: MockBroke
         require_purchase_intent: cfg.require_purchase_intent,
         admin_token: cfg.admin_token.map(str::to_string),
         daily_studio_deposit_limit_cents: cfg.daily_studio_deposit_limit_cents,
+        studio_grant_max_cents: cfg.studio_grant_max_cents,
+        admin_writes_require_bound_body: cfg.require_bound_body,
         marketplace_markup_bps: 0,
         mana_price_max_staleness_secs: 3600,
         ..RawSettings::default()
@@ -370,7 +386,7 @@ fn state_with(pool: PgPool, cfg: StateCfg, market: FakeMarket, broker: MockBroke
         settings,
         Arc::new(market),
         Arc::new(broker),
-        None,
+        cfg.eip1654,
     ));
     if let Some(events) = cfg.revenue_events {
         state.attach_revenue_events(events);
@@ -382,6 +398,7 @@ fn test_state(pool: PgPool, cfg: StateCfg) -> SharedState {
     state_with(pool, cfg, FakeMarket::default(), MockBroker::configured())
 }
 
+#[derive(Clone)]
 pub(super) struct Wallet {
     signer: PrivateKeySigner,
     pub(super) address: String,
@@ -11739,10 +11756,52 @@ async fn a_balance_stream_retries_a_failed_read() {
 }
 
 /// The operator bearer the studio tests send.
-fn admin_bearer() -> HeaderMap {
+pub(super) fn admin_bearer() -> HeaderMap {
     let mut bearer = HeaderMap::new();
     bearer.insert(header::AUTHORIZATION, "Bearer s3cret".parse().unwrap());
     bearer
+}
+
+/// A studio state whose grants may each give up to `grant_max_cents`
+/// (`None` refuses them), with room for any day's deposits.
+pub(super) fn grant_state(pool: PgPool, grant_max_cents: Option<i64>) -> SharedState {
+    grant_state_with(pool, grant_max_cents, None)
+}
+
+/// [`grant_state`] with `CREDITS_ADMIN_WRITES_REQUIRE_BOUND_BODY` set to `required`.
+pub(super) fn grant_state_bound(
+    pool: PgPool,
+    grant_max_cents: Option<i64>,
+    required: bool,
+) -> SharedState {
+    test_state(
+        pool,
+        StateCfg {
+            admin_token: Some("s3cret"),
+            daily_studio_deposit_limit_cents: Some(i64::MAX / 2),
+            studio_grant_max_cents: grant_max_cents,
+            require_bound_body: required,
+            ..StateCfg::default()
+        },
+    )
+}
+
+/// [`grant_state`] with `eip1654` answering contract wallets.
+pub(super) fn grant_state_with(
+    pool: PgPool,
+    grant_max_cents: Option<i64>,
+    eip1654: Option<Arc<dyn crate::auth::eip1654::Eip1654Validator>>,
+) -> SharedState {
+    test_state(
+        pool,
+        StateCfg {
+            admin_token: Some("s3cret"),
+            daily_studio_deposit_limit_cents: Some(i64::MAX / 2),
+            studio_grant_max_cents: grant_max_cents,
+            eip1654,
+            ..StateCfg::default()
+        },
+    )
 }
 
 fn studio_state(pool: PgPool, daily_limit_cents: Option<i64>) -> SharedState {
@@ -11757,7 +11816,7 @@ fn studio_state(pool: PgPool, daily_limit_cents: Option<i64>) -> SharedState {
 }
 
 /// Creates a studio over the admin route and answers its id.
-async fn create_test_studio(app: &Router, name: &str) -> String {
+pub(super) async fn create_test_studio(app: &Router, name: &str) -> String {
     let (status, _, v) = send(
         app,
         "POST",
@@ -12677,7 +12736,7 @@ fn a_bad_write_admin_address_fails_startup() {
 /// A shared cache within its acceptance TTL after a contract wallet's owner
 /// was removed: the cached answer still accepts; the contract itself (the
 /// fresh path) refuses.
-struct RevokedContract;
+pub(super) struct RevokedContract;
 
 /// The contract asked directly: it refuses.
 struct ContractRefuses;
@@ -12717,7 +12776,7 @@ impl crate::auth::eip1654::Eip1654Validator for ContractRefuses {
 /// A contract wallet's chain for `method path`: SIGNER (the contract), its
 /// EIP-1654 ephemeral delegation, and the request payload the ephemeral key
 /// signs.
-async fn contract_wallet_headers(contract: &str, method: &str, path: &str) -> HeaderMap {
+pub(super) async fn contract_wallet_headers(contract: &str, method: &str, path: &str) -> HeaderMap {
     let ephemeral = PrivateKeySigner::random();
     let timestamp = chrono::Utc::now().timestamp_millis().to_string();
     let expiration =

@@ -481,7 +481,7 @@ fn expiry(value: Option<&Value>) -> chrono::NaiveDateTime {
     .filter(|s| s.is_finite() && *s > 0.0)
     .map(|s| if s > 1e11 { s / 1000.0 } else { s });
     seconds
-        .and_then(|s| chrono::DateTime::from_timestamp(s.floor() as i64, 0))
+        .and_then(|s| chrono::DateTime::from_timestamp(super::casts::saturating_i64(s.floor()), 0))
         .filter(|at| *at > now)
         .unwrap_or(now + chrono::Duration::hours(1))
         .naive_utc()

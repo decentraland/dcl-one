@@ -443,7 +443,7 @@ impl ChainIndex for ThirdPartyRegistryIndex {
                 .rows_affected();
             }
         }
-        Ok(written as usize)
+        Ok(crate::market::casts::to_usize(written))
     }
 
     async fn after_publish(
@@ -600,6 +600,14 @@ pub(super) async fn provider(State(state): State<SharedState>, Path(id): Path<St
 
 #[cfg(test)]
 mod tests {
+    #![allow(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        clippy::cast_possible_wrap,
+        clippy::cast_precision_loss,
+        reason = "test fixtures use small literal values"
+    )]
+
     use super::*;
     use crate::chain_index::{
         logs::{Read, Window},

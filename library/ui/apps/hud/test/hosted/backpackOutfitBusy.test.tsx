@@ -113,6 +113,63 @@ describe('the session while the scene works on a saved outfit', () => {
     })
   })
 
+  describe('when the player asks to see a saved outfit on the avatar', () => {
+    beforeEach(() => {
+      act(() => h.session().backpack.previewOutfit(1))
+    })
+
+    it('should report the slot being loaded before the scene answers', () => {
+      expect(h.session().backpack.outfitEquipping).toBe(1)
+    })
+
+    it('should ask the scene to show that slot without equipping it', () => {
+      expect([h.driver.sentOf('previewOutfit'), h.driver.sentOf('equipOutfit')]).toEqual([[{ kind: 'previewOutfit', slot: 1 }], []])
+    })
+
+    describe('and the scene ends the preview', () => {
+      beforeEach(() => {
+        act(() => h.driver.emit({ kind: 'outfitBusy', slot: 1, action: 'preview', busy: false }))
+      })
+
+      it('should report no slot being loaded', () => {
+        expect(h.session().backpack.outfitEquipping).toBeNull()
+      })
+    })
+
+    describe('and the bridge starts again', () => {
+      beforeEach(() => {
+        act(() => h.driver.emit({ kind: 'bridgeReady' }))
+      })
+
+      it('should report no slot being loaded', () => {
+        expect(h.session().backpack.outfitEquipping).toBeNull()
+      })
+    })
+  })
+
+  describe('when the scene starts showing an outfit on the avatar', () => {
+    beforeEach(() => {
+      act(() => h.driver.emit({ kind: 'outfitBusy', slot: 2, action: 'preview', busy: true }))
+    })
+
+    it('should report the slot being loaded', () => {
+      expect(h.session().backpack.outfitEquipping).toBe(2)
+    })
+  })
+
+  describe('when the Backpack closes', () => {
+    beforeEach(() => {
+      act(() => h.session().backpack.toggle())
+      act(() => h.session().backpack.previewOutfit(0))
+      act(() => h.session().backpack.toggle())
+    })
+
+    it('should put back the look from before the preview, then deploy', () => {
+      const kinds = h.driver.sent.map((m) => m.kind).filter((k) => k === 'restoreOutfitPreview' || k === 'commitAvatar')
+      expect(kinds).toEqual(['restoreOutfitPreview', 'commitAvatar'])
+    })
+  })
+
   describe('when the scene starts putting an outfit on', () => {
     beforeEach(() => {
       act(() => h.driver.emit({ kind: 'outfitBusy', slot: 1, action: 'equip', busy: true }))
@@ -181,6 +238,12 @@ describe('the Saved Outfits slots', () => {
 
     it('should show no saved outfit', () => {
       expect(screen.queryByRole('button', { name: /^Outfit \d+$/ })).toBeNull()
+    })
+
+    it("should fill each slot with the HUD's sweeping placeholder", () => {
+      const placeholders = Array.from(document.querySelectorAll('[class*="outfitSkeleton"]'))
+      expect(placeholders.length).toBeGreaterThan(0)
+      for (const placeholder of placeholders) expect(placeholder.className).toMatch(/sweep/)
     })
   })
 
@@ -279,7 +342,7 @@ describe('the Saved Outfits slots', () => {
     })
   })
 
-  describe('when the scene is putting an outfit on', () => {
+  describe('when the avatar is loading an outfit, shown or equipped', () => {
     const equipButtonOf = (slot: number): HTMLElement =>
       within(screen.getByRole('button', { name: `Outfit ${slot}`, hidden: true }).parentElement!).getByRole('button', { name: 'EQUIP', hidden: true })
 
@@ -298,6 +361,18 @@ describe('the Saved Outfits slots', () => {
 
     it('should not let the player equip another outfit', () => {
       expect(equipButtonOf(2)).toBeDisabled()
+    })
+
+    it('should not let the player show that outfit again', () => {
+      expect(screen.getByRole('button', { name: 'Outfit 1', hidden: true })).toBeDisabled()
+    })
+
+    it('should not let the player delete that outfit', () => {
+      expect(screen.getByRole('button', { name: 'Delete Outfit 1', hidden: true })).toBeDisabled()
+    })
+
+    it('should not let the player show another outfit', () => {
+      expect(screen.getByRole('button', { name: 'Outfit 2', hidden: true })).toBeDisabled()
     })
 
     it('should not let the player delete another outfit', () => {

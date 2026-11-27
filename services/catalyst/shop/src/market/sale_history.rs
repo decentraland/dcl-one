@@ -230,10 +230,13 @@ fn trim_for_times(window: &mut chain_walk::Window, from: u64, requests: usize) -
         .collect();
     let capacity = requests.saturating_mul(crate::chain_index::rpc::HEADER_BATCH);
     if let Some(&block) = missing.iter().nth(capacity) {
-        if block as u64 == from {
+        let Ok(block_u) = u64::try_from(block) else {
+            return false;
+        };
+        if block_u == from {
             return false;
         }
-        window.reached = block as u64 - 1;
+        window.reached = block_u - 1;
         window
             .logs
             .retain(|l| chain_walk::log_position(l).0 < block);
@@ -293,7 +296,7 @@ async fn repair_window(
     (budget, chunk): (usize, &mut usize),
     used: &mut Spent,
 ) -> anyhow::Result<()> {
-    let next = from as i64;
+    let next = i64::try_from(from)?;
     let groups = groups(owner);
     let store = owner.indexer == INDEXER_SALES && owner.net == ChainNet::Matic;
     let log_cost = chain_walk::requests_for(&groups, *chunk);
@@ -313,9 +316,11 @@ async fn repair_window(
     .bind(owner.net.db_name())
     .fetch_one(pool)
     .await?;
-    let to = anchor
-        .min(from.saturating_add(width as u64 - 1))
-        .min(upper.filter(|u| *u >= next).map_or(anchor, |u| u as u64));
+    let to = anchor.min(from.saturating_add(width as u64 - 1)).min(
+        upper
+            .filter(|u| *u >= next)
+            .map_or(anchor, |u| u64::try_from(u).unwrap_or(anchor)),
+    );
     ensure!(from <= to, "sales repair moved beyond its cursor");
     let before = source.header(anchor).await?;
     used.read(before.requests);
@@ -356,7 +361,7 @@ async fn repair_window(
             let times = source.block_times(&window.logs).await?;
             used.read(times.requests);
             block_times = times.value;
-            by_block.retain(|b, _| *b <= window.reached as i64);
+            by_block.retain(|b, _| u64::try_from(*b).map_or(true, |b| b <= window.reached));
         }
         // Keep whole blocks. A hot window can name more issuers than fit in
         // the remaining address chunks. Its suffix belongs to the next pass.
@@ -373,10 +378,11 @@ async fn repair_window(
             });
             let extra = names.iter().filter(|a| !addresses.contains(*a)).count();
             if addresses.len() + extra > max_addresses {
-                if block as u64 == from {
+                let block_u = u64::try_from(block)?;
+                if block_u == from {
                     return Ok(());
                 }
-                window.reached = block as u64 - 1;
+                window.reached = block_u - 1;
                 window
                     .logs
                     .retain(|l| chain_walk::log_position(l).0 < block);
@@ -410,9 +416,9 @@ async fn repair_window(
             };
             used.window(&issues);
             window.reached = issues.reached;
-            window
-                .logs
-                .retain(|log| chain_walk::log_position(log).0 <= issues.reached as i64);
+            window.logs.retain(|log| {
+                u64::try_from(chain_walk::log_position(log).0).map_or(true, |b| b <= issues.reached)
+            });
             window.logs.extend(issues.logs);
             window.logs.sort_by_key(chain_walk::log_position);
         }
@@ -444,6 +450,12 @@ async fn repair_window(
     }
     validate_window(ix, &window.logs, &times.value)?;
     let mut tx = pool.begin().await?;
+    // Book repair and folding share the cursor-first order. Trade-events
+    // recovery locks its event rows before the cursor.
+    let cursor_first = chain_walk::locks_cursor_before_projection_write(owner.indexer);
+    if cursor_first {
+        owner.check(&mut tx).await?;
+    }
     if owner.indexer == INDEXER_NFT {
         // An NFT write also commits its pending collection discoveries. A
         // repair of legacy orders only ever enriches the named order rows.
@@ -495,10 +507,12 @@ async fn repair_window(
           sale_covered_rewinds = reorg_rewinds, sale_dirty_from = least(sale_dirty_from,$7), sale_history_revision = sale_history_revision + 1
          WHERE indexer = $1 AND network = $2 AND last_block = $5 AND last_block_hash = $6
            AND $7 <= CASE WHEN sale_input_version = $3 AND sale_covered_rewinds = reorg_rewinds THEN coalesce(sale_verified_through + 1,start_block) ELSE start_block END")
-        .bind(owner.indexer).bind(owner.net.db_name()).bind(VERSION).bind(window.reached as i64)
-        .bind(anchor as i64).bind(hash).bind(next).execute(&mut *tx).await?.rows_affected();
+        .bind(owner.indexer).bind(owner.net.db_name()).bind(VERSION).bind(i64::try_from(window.reached)?)
+        .bind(i64::try_from(anchor)?).bind(hash).bind(next).execute(&mut *tx).await?.rows_affected();
     ensure!(count == 1, "sales repair coverage changed");
-    owner.check(&mut tx).await?;
+    if !cursor_first {
+        owner.check(&mut tx).await?;
+    }
     tx.commit().await?;
     Ok(())
 }

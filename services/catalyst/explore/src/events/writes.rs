@@ -787,7 +787,10 @@ fn text(raw: &Map<String, Value>, key: &str) -> Option<String> {
 /// limits, the categories, the enrichment, the recurrence, the date checks,
 /// the rejection reset, the re-moderation of changed content, the actors of
 /// the transitions and the community check.
-#[allow(clippy::too_many_arguments)]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the update needs the request parts and the editor"
+)]
 async fn update_event(
     state: &SharedState,
     headers: &HeaderMap,

@@ -155,6 +155,10 @@ fn above_ninety_percent(
 /// CPUs, and `MemTotal`/`MemAvailable` from `/proc/meminfo` (`totalmem`,
 /// `freemem`). A figure that cannot be read counts as not overloaded; off
 /// Linux there is no memory figure.
+#[allow(
+    unsafe_code,
+    reason = "libc load average and CPU count, as Node's `os` module reads them"
+)]
 fn resources_overloaded() -> bool {
     #[cfg(unix)]
     let mut load = [0f64; 3];

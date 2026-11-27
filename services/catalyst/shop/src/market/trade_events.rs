@@ -49,6 +49,7 @@ use chrono::Utc;
 use serde_json::{Value, json};
 use sqlx::{PgConnection, PgPool, Row};
 
+use super::casts::{self, RowCount};
 use super::chain_walk::{self, ChainIndex, ChainNet, INDEXER_TRADE_EVENTS, LogGroup};
 use super::listings::{
     self, OffChainMarketplace, TradeAssetInput, TradeChecksInput, TradeCreation,
@@ -296,7 +297,8 @@ pub enum DecodeError {
 /// One log as a row; `Ok(None)` for a topic this index does not model.
 pub fn decode_log(log: &RpcLog, block_time: i64) -> Result<Option<TradeEvent>, DecodeError> {
     let (block, index) = chain_walk::log_position(log);
-    let (block, index) = (block, index as i32);
+    // A missing index (`log_position`'s `i64::MAX`) reads -1.
+    let index = i32::try_from(index).unwrap_or(-1);
     let Some(topic0) = log.topics.first().map(|t| t.to_ascii_lowercase()) else {
         return Ok(None);
     };
@@ -414,7 +416,7 @@ pub async fn insert_events(
         .bind(chunk.iter().map(|r| r.tx_hash.clone()).collect::<Vec<_>>())
         .execute(&mut *conn)
         .await?;
-        written += r.rows_affected() as usize;
+        written += r.rows_usize();
     }
     Ok(written)
 }
@@ -715,7 +717,9 @@ pub async fn fold(
     upto: i64,
     owner: &chain_walk::Owner,
 ) -> anyhow::Result<u64> {
-    while fill_v3_digests(pool, net, chain_id, owner).await? as i64 >= DIGEST_BATCH {}
+    while i64::try_from(fill_v3_digests(pool, net, chain_id, owner).await?)
+        .map_or(true, |n| n >= DIGEST_BATCH)
+    {}
     let mut tx = pool.begin().await?;
     sqlx::query("SET LOCAL statement_timeout = '1800s'")
         .execute(&mut *tx)
@@ -1003,7 +1007,7 @@ fn unreadable(e: sqlx::Error) -> Response {
 }
 
 /// [`unreadable`]'s source and reason.
-fn unreadable_reason(e: sqlx::Error) -> (Source, String) {
+pub(super) fn unreadable_reason(e: sqlx::Error) -> (Source, String) {
     tracing::warn!(error = %e, "cannot read shop.chain_cursor; treating the trade-events index as not current");
     (
         Source::TradeEventsIndex,
@@ -1291,7 +1295,7 @@ pub(crate) async fn item_meta<'e>(
         .bind(network)
         .bind(contract)
         .bind(item_id)
-        .bind(chain_id as i32)
+        .bind(casts::to_i32(chain_id)?)
         .fetch_optional(conn)
         .await?;
     Ok(row.map(|r| AssetMeta {
@@ -1326,7 +1330,7 @@ pub(crate) async fn item_metas(
     .bind(network)
     .bind(&contracts)
     .bind(&items)
-    .bind(chain_id as i32)
+    .bind(casts::to_i32(chain_id)?)
     .fetch_all(conn)
     .await?;
     Ok(rows
@@ -1528,6 +1532,10 @@ pub async fn get_trade_accepted_event(
             ),
         );
     };
+    #[allow(
+        clippy::cast_possible_truncation,
+        reason = "float-to-int `as` saturates; an out-of-range request timestamp is clamped"
+    )]
     let timestamp = pairs
         .iter()
         .find(|(k, _)| k == "timestamp")

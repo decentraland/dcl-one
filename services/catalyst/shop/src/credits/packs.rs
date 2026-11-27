@@ -161,6 +161,11 @@ impl PackOrder<'_> {
     }
 }
 
+#[allow(clippy::cast_possible_truncation, reason = "d % 10 is below 10")]
+fn digit_char(d: u64) -> char {
+    char::from(b'0' + (d % 10) as u8)
+}
+
 /// `text × factor`, exactly, for PostgreSQL's plain `numeric::text` output
 /// (`[-]digits[.digits]`); `None` for anything else.
 fn multiply_decimal(text: &str, factor: u32) -> Option<String> {
@@ -196,20 +201,14 @@ fn multiply_decimal(text: &str, factor: u32) -> Option<String> {
     head.reverse();
     head.extend(digits);
     let split = head.len() - frac_part.len();
-    let int_digits: String = head[..split]
-        .iter()
-        .map(|d| char::from(b'0' + *d as u8))
-        .collect();
+    let int_digits: String = head[..split].iter().map(|d| digit_char(*d)).collect();
     let int_digits = int_digits.trim_start_matches('0');
     let int_digits = if int_digits.is_empty() {
         "0"
     } else {
         int_digits
     };
-    let frac_digits: String = head[split..]
-        .iter()
-        .map(|d| char::from(b'0' + *d as u8))
-        .collect();
+    let frac_digits: String = head[split..].iter().map(|d| digit_char(*d)).collect();
     let mut out = String::new();
     if negative {
         out.push('-');
@@ -304,7 +303,10 @@ impl Credits {
         .bind(&order.pack.sku)
         .bind(&order.credits)
         .bind(order.amount_cents)
-        .bind(order.quantity as i32)
+        .bind(
+            i32::try_from(order.quantity)
+                .map_err(|_| ApiError::Internal(format!("pack quantity {} is past i32", order.quantity)))?,
+        )
         .bind(order.source)
         .bind(&order.pack.currency)
         .bind(checkout_session_id)

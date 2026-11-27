@@ -1,12 +1,21 @@
+import type { ReactNode } from 'react'
 import { SHOWCASE_SECTIONS } from '../../../apps/hud/design/Showcase'
 import frame from '../frame/Canvas.module.css'
 import { ExampleView } from '../frame/ExampleView'
-import { HUD_GLYPHS, HUD_OVERVIEW } from '../hudPages'
+import { HUD_GLYPHS, HUD_OVERVIEW, hudSections } from '../hudPages'
 import { GlyphGrid } from './GlyphsPage'
 import styles from './HudCanvas.module.css'
 
-/** The Showcase's sections, then the glyphs the gallery draws itself. */
-export const hudCanvasPages = [...SHOWCASE_SECTIONS, { ...HUD_GLYPHS, render: () => <GlyphGrid /> }]
+const renders = new Map<string, () => ReactNode>([
+  ...SHOWCASE_SECTIONS.map((section) => [section.name, section.render] as const),
+  [HUD_GLYPHS.name, () => <GlyphGrid />]
+])
+
+/** The Showcase's sections and the glyphs the gallery draws itself, in the sidebar's order. */
+export const hudCanvasPages = hudSections.map((section) => ({
+  ...section,
+  render: renders.get(section.name)!
+}))
 
 /** One page of the HUD section, or every page on the overview, each on a stage of its own. */
 export function HudCanvas({ search }: { search: string }) {

@@ -240,7 +240,11 @@ impl ContractsComponent {
             .fetch_one(&self.pool)
             .await?;
         let state = NetworkState::from_row(&row)?;
-        match state.owned_verdict(self.chain_id as i64, Purpose::Authorize, Utc::now()) {
+        match state.owned_verdict(
+            crate::types::chain_id_column(self.chain_id)?,
+            Purpose::Authorize,
+            Utc::now(),
+        ) {
             Some(Err(why)) => return Ok(Catalogued::IndexRefused(why)),
             Some(Ok(_)) => {}
             None if state.collections_pass.is_none() => return Ok(Catalogued::MirrorUnready),
@@ -353,6 +357,12 @@ pub async fn addresses_document() -> impl axum::response::IntoResponse {
     )
 }
 
+#[allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    clippy::cast_possible_wrap,
+    reason = "test support"
+)]
 #[cfg(test)]
 mod tests {
     use super::*;
