@@ -251,45 +251,57 @@ Both plans spend most of their time reading every held token: a parallel sequent
 
 `/v1/nfts?sortBy=recently_sold` walks each source's sold tokens newest first in two parts, then reads its unsold tokens by contract and token:
 - the latest sales, through `nft_last_sale_recent_idx`;
-- the legacy `OrderSuccessful` times, through `nft_sold_order_idx`, or `nft_event_successful_order` for LAND.
+- the legacy `OrderSuccessful` times, through `nft_sold_order_idx`, or for LAND from the registries' orders in `nft_event_successful_order`, aggregated per token.
 
-It does so when the page's capped total counts at least 400 candidates per row of the window (`first + skip`), or more than the cap. Otherwise, and for an owner's page, it sorts the candidates whole as before. The fixture is synthetic, measured on a laptop with PostgreSQL 17.6 while other builds and test suites ran, so treat the ranges as an order of magnitude.
+It walks when the page's capped total counts at least 400 candidates per row of the window (`first + skip`), or more than the cap with a window of at most 12,500, and when each sold part of a collection or NAME source fills the window within a budget of half the capped total in index rows. Otherwise, and for an owner's page, it sorts the candidates whole. The fixture is synthetic, measured on a laptop with PostgreSQL 17.6 while other builds and test suites ran, so treat the ranges as an order of magnitude.
 
 The seed is the one in [Latest sale per token](#latest-sale-per-token):
 - 3M Polygon tokens over 100,000 items of 5,000 collections;
 - 200,000 Ethereum v1 tokens, 300,000 names, 90,000 parcels and 2,000 estates;
-- a legacy sold time on 0.2% of the tokens (6,400 held);
+- a legacy sold time on 0.2% of the tokens (6,400 held), the 6,000 on Polygon all emotes;
 - 50,000 Ethereum `OrderSuccessful` events, 30,000 of them on LAND and estates;
 - latest sales on 20% of Polygon tokens (599,574), and 10% of v1 tokens, 5% of names and 2% of LAND (36,933 on Ethereum);
-- three items marked `unique`, with 90 tokens between them.
+- three items marked `unique`, with 90 tokens between them;
+- one more collection of 20,000 tokens, five of them sold, all five older than every other Polygon sale.
 
-Each page is `first=24`, the route's sources, both networks' latest sales admitted unless noted. The page statement was timed in three runs after a warm-up. "Before" is the earlier page: every source whole, its top window by the sort. Both answered the same page in every case. The capped total, which both run, is not in the times; it now runs before the page, on the same snapshot.
+Each page is `first=24`, the route's sources, both networks' latest sales admitted unless noted. Each read was timed in three runs after a warm-up, with the whole sort of the same page run between them, so the walk reads a cache the sort has churned. "Walk" is the statement that reads the floors and the walked page; when the walk misses its window, "Sorted after" is the whole sort that follows it. "Sorted whole" is the page read without walking. Both answered the same page in every case. The capped total, which both run first, is not in the times.
 
-| Page | Capped total | Walks | Before | Now |
-| --- | ---: | --- | ---: | ---: |
-| `category=wearable` | 100,001 | yes | 5.2 to 5.8 s | 34 to 44 ms |
-| no category (collections, names, LAND) | 100,001 | yes | 4.9 to 5.4 s | 149 to 151 ms |
-| `category=wearable`, `skip=200` | 100,001 | yes | 3.9 to 4.6 s | 49 to 58 ms |
-| `category=wearable`, `skip=1000` | 100,001 | yes | 4.7 to 7.3 s | 123 to 169 ms |
-| `category=wearable`, `skip=10000` | 100,001 | yes | 4.9 to 5.4 s | 1.1 to 1.2 s |
-| no category, `skip=10000` | 100,001 | yes | 7.7 to 8.1 s | 1.8 to 2.1 s |
-| `category=wearable`, no latest sales admitted | 100,001 | yes | 2.3 to 2.5 s | 20 to 24 ms |
-| no category, no latest sales admitted | 100,001 | yes | 2.8 to 2.9 s | 98 to 103 ms |
-| `category=wearable&isOnSale=false` | 100,001 | yes | 5.6 to 6.7 s | 98 to 149 ms |
-| `category=emote` | 100,001 | yes | 0.86 to 1.3 s | 0.6 to 0.76 s |
-| `category=ens` | 100,001 | yes | 0.31 to 0.59 s | 2 ms |
-| `isLand=true` | 90,000 | yes | 0.47 to 0.51 s | 0.27 to 0.37 s |
-| `itemRarity=unique` | 90 | no | 0.24 to 0.27 s | the same |
-| one creator | 1,600 | no | 0.11 to 0.13 s | the same |
-| one collection | 600 | no | 8 to 9 ms | the same |
-| `search` | 330 | no | 0.8 to 1.2 s | the same |
-| an owner's 16 tokens | 16 | no (owner) | 7 to 8 ms | the same |
+| Page | Capped total | Walks | Sorted whole | Walk | Sorted after |
+| --- | ---: | --- | ---: | ---: | ---: |
+| `category=wearable` | 100,001 | yes | 1.9 s | 28 to 31 ms | |
+| no category (collections, names, LAND) | 100,001 | yes | 2.4 s | 123 to 142 ms | |
+| `category=wearable`, `skip=200` | 100,001 | yes | 1.8 to 2.0 s | 41 to 46 ms | |
+| `category=wearable`, `skip=1000` | 100,001 | yes | 1.9 to 2.0 s | 67 to 70 ms | |
+| `category=wearable`, `skip=10000` | 100,001 | yes | 2.7 to 2.8 s | 0.60 to 0.62 s | |
+| no category, `skip=10000` | 100,001 | yes | 3.1 to 3.2 s | 0.94 to 0.95 s | |
+| `category=wearable`, `skip=12000` | 100,001 | yes | 2.7 s | 0.66 s | |
+| `category=wearable`, no latest sales admitted | 100,001 | yes | 1.4 s | 17 to 21 ms | |
+| no category, no latest sales admitted | 100,001 | yes | 1.6 to 1.7 s | 70 to 76 ms | |
+| `category=wearable&isOnSale=false` | 100,001 | yes | 2.5 to 2.6 s | 58 ms | |
+| `category=emote` | 100,001 | yes | 0.46 to 0.53 s | 0.39 to 0.41 s | |
+| `category=emote`, `skip=1000` | 100,001 | yes | 0.43 to 0.47 s | 0.49 to 0.50 s | |
+| `category=emote`, `skip=10000` | 100,001 | misses | 0.56 to 0.61 s | 0.41 s | 0.59 to 0.60 s |
+| `category=emote`, `skip=20000` | 100,001 | no (window) | 0.53 to 0.55 s | | the same |
+| `category=wearable`, `skip=50000` | 100,001 | no (window) | 2.8 to 2.9 s | | the same |
+| `category=ens` | 100,001 | yes | 0.17 to 0.18 s | 3 ms | |
+| `isLand=true` | 90,000 | yes | 0.30 to 0.31 s | 137 to 140 ms | |
+| the collection of 20,000 tokens | 20,000 | misses | 48 to 52 ms | 5 ms | 47 to 48 ms |
+| its creator | 20,000 | misses | 79 to 84 ms | 29 to 36 ms | 79 to 82 ms |
+| `itemRarity=unique` | 90 | no | 58 to 61 ms | | the same |
+| one creator | 1,600 | no | 46 to 47 ms | | the same |
+| one collection | 600 | no | 5 ms | | the same |
+| `search` | 330 | no | 0.27 to 0.28 s | | the same |
+| an owner's 16 tokens | 16 | no (owner) | 0 to 3 ms | | the same |
 
-Two choices come from earlier runs of this benchmark.
+Four choices come from earlier runs of this benchmark.
 
-**The latest-sale part looks each sale's token up on its own** (a `LATERAL` lookup by primary key, `OFFSET 0`). Joined on `(network, contract_address, token_id)`, the planner multiplied the three columns' selectivities. It expected 419 Polygon tokens where 179,832 matched the wearable filter. At a window of 1,024 it read the window as most of the matches, so it hash-joined all 3M tokens to the 600,000 sales and sorted them (6.1 s of the part's 6.7 s). At a window of 24 it walked the index. Looked up one sale at a time, the estimate is one token per sale, and the walk holds at any depth. `skip=1000` went from 3.3 to 5.1 s with the join to 123 to 169 ms.
+**The latest-sale part looks each sale's token up on its own** (a `LATERAL` lookup by primary key, `OFFSET 0`). Joined on `(network, contract_address, token_id)`, the planner multiplied the three columns' selectivities. It expected 419 Polygon tokens where 179,832 matched the wearable filter. At a window of 1,024 it read the window as most of the matches, so it hash-joined all 3M tokens to the 600,000 sales and sorted them (6.1 s of the part's 6.7 s). At a window of 24 it walked the index. Looked up one sale at a time, the estimate is one token per sale, and the walk holds at any depth: `skip=1000` took 3.3 to 5.1 s with the join and 123 to 169 ms with the lookup.
 
-**The walk needs enough candidates.** A walk reads about `window × held / candidates` rows of each part before it fills the window; a whole sort reads each candidate once. Walking the 90 `unique` tokens read every latest sale and every unsold token in key order: 13.6 to 14.8 s, against 0.27 s sorted whole. The two meet near `sqrt(window × held)` candidates. That is about 9,000 for 24 rows on 3.5M held tokens, hence 400 per row of the window. A total past the cap always walks.
+**The walk needs enough candidates.** A walk reads about `window × held / candidates` rows of each part before it fills the window; a whole sort reads each candidate once. Walking the 90 `unique` tokens read every latest sale and every unsold token in key order: 13.6 to 14.8 s, against 0.27 s sorted whole. The two meet near `sqrt(window × held)` candidates. That is about 9,000 for 24 rows on 3.5M held tokens, hence 400 per row of the window.
+
+**The walk needs a budget.** The candidate count says nothing about how many of them sold. Walked without a bound, the collection of 20,000 tokens read every Polygon sale before giving up, as the `unique` tokens did. With the budget, a part that does not fill its window within half the capped total in index rows stops the walk, and the page is sorted whole. The deepest windows past the cap don't walk: the emotes are about a tenth of the sales, so at `skip=20000` they need more rows than the budget, and the walk would only add its cost to the sort's.
+
+**The budget is a constant.** Each part's bound is the time of its network's budget-th newest index row, read by its own statement before the page. Written as a subquery inside the page, the bound's value was unknown to the planner. For the Polygon legacy part (6,000 rows, none of them a wearable), it then chose a parallel scan of every item's tokens, 2.5 s, over the partial index. That made `skip=10000` 3.3 s.
 
 The indexes, built `CONCURRENTLY` on this seed:
 - `nft_last_sale_recent_idx` on `(network, sold_at DESC, contract_address, token_id)`: 73 MB over 636,507 rows (the table is 79 MB, its primary key 89 MB), 1.4 s;

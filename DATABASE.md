@@ -2706,12 +2706,20 @@ See the [synthetic fixture measurements](METRICS.md#wallet-activity-transfers) f
 
 A `/v1/nfts` read checks the publication of each network its page can return, on the read's own snapshot (`sale_fold::last_sale_networks`). The publication must be valid and fresh, as the sales reads require, its table must be kept for its generation, and `last_sale_through` must reach its block. For such a network, `sold_at` is the later of the token's latest legacy `OrderSuccessful` (`shop.nft.sold_at`, or the LAND source's subquery) and its row in `shop.nft_last_sale`, joined on the primary key. Elsewhere, including on a testnet node, `sold_at` keeps the legacy order alone. On a walker, a shallow NAME page of any sort reads the index instead of the marketplace graph when the Ethereum latest sales are admitted on the snapshot that supplies its rows, because the graph's `soldAt` counts other sales. Such a page follows the index path's rules: the `first + skip` window, and the trades mirror's readiness on the same snapshot when it filters or sorts on orders. Admission is checked at the request's clock, and the page's values and order use that answer. An ordinary shallow page can read the graph when the names index or the latest sales are not ready. A page filtered or sorted by orders uses the native page even when the latest-sale display is unavailable, and returns the named readiness response if its required listing sources cannot answer.
 
-The recently sold sort reads the capped total first, on the same snapshot. With enough candidates (at least 400 per row of the `first + skip` window, or more than the cap) and no owner, lessor or on-sale-only filter, each source is read in three parts:
+The recently sold sort reads the capped total first, on the same snapshot. With enough candidates and no owner, lessor or on-sale-only filter, each source is walked in three parts. Enough means at least 400 per row of the `first + skip` window, or more than the cap with a window of at most 12,500. The parts:
 - its tokens with a latest sale, walked newest first through `nft_last_sale_recent_idx` (`(network, sold_at DESC, contract_address, token_id)`), each sale looking up its token by primary key;
-- its tokens with a legacy order, walked newest first through `nft_sold_order_idx`, or for LAND through the orders in `nft_event_successful_order`;
+- its tokens with a legacy order, walked newest first through `nft_sold_order_idx`. For LAND, the registries' `OrderSuccessful` events in `nft_event_successful_order` are aggregated per token and sorted, so that part's cost follows LAND's order history rather than the window;
 - its tokens with neither, by contract and token.
 
-A part stops after `first + skip` rows under the filters. A token's `sold_at` is the later of its two times, so the page's window lies within the first two parts' rows (a token in both is kept once) followed by the third's. With fewer candidates, the page reads and sorts them whole from the filters' own indexes, which costs less than walking for matches. `the_recently_sold_lane_pages_like_the_whole_set` compares the walk with the whole sort over every source, every admission and windows that cross into the unsold tokens. See the [synthetic fixture measurements](METRICS.md#recently-sold).
+A part stops after `first + skip` rows under the filters. A token's `sold_at` is the later of its two times, so the page's window lies within the first two parts' rows (a token in both is kept once) followed by the third's.
+
+The walk has a budget: half the capped total, in index rows of each sold part of a collection or NAME source. A first statement reads the time of each network's budget-th newest row in both indexes (`sold_floors`), and the page bounds each part by that time, a constant the planner can estimate. A network with fewer rows than the budget gets no bound. When a bounded part finds fewer than `first + skip` rows above its bound, the page returns no row and is read again, sorted whole. A filter that keeps many tokens but few sold ones, such as a large, rarely sold collection, so reads at most that budget instead of walking every sale of the network. With fewer candidates, the page reads and sorts them whole from the filters' own indexes, which costs less than walking for matches.
+
+The tests:
+- `the_recently_sold_lane_pages_like_the_whole_set` compares the walk with the whole sort over every source, every admission and windows that cross into the unsold tokens. Under small budgets it checks that a walked page is either the whole sort's or empty.
+- `the_walk_reads_a_bounded_prefix` covers the budget's routing.
+
+See the [synthetic fixture measurements](METRICS.md#recently-sold).
 
 ### Badge processor
 
@@ -5412,8 +5420,8 @@ windows below are a lower bound for a table folded in another order.
 | newest, `itemRarity=mythic` (85,000 tokens) | 204 ms | 222 ms | walks `nft_mint_order_idx` |
 | name, `category=wearable` | 380 ms | 78 ms | the items sorted by name, then `nft_item_idx` |
 | name, no category | 0.7 to 1.2 s | 96 ms | the same, and 300,000 names sorted |
-| recently sold, `category=wearable` | 34 to 44 ms | 80 ms | walks the latest sales and the legacy orders newest first ([Recently sold](METRICS.md#recently-sold), measured with `shop.nft_last_sale` on a later seed; 5.2 to 5.8 s sorting every held token) |
-| recently sold, no category | 149 to 151 ms | 94 ms | the same, over four sources (4.9 to 5.4 s before) |
+| recently sold, `category=wearable` | 28 to 31 ms | 80 ms | walks the latest sales and the legacy orders newest first ([Recently sold](METRICS.md#recently-sold), measured with `shop.nft_last_sale` on a later seed, where sorting every held token takes 1.9 s) |
+| recently sold, no category | 123 to 142 ms | 94 ms | the same, over four sources (2.4 s sorted whole) |
 | cheapest or recently listed, `category=wearable` | 736 to 740 ms | 65 ms | the listed part (8,200 listed tokens with their lookups); the unlisted part reads 24 rows |
 | the same, no category | 791 ms | 82 ms | the same, with names and LAND |
 | the same, `category=wearable`, `skip=1,000` | 749 to 755 ms | 65 ms | 1,024 unlisted rows of each source added |
@@ -5475,9 +5483,12 @@ before retrying. Each nft fold maintains the index beside `nft_owner_idx` and
 `nft_item_idx`.
 
 The recently sold walk's indexes come the same way: the object pass builds
-them in the migrate transaction (1.4 s and 1.2 s on the seed in
-[Recently sold](METRICS.md#recently-sold)). To build them outside the release
-window, run beforehand, with the same definitions as `schemas/30_shop.sql`:
+them in the migrate transaction, which blocks writes to `shop.nft` and
+`shop.nft_last_sale` while they build. They took 1.4 s and 1.2 s on the
+3.5M-token seed in [Recently sold](METRICS.md#recently-sold); production's
+build time is unmeasured. Whenever production's `shop.nft` is larger than
+that seed, build them before the release with the same definitions as
+`schemas/30_shop.sql`:
 
 ```sql
 CREATE INDEX CONCURRENTLY nft_last_sale_recent_idx

@@ -555,6 +555,104 @@ fn last_sale_join(on: bool, network: &str, contract: &str, token: &str) -> Strin
     }
 }
 
+/// The oldest time a sold part reads on each network: `None` reads them all.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct Floor {
+    ethereum: Option<i64>,
+    matic: Option<i64>,
+}
+
+impl Floor {
+    fn on(self, network: &str) -> Option<i64> {
+        if network == ChainNet::Matic.db_name() {
+            self.matic
+        } else {
+            self.ethereum
+        }
+    }
+}
+
+/// The floors of a walk's two sold parts ([`sold_floors`]). The default
+/// has none: each part reads its network's rows until it fills its window.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct SoldFloors {
+    sale: Floor,
+    legacy: Floor,
+}
+
+/// The time of the `budget`-th newest row of each index a walk's sold parts
+/// read: `nft_last_sale_recent_idx` where the latest sales are admitted,
+/// `nft_sold_order_idx`, on the networks of the collection and NAME
+/// sources. A network with fewer rows has no floor: its walk reads them all
+/// and so stays within the budget. Read before the page, so that the page
+/// bounds each part by a constant the planner can estimate.
+async fn sold_floors(
+    conn: &mut PgConnection,
+    f: &NftFilters,
+    sources: Sources,
+    last_sale: LastSale,
+    budget: i64,
+) -> Result<SoldFloors, sqlx::Error> {
+    let mut nets = if sources.collections {
+        collection_networks(f)
+    } else {
+        Vec::new()
+    };
+    if sources.names && !nets.contains(&ChainNet::Ethereum) {
+        nets.push(ChainNet::Ethereum);
+    }
+    let offset = budget.max(1) - 1;
+    let floor = |table: &str, held: &str, net: ChainNet| {
+        format!(
+            "(SELECT s.sold_at FROM {table} s WHERE s.network = '{}'{held} \
+              ORDER BY s.sold_at DESC, s.contract_address, s.token_id OFFSET {offset} LIMIT 1)",
+            net.db_name()
+        )
+    };
+    let reads: Vec<(bool, ChainNet, String)> = nets
+        .iter()
+        .flat_map(|&net| {
+            let sale = last_sale
+                .on(net)
+                .then(|| (true, net, floor("shop.nft_last_sale", "", net)));
+            let legacy = (
+                false,
+                net,
+                floor(
+                    "shop.nft",
+                    " AND s.sold_at IS NOT NULL AND s.owner IS NOT NULL",
+                    net,
+                ),
+            );
+            sale.into_iter().chain(std::iter::once(legacy))
+        })
+        .collect();
+    let mut floors = SoldFloors::default();
+    if reads.is_empty() {
+        return Ok(floors);
+    }
+    let columns: Vec<&str> = reads.iter().map(|read| read.2.as_str()).collect();
+    let row = sqlx::query(sqlx::AssertSqlSafe(format!(
+        "SELECT {}",
+        columns.join(", ")
+    )))
+    .fetch_one(conn)
+    .await?;
+    for (i, (sale, net, _)) in reads.iter().enumerate() {
+        let time: Option<i64> = row.try_get(i)?;
+        let floor = if *sale {
+            &mut floors.sale
+        } else {
+            &mut floors.legacy
+        };
+        match net {
+            ChainNet::Ethereum => floor.ethereum = time,
+            ChainNet::Matic => floor.matic = time,
+        }
+    }
+    Ok(floors)
+}
+
 /// The rows of a source that one part of the recently sold lane reads
 /// ([`walks_sold`]). Each part orders its rows by its own time, the
 /// source's `sold_key` column: a token's `sold_at` is the later of its
@@ -566,10 +664,12 @@ enum SoldPart {
     /// Every row of the source; `sold_key` is NULL.
     Whole,
     /// The rows with a latest sale (`shop.nft_last_sale`), keyed by its time.
-    /// Read only where the latest sales are admitted.
-    Sale,
-    /// The rows with a legacy `OrderSuccessful`, keyed by its time.
-    Legacy,
+    /// Read only where the latest sales are admitted. Only the rows from the
+    /// floor's time on, on a network where it has one ([`SoldFloors`]).
+    Sale(Floor),
+    /// The rows with a legacy `OrderSuccessful`, keyed by its time; only
+    /// those from the floor's time on.
+    Legacy(Floor),
     /// The rows with neither, whose `sold_at` is NULL. The sort puts them
     /// last, by contract and token.
     Unsold,
@@ -578,7 +678,7 @@ enum SoldPart {
 impl SoldPart {
     /// Whether the part has rows on a network whose latest sales are `on`.
     fn reads(self, on: bool) -> bool {
-        self != Self::Sale || on
+        !matches!(self, Self::Sale(_)) || on
     }
 
     /// For a `shop.nft` source `n`: the FROM that starts its joins, its
@@ -587,6 +687,11 @@ impl SoldPart {
     /// The `Sale` part reads `ls` first and joins it to its token, so that
     /// `nft_last_sale_recent_idx` gives its rows newest first.
     fn nft(self, on: bool, network: &str) -> (&'static str, &'static str, String) {
+        let bound = |time: &str| {
+            self.floor(network)
+                .map(|floor| format!(" AND {time} >= {floor}"))
+                .unwrap_or_default()
+        };
         match self {
             Self::Whole => ("shop.nft n", "NULL::bigint", String::new()),
             // Each sale looks its token up on its own (`OFFSET 0` keeps the
@@ -594,16 +699,16 @@ impl SoldPart {
             // Joined on the key's three columns it multiplies their
             // selectivities, expects a few hundred tokens where there are a
             // network's sales, and past a shallow window sorts every sale.
-            Self::Sale => (
+            Self::Sale(_) => (
                 "shop.nft_last_sale ls CROSS JOIN LATERAL (SELECT * FROM shop.nft t WHERE t.network = ls.network \
                  AND t.contract_address = ls.contract_address AND t.token_id = ls.token_id OFFSET 0) n",
                 "ls.sold_at",
-                format!(" AND ls.network = '{network}'"),
+                format!(" AND ls.network = '{network}'{}", bound("ls.sold_at")),
             ),
-            Self::Legacy => (
+            Self::Legacy(_) => (
                 "shop.nft n",
                 "n.sold_at",
-                " AND n.sold_at IS NOT NULL".to_string(),
+                format!(" AND n.sold_at IS NOT NULL{}", bound("n.sold_at")),
             ),
             Self::Unsold if on => (
                 "shop.nft n",
@@ -618,10 +723,29 @@ impl SoldPart {
         }
     }
 
+    /// The oldest time the part reads on `network`, when it has a floor
+    /// there.
+    fn floor(self, network: &str) -> Option<i64> {
+        match self {
+            Self::Sale(floor) | Self::Legacy(floor) => floor.on(network),
+            Self::Whole | Self::Unsold => None,
+        }
+    }
+
+    /// A source's key columns: the `Sale` part reads them from the sale, so
+    /// that its ties follow `nft_last_sale_recent_idx` too.
+    fn key_columns(self) -> &'static str {
+        if matches!(self, Self::Sale(_)) {
+            "ls.network, ls.contract_address, ls.token_id"
+        } else {
+            "n.network, n.contract_address, n.token_id"
+        }
+    }
+
     /// The latest sales' join of a source whose part does not read them
     /// first.
     fn last_sale_join(self, on: bool, network: &str, contract: &str, token: &str) -> String {
-        if self == Self::Sale {
+        if matches!(self, Self::Sale(_)) {
             String::new()
         } else {
             last_sale_join(on, network, contract, token)
@@ -630,13 +754,8 @@ impl SoldPart {
 }
 
 /// The collection candidates of one network (a v2 token by its item id, a
-/// v1 token by its collection URN and wearable id).
-fn collection_source(net: ChainNet, catalogue: Catalogue, last_sale: LastSale) -> String {
-    collection_part(net, catalogue, last_sale, SoldPart::Whole)
-}
-
-/// [`collection_source`], the rows of `part`.
-fn collection_part(
+/// v1 token by its collection URN and wearable id), the rows of `part`.
+fn collection_source(
     net: ChainNet,
     catalogue: Catalogue,
     last_sale: LastSale,
@@ -664,7 +783,7 @@ fn collection_part(
         }
     };
     format!(
-        "SELECT n.network, n.contract_address, n.token_id, CASE WHEN i.item_type = 'emote_v1' THEN 'emote' ELSE 'wearable' END AS category, \
+        "SELECT {keys}, CASE WHEN i.item_type = 'emote_v1' THEN 'emote' ELSE 'wearable' END AS category, \
                 n.owner, i.name, COALESCE(i.image, '') AS image, n.minted_at AS created_at, n.transferred_at AS updated_at, {sold}, {key} AS sold_key, \
                 n.issued_id, i.item_id AS item_blockchain_id, i.urn, i.item_type, i.rarity, i.category AS item_category, i.body_shapes, \
                 i.description, i.is_smart, i.emote_loop, i.emote_has_sound, i.emote_has_geometry, i.emote_outcome_type, i.creator, \
@@ -672,23 +791,20 @@ fn collection_part(
                 NULL::int AS distance_to_plaza, NULL::boolean AS adjacent_to_road \
          FROM {from} {item_join} {last} \
          WHERE n.network = '{net}' AND n.owner IS NOT NULL AND n.contract_address <> '{registrar}' {proof}{cond}",
+        keys = part.key_columns(),
         net = net.db_name(),
         sold = sold_at("n.sold_at", on),
         last = part.last_sale_join(on, "n.network", "n.contract_address", "n.token_id"),
     )
 }
 
-fn names_source(catalogue: Catalogue, last_sale: LastSale) -> String {
-    names_part(catalogue, last_sale, SoldPart::Whole)
-}
-
-/// [`names_source`], the rows of `part`.
-fn names_part(catalogue: Catalogue, last_sale: LastSale, part: SoldPart) -> String {
+/// The NAME candidates, the rows of `part`.
+fn names_source(catalogue: Catalogue, last_sale: LastSale, part: SoldPart) -> String {
     let registrar = catalogue.registrar();
     let on = last_sale.on(ChainNet::Ethereum);
     let (from, key, cond) = part.nft(on, "ethereum");
     format!(
-        "SELECT n.network, n.contract_address, n.token_id, 'ens' AS category, n.owner, n.ens_subdomain AS name, '' AS image, \
+        "SELECT {keys}, 'ens' AS category, n.owner, n.ens_subdomain AS name, '' AS image, \
                 n.minted_at AS created_at, n.transferred_at AS updated_at, {sold}, {key} AS sold_key, NULL::numeric AS issued_id, NULL::numeric AS item_blockchain_id, \
                 NULL::text AS urn, NULL::text AS item_type, NULL::text AS rarity, NULL::text AS item_category, NULL::text[] AS body_shapes, \
                 NULL::text AS description, NULL::boolean AS is_smart, NULL::boolean AS emote_loop, NULL::boolean AS emote_has_sound, \
@@ -696,6 +812,7 @@ fn names_part(catalogue: Catalogue, last_sale: LastSale, part: SoldPart) -> Stri
                 NULL::int AS x, NULL::int AS y, NULL::text AS parcel_estate_id, NULL::text AS parcel_estate_name, NULL::int AS estate_size, \
                 NULL::int AS distance_to_plaza, NULL::boolean AS adjacent_to_road \
          FROM {from} {last} WHERE n.network = 'ethereum' AND n.contract_address = '{registrar}' AND n.owner IS NOT NULL{cond}",
+        keys = part.key_columns(),
         sold = sold_at("n.sold_at", on),
         last = part.last_sale_join(on, "n.network", "n.contract_address", "n.token_id"),
     )
@@ -716,20 +833,14 @@ fn reads_geography(f: &NftFilters) -> bool {
 /// `on_sale`, only the tokens of the `on_sale` CTE ([`ON_SALE_CTE`]), named
 /// on the registry's own rows so the per-token lookups below run for the
 /// listed tokens instead of for every parcel.
+///
+/// The rows of `part`. The legacy time is the token's latest
+/// `OrderSuccessful` in `shop.nft_event`. The `Legacy` part aggregates the
+/// registries' orders (`nft_event_successful_order`) and sorts them, so its
+/// cost follows LAND's order history rather than the window; the other parts
+/// look the order up per token. The `Sale` part walks the registries' own
+/// sales. Neither reads a budget: LAND's sales and orders are its own.
 fn land_source(
-    net: Option<LandNetwork>,
-    geography: bool,
-    on_sale: bool,
-    last_sale: LastSale,
-) -> String {
-    land_part(net, geography, on_sale, last_sale, SoldPart::Whole)
-}
-
-/// [`land_source`], the rows of `part`. The legacy time is the token's
-/// latest `OrderSuccessful` in `shop.nft_event`: the `Legacy` part reads
-/// those tokens from that table's orders (`nft_event_successful_order`),
-/// and the other parts look it up per token.
-fn land_part(
     net: Option<LandNetwork>,
     geography: bool,
     on_sale: bool,
@@ -738,8 +849,10 @@ fn land_part(
 ) -> String {
     let on = last_sale.on(ChainNet::Ethereum);
     let (land, estate) = net.map_or(("", ""), |n| (n.land_registry, n.estate_registry));
-    let legacy_of = "(SELECT max(s.block_time) FROM shop.nft_event s WHERE s.network = 'ethereum' AND s.contract_address = tr.token_address \
-                       AND s.token_id = tr.token_id AND s.kind = 'order_successful')";
+    let orders_of = "FROM shop.nft_event s WHERE s.network = 'ethereum' AND s.contract_address = tr.token_address \
+                     AND s.token_id = tr.token_id AND s.kind = 'order_successful'";
+    let legacy_of = format!("(SELECT max(s.block_time) {orders_of})");
+    let legacy_of = legacy_of.as_str();
     let (from, legacy, key, cond) = match part {
         SoldPart::Whole => (
             "land_authz.token_right tr".to_string(),
@@ -747,15 +860,15 @@ fn land_part(
             "NULL::bigint",
             String::new(),
         ),
-        SoldPart::Sale => (
+        SoldPart::Sale(_) => (
             "shop.nft_last_sale ls JOIN land_authz.token_right tr ON tr.token_address = ls.contract_address \
              AND tr.token_id = ls.token_id"
                 .to_string(),
             legacy_of,
             "ls.sold_at",
-            " AND ls.network = 'ethereum'".to_string(),
+            format!(" AND ls.network = 'ethereum' AND ls.contract_address IN ('{land}', '{estate}')"),
         ),
-        SoldPart::Legacy => (
+        SoldPart::Legacy(_) => (
             format!(
                 "(SELECT s.contract_address, s.token_id, max(s.block_time) AS sold_at FROM shop.nft_event s \
                   WHERE s.network = 'ethereum' AND s.kind = 'order_successful' AND s.contract_address IN ('{land}', '{estate}') \
@@ -771,8 +884,7 @@ fn land_part(
             legacy_of,
             "NULL::bigint",
             format!(
-                " AND NOT EXISTS (SELECT 1 FROM shop.nft_event s WHERE s.network = 'ethereum' AND s.contract_address = tr.token_address \
-                   AND s.token_id = tr.token_id AND s.kind = 'order_successful'){}",
+                " AND NOT EXISTS (SELECT 1 {orders_of}){}",
                 if on { " AND ls.network IS NULL" } else { "" }
             ),
         ),
@@ -1133,7 +1245,9 @@ fn sorts_on_orders(f: &NftFilters) -> bool {
 /// ending in `, `. LAND reads `land`'s registries, `now_ms` is the bound
 /// clock, `since` the trades floor (`trades::mirrored_since`). Without
 /// `orders` the order columns are NULL and no order leg is read. Each leg
-/// holds the rows of `part`; a source with no rows in it has no leg.
+/// holds the rows of `part`; a source with no rows in it has no leg. Beside
+/// each leg, the network whose sales and orders its sold parts walk: a
+/// collection's or the NAMEs', `None` for LAND's.
 #[allow(
     clippy::too_many_arguments,
     reason = "one argument per input of the candidate SQL"
@@ -1149,7 +1263,7 @@ fn candidate_legs(
     orders: bool,
     last_sale: LastSale,
     part: SoldPart,
-) -> (String, Vec<String>) {
+) -> (String, Vec<String>, Vec<Option<ChainNet>>) {
     let catalogue = land.map(Catalogue::from_land).unwrap_or(Catalogue::Mainnet);
     let restricted = orders
         && match from {
@@ -1183,21 +1297,28 @@ fn candidate_legs(
                 .filter(|&net| part.reads(last_sale.on(net)))
                 .map(|net| {
                     (
-                        collection_part(net, catalogue, last_sale, part),
+                        collection_source(net, catalogue, last_sale, part),
                         false,
                         other_custody,
+                        Some(net),
                     )
                 }),
         );
     }
     if sources.names && ethereum {
-        parts.push((names_part(catalogue, last_sale, part), false, other_custody));
+        parts.push((
+            names_source(catalogue, last_sale, part),
+            false,
+            other_custody,
+            Some(ChainNet::Ethereum),
+        ));
     }
     if sources.land && ethereum {
         parts.push((
-            land_part(land, reads_geography(f), restricted, last_sale, part),
+            land_source(land, reads_geography(f), restricted, last_sale, part),
             restricted,
             land_custody.as_str(),
+            None,
         ));
     }
     let now_ms_p = b.bind_i64(now_ms);
@@ -1260,9 +1381,10 @@ fn candidate_legs(
             "",
         )
     };
+    let walked = parts.iter().map(|part| part.3).collect();
     let legs = parts
         .into_iter()
-        .map(|(source, listed_only, custody)| {
+        .map(|(source, listed_only, custody, _)| {
             let restrict = if listed_only { "" } else { restrict };
             format!(
                 "SELECT b.*{custody}, lo.order_id, lo.marketplace_address AS order_marketplace, lo.price AS legacy_price, lo.expires_at AS legacy_expires_at, \
@@ -1271,7 +1393,7 @@ fn candidate_legs(
             )
         })
         .collect();
-    (prefix, legs)
+    (prefix, legs, walked)
 }
 
 /// The candidate set with its order legs as `listed` (a CTE chain), for
@@ -1299,7 +1421,7 @@ fn candidates_with(
     orders: bool,
 ) -> String {
     let from = Candidates::ListedWhenFiltered;
-    let (prefix, legs) = candidate_legs(
+    let (prefix, legs, _) = candidate_legs(
         b,
         f,
         sources,
@@ -1319,7 +1441,8 @@ fn candidates_with(
 /// lessor's page reads that owner's tokens (`nft_owner_idx`,
 /// `token_right_owner_idx`) and sorts them, as does a page that keeps only
 /// the listed tokens ([`on_sale_only`]); any other page walks when its
-/// candidates are many ([`enough_to_walk`]).
+/// candidates are many ([`enough_to_walk`]) and its sold parts fill the
+/// window early in their walk ([`walked_page`]).
 fn walks_sold(f: &NftFilters) -> bool {
     matches!(f.sort_by, Some(NftSortBy::RecentlySold))
         && f.owner.is_none()
@@ -1328,19 +1451,28 @@ fn walks_sold(f: &NftFilters) -> bool {
 }
 
 /// Candidates per row of the window (`first + skip`) from which walking the
-/// sold tokens newest first costs less than sorting the candidates. A walk
-/// reads about `window × held / candidates` rows of each part before it
-/// fills the window, a sort reads every candidate. On 3.5M held tokens the
-/// two meet near `sqrt(400 × window × held)`; measured in METRICS.md,
-/// "Recently sold".
-pub const WALK_CANDIDATES_PER_ROW: i64 = 400;
+/// sold tokens newest first may cost less than sorting the candidates. A
+/// walk whose filter keeps a share of the sold tokens like its share of the
+/// held ones reads about `window × held / candidates` rows of each part
+/// before it fills the window; a sort reads every candidate. On 3.5M held
+/// tokens the two meet near `sqrt(window × held)` candidates, about 400 per
+/// row at a window of 24; measured in METRICS.md, "Recently sold".
+const WALK_CANDIDATES_PER_ROW: i64 = 400;
 
 /// Whether `total` candidates (the capped total, [`MAX_WINDOW`] + 1 at
-/// most) are enough for the walk to pay at `window`: past the cap they always
-/// are; a filter that keeps a few hundred tokens (one creator's, a rare
-/// rarity, a search) is sorted whole, from its own index.
+/// most) are enough for the walk to pay at `window`. A filter that keeps a
+/// few hundred tokens (one creator's, a rare rarity, a search) is sorted
+/// whole, from its own index. Past the cap the candidates are enough up to
+/// a window of an eighth of the cap: deeper, a filter that keeps a tenth of
+/// the sales (the emotes) needs more rows than the budget, and the walk is
+/// read in vain before the sort. The share of the candidates that sold is
+/// left to [`walked_page`].
 fn enough_to_walk(total: i64, window: i64) -> bool {
-    total > MAX_WINDOW || total >= WALK_CANDIDATES_PER_ROW.saturating_mul(window)
+    if total > MAX_WINDOW {
+        window <= MAX_WINDOW / 8
+    } else {
+        total >= WALK_CANDIDATES_PER_ROW.saturating_mul(window)
+    }
 }
 
 /// The page SQL and the capped total SQL (their own argument lists).
@@ -1354,11 +1486,13 @@ fn enough_to_walk(total: i64, window: i64) -> bool {
 /// without an order, which that sort puts last by contract and token.
 /// The recently sold sort ([`walks_sold`]) reads each source as its rows
 /// with a latest sale (`nft_last_sale_recent_idx`), its rows with a legacy
-/// order (`nft_sold_order_idx`, LAND's from `nft_event_successful_order`),
-/// each newest first, and its rows with neither by contract and token.
+/// order (`nft_sold_order_idx`, newest first; LAND's aggregated from
+/// `nft_event_successful_order`), and its rows with neither by contract and
+/// token.
 /// The capped total reads the order legs only when a filter needs them.
 /// Measured times are in DATABASE.md, "Wearable and emote ownership
-/// workload".
+/// workload". The page is the whole sort's here; [`list_page_at`] routes
+/// the recently sold sort ([`walked_page`]).
 pub fn build_nfts_query(
     f: &NftFilters,
     sources: Sources,
@@ -1371,32 +1505,37 @@ pub fn build_nfts_query(
     (String, sqlx::postgres::PgArguments),
     (String, sqlx::postgres::PgArguments),
 ) {
-    build_nfts_query_for(
-        f,
-        sources,
-        land,
-        first,
-        skip,
-        now_ms,
-        since,
-        false,
-        LastSale::default(),
-        None,
+    (
+        build_nfts_page(
+            f,
+            sources,
+            land,
+            first,
+            skip,
+            now_ms,
+            since,
+            false,
+            LastSale::default(),
+            None,
+        ),
+        build_nfts_total(f, sources, land, now_ms, since),
     )
 }
 
-/// [`build_nfts_query`], with `large_owner` when the filter's owner holds
-/// more than [`LARGE_OWNER_TOKENS`] tokens: that owner's page sorted by
-/// price or listing time is read in two parts too. `last_sale` names the
-/// networks whose latest sales the page's `sold_at` takes. `candidates` is
-/// the page's capped total when it was read first: the recently sold sort
-/// walks its sources only when the total says there are enough candidates
-/// ([`walks_sold`], [`enough_to_walk`]).
+/// The page of [`build_nfts_query`], with `large_owner` when the filter's
+/// owner holds more than [`LARGE_OWNER_TOKENS`] tokens: that owner's page
+/// sorted by price or listing time is read in two parts too. `last_sale`
+/// names the networks whose latest sales the page's `sold_at` takes. With
+/// `walk`, the recently sold sort walks its sources ([`walks_sold`]),
+/// each sold part of a collection or NAME source from its floor on
+/// ([`sold_floors`]). A part that did not fill its window above its floor
+/// empties the page; any row the page does return is the whole sort's
+/// ([`walked_page`]).
 #[allow(
     clippy::too_many_arguments,
-    reason = "build_nfts_query's inputs, the owner's size, the latest sales and the total"
+    reason = "build_nfts_query's inputs, the owner's size, the latest sales and the routing"
 )]
-pub fn build_nfts_query_for(
+pub fn build_nfts_page(
     f: &NftFilters,
     sources: Sources,
     land: Option<LandNetwork>,
@@ -1406,164 +1545,251 @@ pub fn build_nfts_query_for(
     since: Option<chrono::NaiveDateTime>,
     large_owner: bool,
     last_sale: LastSale,
-    candidates: Option<i64>,
-) -> (
-    (String, sqlx::postgres::PgArguments),
-    (String, sqlx::postgres::PgArguments),
-) {
-    let page = {
-        let mut b = Builder::new();
-        let orders = needs_orders(f);
-        // A sort on an order column without a filter that keeps only the
-        // listed rows: each source is read in two parts, so that no read
-        // prices every candidate (below). An owner's page keeps one part:
-        // its candidates are that owner's tokens, and reading every listed
-        // token first costs a typical owner more than it saves; past
-        // [`LARGE_OWNER_TOKENS`] it saves more than it costs.
-        let split = sorts_on_orders(f) && !on_sale_only(f) && (f.owner.is_none() || large_owner);
-        // The recently sold sort walks its sold rows newest first, in the
-        // parts of [`SoldPart`], and its unsold rows by contract and token.
-        let lane =
-            walks_sold(f) && candidates.is_some_and(|total| enough_to_walk(total, first + skip));
-        let whole = SoldPart::Whole;
-        let (prefix, mut legs) = if split && f.is_on_sale != Some(false) {
-            let from = Candidates::Listed;
-            candidate_legs(
-                &mut b, f, sources, land, now_ms, since, from, orders, last_sale, whole,
-            )
-        } else {
-            let from = Candidates::ListedWhenFiltered;
-            let part = if lane { SoldPart::Sale } else { whole };
-            candidate_legs(
+    walk: Option<SoldFloors>,
+) -> (String, sqlx::postgres::PgArguments) {
+    let mut b = Builder::new();
+    let orders = needs_orders(f);
+    // A sort on an order column without a filter that keeps only the
+    // listed rows: each source is read in two parts, so that no read
+    // prices every candidate (below). An owner's page keeps one part:
+    // its candidates are that owner's tokens, and reading every listed
+    // token first costs a typical owner more than it saves; past
+    // [`LARGE_OWNER_TOKENS`] it saves more than it costs.
+    let split = sorts_on_orders(f) && !on_sale_only(f) && (f.owner.is_none() || large_owner);
+    // The recently sold sort walks its sold rows newest first, in the
+    // parts of [`SoldPart`], and its unsold rows by contract and token.
+    let lane = walk.is_some() && walks_sold(f);
+    let whole = SoldPart::Whole;
+    let (prefix, mut legs, walked) = if split && f.is_on_sale != Some(false) {
+        let from = Candidates::Listed;
+        candidate_legs(
+            &mut b, f, sources, land, now_ms, since, from, orders, last_sale, whole,
+        )
+    } else {
+        let from = Candidates::ListedWhenFiltered;
+        let part = match walk {
+            Some(floors) if lane => SoldPart::Sale(floors.sale),
+            _ => whole,
+        };
+        candidate_legs(
+            &mut b, f, sources, land, now_ms, since, from, orders, last_sale, part,
+        )
+    };
+    let unlisted = if split {
+        let from = Candidates::Every;
+        let (_, every, _) = candidate_legs(
+            &mut b, f, sources, land, now_ms, since, from, orders, last_sale, whole,
+        );
+        if f.is_on_sale == Some(false) {
+            // No listed row passes the filter.
+            legs.clear();
+        }
+        every
+    } else {
+        Vec::new()
+    };
+    let ((legacy, legacy_walked), unsold) = if lane {
+        let from = Candidates::ListedWhenFiltered;
+        let mut part = |part| {
+            let (_, legs, walked) = candidate_legs(
                 &mut b, f, sources, land, now_ms, since, from, orders, last_sale, part,
-            )
-        };
-        let unlisted = if split {
-            let from = Candidates::Every;
-            let (_, every) = candidate_legs(
-                &mut b, f, sources, land, now_ms, since, from, orders, last_sale, whole,
             );
-            if f.is_on_sale == Some(false) {
-                // No listed row passes the filter.
-                legs.clear();
+            (legs, walked)
+        };
+        let floors = walk.unwrap_or_default();
+        (
+            part(SoldPart::Legacy(floors.legacy)),
+            part(SoldPart::Unsold).0,
+        )
+    } else {
+        ((Vec::new(), Vec::new()), Vec::new())
+    };
+    let mut wheres = Vec::new();
+    push_filters(&mut b, f, &mut wheres);
+    let window = b.bind_i64(first + skip);
+    let lim = b.bind_i64(first);
+    let off = b.bind_i64(skip);
+    let where_of = |extra: &str| {
+        let all: Vec<&str> = wheres
+            .iter()
+            .map(String::as_str)
+            .chain((!extra.is_empty()).then_some(extra))
+            .collect();
+        if all.is_empty() {
+            String::new()
+        } else {
+            format!("WHERE {}", all.join(" AND "))
+        }
+    };
+    let sort = sort_sql(f.sort_by);
+    // The rows with an order come from the listed tokens, under the
+    // sort; the rows without one have NULL in both order columns, so
+    // the sort orders them by contract and token, which their source
+    // reads from its key. Each part gives its first `first + skip`
+    // rows, and the two parts hold every candidate of the source.
+    let listed_where = where_of(if split {
+        "c.order_price IS NOT NULL"
+    } else {
+        ""
+    });
+    let unlisted_where = where_of("c.order_price IS NULL");
+    // The walk's sold tops, each a CTE, and whether each part read from a
+    // floor filled its window above it.
+    let mut sold_ctes = String::new();
+    let mut complete = Vec::new();
+    let tops: Vec<String> = if lane {
+        // A sold row is in the `Sale` part, the `Legacy` part or both,
+        // each read newest first by its own time: the first `first +
+        // skip` rows of each hold those of the source by `sold_at`, and
+        // a row read twice is kept once. The unsold rows follow every
+        // sold one, by contract and token. A part read from a floor holds
+        // its first rows when it found `first + skip` of them above it.
+        let floors = walk.unwrap_or_default();
+        let parts = legs
+            .iter()
+            .zip(&walked)
+            .map(|leg| (leg, SoldPart::Sale(floors.sale)))
+            .chain(
+                legacy
+                    .iter()
+                    .zip(&legacy_walked)
+                    .map(|leg| (leg, SoldPart::Legacy(floors.legacy))),
+            );
+        let mut sold = Vec::new();
+        for (k, ((leg, net), part)) in parts.enumerate() {
+            sold_ctes.push_str(&format!(
+                "sold_{k} AS MATERIALIZED (SELECT c.* FROM ({leg}) c {listed_where} \
+                 ORDER BY c.sold_key DESC, c.contract_address, c.token_id LIMIT {window}), "
+            ));
+            sold.push(format!("SELECT * FROM sold_{k}"));
+            if net.and_then(|net| part.floor(net.db_name())).is_some() {
+                complete.push(format!("(SELECT count(*) FROM sold_{k}) >= {window}"));
             }
-            every
-        } else {
-            Vec::new()
-        };
-        let (legacy, unsold) = if lane {
-            let from = Candidates::ListedWhenFiltered;
-            let mut part = |part| {
-                candidate_legs(
-                    &mut b, f, sources, land, now_ms, since, from, orders, last_sale, part,
-                )
-                .1
-            };
-            (part(SoldPart::Legacy), part(SoldPart::Unsold))
-        } else {
-            (Vec::new(), Vec::new())
-        };
-        let mut wheres = Vec::new();
-        push_filters(&mut b, f, &mut wheres);
-        let window = b.bind_i64(first + skip);
-        let lim = b.bind_i64(first);
-        let off = b.bind_i64(skip);
-        let where_of = |extra: &str| {
-            let all: Vec<&str> = wheres
-                .iter()
-                .map(String::as_str)
-                .chain((!extra.is_empty()).then_some(extra))
-                .collect();
-            if all.is_empty() {
-                String::new()
-            } else {
-                format!("WHERE {}", all.join(" AND "))
-            }
-        };
-        let sort = sort_sql(f.sort_by);
-        // The rows with an order come from the listed tokens, under the
-        // sort; the rows without one have NULL in both order columns, so
-        // the sort orders them by contract and token, which their source
-        // reads from its key. Each part gives its first `first + skip`
-        // rows, and the two parts hold every candidate of the source.
-        let listed_where = where_of(if split {
-            "c.order_price IS NOT NULL"
-        } else {
-            ""
-        });
-        let unlisted_where = where_of("c.order_price IS NULL");
-        let tops: Vec<String> = if lane {
-            // A sold row is in the `Sale` part, the `Legacy` part or both,
-            // each read newest first by its own time: the first `first +
-            // skip` rows of each hold those of the source by `sold_at`, and
-            // a row read twice is kept once. The unsold rows follow every
-            // sold one, by contract and token.
-            let sold: Vec<String> = legs
-                .iter()
-                .chain(&legacy)
-                .map(|leg| {
-                    format!(
-                        "(SELECT c.* FROM ({leg}) c {listed_where} \
-                         ORDER BY c.sold_key DESC, c.contract_address, c.token_id LIMIT {window})"
-                    )
-                })
-                .collect();
-            std::iter::once(format!(
-                "(SELECT DISTINCT ON (d.network, d.contract_address, d.token_id) d.* FROM ({}) d)",
-                sold.join(" UNION ALL ")
-            ))
-            .chain(unsold.iter().map(|leg| {
+        }
+        (!sold.is_empty())
+            .then(|| {
                 format!(
-                    "(SELECT c.* FROM ({leg}) c {listed_where} ORDER BY c.contract_address, c.token_id LIMIT {window})"
+                    "(SELECT DISTINCT ON (d.network, d.contract_address, d.token_id) d.* FROM ({}) d)",
+                    sold.join(" UNION ALL ")
+                )
+            })
+            .into_iter()
+        .chain(unsold.iter().map(|leg| {
+            format!(
+                "(SELECT c.* FROM ({leg}) c {listed_where} ORDER BY c.contract_address, c.token_id LIMIT {window})"
+            )
+        }))
+        .collect()
+    } else {
+        legs.iter()
+            .map(|leg| {
+                format!("(SELECT c.* FROM ({leg}) c {listed_where} {sort} LIMIT {window})")
+            })
+            .chain(unlisted.iter().map(|leg| {
+                format!(
+                    "(SELECT c.* FROM ({leg}) c {unlisted_where} ORDER BY c.contract_address, c.token_id LIMIT {window})"
                 )
             }))
             .collect()
-        } else {
-            legs.iter()
-                .map(|leg| {
-                    format!("(SELECT c.* FROM ({leg}) c {listed_where} {sort} LIMIT {window})")
-                })
-                .chain(unlisted.iter().map(|leg| {
-                    format!(
-                        "(SELECT c.* FROM ({leg}) c {unlisted_where} ORDER BY c.contract_address, c.token_id LIMIT {window})"
-                    )
-                }))
-                .collect()
-        };
-        b.push(&format!(
-            "WITH {prefix}listed AS ({}) SELECT c.*, c.token_id::text AS token_text, c.issued_id::text AS issued_text, \
-                    c.item_blockchain_id::text AS item_text, c.legacy_price::text AS legacy_price_text \
-             FROM listed c {sort} LIMIT {lim} OFFSET {off}",
-            tops.join(" UNION ALL ")
-        ));
-        (b.sql, b.args)
     };
-    let total = {
-        let mut b = Builder::new();
-        // A sort on the order legs does not change the count.
-        let ctes = candidates_with(
-            &mut b,
-            f,
-            sources,
-            land,
-            now_ms,
-            since,
-            filters_on_orders(f),
-        );
-        let mut wheres = Vec::new();
-        push_filters(&mut b, f, &mut wheres);
-        let cap = b.bind_i64(MAX_WINDOW + 1);
-        let where_sql = if wheres.is_empty() {
-            String::new()
-        } else {
-            format!("WHERE {}", wheres.join(" AND "))
-        };
-        b.push(&format!(
-            "{ctes} SELECT count(*) FROM (SELECT 1 FROM listed c {where_sql} LIMIT {cap}) capped"
-        ));
-        (b.sql, b.args)
+    // A walk that did not fill a part's window reads no row at all: the
+    // checks run first, in order, and the first that fails stops the read.
+    let listed = if complete.is_empty() {
+        tops.join(" UNION ALL ")
+    } else {
+        format!(
+            "SELECT * FROM ({}) u WHERE {}",
+            tops.join(" UNION ALL "),
+            complete.join(" AND ")
+        )
     };
-    (page, total)
+    b.push(&format!(
+        "WITH {prefix}{sold_ctes}listed AS ({listed}) SELECT c.*, c.token_id::text AS token_text, c.issued_id::text AS issued_text, \
+                c.item_blockchain_id::text AS item_text, c.legacy_price::text AS legacy_price_text \
+         FROM listed c {sort} LIMIT {lim} OFFSET {off}"
+    ));
+    (b.sql, b.args)
+}
+
+/// The capped total of [`build_nfts_query`]: [`MAX_WINDOW`] + 1 at most.
+pub fn build_nfts_total(
+    f: &NftFilters,
+    sources: Sources,
+    land: Option<LandNetwork>,
+    now_ms: i64,
+    since: Option<chrono::NaiveDateTime>,
+) -> (String, sqlx::postgres::PgArguments) {
+    let mut b = Builder::new();
+    // A sort on the order legs does not change the count.
+    let ctes = candidates_with(
+        &mut b,
+        f,
+        sources,
+        land,
+        now_ms,
+        since,
+        filters_on_orders(f),
+    );
+    let mut wheres = Vec::new();
+    push_filters(&mut b, f, &mut wheres);
+    let cap = b.bind_i64(MAX_WINDOW + 1);
+    let where_sql = if wheres.is_empty() {
+        String::new()
+    } else {
+        format!("WHERE {}", wheres.join(" AND "))
+    };
+    b.push(&format!(
+        "{ctes} SELECT count(*) FROM (SELECT 1 FROM listed c {where_sql} LIMIT {cap}) capped"
+    ));
+    (b.sql, b.args)
+}
+
+/// The recently sold page of `total` candidates (capped) read by walking
+/// its sources, when [`walks_sold`] and [`enough_to_walk`] allow it and the
+/// walk fills its window within a budget of half of `total` index rows per
+/// sold part ([`sold_floors`], [`build_nfts_page`]). `None` when the page
+/// must be sorted whole: a filter that keeps many tokens but few sold ones
+/// (a large, rarely sold collection, the emotes deep in the list) then
+/// reads at most that budget before it sorts, instead of walking every sale
+/// of the network.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the page's inputs, its admitted latest sales and its total"
+)]
+async fn walked_page(
+    conn: &mut PgConnection,
+    f: &NftFilters,
+    sources: Sources,
+    land: Option<LandNetwork>,
+    first: i64,
+    skip: i64,
+    now_ms: i64,
+    since: Option<chrono::NaiveDateTime>,
+    last_sale: LastSale,
+    total: i64,
+) -> Result<Option<Vec<sqlx::postgres::PgRow>>, sqlx::Error> {
+    if !walks_sold(f) || !enough_to_walk(total, first + skip) {
+        return Ok(None);
+    }
+    let floors = sold_floors(conn, f, sources, last_sale, total / 2).await?;
+    let (sql, args) = build_nfts_page(
+        f,
+        sources,
+        land,
+        first,
+        skip,
+        now_ms,
+        since,
+        false,
+        last_sale,
+        Some(floors),
+    );
+    let rows = sqlx::query_with(sqlx::AssertSqlSafe(sql), args)
+        .fetch_all(conn)
+        .await?;
+    // Empty: a part missed its window within the budget, or the window is
+    // past every candidate. Either is read again, sorted whole.
+    Ok((!rows.is_empty()).then_some(rows))
 }
 
 fn network_of(s: &str) -> Network {
@@ -1960,32 +2186,39 @@ async fn list_page_at(
         _ => false,
     };
     let since = super::trades::mirrored_since(&state.settings, now.naive_utc());
-    let build = |candidates| {
-        build_nfts_query_for(
-            f,
-            sources,
-            land,
-            first,
-            skip,
-            now_ms,
-            since,
-            large_owner,
-            last_sale,
-            candidates,
-        )
-    };
     // The capped total first: the recently sold page walks its sources only
-    // when it says there are enough candidates. Both read one snapshot.
-    let (_, (total_sql, total_args)) = build(None);
+    // when it says the walk may pay. All read one snapshot.
+    let (total_sql, total_args) = build_nfts_total(f, sources, land, now_ms, since);
     let total: i64 = sqlx::query_scalar_with(sqlx::AssertSqlSafe(total_sql), total_args)
         .fetch_one(&mut *conn)
         .await
         .map_err(index_read_error)?;
-    let ((page_sql, page_args), _) = build(Some(total));
-    let rows = sqlx::query_with(sqlx::AssertSqlSafe(page_sql), page_args)
-        .fetch_all(&mut *conn)
-        .await
-        .map_err(index_read_error)?;
+    let walked = walked_page(
+        conn, f, sources, land, first, skip, now_ms, since, last_sale, total,
+    )
+    .await
+    .map_err(index_read_error)?;
+    let rows = match walked {
+        Some(rows) => rows,
+        None => {
+            let (page_sql, page_args) = build_nfts_page(
+                f,
+                sources,
+                land,
+                first,
+                skip,
+                now_ms,
+                since,
+                large_owner,
+                last_sale,
+                None,
+            );
+            sqlx::query_with(sqlx::AssertSqlSafe(page_sql), page_args)
+                .fetch_all(&mut *conn)
+                .await
+                .map_err(index_read_error)?
+        }
+    };
     let estates: Vec<String> = rows
         .iter()
         .filter(|r| r.get::<String, _>("category") == "estate")
@@ -2186,9 +2419,15 @@ fn describe(r: &sqlx::postgres::PgRow, land_image_base: &str) -> AssetDescriptio
 fn source_of(net: ChainNet, contract: &str, chain_id: i64) -> String {
     let (catalogue, registry) = registry_of(net, contract, chain_id);
     match registry {
-        Some(Registry::Land(land)) => land_source(Some(land), false, false, LastSale::default()),
-        Some(Registry::Names) => names_source(catalogue, LastSale::default()),
-        None => collection_source(net, catalogue, LastSale::default()),
+        Some(Registry::Land(land)) => land_source(
+            Some(land),
+            false,
+            false,
+            LastSale::default(),
+            SoldPart::Whole,
+        ),
+        Some(Registry::Names) => names_source(catalogue, LastSale::default(), SoldPart::Whole),
+        None => collection_source(net, catalogue, LastSale::default(), SoldPart::Whole),
     }
 }
 
@@ -2550,7 +2789,13 @@ mod tests {
     #[test]
     fn land_images_carry_the_configured_base_only() {
         for geography in [false, true] {
-            let sql = land_source(Some(LAND_MAINNET), geography, false, LastSale::default());
+            let sql = land_source(
+                Some(LAND_MAINNET),
+                geography,
+                false,
+                LastSale::default(),
+                SoldPart::Whole,
+            );
             assert!(!sql.contains("://"), "{sql}");
         }
         assert_eq!(
@@ -2612,7 +2857,7 @@ mod tests {
         }
         let rows: Vec<(String, i32, bool)> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
             "SELECT c.token_id::text, c.distance_to_plaza, c.adjacent_to_road FROM ({}) c WHERE c.token_id = ANY($1::numeric[]) ORDER BY c.token_id",
-            land_source(Some(LAND_MAINNET), true, false, LastSale::default())
+            land_source(Some(LAND_MAINNET), true, false, LastSale::default(), SoldPart::Whole)
         )))
         .bind(&ids)
         .fetch_all(&pool)
@@ -2803,7 +3048,7 @@ mod tests {
                     // An owner past LARGE_OWNER_TOKENS: the same page, read
                     // in two parts.
                     let large = if f.owner.is_some() {
-                        let ((page, args), _) = build_nfts_query_for(
+                        let (page, args) = build_nfts_page(
                             &f,
                             s,
                             land,
@@ -2826,7 +3071,7 @@ mod tests {
                     };
                     let mut bld = Builder::new();
                     let every = Candidates::Every;
-                    let (prefix, legs) = candidate_legs(
+                    let (prefix, legs, _) = candidate_legs(
                         &mut bld,
                         &f,
                         s,
@@ -2998,8 +3243,11 @@ mod tests {
 
     #[test]
     fn the_lane_walks_only_many_candidates() {
-        // Past the cap the total says "more than the window can ever reach".
-        assert!(enough_to_walk(MAX_WINDOW + 1, 100_000));
+        // Past the cap the total says "more than the window can ever
+        // reach", up to an eighth of the cap.
+        assert!(enough_to_walk(MAX_WINDOW + 1, 24));
+        assert!(enough_to_walk(MAX_WINDOW + 1, MAX_WINDOW / 8));
+        assert!(!enough_to_walk(MAX_WINDOW + 1, MAX_WINDOW / 8 + 1));
         assert!(!enough_to_walk(MAX_WINDOW, MAX_WINDOW));
         // Otherwise enough per row of the window.
         assert!(enough_to_walk(400 * 24, 24));
@@ -3009,6 +3257,149 @@ mod tests {
             "a rare rarity's tokens are sorted whole"
         );
         assert!(!enough_to_walk(0, 1));
+    }
+
+    #[test]
+    fn the_lane_leaves_owner_lessor_and_listed_pages_whole() {
+        let sold = |q: &[(&str, &str)]| {
+            let mut q = q.to_vec();
+            q.push(("sortBy", "recently_sold"));
+            parse_filters(&pairs(&q)).unwrap()
+        };
+        assert!(walks_sold(&sold(&[])));
+        assert!(walks_sold(&sold(&[("isOnSale", "false")])));
+        let owner = "0x00000000000000000000000000000000000000aa";
+        assert!(!walks_sold(&sold(&[("owner", owner)])), "an owner's page");
+        assert!(
+            !walks_sold(&sold(&[("isOnSale", "true")])),
+            "the listed tokens"
+        );
+        let mut lessor = sold(&[]);
+        lessor.unclaimed_land = vec![format!("{LAND_REGISTRY_MAINNET}-1")];
+        assert!(!walks_sold(&lessor), "a lessor's page");
+        let newest = parse_filters(&pairs(&[("sortBy", "newest")])).unwrap();
+        assert!(!walks_sold(&newest), "another sort");
+    }
+
+    /// A recently sold page walks ([`walked_page`]) only when each sold part
+    /// fills the window within the network's `total / 2` newest index rows, or
+    /// the network holds fewer rows than that: a large collection with no
+    /// sale, or only sales older than the budget, is sorted whole; one whose
+    /// latest sale and legacy order are both recent walks.
+    #[tokio::test]
+    async fn the_walk_reads_a_bounded_prefix() {
+        let Some(own) = crate::market::tests::support::OwnDb::create("nftwalkbudget").await else {
+            return;
+        };
+        let pool = own.pool.clone();
+        let now = 1_700_000_000_000;
+        crate::market::trade_events::tests::publish_cursors_at(
+            &pool,
+            chrono::DateTime::from_timestamp_millis(now).map(|t| t.naive_utc()),
+        )
+        .await;
+        let hot = "0x00000000000000000000000000000000000000d1";
+        let rare = "0x00000000000000000000000000000000000000d2";
+        let a = "0x00000000000000000000000000000000000000aa";
+        sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
+            "INSERT INTO shop.collections (network, contract_address, chain_id, name, creator, owner, urn, is_completed, is_approved, is_editable, created_at, updated_at, reviewed_at, mirrored_at) \
+             SELECT 'matic', x.c, 137, 'Probe ' || x.c, '{a}', '{a}', 'urn:decentraland:matic:collections-v2:' || x.c, true, true, false, 1, 1, 1, now() \
+             FROM (VALUES ('{hot}'), ('{rare}')) x(c); \
+             INSERT INTO shop.items (network, contract_address, item_id, chain_id, item_type, urn, creator, rarity, total_supply, max_supply, available, price, image, name, category, body_shapes, search_is_collection_approved, created_at, updated_at, reviewed_at, mirrored_at) \
+             SELECT 'matic', x.c, 0, 137, 'wearable_v2', 'urn:decentraland:matic:collections-v2:' || x.c || ':0', '{a}', 'rare', 1, 999, 1, 5, 'i', 'Item', 'hat', ARRAY['BaseMale'], true, 1, 1, 1, now() \
+             FROM (VALUES ('{hot}'), ('{rare}')) x(c); \
+             INSERT INTO shop.nft (network, contract_address, token_id, owner, item_id, issued_id, minted_block, minted_at, transferred_block, transferred_log, transferred_at, sold_at) \
+             SELECT 'matic', '{hot}', g, '{a}', 0, g, g, 100 + g, g, 0, 100 + g, 1000 + g FROM generate_series(1, 600) g; \
+             INSERT INTO shop.nft_last_sale (network, contract_address, token_id, sold_at, block_number) \
+             SELECT 'matic', '{hot}', g, 2000 + g, 1 FROM generate_series(1, 600) g; \
+             INSERT INTO shop.nft (network, contract_address, token_id, owner, item_id, issued_id, minted_block, minted_at, transferred_block, transferred_log, transferred_at) \
+             SELECT 'matic', '{rare}', g, '{a}', 0, g, g, 100 + g, g, 0, 100 + g FROM generate_series(1001, 1600) g;"
+        )))
+        .execute(&pool)
+        .await
+        .unwrap();
+        let all = LastSale {
+            ethereum: true,
+            matic: true,
+        };
+        let mut conn = pool.acquire().await.unwrap();
+        let mut walks = async |q: &[(&str, &str)], total: i64| {
+            let mut q = q.to_vec();
+            q.push(("sortBy", "recently_sold"));
+            let f = parse_filters(&pairs(&q)).unwrap();
+            walked_page(
+                &mut conn,
+                &f,
+                sources_for(&f),
+                None,
+                1,
+                0,
+                now,
+                None,
+                all,
+                total,
+            )
+            .await
+            .unwrap()
+            .is_some()
+        };
+        let rare_only = [("contractAddress", rare)];
+        assert!(
+            walks(&[], 500).await,
+            "the newest sales match the whole set"
+        );
+        assert!(
+            !walks(&rare_only, 500).await,
+            "no sale of the collection among the 250 newest"
+        );
+        assert!(
+            walks(&rare_only, 1300).await,
+            "fewer rows than the budget: the walk reads them all"
+        );
+        assert!(!walks(&rare_only, 300).await, "too few candidates to walk");
+        assert!(
+            !walks(&[], 300).await,
+            "too few candidates: sorted whole even where the walk would fill"
+        );
+        assert!(
+            !walks(&rare_only, 1200).await,
+            "a budget of exactly the network's 600 rows still bounds the walk"
+        );
+        assert!(
+            !walks(&[("contractAddress", rare), ("owner", a)], 500).await,
+            "an owner's page is sorted whole"
+        );
+        sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
+            "UPDATE shop.nft SET sold_at = 1 WHERE contract_address = '{rare}' AND token_id = 1001; \
+             INSERT INTO shop.nft_last_sale (network, contract_address, token_id, sold_at, block_number) VALUES ('matic', '{rare}', 1001, 1, 1);"
+        )))
+        .execute(&pool)
+        .await
+        .unwrap();
+        assert!(
+            !walks(&rare_only, 500).await,
+            "sales older than the budget are not reached"
+        );
+        sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
+            "INSERT INTO shop.nft_last_sale (network, contract_address, token_id, sold_at, block_number) VALUES ('matic', '{rare}', 1002, 9000, 1);"
+        )))
+        .execute(&pool)
+        .await
+        .unwrap();
+        assert!(
+            !walks(&rare_only, 500).await,
+            "a recent latest sale, but no recent legacy order"
+        );
+        sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
+            "UPDATE shop.nft SET sold_at = 9000 WHERE contract_address = '{rare}' AND token_id = 1003;"
+        )))
+        .execute(&pool)
+        .await
+        .unwrap();
+        assert!(
+            walks(&rare_only, 500).await,
+            "both parts fill the window early"
+        );
     }
 
     /// `sold_at` takes a token's latest sale from `shop.nft_last_sale` on
@@ -3054,8 +3445,8 @@ mod tests {
                 sources.names = true;
                 sources.land = true;
                 let land = Some(LAND_MAINNET);
-                let ((sql, args), _) =
-                    build_nfts_query_for(&f, sources, land, 10, 0, 1, None, false, last_sale, None);
+                let (sql, args) =
+                    build_nfts_page(&f, sources, land, 10, 0, 1, None, false, last_sale, None);
                 sqlx::query_with(sqlx::AssertSqlSafe(sql), args)
                     .fetch_all(&pool)
                     .await
@@ -3220,6 +3611,7 @@ mod tests {
             LastSale::default(),
         ];
         let (mut walked, mut compared) = (0, 0);
+        let (mut bounded_complete, mut bounded_short) = (0, 0);
         for filters in [
             vec![],
             vec![("category", "wearable")],
@@ -3255,18 +3647,11 @@ mod tests {
                     (24, 0),
                     (200, 0),
                 ] {
-                    // Many candidates: the lane reads the page wherever it may.
-                    let ((page, args), _) = build_nfts_query_for(
-                        &f,
-                        s,
-                        land,
-                        first,
-                        skip,
-                        now,
-                        None,
-                        false,
-                        last_sale,
-                        Some(i64::MAX),
+                    // Routed to the walk with no limit to its budget: the lane
+                    // reads the page wherever it may.
+                    let unbounded = Some(SoldFloors::default());
+                    let (page, args) = build_nfts_page(
+                        &f, s, land, first, skip, now, None, false, last_sale, unbounded,
                     );
                     walked += usize::from(page.contains("DISTINCT ON (d.network"));
                     assert_eq!(
@@ -3274,19 +3659,17 @@ mod tests {
                         walks_sold(&f),
                         "{q:?}: the lane reads the page"
                     );
-                    // Few candidates, or none counted: the whole set is sorted.
-                    for few in [None, Some(WALK_CANDIDATES_PER_ROW * (first + skip) - 1)] {
-                        let ((whole, _), _) = build_nfts_query_for(
-                            &f, s, land, first, skip, now, None, false, last_sale, few,
-                        );
-                        assert!(!whole.contains("DISTINCT ON (d.network"), "{q:?} {few:?}");
-                    }
+                    // Not routed to it: the whole set is sorted.
+                    let (whole, _) = build_nfts_page(
+                        &f, s, land, first, skip, now, None, false, last_sale, None,
+                    );
+                    assert!(!whole.contains("DISTINCT ON (d.network"), "{q:?}");
                     let got = sqlx::query_with(sqlx::AssertSqlSafe(page), args)
                         .fetch_all(&pool)
                         .await
                         .unwrap();
                     let mut bld = Builder::new();
-                    let (prefix, legs) = candidate_legs(
+                    let (prefix, legs, _) = candidate_legs(
                         &mut bld,
                         &f,
                         s,
@@ -3323,11 +3706,51 @@ mod tests {
                         "{q:?} {last_sale:?} first={first} skip={skip}"
                     );
                     compared += usize::from(!want.is_empty());
+                    if walks_sold(&f) {
+                        // A small budget: a page the walk returns is the
+                        // whole sort's.
+                        for budget in [3, 12, 40] {
+                            let mut conn = pool.acquire().await.unwrap();
+                            let floors = sold_floors(&mut conn, &f, s, last_sale, budget)
+                                .await
+                                .unwrap();
+                            let (page, args) = build_nfts_page(
+                                &f,
+                                s,
+                                land,
+                                first,
+                                skip,
+                                now,
+                                None,
+                                false,
+                                last_sale,
+                                Some(floors),
+                            );
+                            let bounded = sqlx::query_with(sqlx::AssertSqlSafe(page), args)
+                                .fetch_all(&pool)
+                                .await
+                                .unwrap();
+                            if !bounded.is_empty() {
+                                assert_eq!(
+                                    rows(&bounded),
+                                    rows(&want),
+                                    "{q:?} {last_sale:?} first={first} skip={skip} budget={budget}"
+                                );
+                                bounded_complete += 1;
+                            } else if !want.is_empty() {
+                                bounded_short += 1;
+                            }
+                        }
+                    }
                 }
             }
         }
         assert!(walked > 300, "the lane read the pages: {walked}");
         assert!(compared > 300, "the cases read rows: {compared}");
+        assert!(
+            bounded_complete > 100 && bounded_short > 100,
+            "small budgets both fill and miss windows: {bounded_complete} {bounded_short}"
+        );
         // The fixture holds what the lane must order: sold rows of every
         // source on both networks, ties, and unsold rows past them.
         let f = parse_filters(&pairs(&[("sortBy", "recently_sold")])).unwrap();
@@ -3340,8 +3763,18 @@ mod tests {
             ethereum: true,
             matic: true,
         };
-        let ((page, args), _) =
-            build_nfts_query_for(&f, s, land, 200, 0, now, None, false, all, Some(i64::MAX));
+        let (page, args) = build_nfts_page(
+            &f,
+            s,
+            land,
+            200,
+            0,
+            now,
+            None,
+            false,
+            all,
+            Some(SoldFloors::default()),
+        );
         let got = rows(
             &sqlx::query_with(sqlx::AssertSqlSafe(page), args)
                 .fetch_all(&pool)
