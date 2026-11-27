@@ -17,8 +17,8 @@ use uuid::Uuid;
 use super::support::{
     FakeCommittee, committee_index, on_chain, scratch_pool, temp_storage, wallet,
 };
-use crate::curation::forum::fake::{API_USERNAME, FakeForum};
 use crate::shared::signed_fetch::test_support::signed_headers_by;
+use crate::tests::forum_fake::{API_USERNAME, FakeForum};
 
 const OWNER_KEY: &str = super::support::OWNER_KEY;
 const STRANGER_KEY: &str = "0x2222222222222222222222222222222222222222222222222222222222222222";
@@ -266,7 +266,7 @@ async fn a_published_collection_gets_one_topic_in_the_nodes_words() {
     let link = format!(
         "{}/t/{}/1001",
         e.origin,
-        crate::curation::forum::fake::slug(&title)
+        crate::tests::forum_fake::slug(&title)
     );
     assert_eq!(body, json!({ "ok": true, "data": link }));
     assert_eq!(

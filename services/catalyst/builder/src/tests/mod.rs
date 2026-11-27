@@ -10,6 +10,7 @@ mod cors;
 mod curations;
 mod draft_persistence;
 mod forum;
+pub(crate) mod forum_fake;
 mod item_files;
 mod item_videos;
 mod items;
