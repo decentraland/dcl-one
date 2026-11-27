@@ -724,9 +724,7 @@ pub fn read_only_pool(database_url: &str) -> Result<PgPool, String> {
     let opts = sqlx::postgres::PgConnectOptions::from_str(database_url)
         .map_err(|_| "DATABASE_URL is not a PostgreSQL connection URL".to_string())?
         .options([("default_transaction_read_only", "on")]);
-    if matches!(opts.get_ssl_mode(), sqlx::postgres::PgSslMode::VerifyCa) {
-        return Err("sslmode=verify-ca is not supported".to_string());
-    }
+    crate::db::check_tls(database_url, &opts).map_err(|e| e.to_string())?;
     Ok(sqlx::postgres::PgPoolOptions::new()
         .max_connections(1)
         .acquire_timeout(std::time::Duration::from_secs(10))

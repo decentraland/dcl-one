@@ -67,6 +67,14 @@ pub enum PoolError {
     #[error("sslmode=verify-ca is not supported")]
     VerifyCaUnsupported,
 
+    #[error(
+        "sslrootcert or PGSSLROOTCERT is set, but only sslmode=verify-full checks the server certificate"
+    )]
+    RootCertIgnored,
+
+    #[error("PGSSLMODE={0:?} is not a recognised sslmode")]
+    UnknownPgSslMode(String),
+
     #[error(transparent)]
     Connect(sqlx::Error),
 }
@@ -140,20 +148,7 @@ pub async fn connect_pool(url: &str, settings: &PoolSettings) -> Result<PgPool, 
         .parse::<PgConnectOptions>()
         .map_err(PoolError::InvalidUrl)?
         .options(options);
-    // sqlx's verify-ca skips the hostname check and needs a process-wide rustls provider.
-    let sslmode = connect_opts.get_ssl_mode();
-    if matches!(sslmode, PgSslMode::VerifyCa) {
-        return Err(PoolError::VerifyCaUnsupported);
-    }
-    tracing::info!(?sslmode, "connecting the PostgreSQL pool");
-    if !matches!(sslmode, PgSslMode::VerifyFull)
-        && (std::env::var_os("PGSSLROOTCERT").is_some() || url_names_root_cert(url))
-    {
-        tracing::warn!(
-            ?sslmode,
-            "sslrootcert is ignored: only sslmode=verify-full checks the server certificate"
-        );
-    }
+    check_tls(url, &connect_opts)?;
 
     let mut pool_opts = PgPoolOptions::new()
         .max_connections(settings.max_connections)
@@ -190,6 +185,32 @@ pub async fn connect_pool(url: &str, settings: &PoolSettings) -> Result<PgPool, 
         .connect_with(connect_opts)
         .await
         .map_err(PoolError::Connect)
+}
+
+/// Refuses the TLS settings sqlx would silently weaken, then logs the mode in effect.
+pub fn check_tls(url: &str, opts: &PgConnectOptions) -> Result<(), PoolError> {
+    if let Ok(mode) = std::env::var("PGSSLMODE")
+        && pgsslmode_is_unknown(&mode)
+    {
+        return Err(PoolError::UnknownPgSslMode(mode));
+    }
+    let sslmode = opts.get_ssl_mode();
+    match sslmode {
+        // sqlx's verify-ca skips the hostname check and needs a process-wide rustls provider.
+        PgSslMode::VerifyCa => return Err(PoolError::VerifyCaUnsupported),
+        PgSslMode::Prefer | PgSslMode::Require
+            if std::env::var("PGSSLROOTCERT").is_ok() || url_names_root_cert(url) =>
+        {
+            return Err(PoolError::RootCertIgnored);
+        }
+        _ => {}
+    }
+    tracing::info!(?sslmode, "connecting to PostgreSQL");
+    Ok(())
+}
+
+fn pgsslmode_is_unknown(mode: &str) -> bool {
+    !mode.is_empty() && mode.parse::<PgSslMode>().is_err()
 }
 
 fn url_names_root_cert(url: &str) -> bool {
@@ -954,6 +975,28 @@ mod tests {
         }
         assert!(!url_names_root_cert("postgres://u@h/db?sslmode=require"));
         assert!(!url_names_root_cert("postgres://u@h/db"));
+    }
+
+    #[test]
+    fn check_tls_refuses_a_root_cert_that_tls_would_ignore() {
+        let check = |mode: &str| {
+            let url = format!("postgres://u@h/db?sslmode={mode}&sslrootcert=/ca.pem");
+            check_tls(&url, &url.parse::<PgConnectOptions>().unwrap())
+        };
+        for mode in ["prefer", "require"] {
+            let err = check(mode).unwrap_err();
+            assert!(matches!(err, PoolError::RootCertIgnored), "{mode}: {err}");
+        }
+        for mode in ["verify-full", "disable", "allow"] {
+            check(mode).unwrap();
+        }
+    }
+
+    #[test]
+    fn pgsslmode_is_unknown_only_for_unrecognised_values() {
+        assert!(pgsslmode_is_unknown("required"));
+        assert!(!pgsslmode_is_unknown("require"));
+        assert!(!pgsslmode_is_unknown(""));
     }
 
     #[tokio::test]

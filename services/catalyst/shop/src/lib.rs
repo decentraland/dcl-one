@@ -46,7 +46,6 @@ pub(crate) use catalyst_chain_index as chain_index;
 pub(crate) use catalyst_comms as comms;
 pub(crate) use catalyst_config::config;
 pub(crate) use catalyst_content as content;
-#[cfg(test)]
 pub(crate) use catalyst_db as db;
 pub(crate) use catalyst_fed as fed;
 pub(crate) use catalyst_jobs as jobs;
