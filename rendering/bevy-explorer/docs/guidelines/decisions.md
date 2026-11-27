@@ -630,7 +630,8 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   "world") beside the scene restrictions, so a ban reads apart from a scene that turns nearby
   voice off. The mark follows the current scene: it goes on a neighbouring parcel, returns with
   the retained refusal and leaves on a fresh admission. Once the world shows, a notice says why
-  for 10 s, once per ban, as unity-explorer's tooltip does (`SHOW_BANNED_TOOLTIP_DELAY_SEC`).
+  for 10 s each time the mark appears, as unity-explorer's tooltip does
+  (`SHOW_BANNED_TOOLTIP_DELAY_SEC`), and not again while it stands.
   Differences: the notice is a toast, since the minimap here can be hidden and unity-explorer's
   cannot; its text says the scene stays unloaded, which unity-explorer's does not ("You will not
   be visible to others in this scene or be able to participate in the Nearby chat"); a world ban

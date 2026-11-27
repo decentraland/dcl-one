@@ -358,8 +358,9 @@ Expectations:
   scope is set, beside the `Scene restrictions` image when the scene also turns something off. Its
   tooltip is the notice below. A scene that only turns nearby voice off shows no ban mark.
 - **Notice**: once the world shows, a toast says why for 10 s, whether or not the minimap is
-  shown: once per ban, not again while it stands (scenes loading nearby raise the loader). An
-  admission, a move to another scene or a sign-out takes the mark and the notice down.
+  shown: each time the mark appears, not again while it stands (scenes loading nearby raise the
+  loader). An admission, a move to another scene or a sign-out takes the mark and the notice
+  down.
 - Tests: `library/ui/apps/hud/test/hosted/sceneBan.test.tsx`,
   `library/ui/apps/hud/test/hosted/minimap.render.test.tsx`, `src/test/bridgeSceneBan.test.ts`.
 

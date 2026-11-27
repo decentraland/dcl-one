@@ -78,8 +78,9 @@ scenario(
     const neighbour = neighbours[0]
     assert.ok(neighbour, 'the scene has a neighbouring parcel')
     await explorer.teleport(...EMPTY_PARCEL)
-    // the mark is in the minimap's header, which the rail's Map button shows
+    // the mark is in the minimap's header, which the rail's Map button shows; no ban, no mark
     const minimapWasShown = await showMinimap(explorer, true)
+    await explorer.hud.waitHidden(BAN_MARK, ROOM_TIMEOUT_MS)
     stub.sceneAdapter(refusal(403, 'User is banned from this scene'))
     try {
       await explorer.teleport(...SCENE_PARCEL)
@@ -104,7 +105,6 @@ scenario(
       })
       assert.ok((await explorer.banBlockState()).sceneAdmission.retainedRefusals.some((refusal) =>
         refusal.sceneId === state.sceneAdmission.sceneId && refusal.scope === 'scene'))
-      await explorer.hud.waitHidden(BAN_MARK, ROOM_TIMEOUT_MS)
       await explorer.teleport(...SCENE_PARCEL)
       await until(() => explorer.banBlockState(), (s) =>
         s.sceneAdmission.state === 'refused' && s.sceneAdmission.sceneId === state.sceneAdmission.sceneId, {
@@ -127,8 +127,8 @@ scenario(
       })
     } finally {
       stub.sceneAdapter(refusal(503, 'stub has no adapter', { 'retry-after': '1' }))
-      await showMinimap(explorer, minimapWasShown)
     }
+    await showMinimap(explorer, minimapWasShown)
   },
   native ? { session: { nativeArgs: ['--comms-gatekeeper', `http://127.0.0.1:${STUB_PORT}`] } } : { todo: 'web: a loopback service override stops at the launch gate' }
 )
