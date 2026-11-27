@@ -69,7 +69,7 @@ pub const FAMILIES: &[(&str, &str, &str)] = &[
     (
         "create",
         "Creator plane",
-        "Camera-reel moderation, builder curation, the asset-bundle registry",
+        "Camera-reel moderation, the asset-bundle registry",
     ),
 ];
 
