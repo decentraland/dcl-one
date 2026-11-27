@@ -526,6 +526,13 @@ Movement:
   `--timeout-seconds` (10 s after the duration by default, at most 300) runs out first,
   `settled` is `false` and `warning` names what it waited for. A move another move replaces
   fails with `move cancelled` either way.
+- `/camera_mode first_person|third_person|drone`: sets the player's zoom level, as zooming in or
+  out does (the drone level is third person to scenes). It replies JSON at once, `before`, `after`
+  and `changed`; the camera then blends to the level as it does after a zoom (`/camera_state`
+  `blending`). It is refused, `{"refused", "cause"}`, while photo mode holds the camera
+  (`cause.holder` `photo_mode`) and while a scene's camera mode area or virtual camera does
+  (`cause.holder` `scene`, with the scene's `scene` title, `sceneHash` and the `mode` it holds:
+  a level or `cinematic`).
 
 Scene animations:
 

@@ -412,6 +412,16 @@ export interface MoveReport {
   warning?: string
 }
 
+/** The player camera's zoom level, as `/camera_mode` sets it. */
+export type CameraLevel = 'first_person' | 'third_person' | 'drone'
+
+/** What `/camera_mode` reports: the level before and after, and whether it changed. */
+export interface CameraModeChange {
+  before: CameraLevel
+  after: CameraLevel
+  changed: boolean
+}
+
 export interface LiveScene {
   title: string
   hash: string
@@ -840,6 +850,13 @@ export class Explorer {
     line += ' --wait'
     if (options.timeoutSeconds !== undefined) line += ` --timeout-seconds ${options.timeoutSeconds}`
     return this.json<MoveReport>(line)
+  }
+
+  /** Sets the player's zoom level, as zooming does; the camera then blends to it. Rejects with
+   *  `{"refused", "cause"}` as the error's output while photo mode (`cause.holder` `photo_mode`)
+   *  or a scene (`cause.holder` `scene`) holds the camera. */
+  setCameraMode(level: CameraLevel): Promise<CameraModeChange> {
+    return this.json<CameraModeChange>(`/camera_mode ${level}`)
   }
 
   /** `/player_position`, parsed: DCL axes, so the parcel is `floor(x / 16), floor(z / 16)`. */

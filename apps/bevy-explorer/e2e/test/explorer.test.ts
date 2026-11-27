@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { describe, test } from 'node:test'
 import { ConsoleError, FakeConsole, commandOf, redactLine } from '../driver/console.ts'
-import { type CaptureSequence, type CommandRecord, Explorer, type MoveReport, parseLiveScenes, parsePortables, parseSmartWearables, saveCaptureFrames, type WorldState } from '../driver/explorer.ts'
+import { type CameraModeChange, type CaptureSequence, type CommandRecord, Explorer, type MoveReport, parseLiveScenes, parsePortables, parseSmartWearables, saveCaptureFrames, type WorldState } from '../driver/explorer.ts'
 import { enterWorld } from '../driver/session.ts'
 
 function world(overrides: Partial<WorldState> = {}): string {
@@ -143,6 +143,13 @@ describe('Explorer', () => {
       '/move_player_to 2400 0 2400 --camera-target 2388 1.75 2400 --avatar-target 2388 0 2410 --wait',
       '/move_player_to -1.5 0 2 --wait --timeout-seconds 4'
     ])
+  })
+
+  test('setCameraMode sends the level and parses the change', async () => {
+    const switched: CameraModeChange = { before: 'third_person', after: 'first_person', changed: true }
+    const fake = new FakeConsole({ camera_mode: JSON.stringify(switched) })
+    assert.deepEqual(await new Explorer(fake).setCameraMode('first_person'), switched)
+    assert.deepEqual(fake.lines, ['/camera_mode first_person'])
   })
 
   test('the voice chat actions compose their lines', async () => {
