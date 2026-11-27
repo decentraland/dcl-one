@@ -21,8 +21,8 @@ use system_bridge::{
     FriendshipEventUpdate, HomeScene, HoverEvent, ItemPurchaseRequest, ItemPurchaseState,
     ListenedCommunity, LiveSceneInfo, LobbyStage, MapPinInfo, OutfitsData, PermanentPermissionItem,
     PermissionRequestEvent, PhotoModeState, PlatformBanNotice, PortableInfo, ProfileChangedEvent,
-    ProximityEvent, ReactionData, SatelliteView, SceneLoadingUi, SetAvatarData, SetAvatarResult,
-    SetItemPurchaseState, SetPermanentPermission, SetSinglePermission, SystemApi,
+    ProximityEvent, ReactionData, SatelliteView, SceneBanNotice, SceneLoadingUi, SetAvatarData,
+    SetAvatarResult, SetItemPurchaseState, SetPermanentPermission, SetSinglePermission, SystemApi,
     TextureOptimizationStatus, VoiceChatAction, VoiceChatState, VoiceMessage, WelcomeState,
     WorldAccessEvent, WorldAccessVerdict,
 };
@@ -1047,6 +1047,26 @@ pub async fn op_read_platform_ban_stream(
     state: Rc<RefCell<impl State>>,
     rid: u32,
 ) -> Result<Option<PlatformBanNotice>, anyhow::Error> {
+    Ok(read_stream(state, rid).await)
+}
+
+pub async fn op_get_scene_ban_stream(state: Rc<RefCell<impl State>>) -> u32 {
+    let (sx, rx) = RpcStreamSender::channel();
+    let rid = open_stream(&mut *state.borrow_mut(), rx);
+
+    state
+        .borrow_mut()
+        .borrow_mut::<SuperUserScene>()
+        .send(SystemApi::GetSceneBanStream(sx))
+        .unwrap();
+
+    rid
+}
+
+pub async fn op_read_scene_ban_stream(
+    state: Rc<RefCell<impl State>>,
+    rid: u32,
+) -> Result<Option<SceneBanNotice>, anyhow::Error> {
     Ok(read_stream(state, rid).await)
 }
 

@@ -867,6 +867,26 @@ pub struct PlatformBanNotice {
     pub expires_at: Option<String>,
 }
 
+/// What refused the signed-in wallet as banned: the scene, or the world it is in.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[derive(ts_rs::TS)]
+#[ts(export)]
+pub enum SceneBanScope {
+    Scene,
+    World,
+}
+
+/// The current scene's room refused the signed-in wallet as banned from the scene or its
+/// world. `scope` is null while there is no such refusal; a platform ban is not one.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[derive(ts_rs::TS)]
+#[ts(export)]
+pub struct SceneBanNotice {
+    pub scope: Option<SceneBanScope>,
+}
+
 /// The engine needs a password to enter a world (see `ipfs::world_access`); answered with
 /// `SetWorldPassword`.
 #[derive(Clone, Debug, Serialize, Deserialize)]

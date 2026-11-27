@@ -17,9 +17,9 @@ use system_bridge::{
     FriendshipEventUpdate, HomeScene, HoverEvent, ItemPurchaseRequest, ItemPurchaseState,
     ListenedCommunity, LiveSceneInfo, LobbyStage, MapPinInfo, OutfitsData, PermanentPermissionItem,
     PermissionRequestEvent, PhotoModeState, PlatformBanNotice, PortableInfo, ProfileChangedEvent,
-    ProximityEvent, ReactionData, SatelliteView, SceneLoadingUi, SetAvatarData, SetAvatarResult,
-    TextureOptimizationStatus, VoiceChatAction, VoiceChatState, VoiceMessage, WelcomeState,
-    WorldAccessEvent, WorldAccessVerdict,
+    ProximityEvent, ReactionData, SatelliteView, SceneBanNotice, SceneLoadingUi, SetAvatarData,
+    SetAvatarResult, TextureOptimizationStatus, VoiceChatAction, VoiceChatState, VoiceMessage,
+    WelcomeState, WorldAccessEvent, WorldAccessVerdict,
 };
 
 // list of op declarations
@@ -111,6 +111,8 @@ pub fn ops(super_user: bool) -> Vec<OpDecl> {
             op_read_world_access_stream(),
             op_get_platform_ban_stream(),
             op_read_platform_ban_stream(),
+            op_get_scene_ban_stream(),
+            op_read_scene_ban_stream(),
             op_set_world_password(),
             op_get_portables_stream(),
             op_read_portables_stream(),
@@ -799,6 +801,21 @@ pub async fn op_read_platform_ban_stream(
 ) -> Result<JsPlain<Option<PlatformBanNotice>>, OpError> {
     Ok(JsPlain(
         dcl_js::system_api::op_read_platform_ban_stream(state, rid).await?,
+    ))
+}
+
+#[op2]
+pub async fn op_get_scene_ban_stream(state: Rc<RefCell<OpState>>) -> u32 {
+    dcl_js::system_api::op_get_scene_ban_stream(state).await
+}
+
+#[op2]
+pub async fn op_read_scene_ban_stream(
+    state: Rc<RefCell<OpState>>,
+    rid: u32,
+) -> Result<JsPlain<Option<SceneBanNotice>>, OpError> {
+    Ok(JsPlain(
+        dcl_js::system_api::op_read_scene_ban_stream(state, rid).await?,
     ))
 }
 
