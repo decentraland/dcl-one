@@ -82,3 +82,32 @@ async fn with_writes_off_every_write_is_refused_on_both_mounts_and_reads_answer(
     let (status, _, _) = send(&app, "GET", "/v1/storage/contents/not-a-hash").await;
     assert_eq!(status, StatusCode::NOT_FOUND, "a read is not gated");
 }
+
+/// The gate answers before routing, so the refusals above would also pass
+/// for a route that is gone: with writes on, each write reaches a handler on
+/// both mounts, neither 404 nor 405.
+#[tokio::test]
+async fn with_writes_on_every_gated_write_is_routed_on_both_mounts() {
+    let state = super::support::state_with_settings(crate::Settings {
+        writes_enabled: true,
+        ..Default::default()
+    })
+    .await;
+    let app = Router::new()
+        .merge(crate::root_router(state.clone()))
+        .nest("/builder-api", crate::router(state));
+    let mut unrouted = Vec::new();
+    for mount in ["", "/builder-api"] {
+        for (method, path) in WRITES {
+            let path = format!("{mount}{}", path.replace("{id}", ID));
+            let (status, _, body) = send(&app, method, &path).await;
+            if matches!(
+                status,
+                StatusCode::NOT_FOUND | StatusCode::METHOD_NOT_ALLOWED
+            ) {
+                unrouted.push(format!("{method} {path}: {status} {body}"));
+            }
+        }
+    }
+    assert!(unrouted.is_empty(), "{}", unrouted.join("\n"));
+}
