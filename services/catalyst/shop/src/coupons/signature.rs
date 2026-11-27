@@ -49,8 +49,8 @@ fn coupon_type_hash() -> [u8; 32] {
 /// decodes.
 pub fn encode_coupon_data(discount_type: i64, discount_ppm: i64, root: [u8; 32]) -> Vec<u8> {
     let mut data = Vec::with_capacity(96);
-    data.extend_from_slice(&word_u64(discount_type.max(0) as u64));
-    data.extend_from_slice(&word_u64(discount_ppm.max(0) as u64));
+    data.extend_from_slice(&word_u64(u64::try_from(discount_type).unwrap_or(0)));
+    data.extend_from_slice(&word_u64(u64::try_from(discount_ppm).unwrap_or(0)));
     data.extend_from_slice(&root);
     data
 }
@@ -63,7 +63,7 @@ pub fn coupon_manager_domain(
         contracts.coupon_manager.name,
         contracts.coupon_manager.version,
         parse_address(contracts.coupon_manager.address)?,
-        word_u64(chain_id.max(0) as u64),
+        word_u64(u64::try_from(chain_id).unwrap_or(0)),
     ))
 }
 

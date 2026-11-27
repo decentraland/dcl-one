@@ -32,7 +32,7 @@ pub(super) fn deno_fetch() -> Vec<ExtensionFileSource> {
 }
 
 /// Unmodified copies of the deno_web and deno_webidl scripts the runtime loads.
-fn deno_web() -> Vec<ExtensionFileSource> {
+pub(super) fn deno_web() -> Vec<ExtensionFileSource> {
     embedded!(
         "ext:deno_web/00_infra.js" = "vendor/deno_web/00_infra.js",
         "ext:deno_web/00_url.js" = "vendor/deno_web/00_url.js",
@@ -52,7 +52,7 @@ fn deno_web() -> Vec<ExtensionFileSource> {
     )
 }
 
-fn deno_webidl() -> Vec<ExtensionFileSource> {
+pub(super) fn deno_webidl() -> Vec<ExtensionFileSource> {
     embedded!("ext:deno_webidl/00_webidl.js" = "vendor/deno_webidl/00_webidl.js")
 }
 

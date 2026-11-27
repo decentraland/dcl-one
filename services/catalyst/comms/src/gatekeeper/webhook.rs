@@ -4,6 +4,9 @@
 //! (`gatekeeper::streaming`), then the live presence and the room event sink.
 //! The room event store receives every verified participant event.
 
+// Decodes untrusted input: malformed bytes must not panic.
+#![deny(clippy::indexing_slicing, clippy::expect_used)]
+
 use crate::metrics::declarations;
 
 use axum::body::Bytes;
@@ -183,9 +186,12 @@ impl ValidatedEvent {
                     watcher: identity
                         .starts_with("watch:")
                         .then(|| {
-                            &event["participant"]["attributes"]
-                                [super::streaming::cast::WATCHER_WALLET_ATTRIBUTE]
+                            event
+                                .get("participant")?
+                                .get("attributes")?
+                                .get(super::streaming::cast::WATCHER_WALLET_ATTRIBUTE)
                         })
+                        .flatten()
                         .and_then(|wallet| crate::Address::parse(wallet.as_str()?).ok()),
                     sid,
                     current_key: identity_key(&room, &identity),
@@ -382,9 +388,15 @@ pub async fn livekit_webhook(
         .unwrap_or_default();
     let id = &event.id;
     let (a, b) = (stripe(id), stripe(resource));
-    let _first = state.webhooks.locks[a.min(b)].lock().await;
+    let (Some(first), Some(second)) = (
+        state.webhooks.locks.get(a.min(b)),
+        state.webhooks.locks.get(a.max(b)),
+    ) else {
+        return Err(ApiError::internal("webhook lock stripe out of range"));
+    };
+    let _first = first.lock().await;
     let _second = if a != b {
-        Some(state.webhooks.locks[a.max(b)].lock().await)
+        Some(second.lock().await)
     } else {
         None
     };
@@ -760,9 +772,11 @@ pub mod test_support {
     }
 }
 
+#[allow(clippy::indexing_slicing, clippy::expect_used, reason = "test support")]
 #[cfg(test)]
 mod initial_metadata_tests;
 
+#[allow(clippy::indexing_slicing, clippy::expect_used, reason = "test support")]
 #[cfg(test)]
 mod tests {
     use super::*;

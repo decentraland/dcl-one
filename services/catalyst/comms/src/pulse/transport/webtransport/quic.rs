@@ -1,3 +1,5 @@
+// Decodes untrusted input: malformed bytes must not panic.
+#![deny(clippy::indexing_slicing, clippy::expect_used)]
 // from: catalyrst/third_party/web_transport/src/host.rs (decentraland/rust-web-transport c5416501 + web_transport.patch; Apache-2.0, LICENSE in that tree)
 //! The WebTransport host: binds a QUIC endpoint, accepts WebTransport sessions, and pumps
 //! the reliable bidi stream and unreliable datagrams to/from a synchronously-polled event
@@ -314,7 +316,10 @@ async fn stream_loop(
     let reader = crate::shared::task::spawn(async move {
         let mut buf = vec![0u8; STREAM_READ_BUF];
         while let Ok(Some(n)) = recv.read(&mut buf).await {
-            let data = Bytes::copy_from_slice(&buf[..n]);
+            let Some(read) = buf.get(..n) else {
+                break;
+            };
+            let data = Bytes::copy_from_slice(read);
             if events_tx.send(Event::StreamData { peer_id, data }).is_err() {
                 break;
             }
@@ -359,7 +364,7 @@ fn server_config(
     let tls = web_transport_quinn::crypto::QuicServerConfig::try_from(tls)
         .map_err(|e| HostError::Cert(e.to_string()))?;
     let mut config = quinn::ServerConfig::with_crypto(Arc::new(tls));
-    config.transport_config(Arc::new(transport_config(idle_timeout)));
+    config.transport_config(Arc::new(transport_config(idle_timeout)?));
     Ok(config)
 }
 
@@ -373,7 +378,12 @@ fn server_config(
 /// live client that sends nothing stays connected until Pulse ends its session with a reason
 /// (the authentication timeout equals the idle timeout), while one that stops answering still
 /// times out.
-fn transport_config(idle_timeout: Duration) -> quinn::TransportConfig {
+fn transport_config(idle_timeout: Duration) -> Result<quinn::TransportConfig, HostError> {
+    let max_idle = idle_timeout.try_into().map_err(|_| {
+        HostError::Endpoint(format!(
+            "idle timeout {idle_timeout:?} exceeds a QUIC varint"
+        ))
+    })?;
     let mut transport = quinn::TransportConfig::default();
     transport
         .max_concurrent_bidi_streams(MAX_CONCURRENT_BIDI_STREAMS.into())
@@ -381,13 +391,9 @@ fn transport_config(idle_timeout: Duration) -> quinn::TransportConfig {
         .stream_receive_window(STREAM_RECEIVE_WINDOW.into())
         .receive_window(CONNECTION_RECEIVE_WINDOW.into())
         .datagram_receive_buffer_size(Some(DATAGRAM_RECEIVE_BUFFER))
-        .max_idle_timeout(Some(
-            idle_timeout
-                .try_into()
-                .expect("the idle timeout fits a QUIC varint"),
-        ))
+        .max_idle_timeout(Some(max_idle))
         .keep_alive_interval(Some(idle_timeout / 3));
-    transport
+    Ok(transport)
 }
 
 /// Parse a PEM certificate chain and private key into the rustls types
@@ -418,6 +424,7 @@ fn parse_pem(
     Ok((certs, key))
 }
 
+#[allow(clippy::indexing_slicing, clippy::expect_used, reason = "test support")]
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -429,7 +436,7 @@ mod tests {
     #[test]
     fn the_transport_config_carries_every_pulse_limit() {
         // quinn exposes no getters, so read the values back from its field-by-field Debug.
-        let config = format!("{:?}", transport_config(IDLE_TIMEOUT));
+        let config = format!("{:?}", transport_config(IDLE_TIMEOUT).unwrap());
         for field in [
             "max_concurrent_bidi_streams: 4,",
             "max_concurrent_uni_streams: 16,",

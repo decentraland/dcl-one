@@ -52,6 +52,16 @@ impl<'a> Params<'a> {
         }
     }
 
+    /// [`Self::get_number`] as an integer: the fraction dropped, out-of-range
+    /// values saturated, NaN as 0.
+    #[allow(
+        clippy::cast_possible_truncation,
+        reason = "float-to-int `as` saturates; the page readers clamp the result"
+    )]
+    pub fn get_integer(&self, key: &str) -> Option<i64> {
+        self.get_number(key, None).map(|n| n as i64)
+    }
+
     /// Presence, not truth: upstream reads its boolean flags as "the key is there".
     pub fn get_boolean(&self, key: &str) -> bool {
         self.pairs.iter().any(|(k, _)| k == key)
@@ -471,6 +481,15 @@ impl From<super::graph::Network> for Network {
     }
 }
 
+/// `chain` as the wire's `ChainId`. The index settings admit only the
+/// supported chains, so the network's default never stands in for a served one.
+pub(super) fn wire_chain(chain: i64, network: Network) -> ChainId {
+    u64::try_from(chain)
+        .ok()
+        .and_then(|c| ChainId::try_from(c).ok())
+        .unwrap_or_else(|| network.chain_id())
+}
+
 pub const NETWORK_VALUES: &[&str] = &["ETHEREUM", "MATIC"];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -589,8 +608,9 @@ pub fn bn_add(a: &str, b: &str) -> String {
         carry = s / 10;
         out.push(b'0' + (s % 10) as u8);
     }
+    // Two digits and a carry sum to at most 19, so the last carry is 1.
     if carry > 0 {
-        out.push(b'0' + carry as u8);
+        out.push(b'1');
     }
     while out.len() > 1 && out.last() == Some(&b'0') {
         out.pop();

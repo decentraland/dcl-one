@@ -1,81 +1,10 @@
-import fs from "node:fs";
-import path from "node:path";
+import { fetchReferrerProfile, referrerFromAddress, resolveReferrerAddress, type ReferrerVM } from "./referral";
 
-import {
-  fetchReferrerProfile,
-  referrerFromAddress,
-  resolveReferrerAddress,
-  ReferralStateSchema,
-  type ReferrerVM,
-  type ReferralState,
-} from "./referral";
-
-const FIXTURE = path.join(
-  process.cwd(),
-  "src", "data", "fixtures",
-  "landings-invite-referral.json",
-);
-
-type Faq = { q: string; a: string };
-
-type Fixture = {
-  _source?: string;
-  referrer: { name: string; ethAddress: string; hasClaimedName?: boolean };
-  referral: unknown;
-  faqs: Faq[];
-};
-
-let cached: { referral: ReferralState; faqs: Faq[]; referrer: ReferrerVM } | null = null;
-
-function readFixture() {
-  if (cached) return cached;
-  const raw = JSON.parse(fs.readFileSync(FIXTURE, "utf8")) as Fixture;
-  const ladder = ReferralStateSchema.parse(raw.referral);
-  cached = {
-    referral: {
-      ...ladder,
-      invitedUsers: 0,
-      invitedUsersAccepted: 0,
-      currentTier: 0,
-      nextTier: ladder.tiers[0]?.tier ?? 1,
-    },
-    faqs: raw.faqs ?? [],
-    referrer: {
-      name: raw.referrer.name,
-      address: raw.referrer.ethAddress?.toLowerCase() ?? null,
-      hasClaimedName: Boolean(raw.referrer.hasClaimedName),
-      resolved: false,
-      face256: null,
-    },
-  };
-  return cached;
-}
-
-type ReferralLoad = {
-  referrer: ReferrerVM;
-  referral: ReferralState;
-  faqs: Faq[];
-  referrerParam: string;
-  isFixture: boolean;
-};
-
-export async function loadInviteReferral(
-  referrerParam: string,
-  signal?: AbortSignal,
-): Promise<ReferralLoad> {
-  const fx = readFixture();
-  const param = referrerParam.trim();
-
-  const address = await resolveReferrerAddress(param, { signal });
+/** The invite's referrer: the wallet its NAME or address names, with the profile's name and face when the node has them. */
+export async function loadInviteReferral(referrerParam: string, signal?: AbortSignal): Promise<{ referrer: ReferrerVM }> {
+  const address = await resolveReferrerAddress(referrerParam.trim(), { signal });
   const referrer = address
     ? await fetchReferrerProfile(address, { signal }).catch(() => referrerFromAddress(address))
     : referrerFromAddress(null);
-
-  return {
-    referrer,
-    referral: fx.referral,
-    faqs: fx.faqs,
-    referrerParam: param,
-    isFixture: true,
-  };
+  return { referrer };
 }

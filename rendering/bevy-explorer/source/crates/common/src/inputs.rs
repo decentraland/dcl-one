@@ -62,6 +62,10 @@ pub enum SystemAction {
     PhotoCameraDown,
     PhotoTiltLeft,
     PhotoTiltRight,
+    /// Step the player camera to its next zoom level, bouncing between first person and drone.
+    CameraSwitchLevel,
+    /// Move the third-person and drone cameras to the other shoulder.
+    CameraSwapShoulder,
 }
 
 impl From<SystemAction> for Action {
@@ -706,6 +710,14 @@ impl Default for InputMap {
                         InputIdentifier::Key(KeyCode::KeyE),
                         InputIdentifier::Gamepad(GamepadButton::DPadRight),
                     ],
+                ),
+                (
+                    Action::System(SystemAction::CameraSwitchLevel),
+                    vec![InputIdentifier::Key(KeyCode::KeyV)],
+                ),
+                (
+                    Action::System(SystemAction::CameraSwapShoulder),
+                    vec![InputIdentifier::Key(KeyCode::Period)],
                 ),
             ]),
         }

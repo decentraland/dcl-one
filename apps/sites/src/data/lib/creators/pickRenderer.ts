@@ -27,7 +27,7 @@ export type RendererInputs = {
   override: 'babylon' | null
   /** The `unity-wearable-preview` flag; unknown counts as off. */
   unityEnabled: boolean
-  /** The link as `lib/connectionSpeed` measured it; `null` when it could not. */
+  /** The link as `@web-core/connection-speed` measured it; `null` when it could not. */
   measuredMbps: number | null
 }
 

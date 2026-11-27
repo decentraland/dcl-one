@@ -1,4 +1,5 @@
 //! The runner itself: repeats, seeds, skips, refusals, panics and deadlines.
+#![allow(clippy::unwrap_used, reason = "test support")]
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};

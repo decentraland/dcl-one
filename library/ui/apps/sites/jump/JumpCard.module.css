@@ -223,8 +223,9 @@
   display: contents;
 }
 
+/* Jump In is the shared Button (primary, md) across the card's width. */
 .jumpIn {
-  composes: jumpIn from './JumpButtons.module.css';
+  width: 100%;
 }
 
 @media (max-width: 1499.98px) {

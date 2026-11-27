@@ -25,6 +25,10 @@ pub const DEFAULT_PAGE_LIMIT: i64 = 100;
 /// The creation body is gated by `validate_creation_schema`, whose `discountType`/`discount`
 /// rule is JSON Schema's `integer`: a number with a zero fractional part, however it was
 /// spelled. Plain `i64` deserialisation refuses `300000.0`, so the two gates would disagree.
+#[allow(
+    clippy::cast_possible_truncation,
+    reason = "the float is integral and |v| <= 2^63; `as` saturates the one 2^63 case"
+)]
 fn integer_number<'de, D>(deserializer: D) -> Result<i64, D::Error>
 where
     D: serde::Deserializer<'de>,
@@ -35,7 +39,7 @@ where
     }
     number
         .as_f64()
-        .filter(|value| value.fract() == 0.0 && value.abs() <= i64::MAX as f64)
+        .filter(|value| value.fract() == 0.0 && value.abs() <= crate::types::TWO_POW_63)
         .map(|value| value as i64)
         .ok_or_else(|| serde::de::Error::custom(format!("invalid integer {number}")))
 }

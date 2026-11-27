@@ -1027,6 +1027,10 @@ fn start_scene_lods(
                 if !may_start(lod.level, partition, &rings) {
                     continue;
                 }
+                // a near LOD's descriptor is under the variants base, known once it settles
+                if lod.level == LodLevel::Near && ipfas.ipfs().bevy_variants_pending() {
+                    continue;
+                }
                 if lod.level == LodLevel::Far {
                     // `update_scene_lods` makes a far LOD only for a scene with a listed base
                     let Some(base) = lod.base else {
@@ -1520,7 +1524,7 @@ mod tests {
     /// An ipfs client with a variants base, so far LODs can be offered.
     fn ipfs_resource_with_base() -> IpfsResource {
         let ipfs = ipfs_resource();
-        ipfs.set_bevy_variants_base("https://abgen.example");
+        ipfs.set_bevy_variants_base(Some("https://abgen.example"), "test");
         ipfs
     }
 
@@ -2485,7 +2489,7 @@ mod tests {
 
         app.world()
             .resource::<IpfsResource>()
-            .set_bevy_variants_base("https://abgen.example");
+            .set_bevy_variants_base(Some("https://abgen.example"), "test");
         let waiting = far(&mut app);
         app.world_mut().run_system_once(start_scene_lods).unwrap();
         assert!(matches!(

@@ -264,6 +264,10 @@ impl Decimal {
 
     /// Base-10 exponent of the most significant digit: the value lies in
     /// `[10^mag, 10^(mag+1))`. Only meaningful when `has_nonzero_digit`.
+    #[allow(
+        clippy::cast_possible_wrap,
+        reason = "slice indexes are at most isize::MAX, which fits i64"
+    )]
     fn magnitude_exp(&self) -> i64 {
         self.int_len as i64 - self.first_significant as i64 - 1 + self.exp
     }

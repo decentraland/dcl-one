@@ -2,8 +2,13 @@
 
 use serde::{Deserialize, Serialize};
 
+#[allow(
+    clippy::cast_possible_truncation,
+    reason = "the float is whole and in [-2^63, 2^63), so it fits i64 exactly"
+)]
 fn serialize_number<S: serde::Serializer>(value: &f64, serializer: S) -> Result<S::Ok, S::Error> {
-    if value.fract() == 0.0 && *value >= i64::MIN as f64 && *value < -(i64::MIN as f64) {
+    use crate::types::TWO_POW_63;
+    if value.fract() == 0.0 && *value >= -TWO_POW_63 && *value < TWO_POW_63 {
         serializer.serialize_i64(*value as i64)
     } else {
         serializer.serialize_f64(*value)

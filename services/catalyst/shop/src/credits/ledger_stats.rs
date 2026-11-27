@@ -301,7 +301,7 @@ impl Credits {
             credited_count: credited,
             reversed_count,
             refund_rate: if credited + reversed_count > 0 {
-                reversed_count as f64 / (credited + reversed_count) as f64
+                ratio(reversed_count, credited + reversed_count)
             } else {
                 0.0
             },
@@ -502,6 +502,14 @@ impl Credits {
             top_spenders,
         })
     }
+}
+
+#[allow(
+    clippy::cast_precision_loss,
+    reason = "a rate; rounding counts above 2^53 is harmless"
+)]
+fn ratio(n: i64, d: i64) -> f64 {
+    n as f64 / d as f64
 }
 
 #[cfg(test)]

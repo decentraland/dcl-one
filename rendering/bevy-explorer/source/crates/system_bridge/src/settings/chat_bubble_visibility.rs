@@ -26,7 +26,7 @@ impl AppSetting for ChatBubbleVisibility {
     }
 
     fn category() -> SettingCategory {
-        SettingCategory::Gameplay
+        SettingCategory::Chat
     }
 
     fn description(&self) -> String {

@@ -82,6 +82,21 @@ module.exports.setSetting = async function(name, value) {
     await op_set_setting(name, value);
 }
 
+// the settings list (as getSettings): the list now, then again whenever a value or choice changes
+module.exports.getSettingsStream = async function() {
+  const rid = await Deno.core.ops.op_get_settings_stream();
+
+  async function* streamGenerator() {
+    while (true) {
+      const next = await Deno.core.ops.op_read_settings_stream(rid);
+      if (next === null) break;
+      yield next;
+    }
+  }
+
+  return streamGenerator();
+}
+
 module.exports.kernelFetch = async function (body) { 
     const headers = await Deno.core.ops.op_kernel_fetch_headers(body.url, body.init?.method, body.meta);
 
@@ -409,7 +424,8 @@ module.exports.sendChatReaction = function(channel, messageId, emoji, remove) {
   Deno.core.ops.op_send_chat_reaction(channel, messageId, emoji, remove ?? false)
 }
 
-// get situational reactions as they play (the local user's included) as a stream
+// get situational reactions as they play (the local user's included) as a stream; nothing
+// arrives while the "Chat Reactions" setting is off
 // type Reaction = {
 //   from: string,
 //   emoji: string,
