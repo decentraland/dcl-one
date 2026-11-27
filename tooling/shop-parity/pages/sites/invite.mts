@@ -1,8 +1,8 @@
 // The invite landing at /invite/<referrer>, for the test wallet as the referrer: two InviteHero sections
 // (the inviter's name, the envelope and the avatar preview, then "Hang out in Decentraland" over its clip),
 // the FAQ accordion and the LandingFooter. The route is Layout-less on the reference (sites:
-// pages/invite/InvitePage.tsx, App.tsx), so it has no site nav on either side; dcl-one renders StInvite
-// (apps/ui3/src/web/pages/StInvite.tsx) in SitesChrome without its nav.
+// pages/invite/InvitePage.tsx, App.tsx), so it has no site nav on either side; dcl-one renders InviteLanding
+// (library/ui/apps/sites/invite/InviteLanding.tsx) in SitesLayout without its nav.
 import type { Page } from "playwright-core";
 import { both, signedIn, type KeyElement, type PageSpec } from "../../lib/spec.mts";
 import { interOnReference, NEWSLETTER_EXPECTED, NEWSLETTER_REGION, SITES_UNRECORDED } from "./frame.mts";
@@ -27,7 +27,7 @@ const READY = "xpath=//h1[contains(normalize-space(),' invited you to join')][//
  * Both heroes draw a WebGL <canvas> animated over a static picture (sites: decentraland-ui2 AnimatedBackground;
  * dcl-one: library/ui/components/AnimatedBackground): both sides hide the canvas, so the static fallback
  * and the text over it are compared. The second hero plays the same looping clip on both sides (sites:
- * data/inviteContent.ts through cms-videos.decentraland.org; dcl-one: assets/invite/referral.webm, the same
+ * data/inviteContent.ts through cms-videos.decentraland.org; dcl-one: library/ui/apps/sites/assets/invite/referral.webm, the same
  * bytes): both sides hold it paused at 0 s once it can show its first frame. A clip that shows no first frame or
  * ends no seek within 10 s is left as it is, and the run says so.
  */
@@ -63,7 +63,7 @@ const invite: PageSpec = {
   init: interOnReference,
   setup: holdMotion,
   keys,
-  masks: [{ selector: { reference: ["section div:has(> iframe)"], "dcl-one": [".stinvite__avatar-wrap:has(> *)"] }, why: PREVIEW }],
+  masks: [{ selector: { reference: ["section div:has(> iframe)"], "dcl-one": ["[data-invite-avatar]:has(> *)"] }, why: PREVIEW }],
   regions: [NEWSLETTER_REGION],
   expected: NEWSLETTER_EXPECTED,
   unrecorded: SITES_UNRECORDED,

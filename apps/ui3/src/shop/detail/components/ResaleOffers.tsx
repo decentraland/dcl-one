@@ -1,10 +1,10 @@
 // from: shop@94584a5c:app/src/components/ResellersModal/ResellersModal.tsx (the resale list, its sort and paging,
 //       the seller and mint number resolved for the visible rows only, the classic-order section)
 
+import { ShopManaMark } from "@dcl/one-ui";
 import { useMemo, useState } from "react";
 import { Link } from "react-router";
 
-import ManaMark from "../../../atoms/ManaMark";
 import { shortAddress } from "@shop/model/address";
 import { parseManaWei } from "@shop/model/money";
 import type { UnifiedListing } from "@shop/discovery/api";
@@ -71,7 +71,7 @@ export default function ResaleOffers({
                   <ManaAmount wei={mana} network={network} />
                 ) : (
                   <span className="shop-price" data-kind="mana-at-checkout" title={t("assetCard.manaPriceOnPage")}>
-                    <ManaMark size={14} network={network} />
+                    <ShopManaMark size={14} network={network} />
                     <span>{t("assetCard.manaOnly")}</span>
                   </span>
                 )}

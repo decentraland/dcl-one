@@ -8,7 +8,7 @@ import { useEffect, useState, type ReactNode } from "react";
 
 import { REMOTE_FLAG, useRemoteFlagState } from "../../discovery/lib/remoteFlags";
 import { frameRenderer, rendererOptions } from "../lib/frameRenderer";
-import { pickRenderer } from "../lib/pickRenderer";
+import { decidePreviewDevice } from "../lib/previewDevice";
 import PreviewFrame, { previewBase, UNITY_LOAD_TIMEOUT_MS, type PreviewFrameOptions } from "./PreviewFrame";
 
 type Props = {
@@ -25,10 +25,7 @@ type Props = {
 export default function AvatarStage({ options, unityMode = "builder", cover = null, unavailable }: Props) {
   // Read on the client only: the device decides the renderer, and whether to draw at all.
   const [device, setDevice] = useState<"full" | "lite" | "none" | null>(null);
-  useEffect(() => {
-    const decision = pickRenderer();
-    setDevice(decision.reason === "no-webgl" ? "none" : decision.renderer);
-  }, []);
+  useEffect(() => decidePreviewDevice((decision) => setDevice(decision.reason === "no-webgl" ? "none" : decision.renderer)), []);
   const full = device === "full";
   const unityFlag = useRemoteFlagState(REMOTE_FLAG.unityWearablePreview, full);
   const bevyFlag = useRemoteFlagState(REMOTE_FLAG.bevyAvatarPreview, full);
