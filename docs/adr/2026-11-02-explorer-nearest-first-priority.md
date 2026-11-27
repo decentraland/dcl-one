@@ -1,6 +1,13 @@
 # ADR: The Explorer orders scenes and downloads from the camera, nearest first, without distance buckets
 
-- Status: Accepted
+- Status: Partially superseded
+- Superseded by: [scene tick-rate bands](2026-11-24-explorer-scene-tick-rate-bands.md), for the
+  rejected tick-rate table and once-a-second cap behind the camera only: the Decision's "no
+  tick-rate table" and "while frame time is spare nothing changes: every eligible scene is
+  sent" no longer hold, since a capped scene waits out its band's interval, rounded to whole
+  frames.
+- Retained scope: the partition, the tick key and download ordering.
+- Status changed: 2026-11-24
 - Date: 2026-11-02
 
 ## Context

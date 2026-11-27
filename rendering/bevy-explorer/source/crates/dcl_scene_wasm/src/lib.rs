@@ -10,7 +10,7 @@ use std::{cell::RefCell, collections::VecDeque, sync::Arc};
 
 use common::{
     rpc::{rmp_encode, CancellationToken, IpcMessage, RequestContext, SCENE_IPC_CONTEXT},
-    structs::GlobalCrdtStateUpdate,
+    structs::{GlobalCrdtStateUpdate, SCENE_GLOBAL_UPDATE_CAPACITY},
 };
 use dcl_js::KillFlag;
 use dcl_types::{
@@ -58,7 +58,7 @@ fn init_scene(init: RelayInit) -> bool {
 
     let (thread_sx, thread_rx) = mpsc::unbounded_channel();
     let (renderer_sender, renderer_rx) = scene_response_channel();
-    let (global_sx, global_rx) = broadcast::channel(1000);
+    let (global_sx, global_rx) = broadcast::channel(SCENE_GLOBAL_UPDATE_CAPACITY);
     let (close_sx, close_rx) = mpsc::unbounded_channel();
     SCENE_IPC_CONTEXT.set(Some(RequestContext {
         registry: Default::default(),

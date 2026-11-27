@@ -4,8 +4,8 @@ use bevy::{
 };
 
 use common::{
-    partition::{point_partition, scene_partition, LoadPriority, Tier},
-    structs::{PrimaryCamera, PrimaryUser},
+    partition::{point_partition, scene_partition, LoadPriority, PartitionData, Tier},
+    structs::{CameraOverride, PrimaryCamera, PrimaryUser},
 };
 use ipfs::IpfsResource;
 
@@ -51,6 +51,125 @@ pub fn release_scene_hash(world: DeferredWorld, context: HookContext) {
 /// A scene behind the camera counts as this many times farther in the tick queue: it keeps
 /// ticking, and yields first when frame time runs short.
 pub const BEHIND_SCENE_TICK_PENALTY: f32 = 4.0;
+
+/// The most ticks a second of a scene whose nearest parcel is under each distance (m) from the
+/// player, nearest band first, rounded to whole frames (`tick_rate_allows`). A scene beyond the
+/// last band ticks at `FAR_SCENE_TICK_RATE`.
+pub(crate) const SCENE_TICK_RATE_BANDS: [(f32, f32); 5] = [
+    (16.0, 40.0),
+    (32.0, 30.0),
+    (48.0, 15.0),
+    (64.0, 10.0),
+    (80.0, 5.0),
+];
+
+/// The most ticks a second of a scene beyond the last band.
+pub(crate) const FAR_SCENE_TICK_RATE: f32 = 0.5;
+
+/// The most ticks a second of a scene behind the camera.
+pub(crate) const BEHIND_SCENE_TICK_RATE: f32 = 1.0;
+
+/// Every rate `scene_tick_rate` gives: the bands nearest first, then behind the camera, then
+/// beyond the last band.
+pub(crate) const SCENE_TICK_RATE_CAPS: [f32; SCENE_TICK_RATE_BANDS.len() + 2] = {
+    let mut caps = [0.0; SCENE_TICK_RATE_BANDS.len() + 2];
+    let mut band = 0;
+    while band < SCENE_TICK_RATE_BANDS.len() {
+        caps[band] = SCENE_TICK_RATE_BANDS[band].1;
+        band += 1;
+    }
+    caps[band] = BEHIND_SCENE_TICK_RATE;
+    caps[band + 1] = FAR_SCENE_TICK_RATE;
+    caps
+};
+
+/// The steepest camera pitch, as the height of the camera's unit forward direction, at which the
+/// behind cap applies.
+pub(crate) const BEHIND_SCENE_MAX_FORWARD_Y: f32 = 0.5;
+
+pub(crate) fn behind_cap_applies(forward: Vec3) -> bool {
+    forward.y.abs() < BEHIND_SCENE_MAX_FORWARD_Y
+}
+
+/// Why every scene ticks at the full rate this frame, or None while the distance bands cap them.
+/// `camera` is the rendering camera and whether it frames a photo; `caps_off` is the
+/// `/scene_tick_rate_caps` switch.
+pub(crate) fn tick_rate_caps_lifted(
+    camera: Option<(&PrimaryCamera, bool)>,
+    caps_off: bool,
+) -> Option<&'static str> {
+    match camera {
+        _ if caps_off => Some("Turned off"),
+        None => Some("No rendering camera"),
+        Some((_, true)) => Some("Photo mode"),
+        Some((primary, false))
+            if matches!(primary.scene_override, Some(CameraOverride::Cinematic(_))) =>
+        {
+            Some("Cinematic camera")
+        }
+        Some(_) => None,
+    }
+}
+
+/// What the rendering camera, `camera` (with whether it frames a photo), allows this frame: why no
+/// scene is capped, or None while the bands cap them (`tick_rate_caps_lifted`), and whether the
+/// behind cap applies at its pitch (`behind_cap_applies`).
+pub(crate) fn camera_tick_rate_caps(
+    camera: Option<(&GlobalTransform, &PrimaryCamera, bool)>,
+    caps_off: bool,
+) -> (Option<&'static str>, bool) {
+    let lifted = tick_rate_caps_lifted(
+        camera.map(|(_, primary, photo_mode)| (primary, photo_mode)),
+        caps_off,
+    );
+    let behind_cap =
+        camera.is_some_and(|(camera, ..)| behind_cap_applies(camera.forward().as_vec3()));
+    (lifted, behind_cap)
+}
+
+/// The most ticks a second of a scene at `partition`: its distance band's rate, or
+/// `FAR_SCENE_TICK_RATE` beyond the last band, at most `BEHIND_SCENE_TICK_RATE` behind the
+/// camera from the second band on.
+pub(crate) fn scene_tick_rate(partition: &PartitionData) -> f32 {
+    let band = SCENE_TICK_RATE_BANDS
+        .iter()
+        .position(|(distance, _)| partition.sqr_distance < distance * distance);
+    let rate = band.map_or(FAR_SCENE_TICK_RATE, |band| SCENE_TICK_RATE_BANDS[band].1);
+    if partition.is_behind && band != Some(0) {
+        rate.min(BEHIND_SCENE_TICK_RATE)
+    } else {
+        rate
+    }
+}
+
+/// The age a scene due this frame is ranked by. A scene its band let through ranks by the time
+/// since its interval passed, at least a frame, so holding it back does not rank it as starved; a
+/// scene at the full rate, or released on unread global updates or peer messages, by the time
+/// since it was last sent.
+pub(crate) fn queue_age(cap: Option<f32>, released: bool, age: f64, frame: f64) -> f64 {
+    match cap {
+        Some(rate) if !released => (age - 1.0 / f64::from(rate)).max(frame),
+        _ => age,
+    }
+}
+
+/// Whether a scene ticking at most `rate` times a second, last sent `age` seconds ago, may tick
+/// in a frame of `frame` seconds. `age` grows a frame at a time, so the interval counts as
+/// passed within a quarter of a frame of it: frame jitter then cannot miss an interval of whole
+/// frames, and an interval of one and a half frames always waits for the second.
+pub(crate) fn tick_rate_allows(rate: f32, age: f64, frame: f64) -> bool {
+    (age + frame * 0.25) * rate as f64 >= 1.0
+}
+
+/// The global updates delivered to a capped scene's host since its last dispatch from which it
+/// is due.
+pub(crate) const GLOBAL_UPDATE_BACKLOG_DUE: u64 =
+    common::structs::SCENE_GLOBAL_UPDATE_CAPACITY as u64 / 4;
+
+/// The peer messages handed to a capped scene's inbound queues (string bus, binary bus, topic
+/// inbox) since its last dispatch from which it is due: a quarter of the topic inbox, the
+/// smallest of the three.
+pub(crate) const SCENE_MESSAGE_BACKLOG_DUE: u64 = dcl_types::TOPIC_INBOX_CAPACITY as u64 / 4;
 
 /// Where partitions are measured from: distance from the player, facing from the rendering
 /// camera (a `PrimaryCamera` with a `Camera`). Without one, as on the headless server whose

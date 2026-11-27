@@ -1166,3 +1166,38 @@ fn a_realm_change_refused_in_a_preview_leaves_no_landing_for_the_next_one() {
     assert_eq!(landing_spawn_point(&app, player), Some(None));
     assert_eq!(landing_position(&app, player), None);
 }
+
+/// A scene seeded with the global state at load start starts from the global state at spawn: a
+/// player who left while it loaded is gone, a changed component and a new player are taken, and
+/// the scene's own entities are kept.
+#[test]
+fn a_spawning_scene_starts_from_the_global_state_at_spawn() {
+    let transform = SceneComponentId::TRANSFORM;
+    let lww = CrdtType::LWW_ENT;
+    let stays = SceneEntityId::new(32, 0);
+    let leaves = SceneEntityId::new(33, 0);
+    let joins = SceneEntityId::new(34, 0);
+    let own = SceneEntityId::new(512, 0);
+    let put = |store: &mut CrdtStore, entity, data: &[u8]| {
+        store.force_update(transform, lww, entity, Some(&mut DclReader::new(data)));
+    };
+
+    let mut at_load = CrdtStore::default();
+    put(&mut at_load, stays, &[1]);
+    put(&mut at_load, leaves, &[1]);
+    let seeded_entities = store_entities(&at_load);
+    let mut store = at_load.clone();
+    put(&mut store, own, &[7]);
+
+    let mut at_spawn = at_load;
+    at_spawn.clean_up(&HashSet::from_iter([leaves]));
+    put(&mut at_spawn, stays, &[2]);
+    put(&mut at_spawn, joins, &[3]);
+
+    refresh_global_state(&mut store, &seeded_entities, at_spawn);
+
+    assert_eq!(store.get(transform, lww, stays), Some(&[2][..]));
+    assert_eq!(store.get(transform, lww, leaves), None);
+    assert_eq!(store.get(transform, lww, joins), Some(&[3][..]));
+    assert_eq!(store.get(transform, lww, own), Some(&[7][..]));
+}

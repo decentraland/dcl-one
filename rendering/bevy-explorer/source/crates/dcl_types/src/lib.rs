@@ -198,6 +198,12 @@ pub enum CommsMessageType {
 pub const MAX_TOPIC_BYTES: usize = 512;
 /// Longest `CommsApi` topic message, including the type byte and the topic length prefix.
 pub const MAX_TOPIC_MESSAGE_BYTES: usize = 13 * 1024;
+/// Sender and data bytes queued across all of a scene's topics; past it new messages are dropped.
+pub const MAX_QUEUED_TOPIC_BYTES: usize = 8 * 1024 * 1024;
+/// The messages a scene's topic inbox holds between two drains, sized so a full inbox of
+/// maximum-size messages holds no more than [`MAX_QUEUED_TOPIC_BYTES`], the most the topic
+/// queues it drains into accept.
+pub const TOPIC_INBOX_CAPACITY: usize = MAX_QUEUED_TOPIC_BYTES / MAX_TOPIC_MESSAGE_BYTES;
 
 pub const MAX_COMMS_MESSAGE_BYTES: usize = 30_000;
 /// A binary receiver's 13 KiB buffer includes a length byte and a 42-byte wallet address.

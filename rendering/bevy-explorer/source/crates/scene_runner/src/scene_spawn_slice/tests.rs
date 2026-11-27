@@ -25,6 +25,9 @@ pub(crate) fn scene_updates(frame_target: Option<Duration>) -> SceneUpdates {
         frames: 0,
         skipped_in_flight: 0,
         skipped_already_sent: 0,
+        skipped_rate_capped: 0,
+        released_by_backlog: 0,
+        tick_rate_caps_off: false,
     }
 }
 

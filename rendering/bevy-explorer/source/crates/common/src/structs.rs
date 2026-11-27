@@ -2560,6 +2560,8 @@ pub struct DebugInfo {
     pub info: HashMap<&'static str, String>,
 }
 
+pub const SCENE_GLOBAL_UPDATE_CAPACITY: usize = 1000;
+
 #[derive(Clone, Serialize, Deserialize)]
 pub enum GlobalCrdtStateUpdate {
     Crdt(Vec<u8>, dcl_component::Localizer),

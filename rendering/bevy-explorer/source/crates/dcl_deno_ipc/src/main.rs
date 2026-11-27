@@ -143,7 +143,12 @@ async fn scene_ipc_in(
             EngineToScene::NewScene(id, new_scene_info) => {
                 let global_sx = global_senders
                     .entry(new_scene_info.presence_context)
-                    .or_insert_with(|| tokio::sync::broadcast::channel(1000).0);
+                    .or_insert_with(|| {
+                        tokio::sync::broadcast::channel(
+                            common::structs::SCENE_GLOBAL_UPDATE_CAPACITY,
+                        )
+                        .0
+                    });
                 let response_sx = dcl_deno::spawn_scene(
                     new_scene_info.initial_crdt_store,
                     new_scene_info.scene_context,

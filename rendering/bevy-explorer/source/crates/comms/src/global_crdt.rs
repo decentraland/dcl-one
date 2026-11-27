@@ -14,7 +14,7 @@ use common::{
     structs::{
         AudioDecoderError, EmoteCommand, EmoteLifecycle, EmoteLifecycleEvent, EmoteLifecycleSource,
         EmoteMask, GlobalCrdtStateUpdate, HeadSync, MoveKind, PlayerAddress, PlayerLanguage,
-        PointAtSync, SceneDrivenAnimationRequest, TimeOfDay,
+        PointAtSync, SceneDrivenAnimationRequest, TimeOfDay, SCENE_GLOBAL_UPDATE_CAPACITY,
     },
     util::{AsH160, ModifyComponentExt},
 };
@@ -314,12 +314,16 @@ pub struct GlobalCrdtState {
     pub(crate) realm_bounds: (IVec2, IVec2),
     // per-component localizer registry (populated as components are first sent)
     localizers: HashMap<SceneComponentId, Localizer>,
+    sent: u64,
+    // the last time of day and camera fov given, which the store does not hold
+    time: Option<TimeOfDay>,
+    camera_fov: Option<f32>,
 }
 
 impl GlobalCrdtState {
     pub fn new(room: Option<String>) -> Self {
         let (ext_sender, ext_receiver) = mpsc::channel(1000);
-        let (int_sender, _) = broadcast::channel(1000);
+        let (int_sender, _) = broadcast::channel(SCENE_GLOBAL_UPDATE_CAPACITY);
         Self {
             room,
             ext_receiver,
@@ -330,6 +334,9 @@ impl GlobalCrdtState {
             lookup: Default::default(),
             realm_bounds: (IVec2::MAX, IVec2::MIN),
             localizers: Default::default(),
+            sent: 0,
+            time: None,
+            camera_fov: None,
         }
     }
 }
@@ -456,6 +463,27 @@ impl GlobalCrdtState {
         (store, self.int_sender.subscribe())
     }
 
+    /// The updates sent to this context's scene hosts since it was created.
+    /// As [`Self::subscribe`], then sends the last time of day and camera fov again, so the
+    /// returned receiver starts with both.
+    pub fn subscribe_with_time_and_fov(
+        &mut self,
+        scene_origin: bevy::prelude::Vec3,
+    ) -> (CrdtStore, broadcast::Receiver<GlobalCrdtStateUpdate>) {
+        let subscription = self.subscribe(scene_origin);
+        if let Some(time) = self.time {
+            self.send_update(GlobalCrdtStateUpdate::Time(time), "time");
+        }
+        if let Some(fov_y) = self.camera_fov {
+            self.send_update(GlobalCrdtStateUpdate::CameraFov(fov_y), "camera fov");
+        }
+        subscription
+    }
+
+    pub fn sent(&self) -> u64 {
+        self.sent
+    }
+
     pub fn set_bounds(&mut self, min: IVec2, max: IVec2) {
         info!("bounds: {min}-{max}");
         self.realm_bounds = (min, max);
@@ -514,21 +542,24 @@ impl GlobalCrdtState {
     }
 
     pub fn update_time(&mut self, time: TimeOfDay) {
+        self.time = Some(time);
         self.send_update(GlobalCrdtStateUpdate::Time(time), "time");
     }
 
     pub fn update_camera_fov(&mut self, fov_y: f32) {
+        self.camera_fov = Some(fov_y);
         self.send_update(GlobalCrdtStateUpdate::CameraFov(fov_y), "camera fov");
     }
 
     // a broadcast send fails exactly when there are no subscribers, which is the
     // normal state whenever no scenes are live — not an error, just nobody listening
-    fn send_update(&self, update: GlobalCrdtStateUpdate, what: &str) {
+    fn send_update(&mut self, update: GlobalCrdtStateUpdate, what: &str) {
         if self.int_sender.receiver_count() == 0 {
             return;
         }
-        if let Err(e) = self.int_sender.send(update) {
-            error!("failed to send {what} update to scenes: {e}");
+        match self.int_sender.send(update) {
+            Ok(_) => self.sent += 1,
+            Err(e) => error!("failed to send {what} update to scenes: {e}"),
         }
     }
 }
@@ -916,21 +947,21 @@ pub fn process_transport_updates(
     // gather any event receivers
     for ev in subscribers.read() {
         match (&ev.origin, &ev.call) {
-            (RpcOrigin::Scene { hash, .. }, RpcCall::SubscribeMessageBus { sender }) => {
+            (RpcOrigin::Scene { entity, hash }, RpcCall::SubscribeMessageBus { sender }) => {
                 messagebus
                     .string_senders
-                    .insert(hash.to_string(), sender.clone());
+                    .insert(hash.to_string(), (*entity, sender.clone()));
             }
-            (RpcOrigin::Scene { hash, .. }, RpcCall::SubscribeBinaryBus { sender }) => {
+            (RpcOrigin::Scene { entity, hash }, RpcCall::SubscribeBinaryBus { sender }) => {
                 messagebus
                     .binary_senders
-                    .insert(hash.to_string(), sender.clone());
+                    .insert(hash.to_string(), (*entity, sender.clone()));
             }
             _ => (),
         }
     }
-    messagebus.string_senders.retain(|_, s| !s.is_closed());
-    messagebus.binary_senders.retain(|_, s| !s.is_closed());
+    messagebus.string_senders.retain(|_, (_, s)| !s.is_closed());
+    messagebus.binary_senders.retain(|_, (_, s)| !s.is_closed());
 
     // forget per-player state for despawned players (cheap unless a map outgrew the live set)
     let live_players = players.iter().len();
@@ -1437,8 +1468,9 @@ fn resolve_remote_anim(
 /// Scene bus subscriptions and delivery policy used by transport processing.
 #[derive(SystemParam)]
 pub struct SceneMessageBus<'w, 's> {
-    string_senders: Local<'s, HashMap<String, RpcEventSender>>,
-    binary_senders: Local<'s, HashMap<String, RpcStreamSender<(String, Vec<u8>)>>>,
+    // by scene hash: the scene root and its queue
+    string_senders: Local<'s, HashMap<String, (Entity, RpcEventSender)>>,
+    binary_senders: Local<'s, HashMap<String, (Entity, RpcStreamSender<(String, Vec<u8>)>)>>,
     scene_rooms: SceneRooms<'w, 's>,
     scene_topics: SceneTopicRouter<'w, 's>,
     realm: Res<'w, common::structs::CurrentRealm>,
@@ -1507,19 +1539,24 @@ impl SceneMessageBus<'_, '_> {
 
         match comms_type {
             CommsMessageType::String => {
-                if let Some(sender) = self.string_senders.get(&scene.scene_id) {
-                    let _ = sender.send(
+                if let Some((root, sender)) = self.string_senders.get(&scene.scene_id) {
+                    let sent = sender.send(
                         json!({
                             "message": String::from_utf8(scene.data).unwrap_or_default(),
                             "sender": address,
                         })
                         .to_string(),
                     );
+                    if sent.is_ok() {
+                        self.scene_topics.record_delivered(*root);
+                    }
                 }
             }
             CommsMessageType::Binary => {
-                if let Some(sender) = self.binary_senders.get(&scene.scene_id) {
-                    let _ = sender.send((address, scene.data));
+                if let Some((root, sender)) = self.binary_senders.get(&scene.scene_id) {
+                    if sender.send((address, scene.data)).is_ok() {
+                        self.scene_topics.record_delivered(*root);
+                    }
                 }
             }
             CommsMessageType::CommsData => {
@@ -2734,5 +2771,44 @@ mod tests {
         let source = sources.single(app.world()).unwrap();
         assert!(source.available_transports.contains(&transport));
         assert!(source.current_transport.is_none());
+    }
+
+    /// A spawning scene's receiver starts with the time of day and camera fov, which the store
+    /// does not hold; an update sent while the scene loaded reaches it in the store, not again
+    /// on the receiver.
+    #[test]
+    fn a_spawn_subscription_starts_with_the_time_and_fov_and_no_backlog() {
+        let mut state = GlobalCrdtState::new(None);
+        // held by the scenes already live, so every send below is delivered
+        let _live = state.subscribe(Vec3::ZERO);
+        let time = TimeOfDay {
+            time: 12.0 * 3600.0,
+            ..default()
+        };
+        state.update_time(time);
+        state.update_camera_fov(1.2);
+        let joined = SceneEntityId::new(32, 0);
+        state.update_crdt(
+            SceneComponentId::PLAYER_IDENTITY_DATA,
+            CrdtType::LWW_ANY,
+            joined,
+            &PbPlayerIdentityData {
+                address: "0x1".to_owned(),
+                is_guest: true,
+            },
+        );
+
+        let (store, mut updates) = state.subscribe_with_time_and_fov(Vec3::ZERO);
+
+        assert!(store
+            .lww
+            .get(&SceneComponentId::PLAYER_IDENTITY_DATA)
+            .is_some_and(|component| component.last_write.contains_key(&joined)));
+        assert!(matches!(updates.try_recv(), Ok(GlobalCrdtStateUpdate::Time(t)) if t == time));
+        assert!(matches!(
+            updates.try_recv(),
+            Ok(GlobalCrdtStateUpdate::CameraFov(fov)) if fov == 1.2
+        ));
+        assert!(updates.try_recv().is_err());
     }
 }

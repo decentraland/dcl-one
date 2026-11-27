@@ -70,6 +70,16 @@ pub struct RendererSceneContext {
     pub scene_bounds: SceneBounds,
     pub spawn_points: Vec<SpawnPoint>,
     pub priority: f32,
+    /// The most ticks a second the scene loop sends this scene (`scene_tick_rate`), refreshed
+    /// each frame; `None` at the full rate.
+    pub(crate) tick_rate_cap: Option<f32>,
+    /// Whether this frame's queue holds the scene before its band allows, on unread global
+    /// updates or peer messages (`GLOBAL_UPDATE_BACKLOG_DUE`, `SCENE_MESSAGE_BACKLOG_DUE`).
+    pub(crate) due_on_backlog: bool,
+    /// `GlobalCrdtState::sent` of the scene's crdt context at its last dispatch.
+    pub(crate) global_updates_read: u64,
+    /// The scene's `SceneMessagesDelivered` at its last dispatch.
+    pub(crate) scene_messages_read: u64,
     /// This scene's `featureToggles.portableExperiences`, applied to portables while the
     /// player stands in it.
     pub portable_experiences: PortableExperiencesToggle,
@@ -156,6 +166,7 @@ pub const SCENE_JS_SPAWN_TICK: u32 = 1;
 pub const SCENE_FIRST_DISPATCH_TICK: u32 = 2;
 /// The reply to the scene's first `onUpdate`.
 pub const SCENE_FIRST_UPDATE_TICK: u32 = 3;
+pub(crate) const SCENE_LOADED_TICK: u32 = 7;
 
 pub const SCENE_LOG_BUFFER_SIZE: usize = 100;
 
@@ -180,6 +191,10 @@ pub const SCENE_NOT_RESPONDING_DISPLAY_AFTER: std::time::Duration =
 impl RendererSceneContext {
     pub fn broken(&self) -> bool {
         matches!(self.state, SceneState::Broken)
+    }
+
+    pub(crate) fn schedulable(&self, is_super: bool) -> bool {
+        !self.broken() && (self.blocked.is_empty() || is_super)
     }
 
     /// The scene's content is on screen: it has run past its first ticks with nothing blocking
@@ -273,6 +288,10 @@ impl RendererSceneContext {
             last_update_frame: 0,
             state: SceneState::Init,
             priority,
+            tick_rate_cap: None,
+            due_on_backlog: false,
+            global_updates_read: 0,
+            scene_messages_read: 0,
             crdt_store: Default::default(),
             initial_crdt: None,
             blocked: Default::default(),

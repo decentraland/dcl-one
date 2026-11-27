@@ -19,6 +19,11 @@ pub struct SceneMessageTraffic {
     pub(crate) invalid: u64,
 }
 
+/// On a scene root: the peer messages handed to the scene's inbound queues (string bus, binary
+/// bus, topic inbox) since the component was inserted.
+#[derive(Component, Default)]
+pub struct SceneMessagesDelivered(pub u64);
+
 impl SceneMessageTraffic {
     /// Topic publishes (sent, dropped).
     pub fn publishes(&self) -> (u64, u64) {
