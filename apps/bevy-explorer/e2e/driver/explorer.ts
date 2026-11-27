@@ -165,6 +165,9 @@ export interface AvatarReport {
   rendered: { processed: boolean; bodyShape: string; wearables: RenderedWearable[]; hidden: string[] } | null
   emote: EmoteState | null
   upperBodyEmote: EmoteState | null
+  /** The player's full-body emote from a scene that has not started, or that movement or jump
+   *  input dropped; null otherwise. Absent from builds before it was reported. */
+  sceneEmote?: { urn: string; state: 'waiting' | 'dropped' } | null
   /** The files the avatar could not be built from; `noBody` when neither its body nor the default
    *  body could be. Absent from builds before it was reported. */
   loadFailures?: { bodies: string[]; wearables: string[]; noBody: boolean }
