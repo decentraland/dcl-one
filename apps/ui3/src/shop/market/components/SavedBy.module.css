@@ -1,16 +1,7 @@
 /* "Saved by": one row per account, the profile name over its short address. */
-.modal h2 {
-  margin: 0;
-  font-size: 20px;
-}
-.item {
-  margin: 4px 0 16px;
-  color: var(--ink-6);
-  font-size: 14px;
-}
 .empty {
-  margin: 8px 0 0;
-  color: var(--ink-6);
+  margin: 0;
+  color: var(--dcl-text-secondary-on-brand);
 }
 .list {
   max-height: min(420px, 60vh);
@@ -18,10 +9,11 @@
   padding: 0;
   overflow-y: auto;
   list-style: none;
-  border-top: 1px solid var(--line);
+  text-align: start;
+  border-top: 1px solid var(--dcl-border-subtle);
 }
 .list li + li {
-  border-top: 1px solid var(--line);
+  border-top: 1px solid var(--dcl-border-subtle);
 }
 .list a,
 .account {
@@ -29,23 +21,23 @@
   flex-direction: column;
   gap: 2px;
   padding: 10px 4px;
-  color: var(--text);
+  color: var(--dcl-text-primary);
   text-decoration: none;
 }
 .list a:hover strong {
   text-decoration: underline;
 }
 .list a:focus-visible {
-  outline: 2px solid var(--accent);
+  outline: 2px solid var(--dcl-text-primary);
   outline-offset: -2px;
 }
 .list strong {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 14px;
+  font-size: var(--dcl-font-size-body-sm);
 }
 .list span {
-  color: var(--ink-6);
-  font-size: 12px;
+  color: var(--dcl-text-secondary-on-brand);
+  font-size: var(--dcl-font-size-body-xs);
 }

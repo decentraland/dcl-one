@@ -71,6 +71,7 @@ fn registry() -> anyhow::Result<dcl_metrics::Registry> {
         crate::shop::credits::metrics::FAMILIES,
         crate::shop::market::bids::FAMILIES,
         crate::shop::market::orders::FAMILIES,
+        crate::shop::market::nft_reads::FAMILIES,
         crate::chain_index::graph::FAMILIES,
     ])
 }

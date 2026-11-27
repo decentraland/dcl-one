@@ -212,7 +212,6 @@
      lighter: 50% black ≈ 29%, 40% ≈ 22%, 10% white ≈ 26%. */
   --scrim-head: rgba(0, 0, 0, 0.29);
   --surface-light: var(--text); /* light buttons, fields, popups */
-  --surface-light-hover: #f5f5f5;
   --surface-light-press: #c8c8c8;
   --ink-on-light: var(--panel);
   --ink-muted: var(--dcl-neutrals-cloudy-sky); /* placeholders, idle nav labels */
@@ -229,7 +228,6 @@
   --scrim-20: rgba(0, 0, 0, 0.1); /* 10 % black under this name; not an alias of the foundation's black-10 */
   --divider-pink: rgba(247, 85, 255, 0.25);
   --tab-hover: rgba(255, 255, 255, 0.26);
-  --cover-dark: rgba(22, 21, 24, 0.6); /* incompatible-item cover */
   --menu-bar: var(--panel);
   --menu-tab-hover: #232226;
   --menu-tab-selected: #393641;
@@ -246,7 +244,6 @@
   --glow-pink-faint: rgba(255, 75, 237, 0.14);
   --hide-overlay: #4e0e78;
   --shown: #36d41d; /* a hidden item shown anyway */
-  --smart-badge: linear-gradient(90deg, #e82af7 0%, #b229df 100%);
   --cta-flare: linear-gradient(90deg, #ff3156 0%, #ff5757 50%, #ff7d58 100%);
   --scrim-60: rgba(0, 0, 0, 0.4); /* 40 % black under this name; not an alias of the foundation's black-40 */
   --scrim-card: var(--dcl-transparencies-black-60); /* the lobby dimmed around a card it presents */
@@ -400,11 +397,6 @@
   --lobby-card: rgba(20, 20, 26, 0.84);
   --lobby-ink: var(--dcl-neutrals-snow);
   --lobby-ink-dim: rgb(191, 191, 199);
-  --rail-dot: var(--dcl-transparencies-white-60);
-  --rail-dot-active: rgb(255, 51, 153);
-  --rail-arrow: rgba(28, 28, 33, 0.7);
-  --rail-arrow-hover: rgb(56, 56, 66);
-  --rail-arrow-pressed: rgb(13, 13, 15);
   --ease-outcubic: cubic-bezier(0.215, 0.61, 0.355, 1);
   --type-96: 96px;
   --fw-light: 300;
