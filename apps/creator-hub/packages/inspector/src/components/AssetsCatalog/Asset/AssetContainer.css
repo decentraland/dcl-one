@@ -40,3 +40,9 @@
   gap: 4px;
   color: #ff2d55;
 }
+
+/* The design system's regular tooltip: Onix fill, regular text, a pointer at the tile. */
+.InfoTooltip.AssetNameTooltip {
+  --tooltip-bg: var(--palette-neutral-onyx);
+  --tooltip-weight: 400;
+}

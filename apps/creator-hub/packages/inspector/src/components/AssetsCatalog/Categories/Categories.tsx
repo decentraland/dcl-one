@@ -26,8 +26,9 @@ const Categories: React.FC<Props> = ({ assets, collapsed, onToggle, onAddToFiles
                 onClick={() => onToggle(category)}
               >
                 {isOpen ? <OpenIcon /> : <ClosedIcon />}
-                {category}
-                <span className="category-count">{categoryAssets.length}</span>
+                <span>
+                  {category} <span className="category-count">({categoryAssets.length})</span>
+                </span>
               </button>
             </h4>
             {isOpen && (

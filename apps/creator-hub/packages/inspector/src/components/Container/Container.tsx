@@ -2,13 +2,9 @@ import React, { useCallback, useMemo, useState } from 'react';
 import { IoIosArrowDown, IoIosArrowForward } from 'react-icons/io';
 import { FiAlertTriangle as WarningIcon } from 'react-icons/fi';
 import { VscTrash as RemoveIcon } from 'react-icons/vsc';
-import {
-  MdContentCopy as CopyIcon,
-  MdContentPaste as PasteIcon,
-  MdRestartAlt as ResetIcon,
-} from 'react-icons/md';
 import { cx } from '../../lib/utils/cx';
 import { Button } from '../Button';
+import { CopyIcon, PasteIcon, ResetIcon } from '../Icons/ComponentValues';
 import { InfoTooltip } from '../ui/InfoTooltip';
 import MoreOptionsMenu from '../EntityInspector/MoreOptionsMenu';
 import { useComponentClipboard } from '../../hooks/sdk/useComponentClipboard';

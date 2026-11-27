@@ -32,8 +32,7 @@ const Header: React.FC<Props> = ({
       { value: ALL_CATEGORIES, label: 'All categories' },
       ...categories.map(({ name, count }) => ({
         value: name,
-        label: name.charAt(0).toUpperCase() + name.slice(1),
-        secondaryText: count.toString(),
+        label: `${name.charAt(0).toUpperCase() + name.slice(1)} (${count})`,
       })),
     ],
     [categories],
@@ -76,26 +75,26 @@ const Header: React.FC<Props> = ({
           value={selectedCategory ?? ALL_CATEGORIES}
           onChange={event => onChangeCategory((event.target.value as string) || undefined)}
         />
-        {!isMainHeader && (
-          <nav
-            className="Assets-crumbs inline assets-catalog-header-title"
-            aria-label="Asset pack path"
-          >
-            {crumbs.map((crumb, index) => (
-              <React.Fragment key={crumb.label}>
-                {index > 0 && <ChevronIcon />}
-                <button
-                  className={cx({ current: index === crumbs.length - 1 })}
-                  onClick={crumb.onClick}
-                  disabled={!crumb.onClick}
-                >
-                  {crumb.label}
-                </button>
-              </React.Fragment>
-            ))}
-          </nav>
-        )}
       </div>
+      {!isMainHeader && (
+        <nav
+          className="Assets-crumbs assets-catalog-header-title"
+          aria-label="Asset pack path"
+        >
+          {crumbs.map((crumb, index) => (
+            <React.Fragment key={crumb.label}>
+              {index > 0 && <ChevronIcon />}
+              <button
+                className={cx({ current: index === crumbs.length - 1 })}
+                onClick={crumb.onClick}
+                disabled={!crumb.onClick}
+              >
+                {crumb.label}
+              </button>
+            </React.Fragment>
+          ))}
+        </nav>
+      )}
     </div>
   );
 };

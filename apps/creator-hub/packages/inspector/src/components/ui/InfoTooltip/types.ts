@@ -17,6 +17,8 @@ export type Props = {
   trigger?: ReactNode;
   position?: Position;
   className?: string;
+  /** Draw a pointer from the tip to the trigger. */
+  arrow?: boolean;
   disabled?: boolean;
   open?: boolean;
   hoverable?: boolean;

@@ -18,7 +18,7 @@
 .assets-catalog-category h4.category-name {
   margin: 0;
   font-size: 12px;
-  font-weight: 400;
+  font-weight: 600;
   line-height: normal;
 }
 
@@ -51,12 +51,7 @@
   color: var(--neutral-grey-3);
 }
 
-.assets-catalog-category .category-count {
-  margin-left: 2px;
-  padding: 0 7px;
-  border-radius: 9px;
-  background: var(--base-17);
+.assets-catalog-category h4.category-name .category-count {
   color: var(--neutral-grey-3);
-  font-size: 10px;
-  line-height: 16px;
+  font-weight: 400;
 }

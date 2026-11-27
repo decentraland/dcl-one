@@ -53,14 +53,14 @@ test.describe('Assets', () => {
     await expect(Hierarchy.getId('Pebbles')).resolves.toBeGreaterThanOrEqual(152);
   });
 
-  test('Name tooltip sits right above the tile in search results, as in the category view', async () => {
+  test('Name tooltip hugs the tile in search results, as in the category view', async () => {
     const category = await Assets.getNameTooltipPlacement('Bookshelf');
     await Assets.search('Bookshelf');
     const search = await Assets.getNameTooltipPlacement('Bookshelf');
 
     // It hugs the tile it labels, instead of floating up the stretched row (#1010)...
-    expect(Math.abs(search.gapAbove - category.gapAbove)).toBeLessThan(2);
-    // ...and still clears the panel header, which is what made it read as "too high".
+    expect(Math.abs(search.gap - category.gap)).toBeLessThan(2);
+    // ...and still clears the panel header and the asset pack path under it.
     expect(category.clearsHeaderBy).toBeGreaterThan(0);
     expect(search.clearsHeaderBy).toBeGreaterThan(0);
   });
