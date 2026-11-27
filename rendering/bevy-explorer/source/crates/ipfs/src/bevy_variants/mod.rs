@@ -896,8 +896,8 @@ impl IpfsIo {
         ))
     }
 
-    /// abgen's one simplified mesh for a scene, its far LOD, under the variants base. Offered on
-    /// the variants base (variants on, the scene eligible) and only on a GPU with BC textures:
+    /// abgen's one simplified mesh for a scene, its far LOD, under the variants base. Offered
+    /// while a variants base is set, for an eligible scene, and only on a GPU with BC textures:
     /// the mesh's atlases are BC KTX2 only. Like a `glb` variant it is fetched at its own path:
     /// its Brotli copy exists only when it is smaller, and the server sends it to a browser that
     /// accepts `br`.
