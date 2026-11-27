@@ -764,7 +764,7 @@ mod main_extractor_contracts {
     #[derive(Deserialize)]
     struct Page {
         #[serde(default)]
-        #[allow(dead_code)]
+        #[allow(dead_code, reason = "parsed only so a bad limit is refused")]
         limit: u64,
     }
 

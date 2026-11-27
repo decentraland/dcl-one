@@ -15,6 +15,13 @@
 //! ([`venues`]); a controlled deployment (the anvil tests) builds its own,
 //! so no route reads an address from a request.
 
+// Money and chain values: a silently truncated or sign-flipped cast is a bug.
+#![deny(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    clippy::cast_possible_wrap
+)]
+
 pub mod actions;
 pub mod calls;
 pub mod chain;
@@ -118,7 +125,7 @@ fn settlement_book_for(
                 .indexes
                 .chain_id(crate::market::chain_walk::ChainNet::Matic);
             anyhow::ensure!(
-                indexed == ChainId::AMOY.0 as i64,
+                u64::try_from(indexed) == Ok(ChainId::AMOY.0),
                 "COLLECTIONS_CHAIN_ID is Amoy (80002) but MARKETPLACE_INDEX_CHAIN_ID_MATIC is {indexed}: \
                  an index of another chain would confirm Amoy's trades"
             );

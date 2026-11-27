@@ -96,7 +96,10 @@ It installs with pnpm as one workspace with a single lockfile
    need: the `npm-release` environment, a trusted publisher on each `@dcl` package naming that
    workflow and environment, and `decentraland/js-sdk-toolchain` to stop publishing. Then the rest of the PR tooling (the e2e realm, the playground). The first
    release notes carry the narrowed types above.
-2. The `auth-server` branch as a dcl-one branch published through a manual `publish-tag` run.
+2. The `auth-server` branch is a dcl-one branch: `main` plus the authoritative-server SDK. A push
+   to it publishes `@dcl/*` under the `auth-server` dist-tag from `sdk-release.yml`. Still needed:
+   `decentraland/js-sdk-toolchain` to stop publishing that tag, and a scheduled merge of `main`
+   into the branch.
 3. Build the bridge scene from the SDK here, in place of the pinned snapshot published from
    `decentraland/js-sdk-toolchain`'s `experimental-bevy`.
 4. `make lint-packages` (inherited) checks only the root manifest: its `packages/*/package.json`

@@ -1,0 +1,37 @@
+@layer dcl.reset, dcl.foundations, dcl.components;
+
+/* Not from Figma's pill-text (Pills): the Explorer HUD's count pill. Its rem and 11px type sizes have no token. */
+@layer dcl.components {
+  /* a11y exception countbadge-contrast (docs/ui-standards.md): snow on ruby is 3.6:1. */
+  .root {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex: none;
+    border-radius: var(--dcl-radius-full);
+    background: var(--dcl-brand-ruby);
+    color: var(--dcl-neutrals-snow);
+    font-weight: 700;
+  }
+
+  .md {
+    min-width: 20px;
+    height: 20px;
+    padding: 0 6px;
+    font-size: 0.72rem;
+  }
+
+  .sm {
+    min-width: 18px;
+    height: 18px;
+    padding: 0 5px;
+    font-size: 11px;
+  }
+
+  .xs {
+    min-width: 16px;
+    height: 16px;
+    padding: 0 4px;
+    font-size: 11px;
+  }
+}

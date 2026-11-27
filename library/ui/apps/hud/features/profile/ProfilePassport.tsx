@@ -7,8 +7,9 @@
 // NOTE: backend follow-up for OTHER users — the bridge must fetch their rich profile
 // (badges/info/mutuals) by address; the 2D picture is the fallback meanwhile.
 
+import { Button, EmptyState, EquippedItemCard, MaskIcon, ScrollThumb, Spinner, Tooltip, type EquippedItemCardProps } from '@dcl/one-ui'
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Avatar, BlockUserIcon, Button, Close, ColorPicker, ContextMenu, ControlButton, EmptyState, EquippedItemCard, Icon, Kebab, MaskIcon, Pencil, ReportFlag, ScrollThumb, Search, Spinner, Tabs, Tooltip, showConfirm, type ContextMenuItem, type EquippedItemCardProps, type TabItem, NameSeal } from '../../design'
+import { Avatar, BlockUserIcon, Close, ColorPicker, ContextMenu, ControlButton, Icon, Kebab, Pencil, ReportFlag, Search, Tabs, showConfirm, type ContextMenuItem, type TabItem, NameSeal } from '../../design'
 import giftIcon from '../../assets/gifting/gift.png'
 import jumpInIcon from '../../assets/friends/jump-in.png'
 import { registerCancelLayer } from '@explorer-core/lib/cancelLayers'
@@ -89,7 +90,7 @@ function BadgeIcon({ image, alt, className = '' }: { image?: string; alt: string
 // The Overview's compact row: icon only, name on hover.
 function BadgeTile({ badge }: { badge: Badge }): React.JSX.Element {
   return (
-    <Tooltip label={badgeLabel(badge)} side="top">
+    <Tooltip appearance="hud" label={badgeLabel(badge)} side="top">
       <BadgeIcon image={badge.image} alt={badge.name} />
     </Tooltip>
   )
@@ -271,7 +272,7 @@ function CreationsSection({ address }: { address: string }): React.JSX.Element {
     return (
       <section className={`${styles.card} ${styles.cardFill}`}>
         <div className={styles.emptyState}>
-          <Spinner size={34} />
+          <Spinner variant="thin" size={34} />
         </div>
       </section>
     )
@@ -527,7 +528,7 @@ export function ProfilePassport({
           <div className={styles.main}>
         {/* --- header --- */}
         <header className={styles.head}>
-          <div className={styles.idblock}>
+          <div>
             <div className={styles.nameRow}>
               <span className={styles.name} style={{ '--name-color': nameColor } as React.CSSProperties}>{base}</span>
               {claimed && <Verified />}
@@ -562,7 +563,7 @@ export function ProfilePassport({
           </div>
           <div className={styles.headActions}>
             {!isSelf && onJump != null && (
-              <Tooltip label="Jump to Location" side="bottom">
+              <Tooltip appearance="hud" label="Jump to Location" side="bottom">
                 <button type="button" className={`${styles.headBtn} ${styles.headIconBtn}`} aria-label="Jump to Location" onClick={() => onJump(profile.address)}>
                   <img src={jumpInIcon} alt="" width={24} height={24} />
                 </button>
@@ -615,12 +616,12 @@ export function ProfilePassport({
               </div>
             )}
             {canEdit && editMode && (
-              <Button variant="primary" disabled={!editStatus.canSave} onClick={() => saveRef.current?.()}>
+              <Button appearance="hud" variant="primary" disabled={!editStatus.canSave} onClick={() => saveRef.current?.()}>
                 {editing.saving ? 'SAVING…' : 'SAVE'}
               </Button>
             )}
             {canEdit && editMode ? (
-              <Button variant="secondary" onClick={() => void cancelEdit()} disabled={editing.saving}>
+              <Button appearance="hud" variant="secondary" onClick={() => void cancelEdit()} disabled={editing.saving}>
                 CANCEL
               </Button>
             ) : (

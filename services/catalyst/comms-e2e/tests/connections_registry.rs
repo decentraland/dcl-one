@@ -1,4 +1,5 @@
 //! The connection scenarios as the runner sees them: what each declares, and when each is skipped.
+#![allow(clippy::unwrap_used, reason = "test support")]
 
 use catalyst_comms_e2e::scenarios::connections;
 use catalyst_comms_e2e::stack::Stack;

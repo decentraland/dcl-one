@@ -188,3 +188,36 @@ const spreadButtonHtml: ButtonProps = { ...htmlSpread }
 // @ts-expect-error Link-mode spreads cannot override owned content either.
 const spreadLinkHtml: ButtonProps = { href: '/save', ...htmlSpread }
 void [buttonHtml, linkHtml, spreadButtonHtml, spreadLinkHtml]
+
+// The Explorer HUD's control looks are separate members of the Button union.
+const hudControl: ButtonProps = {
+  appearance: 'hud',
+  control: 'circle',
+  active: true,
+  'aria-label': 'Menu'
+}
+const hudHeader: ButtonProps = { appearance: 'hud', control: 'header', 'aria-label': 'Close' }
+const hudControlRadius: ButtonProps = {
+  appearance: 'hud',
+  control: 'square',
+  // @ts-expect-error A control takes no radius override.
+  radius: 'pill',
+  'aria-label': 'Close'
+}
+// @ts-expect-error Only a control has an active look.
+const hudActive: ButtonProps = { appearance: 'hud', active: true, children: 'Save' }
+const hudHeaderSize: ButtonProps = {
+  appearance: 'hud',
+  control: 'header',
+  // @ts-expect-error A header button has no size.
+  size: 'sm',
+  'aria-label': 'Close'
+}
+// @ts-expect-error A control's fills are its own four.
+const hudControlFill: ButtonProps = {
+  appearance: 'hud',
+  control: 'square',
+  variant: 'primary',
+  'aria-label': 'Close'
+}
+void [hudControl, hudHeader, hudControlRadius, hudActive, hudHeaderSize, hudControlFill]

@@ -636,6 +636,17 @@ class ConfigurationTest(unittest.TestCase):
         self.assertIn("location = /ui-gallery {\nproxy_pass http://sites;", config)
         self.assertIn("location ^~ /ui-gallery/ {\nproxy_pass http://sites;", config)
 
+    def test_avatar_preview_routes_to_sites_before_any_regex(self):
+        # The page is a static file with no route file, like the gallery; its modules are under /assets/.
+        root = Path(__file__).parents[3]
+        sites = sorted(path.name for path in (root / "apps/sites/src/routes/routes").iterdir())
+        self.assertNotIn("/avatar-preview", gateway.site_prefixes(sites))
+        table = {"sites": sites, "internal": [], "aliases": [], "node": [], "deploy": []}
+        config = gateway.render(table, gateway.settings({"GATEWAY_RESOLVERS": "127.0.0.1"}), "/mime.types")
+        self.assertIn("location = /avatar-preview {\nproxy_pass http://sites;", config)
+        self.assertIn("location ^~ /avatar-preview/ {\nproxy_pass http://sites;", config)
+        self.assertIn("location ^~ /assets/ {\nproxy_pass http://sites;", config)
+
     def test_a_sites_route_cannot_claim_the_ui_gallery(self):
         table = {"sites": ["ui-gallery.tsx"], "internal": [], "aliases": [], "node": [], "deploy": []}
         with self.assertRaisesRegex(ValueError, "Two locations have the name = /ui-gallery"):

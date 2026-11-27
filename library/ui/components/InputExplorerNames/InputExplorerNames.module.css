@@ -1,0 +1,133 @@
+@layer dcl.reset, dcl.foundations, dcl.components;
+
+/* Not in Figma: the Explorer HUD's plain field (`appearance="hud"`), the input alone. Its 10px corners, its rem
+   type size, its 6% and 45% white, its dark ink on pearl, its error red and its 140ms have no token. */
+@layer dcl.components {
+  .hud {
+    box-sizing: border-box;
+    width: 100%;
+    min-width: 0;
+    height: 38px;
+    padding: 0 var(--dcl-space-12);
+    border-radius: 10px;
+    outline: none;
+    font-family: inherit;
+    font-size: 0.82rem;
+    font-weight: 500;
+    transition: border-color 140ms ease;
+  }
+
+  .hud::placeholder {
+    color: rgba(255, 255, 255, 0.45);
+  }
+
+  .hud:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
+  /* The field over several lines. */
+  .hudArea {
+    box-sizing: border-box;
+    width: 100%;
+    min-width: 0;
+    padding: 10px var(--dcl-space-12);
+    border-radius: 10px;
+    outline: none;
+    font-family: inherit;
+    font-size: 0.82rem;
+    font-weight: 500;
+    line-height: 1.45;
+    resize: vertical;
+    transition: border-color 140ms ease;
+  }
+
+  .hudArea::placeholder {
+    color: rgba(255, 255, 255, 0.45);
+  }
+
+  .hudArea:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
+  .hudArea:focus {
+    border-color: var(--dcl-brand-ruby);
+  }
+
+  .hudDark {
+    border: 1px solid var(--dcl-transparencies-white-10);
+    background: rgba(255, 255, 255, 0.06);
+    color: var(--dcl-neutrals-snow);
+  }
+
+  .hudLight {
+    border: 1px solid transparent;
+    background: var(--dcl-neutrals-pearl);
+    color: #1a1206;
+  }
+
+  .hudLight::placeholder {
+    color: rgba(255, 255, 255, 0.45);
+  }
+
+  .hud:focus {
+    border-color: var(--dcl-brand-ruby);
+  }
+
+  .hudInvalid,
+  .hudInvalid:focus {
+    border-color: #ff2424;
+  }
+
+  .hudWrap {
+    position: relative;
+    width: 100%;
+    min-width: 0;
+  }
+
+  .hudLarge {
+    height: auto;
+    min-height: 74px;
+    padding: 0 18px;
+    font-size: 36px;
+  }
+
+  .hudWithAction {
+    min-height: calc(var(--action-icon, 18px) + 20px);
+    padding-right: calc(var(--action-icon, 18px) + 22px);
+  }
+
+  .hudAction {
+    position: absolute;
+    top: 50%;
+    right: 6px;
+    display: grid;
+    width: calc(var(--action-icon, 18px) + 10px);
+    height: calc(var(--action-icon, 18px) + 10px);
+    padding: 0;
+    border: 0;
+    border-radius: 10px;
+    background: none;
+    color: inherit;
+    opacity: 0.7;
+    cursor: pointer;
+    transform: translateY(-50%);
+    transition:
+      opacity 140ms ease,
+      background 140ms ease;
+    place-items: center;
+  }
+
+  .hudAction:hover:not(:disabled),
+  .hudAction:focus-visible {
+    outline: none;
+    background: rgba(255, 255, 255, 0.06);
+    opacity: 1;
+  }
+
+  .hudAction:disabled {
+    opacity: 0.3;
+    cursor: not-allowed;
+  }
+}

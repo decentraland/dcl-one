@@ -4,11 +4,11 @@
 // for a stopped smart wearable, Restart (`/smart_wearable restart <urn>`). The button shows while the
 // engine lists any.
 
-import { Button } from '../../design'
 import type { PortableInfo, PortableInfoKind, PortableState } from '@explorer-core/engine/generated'
 import { useRailPopover } from '../sidebar/useRailPopover'
 import popover from '../permissions/PermissionsPopover.module.css'
 import styles from './PortablesPopover.module.css'
+import { Button } from '@dcl/one-ui'
 
 const STATE_LABEL: Record<PortableState, string> = {
   loading: 'Loading',
@@ -74,12 +74,12 @@ export function PortablesPopover({
               </span>
             </div>
             {p.kind === 'smartWearable' && p.state === 'stopped' ? (
-              <Button size="sm" variant="ghost" aria-label={`Restart ${p.name}`} onClick={() => onRestart(p.pid)}>
+              <Button appearance="hud" size="sm" variant="ghost" aria-label={`Restart ${p.name}`} onClick={() => onRestart(p.pid)}>
                 Restart
               </Button>
             ) : (
               hash != null && (
-                <Button size="sm" variant="ghost" aria-label={`Stop ${p.name}`} onClick={() => onStop(hash)}>
+                <Button appearance="hud" size="sm" variant="ghost" aria-label={`Stop ${p.name}`} onClick={() => onStop(hash)}>
                   Stop
                 </Button>
               )

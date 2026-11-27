@@ -1,8 +1,9 @@
 use bevy::ecs::system::RunSystemOnce;
 use common::{
     profile::SerializedProfile,
-    structs::{CameraOverride, CinematicSettings},
+    structs::{CameraOverride, CinematicSettings, PlayerModifiers},
 };
+use comms::BlockedOrBanned;
 
 use dcl_component::{proto_components::common::Color3, SceneEntityId};
 use scene_runner::{
@@ -11,6 +12,7 @@ use scene_runner::{
 };
 
 use super::*;
+use crate::BeyondMaxAvatars;
 
 const ADDRESS: &str = "0x00000000000000000000000000000000000012ab";
 
@@ -121,22 +123,14 @@ fn a_tag_keeps_its_size_on_screen() {
 
 #[test]
 fn a_name_shows_in_range_of_the_camera() {
-    let view = |first_person| TagView {
-        position: Vec3::ZERO,
-        first_person,
-    };
-    let third = view(false);
-    assert!(third.shows(Vec3::new(0.0, 0.0, -2.0), false));
-    assert!(third.shows(Vec3::new(0.0, 0.0, -40.0), false));
-    assert!(!third.shows(Vec3::new(0.0, 0.0, -1.9), false));
-    assert!(!third.shows(Vec3::new(0.0, 0.0, -40.1), false));
+    let shows = |player| in_range(player, Vec3::ZERO);
+    assert!(shows(Vec3::new(0.0, 0.0, -2.0)));
+    assert!(shows(Vec3::new(0.0, 0.0, -40.0)));
+    assert!(!shows(Vec3::new(0.0, 0.0, -1.9)));
+    assert!(!shows(Vec3::new(0.0, 0.0, -40.1)));
     // behind the camera or off to the side: the frustum's to cull
-    assert!(third.shows(Vec3::new(0.0, 0.0, 5.0), false));
-    assert!(third.shows(Vec3::new(30.0, 0.0, -1.0), false));
-    // the local player's own, in third person only
-    assert!(third.shows(Vec3::new(0.0, 0.0, -3.0), true));
-    assert!(!view(true).shows(Vec3::new(0.0, 0.0, -3.0), true));
-    assert!(view(true).shows(Vec3::new(0.0, 0.0, -3.0), false));
+    assert!(shows(Vec3::new(0.0, 0.0, 5.0)));
+    assert!(shows(Vec3::new(30.0, 0.0, -1.0)));
 }
 
 #[test]

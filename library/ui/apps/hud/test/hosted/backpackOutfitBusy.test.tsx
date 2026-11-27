@@ -239,6 +239,12 @@ describe('the Saved Outfits slots', () => {
     it('should show no saved outfit', () => {
       expect(screen.queryByRole('button', { name: /^Outfit \d+$/ })).toBeNull()
     })
+
+    it("should fill each slot with the HUD's sweeping placeholder", () => {
+      const placeholders = Array.from(document.querySelectorAll('[class*="outfitSkeleton"]'))
+      expect(placeholders.length).toBeGreaterThan(0)
+      for (const placeholder of placeholders) expect(placeholder.className).toMatch(/sweep/)
+    })
   })
 
   describe('when the player presses the delete button of a saved outfit', () => {

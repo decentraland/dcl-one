@@ -7,8 +7,9 @@
 // it, and its description on hover. The sidebar's Invites & Requests opens the user's invites, the
 // join requests their communities received and their own requests.
 
+import { Button, CountBadge, EmptyState, Spinner, SwapLabel, Tooltip } from '@dcl/one-ui'
 import { useEffect, useRef, useState } from 'react'
-import { Avatar, Button, Chip, CountBadge, EmptyState, SearchField, Spinner, SwapLabel, Tooltip } from '../../design'
+import { Avatar, Chip, SearchField } from '../../design'
 import { nameColor } from '@explorer-core/lib/identity'
 import { MainMenuShell } from '../menu/MainMenuShell'
 import { MenuBackdrop } from '../menu/MenuBackdrop'
@@ -69,8 +70,8 @@ function CardButton({ c, onOpen, onJoin, onRequestToJoin, onCancelRequest, onAcc
   if (inviteId != null) {
     return (
       <span className={styles.cardBtns}>
-        <Button size="sm" className={styles.cardBtn} aria-label="Accept invite" onClick={act(() => onAcceptInvite(c.id, inviteId))}>Accept</Button>
-        <Button
+        <Button appearance="hud" size="sm" className={styles.cardBtn} aria-label="Accept invite" onClick={act(() => onAcceptInvite(c.id, inviteId))}>Accept</Button>
+        <Button appearance="hud"
           size="sm"
           variant="secondary"
           className={styles.cardBtn}
@@ -83,20 +84,20 @@ function CardButton({ c, onOpen, onJoin, onRequestToJoin, onCancelRequest, onAcc
     )
   }
   if (isMember(c.role)) {
-    return <Button size="sm" variant="ghost" className={styles.cardBtn} onClick={act(onOpen)}>View</Button>
+    return <Button appearance="hud" size="sm" variant="ghost" className={styles.cardBtn} onClick={act(onOpen)}>View</Button>
   }
   if (c.privacy !== 'private') {
-    return <Button size="sm" className={styles.cardBtn} onClick={act(() => onJoin(c.id))}>Join</Button>
+    return <Button appearance="hud" size="sm" className={styles.cardBtn} onClick={act(() => onJoin(c.id))}>Join</Button>
   }
   const requestId = c.pendingRequestId
   if (requestId != null) {
     return (
-      <Button size="sm" variant="ghost" className={styles.cardBtn} aria-label="Cancel join request" onClick={act(() => onCancelRequest(c.id, requestId))}>
+      <Button appearance="hud" size="sm" variant="ghost" className={styles.cardBtn} aria-label="Cancel join request" onClick={act(() => onCancelRequest(c.id, requestId))}>
         <SwapLabel idle="Request Sent" hover="Cancel Request" />
       </Button>
     )
   }
-  return <Button size="sm" className={styles.cardBtn} onClick={act(() => onRequestToJoin(c.id))}>Request to Join</Button>
+  return <Button appearance="hud" size="sm" className={styles.cardBtn} onClick={act(() => onRequestToJoin(c.id))}>Request to Join</Button>
 }
 
 function CommunityCard({ c, live, onOpen, ...actions }: CardActions & { c: Community; live: boolean; onOpen: () => void }): React.JSX.Element {
@@ -122,7 +123,7 @@ function CommunityCard({ c, live, onOpen, ...actions }: CardActions & { c: Commu
           {friends.length > 0 && (
             <span className={styles.friends} aria-label={`Friends in this community: ${friends.map((f) => f.name).join(', ')}`}>
               {friends.map((f) => (
-                <Tooltip key={f.address} label={f.name} side="top" className={styles.friend}>
+                <Tooltip appearance="hud" key={f.address} label={f.name} side="top" className={styles.friend}>
                   <Avatar src={f.picture} name={f.name} color={nameColor(f.address)} size={20} />
                 </Tooltip>
               ))}
@@ -217,7 +218,7 @@ function InvitesAndRequests({
   /** Read the section again (a list could not be read). */
   onRetry: () => void
 }): React.JSX.Element {
-  if (invites == null) return <div className={styles.loading}><Spinner /></div>
+  if (invites == null) return <div className={styles.loading}><Spinner variant="thin" /></div>
   // a list that could not be read says so, rather than claiming nothing is pending
   const failed = (list: CommunityInvitesMessage['failed'][number]): boolean => invites.failed.includes(list)
   const unread = <EmptyState variant="inline" tone="error" title={SECTION_LOAD_ERROR} actions={[{ label: 'RETRY', variant: 'outline', onClick: onRetry }]} />
@@ -437,7 +438,7 @@ export function CommunitiesPage({
             {count !== '' && <span className={styles.count}>{count}</span>}
           </div>
           {!showingMine && browse.loading ? (
-            <div className={styles.loading}><Spinner /></div>
+            <div className={styles.loading}><Spinner variant="thin" /></div>
           ) : !showingMine && browse.failed === true ? null : gridList.length === 0 ? (
             <div className={styles.empty}>{showingMine ? 'You haven’t joined any communities yet.' : 'No Communities match your search terms.'}</div>
           ) : (
@@ -448,7 +449,7 @@ export function CommunitiesPage({
                 ))}
               </div>
               {!showingMine && browse.items.length < browse.total && <LoadMore count={browse.items.length} onVisible={loadMoreBrowse} />}
-              {!showingMine && browse.loadingMore && <div className={styles.loadingMore}><Spinner size={22} /></div>}
+              {!showingMine && browse.loadingMore && <div className={styles.loadingMore}><Spinner variant="thin" size={22} /></div>}
             </>
           )}
           </>

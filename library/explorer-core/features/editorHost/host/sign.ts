@@ -32,7 +32,8 @@ export async function signFetch(identity: AuthIdentity, method: string, url: str
     metadata == null
       ? [JSON.stringify({ intent: 'dcl:editor:projects', signer: 'dcl:editor', origin: location.origin }), `${pathname}${search}`]
       : [JSON.stringify(metadata), pathname]
-  const payload = [method, path, timestamp, meta].join(':').toLowerCase()
+  // crypto-middleware 6.x: method and path folded, metadata signed verbatim
+  const payload = [method.toLowerCase(), path.toLowerCase(), timestamp, meta].join(':')
   const headers: Record<string, string> = { 'x-identity-timestamp': timestamp, 'x-identity-metadata': meta }
   const chain = await signPayload(identity, payload, sign)
   chain.forEach((link, i) => (headers[`x-identity-auth-chain-${i}`] = JSON.stringify(link)))
