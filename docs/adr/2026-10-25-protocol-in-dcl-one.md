@@ -54,8 +54,9 @@ source in this repository.
   Play build's source set includes it.
 - `.github/workflows/protocol-release.yml` publishes `@dcl/protocol` under the `next` dist-tag on
   a push to `main` that changes `library/protocol`, as `1.0.0-<run>.commit-<sha>` (oddish stamps
-  it; the manifest keeps `1.0.0`), through npm trusted publishing and the `npm-release`
-  environment the SDK's releases use ([releases ADR](2026-11-09-releases-per-scope.md)). A pull
+  it; the manifest keeps `1.0.0`), through npm trusted publishing and the
+  `npm-release-protocol` environment, which only `main` may deploy to
+  ([releases ADR](2026-11-09-releases-per-scope.md)). A pull
   request from this repository publishes what its run packed as `@dcl-regenesislabs/protocol`
   under the shared `pr` dist-tag from `.github/workflows/protocol.yml`, and the PR's CI status
   comment names the exact version; fork pull requests publish nothing. The package has no
@@ -91,7 +92,7 @@ places where its copy was behind `main`.
 1. `decentraland/protocol` to stop publishing `next`: while it publishes, the tag points at
    whichever repository pushed last, and a commit it lands on `main` is missing here until it is
    ported. `next` also needs a trusted publisher on `@dcl/protocol` naming
-   `protocol-release.yml` and the `npm-release` environment, and the previews one on
+   `protocol-release.yml` and the `npm-release-protocol` environment, and the previews one on
    `@dcl-regenesislabs/protocol` naming `protocol.yml`.
 2. Import `js-sdk-toolchain` beside it (`library/js-sdk-toolchain`), reading
    `library/protocol` directly; then its publishing and the `auth-server` branch.

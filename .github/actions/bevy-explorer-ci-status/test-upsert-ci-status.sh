@@ -171,26 +171,36 @@ done
 pass "on-demand sections appended on update and on create"
 
 # --- 3c. sdk and protocol: appended to an explorer comment, alone on a pull request with no explorer build ---
+in_section() { awk -v s="<!-- ci:$1:start -->" -v e="<!-- ci:$1:end -->" '$0 == e { f = 0 } f; $0 == s { f = 1 }' <<< "$2"; }
 for section in sdk protocol; do
   reset_store
   run_upsert build "BUILD-FIRST" >/dev/null
-  run_upsert "$section" "SDK-PREVIEW" >/dev/null
+  run_upsert "$section" "$section-PREVIEW" >/dev/null
   [ "$(count)" = 1 ] || fail "$section append: expected 1 comment"
   BODY="$(body_of)"
   grep -q 'BUILD-FIRST' <<< "$BODY" || fail "$section append: build content lost"
-  grep -q 'SDK-PREVIEW' <<< "$BODY" || fail "$section append: content missing"
+  grep -q "$section-PREVIEW" <<< "$(in_section "$section" "$BODY")" || fail "$section append: content not in its section"
   reset_store
-  OUT="$(run_upsert "$section" "SDK-ALONE")"
+  OUT="$(run_upsert "$section" "$section-ALONE")"
   grep -q 'updated (attempt 1)' <<< "$OUT" || fail "$section create: did not settle on attempt 1"
   BODY="$(body_of)"
-  grep -q 'SDK-ALONE' <<< "$BODY" || fail "$section create: content missing"
+  grep -q "$section-ALONE" <<< "$(in_section "$section" "$BODY")" || fail "$section create: content not in its section"
   grep -q '<!-- ci:build:start -->' <<< "$BODY" && fail "$section create: seeded explorer sections that will never report"
   run_upsert build "BUILD-LATER" >/dev/null
   BODY="$(body_of)"
   grep -q 'BUILD-LATER' <<< "$BODY" || fail "$section create: a later build section did not land"
-  grep -q 'SDK-ALONE' <<< "$BODY" || fail "$section create: a later build section wiped the sdk one"
+  grep -q "$section-ALONE" <<< "$(in_section "$section" "$BODY")" || fail "$section create: a later build section wiped the $section one"
 done
-pass "sdk and protocol sections appended to an explorer comment, and alone without explorer sections"
+# a library/protocol change reports both
+reset_store
+run_upsert sdk "sdk-BOTH" >/dev/null
+run_upsert protocol "protocol-BOTH" >/dev/null
+[ "$(count)" = 1 ] || fail "sdk with protocol: expected 1 comment"
+BODY="$(body_of)"
+for section in sdk protocol; do
+  [ "$(in_section "$section" "$BODY")" = "$section-BOTH" ] || fail "sdk with protocol: the $section section does not hold its own content"
+done
+pass "sdk and protocol sections appended to an explorer comment, alone without explorer sections, and together"
 
 # --- 4. marker-shaped body lines are stripped ------------------------------------------------
 reset_store
