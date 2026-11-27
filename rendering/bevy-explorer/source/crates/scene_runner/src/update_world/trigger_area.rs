@@ -618,14 +618,22 @@ mod tests {
     fn a_pointer_trigger_area_is_entered_when_it_ties_with_a_coincident_pointer_collider() {
         let pointer = ColliderLayer::ClPointer as u32;
         let (mut world, scene) = world_with_trigger_area(pointer);
-        // a lower entity id than the area, whose front face (z = -6) it shares
-        add_scene_collider(&mut world, scene, 511, pointer, Vec3::new(8.0, 1.0, -6.5));
+        // a lower entity id than the area, whose front face (z = -6) it shares; inside the area on
+        // its mask's layer, it also enters as a scene collider
+        let coincident =
+            add_scene_collider(&mut world, scene, 511, pointer, Vec3::new(8.0, 1.0, -6.5));
         point_pointer_ray_at_area(&mut world, 8.0);
 
         let results = results(&mut world, scene);
+        let pointer_results = results
+            .into_iter()
+            .filter(|result| {
+                result.trigger.as_ref().unwrap().entity != coincident.as_proto_u32().unwrap()
+            })
+            .collect::<Vec<_>>();
 
         assert_eq!(
-            event_types(&results),
+            event_types(&pointer_results),
             [TriggerAreaEventType::TaetEnter as i32]
         );
     }
