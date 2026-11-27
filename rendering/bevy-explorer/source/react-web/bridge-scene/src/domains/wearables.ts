@@ -21,7 +21,7 @@ type CatalogElement = {
   category: string
   // Per-owned-token data; carries the tokenId we need for the deployable URN.
   individualData?: Array<{ id?: string; tokenId?: string }>
-  entity?: { metadata?: { description?: string; thumbnail?: string; data?: HideData }; content?: Array<{ file: string; hash: string }> }
+  entity?: { metadata?: { description?: unknown; thumbnail?: string; data?: HideData }; content?: Array<{ file: string; hash: string }> }
 }
 
 // item-urn → deployable token urn (see tokenUrnOf), what the equip handler sends. The map
@@ -96,10 +96,12 @@ export async function fetchWearablesPage(
   const items: Wearable[] = elements.map((el) => {
     const file = el.entity?.metadata?.thumbnail
     const hash = el.entity?.content?.find((c) => c.file === file)?.hash
+    // The catalog's JSON is unchecked and the HUD trims this, so only text goes through.
+    const description = el.entity?.metadata?.description
     return {
       urn: el.urn,
       name: el.name,
-      description: el.entity?.metadata?.description,
+      description: typeof description === 'string' ? description : undefined,
       rarity: el.rarity,
       category: el.category,
       thumbnail: hash != null ? `${baseUrl}/content/contents/${hash}` : undefined,

@@ -10041,7 +10041,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/emotes.ts",
-      "sha256": "b66e0c8a739c80e138554f36acf906e9825014a3595a51369911a2fcfdbb8132"
+      "sha256": "9f592928096b6b2fcda8a266336c909d28e5f3d98d00d601ccce5db44fc19915"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/events.ts",
@@ -10145,7 +10145,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/wearables.ts",
-      "sha256": "bcd31be77eab98e1f9e2bc5696bc97a8fdba3ba98a926b6a51a69427750ec904"
+      "sha256": "a07df6868a1c91b645df92b4003a388d0b4f6df0584e5af333ef3969f4fd194a"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/welcome.ts",
@@ -10401,7 +10401,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/bridgeResolveWearables.test.ts",
-      "sha256": "9ed25e6e84f0815a516f991841f947954e4dccd86225bc0f88cbe47c0290041f"
+      "sha256": "193316ff29df96ffbf9c29765bca0eb619369e82279d2f61f25d996cdb8141b5"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/bridgeSceneLookup.test.ts",
@@ -13102,7 +13102,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/backpack/BackpackPage.module.css",
-      "sha256": "b24f6a5301924fc7ea19d53e2145d9d7fbc4a1efb6609ba6118a5dccee2b0d69"
+      "sha256": "61a189b67f77d29908a9097c903b1bfafb3c0e6b7ed958bfd3b1622865383a0d"
     },
     {
       "path": "library/ui/apps/hud/features/backpack/BackpackPage.tsx",

@@ -84,4 +84,11 @@ describe('fetchWearablesPage', () => {
     const page = await fetchWearablesPage('0xabc', { page: 0, pageSize: 16 })
     expect(page.items.map((w) => [w.urn, w.description])).toEqual([['urn:a', 'Keeps the sun off.'], ['urn:b', undefined]])
   })
+
+  it.each([42, null, { text: 'Hat' }, ['Hat']])('leaves out a description that is not text (%j)', async (description) => {
+    const { fetchWearablesPage } = await load()
+    getJson.mockResolvedValueOnce({ elements: [element('urn:a', { description })], totalAmount: 1 })
+    const page = await fetchWearablesPage('0xabc', { page: 0, pageSize: 16 })
+    expect(page.items[0].description).toBeUndefined()
+  })
 })

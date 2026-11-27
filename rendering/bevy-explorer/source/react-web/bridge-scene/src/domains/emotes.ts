@@ -39,7 +39,7 @@ type CatalogElement = {
   name?: string
   rarity?: string
   individualData?: Array<{ id?: string; tokenId?: string }>
-  entity?: { metadata?: { name?: string; description?: string; thumbnail?: string; rarity?: string }; content?: Array<{ file: string; hash: string }> }
+  entity?: { metadata?: { name?: string; description?: unknown; thumbnail?: string; rarity?: string }; content?: Array<{ file: string; hash: string }> }
 }
 
 const OWNED_PAGE_SIZE = 200
@@ -171,7 +171,8 @@ export function registerEmotes(ctx: Ctx): void {
     const customEmotes: Emote[] = owned.map((el) => ({
       urn: el.urn,
       name: el.entity?.metadata?.name ?? el.name ?? baseEmoteName(el.urn),
-      description: el.entity?.metadata?.description,
+      // The catalog's JSON is unchecked and the HUD trims this, so only text goes through.
+      description: typeof el.entity?.metadata?.description === 'string' ? el.entity.metadata.description : undefined,
       rarity: el.rarity ?? el.entity?.metadata?.rarity ?? 'base',
       thumbnail: thumbUrl(base, el),
       slot: slotByItem.get(itemUrn(el.urn))
