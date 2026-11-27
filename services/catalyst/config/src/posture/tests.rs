@@ -34,14 +34,44 @@ fn parsed(pairs: &[(&str, &str)]) -> Config {
 #[test]
 fn the_mirror_sources_follow_the_catalogue_chain_pair() {
     let main = expanded(Posture::Mirror, &[]);
+    assert_eq!(main["MARKETPLACE_COLLECTIONS_INDEX_OWNS"], "matic,ethereum");
+    assert_eq!(main["MARKETPLACE_MIRRORS_ENABLED"], "false");
+    assert!(!main.contains_key("ETH_COLLECTIONS_SUBGRAPH_URL"));
+    assert!(!main.contains_key("MATIC_COLLECTIONS_SUBGRAPH_URL"));
+    let hand_back = expanded(
+        Posture::Mirror,
+        &[("MARKETPLACE_COLLECTIONS_INDEX_OWNS", "")],
+    );
+    assert_eq!(hand_back["MARKETPLACE_MIRRORS_ENABLED"], "true");
     assert_eq!(
-        main["ETH_COLLECTIONS_SUBGRAPH_URL"],
+        hand_back["ETH_COLLECTIONS_SUBGRAPH_URL"],
         "https://subgraph.decentraland.org/collections-ethereum-mainnet"
     );
     assert_eq!(
-        main["MATIC_COLLECTIONS_SUBGRAPH_URL"],
+        hand_back["MATIC_COLLECTIONS_SUBGRAPH_URL"],
         "https://subgraph.decentraland.org/collections-matic-mainnet"
     );
+    let partial = expanded(
+        Posture::Mirror,
+        &[("MARKETPLACE_COLLECTIONS_INDEX_OWNS", " polygon ")],
+    );
+    assert_eq!(partial["MARKETPLACE_MIRRORS_ENABLED"], "true");
+    assert_eq!(
+        partial["ETH_COLLECTIONS_SUBGRAPH_URL"],
+        hand_back["ETH_COLLECTIONS_SUBGRAPH_URL"]
+    );
+    assert!(!partial.contains_key("MATIC_COLLECTIONS_SUBGRAPH_URL"));
+    let disabled = expanded(
+        Posture::Mirror,
+        &[("MARKETPLACE_COLLECTIONS_INDEX_ENABLED", "false")],
+    );
+    assert_eq!(disabled["MARKETPLACE_COLLECTIONS_INDEX_OWNS"], "");
+    assert_eq!(disabled["MARKETPLACE_MIRRORS_ENABLED"], "true");
+    for posture in [Posture::Island, Posture::Journey] {
+        let local = expanded(posture, &[]);
+        assert_eq!(local["MARKETPLACE_COLLECTIONS_INDEX_OWNS"], "");
+        assert_eq!(local["MARKETPLACE_MIRRORS_ENABLED"], "false");
+    }
     let cfg = expanded(
         Posture::Mirror,
         &[
@@ -49,6 +79,8 @@ fn the_mirror_sources_follow_the_catalogue_chain_pair() {
             ("MARKETPLACE_INDEX_CHAIN_ID_MATIC", "80002"),
         ],
     );
+    assert_eq!(cfg["MARKETPLACE_COLLECTIONS_INDEX_OWNS"], "");
+    assert_eq!(cfg["MARKETPLACE_MIRRORS_ENABLED"], "true");
     assert_eq!(
         cfg["ETH_COLLECTIONS_SUBGRAPH_URL"],
         "https://subgraph.decentraland.org/collections-ethereum-sepolia"
@@ -180,17 +212,34 @@ fn a_mirror_refuses_blank_profile_ownership_readers() {
         err.contains("MARKETPLACE_SUBGRAPH_URL is empty: unset it"),
         "{err}"
     );
-    // The collections subgraphs are no profile ownership source, but they
-    // are the catalogue the nft walk takes its contracts from: a node that
-    // fills its own catalogue may blank neither, one whose catalogue another
-    // node fills may.
+    // A mirrored network needs a source URL. The native catalogue and a
+    // catalogue another process fills can both serve without one.
+    check_of(&[
+        db,
+        (ENV, "mirror"),
+        ("ETH_COLLECTIONS_SUBGRAPH_URL", " "),
+        ("MATIC_COLLECTIONS_SUBGRAPH_URL", ""),
+    ])
+    .unwrap();
+    check_of(&[
+        db,
+        (ENV, "mirror"),
+        ("MARKETPLACE_COLLECTIONS_INDEX_OWNS", "matic"),
+        ("MATIC_COLLECTIONS_SUBGRAPH_URL", ""),
+    ])
+    .unwrap();
     for (key, blank) in [
         ("ETH_COLLECTIONS_SUBGRAPH_URL", " "),
         ("MATIC_COLLECTIONS_SUBGRAPH_URL", ""),
     ] {
-        let err = check_of(&[db, (ENV, "mirror"), (key, blank)])
-            .unwrap_err()
-            .to_string();
+        let err = check_of(&[
+            db,
+            (ENV, "mirror"),
+            ("MARKETPLACE_COLLECTIONS_INDEX_OWNS", ""),
+            (key, blank),
+        ])
+        .unwrap_err()
+        .to_string();
         assert!(
             err.contains(&format!("{key} is empty")) && err.contains("never publishes"),
             "{err}"
@@ -201,6 +250,7 @@ fn a_mirror_refuses_blank_profile_ownership_readers() {
         (ENV, "mirror"),
         ("ETH_COLLECTIONS_SUBGRAPH_URL", " "),
         ("MATIC_COLLECTIONS_SUBGRAPH_URL", ""),
+        ("MARKETPLACE_COLLECTIONS_INDEX_OWNS", ""),
         ("MARKETPLACE_MIRRORS_ENABLED", "false"),
     ])
     .unwrap();

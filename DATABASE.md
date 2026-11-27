@@ -4127,36 +4127,54 @@ network's publication and projection generation. The creator directory is a
 display aggregate that keeps its stated staleness (15 minutes, kept up to an hour), so it is filed
 under which source serves each network: an ownership change files it anew.
 
-**Switching a network from the mirror.** Run this only once two things
-hold:
-- every reader above follows the index, the other readers included;
-- the NFT and sales walks take their contracts from the index.
+### Mainnet catalogue cutover
 
-Deploys are manual, one process at a time:
+On the mainnet mirror posture the collections index owns `matic,ethereum`
+by default. The posture turns off the collections and items mirrors and
+leaves their two subgraph URLs unset. An explicit ownership list can keep
+either network on its mirror. Sepolia and Amoy keep both mirrors. Island
+and journey leave ownership empty and their mirrors off.
 
-1. Run the enabled walk (`MARKETPLACE_COLLECTIONS_INDEX_ENABLED=true` in the mirror posture) on the
-   process that runs the mirror, and wait until the `collections` cursor of
-   each network to hand over publishes. That is the catch-up: on `matic`
-   (chain 137) from block 15,202,000; on `ethereum` (chain 1, the 42
-   collections-v1 contracts) from block 8,828,687, about 37 minutes
-   (`METRICS.md`). The mirror keeps serving meanwhile.
-2. Stop that process, set `MARKETPLACE_COLLECTIONS_INDEX_OWNS` to the networks
-   (`matic`, `ethereum`, or both), and start it again. Two processes must
-   never write the catalogue under different settings. The mirror switch
-   stays as it was: the mirror keeps walking any network not listed. The
-   next pass's publication on each listed network rebuilds its rows from the
-   log and takes the network (on Ethereum, with the v1 royalty catalogue).
-3. Check `SELECT owned_at, projected_through, pending, generation FROM
-   shop.collection_projection`.
+**Before switching an existing database**
 
-**Handing a network back to the mirror.**
-1. Stop the index process, remove the network from
-   `MARKETPLACE_COLLECTIONS_INDEX_OWNS`, and start it again. Its fold keeps
-   the log alone from then.
-2. Run this transaction. It takes the exclusive catalogue lock, and removes
-   the network's rows, the mirror's pass markers and the ownership together.
-   It is shown for `matic`; for `ethereum`, write `'ethereum'` for the
-   network and `1` for the lock's second key (the chain id):
+1. Run the owner-aware NFT and sales walkers on the database before handing
+   over the catalogue. To warm the collections walks with the mirror still
+   serving, explicitly set `MARKETPLACE_COLLECTIONS_INDEX_OWNS=` and
+   `MARKETPLACE_MIRRORS_ENABLED=true`. Preserve the two previous subgraph
+   URLs if the deployment overrides them.
+2. Verify `shop.chain_cursor` rows for `indexer='collections'` and the
+   networks being handed over. Polygon is chain 137 from block 15,202,000.
+   Ethereum is chain 1 from block 8,828,687. Each cursor needs full history,
+   a published `folded_block` and `folded_at`, and no quarantine or detected
+   divergence. Ethereum's first walk takes about 37 minutes of back-to-back
+   passes. See [the measured replay](METRICS.md#ethereum-collections-v1-first-walk).
+3. During the cutover window, stop the catalogue writers sharing the
+   database. Use the same ownership list on each replacement writer.
+   Set `MARKETPLACE_COLLECTIONS_INDEX_OWNS=matic,ethereum`, or let the
+   mainnet mirror posture choose it. Remove any overrides that kept both
+   mirrors active. The first publication replaces the owned network's
+   catalogue rows and takes ownership in the same transaction. Ethereum
+   publishes its v1 royalty catalogue with those rows.
+4. Check `SELECT network, owned_at, projected_through, pending, generation
+   FROM shop.collection_projection ORDER BY network`. Each handed-over
+   network should have `owned_at` and `projected_through` set, with no
+   unresolved collections. Compare the chain-bound collection counts
+   against the warmed catalogue at a common height and confirm normal
+   catalogue and royalty reads. Confirm NFT and Polygon sales cursors
+   advance, badge sales runs, and owned mirrors make no requests.
+
+**Handing a network back to the mirror**
+
+1. Stop the catalogue writers. Explicitly set
+   `MARKETPLACE_COLLECTIONS_INDEX_OWNS` to the networks that stay owned,
+   or to an empty value if neither stays owned. Enable
+   `MARKETPLACE_MIRRORS_ENABLED=true` and restore the handed-back network's
+   subgraph URL. Unsetting an explicitly blank URL restores the default
+   under the mirror posture.
+2. Before restarting, run this transaction. It takes the exclusive
+   catalogue lock and removes the network's rows, pass markers and ownership
+   together. For Ethereum, replace `'matic'` with `'ethereum'` and use `1`
+   as the advisory lock's chain ID.
 
    ```sql
    BEGIN;
@@ -4177,11 +4195,11 @@ Deploys are manual, one process at a time:
    running the transaction again (after a commit that went unconfirmed)
    changes nothing the mirror wrote since.
 
-Every read of the network then answers the unavailable envelope until the
-mirror's next complete collections and items passes, which rewrite it with
-the mirror's rows alone (`collections_projection::hand_back` runs the same
-statements). On Ethereum, deleting the pass markers also empties the v1
-royalty catalogue (the markers' trigger), and those passes publish it again.
+3. Restart the writers with the updated settings. The mirror's first
+   complete collections pass admits the NFT and sales address loads again.
+   Catalogue reads wait for their required collections and items passes.
+   On Ethereum, the hand-back clears the v1 royalty catalogue and the
+   mirror passes publish it again.
 
 ## Auth API relay state workload
 

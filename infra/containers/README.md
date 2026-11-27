@@ -284,8 +284,12 @@ enable the switches on the index worker and wait for the required publications b
 On a populated ledger, prebuild `collection_event_creatorship_position_idx` with
 `CREATE INDEX CONCURRENTLY` before running `catalyst schema migrate`. See the sales-read
 index procedure in `DATABASE.md`.
-The catalogue continues to
-read the collections mirror unless the on-chain projection owns that network.
+The mainnet mirror posture gives the collections index ownership of both
+catalogues by default. Apply the [mainnet catalogue cutover runbook](../../DATABASE.md#mainnet-catalogue-cutover)
+when upgrading an existing writer. For the warming phase, explicitly keep
+`MARKETPLACE_COLLECTIONS_INDEX_OWNS=` empty and enable
+`MARKETPLACE_MIRRORS_ENABLED=true`. Sepolia and Amoy keep their collections
+mirrors.
 On Ethereum mainnet the same switch walks the 42 collections-v1 contracts over the `TRADE_RPC_URLS`
 entry for chain 1 (else `ETH_RPC_URL`), from block 8,828,687. Its first walk is a one-time catch-up:
 on an endpoint that takes 10,000 blocks per `eth_getLogs`, it measured 18 passes, about 7,100 RPC

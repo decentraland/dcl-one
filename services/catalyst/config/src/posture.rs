@@ -149,7 +149,50 @@ fn sepolia(lookup: &Lookup) -> bool {
         == Some(ChainPair::Testnet)
 }
 
+const ETH_COLLECTION_NAMES: [&str; 2] = ["ethereum", "mainnet"];
+const MATIC_COLLECTION_NAMES: [&str; 2] = ["matic", "polygon"];
+
+fn owns_collections(raw: &str, names: [&str; 2]) -> bool {
+    raw.split(',')
+        .map(str::trim)
+        .any(|name| names.iter().any(|alias| name.eq_ignore_ascii_case(alias)))
+}
+
+fn walks_mainnet_collections(lookup: &Lookup) -> bool {
+    mainnet(lookup)
+        && lookup("MARKETPLACE_COLLECTIONS_INDEX_ENABLED")
+            .is_none_or(|value| value.trim() == "true")
+        && set(lookup, "MARKETPLACE_INDEX_CHAIN_ID_ETHEREUM")
+            .is_none_or(|value| value.trim() == "1")
+        && set(lookup, "MARKETPLACE_INDEX_CHAIN_ID_MATIC").is_none_or(|value| value.trim() == "137")
+}
+
+fn default_collections_ownership(lookup: &Lookup) -> Option<String> {
+    Some(if walks_mainnet_collections(lookup) {
+        "matic,ethereum".into()
+    } else {
+        String::new()
+    })
+}
+
+fn serves_projected_collections(lookup: &Lookup, names: [&str; 2]) -> bool {
+    walks_mainnet_collections(lookup)
+        && set(lookup, "MARKETPLACE_COLLECTIONS_INDEX_OWNS")
+            .is_some_and(|raw| owns_collections(&raw, names))
+}
+
+fn default_collections_mirrors(lookup: &Lookup) -> Option<String> {
+    Some(
+        (!serves_projected_collections(lookup, ETH_COLLECTION_NAMES)
+            || !serves_projected_collections(lookup, MATIC_COLLECTION_NAMES))
+        .to_string(),
+    )
+}
+
 fn eth_collections_source(lookup: &Lookup) -> Option<String> {
+    if serves_projected_collections(lookup, ETH_COLLECTION_NAMES) {
+        return None;
+    }
     Some(
         if set(lookup, "MARKETPLACE_INDEX_CHAIN_ID_ETHEREUM").as_deref() == Some("11155111") {
             "https://subgraph.decentraland.org/collections-ethereum-sepolia"
@@ -161,6 +204,9 @@ fn eth_collections_source(lookup: &Lookup) -> Option<String> {
 }
 
 fn matic_collections_source(lookup: &Lookup) -> Option<String> {
+    if serves_projected_collections(lookup, MATIC_COLLECTION_NAMES) {
+        return None;
+    }
     Some(
         if set(lookup, "MARKETPLACE_INDEX_CHAIN_ID_MATIC").as_deref() == Some("80002") {
             "https://subgraph.decentraland.org/collections-matic-amoy"
@@ -319,7 +365,6 @@ const ROWS: &[Row] = &[
         "WORLD_MANIFEST_UPSTREAM_URL",
         "https://places-dcf8abb.s3.amazonaws.com/WorldManifest.json",
     ),
-    mirrored("mirrors", "MARKETPLACE_MIRRORS_ENABLED"),
     upstream(
         "mirrors",
         "TRADES_SYNC_UPSTREAM_URL",
@@ -344,6 +389,26 @@ const ROWS: &[Row] = &[
         }),
         Default("Polygon mainnet"),
         Default("Polygon mainnet"),
+    ),
+    row(
+        "mirrors",
+        "MARKETPLACE_COLLECTIONS_INDEX_OWNS",
+        From(
+            "Ethereum and Polygon when walking mainnet collections",
+            default_collections_ownership,
+        ),
+        Is(""),
+        Is(""),
+    ),
+    row(
+        "mirrors",
+        "MARKETPLACE_MIRRORS_ENABLED",
+        From(
+            "while a network still needs its collections mirror",
+            default_collections_mirrors,
+        ),
+        Is("false"),
+        Is("false"),
     ),
     row(
         "mirrors",
@@ -402,8 +467,6 @@ const ROWS: &[Row] = &[
     mirrored("indexes", "MARKETPLACE_THIRD_PARTY_REGISTRY_INDEX_ENABLED"),
     // Account inventory and lifetime creator rankings require the factory walk.
     mirrored("indexes", "MARKETPLACE_COLLECTIONS_INDEX_ENABLED"),
-    // Taking a network's catalogue from the mirror is an operator's step.
-    same("indexes", "MARKETPLACE_COLLECTIONS_INDEX_OWNS", ""),
     // The MANA transfer walk stays an operator's opt-in under every posture.
     same(
         "indexes",
@@ -900,23 +963,29 @@ fn refuse_unfiltered_profiles(config: &Config, env: &Lookup) -> anyhow::Result<(
              but MARKETPLACE_NFT_INDEX_ENABLED is off: unset it to walk the index"
         );
     }
-    // The walk takes its contracts from the collections mirror and starts on
-    // a network once that mirror completed a pass there, so a node that fills
-    // its own catalogue reads both collections subgraphs. One whose catalogue
-    // another writer fills (MARKETPLACE_MIRRORS_ENABLED=false) reads its tables.
+    // A live collections projection supplies a network's addresses
+    // without a subgraph. For the rest, a local mirror needs its URL.
     if config.marketplace.marketplace_mirrors_enabled {
+        let market = &config.marketplace;
+        let projects = market.marketplace_collections_index_enabled
+            && ChainPair::from_eth_network(&config.node.eth_network) == Some(ChainPair::Mainnet)
+            && market.marketplace_index_chain_id_ethereum == 1
+            && market.marketplace_index_chain_id_matic == 137;
+        let owns = &market.marketplace_collections_index_owns;
         let upstreams = &config.market_upstreams;
-        for (key, url) in [
+        for (key, url, names) in [
             (
                 "ETH_COLLECTIONS_SUBGRAPH_URL",
                 &upstreams.eth_collections_subgraph_url,
+                ETH_COLLECTION_NAMES,
             ),
             (
                 "MATIC_COLLECTIONS_SUBGRAPH_URL",
                 &upstreams.matic_collections_subgraph_url,
+                MATIC_COLLECTION_NAMES,
             ),
         ] {
-            if Config::non_empty(url).is_none() {
+            if !(projects && owns_collections(owns, names)) && Config::non_empty(url).is_none() {
                 anyhow::bail!(
                     "{ENV}=mirror walks the nft index over the contracts its collections mirror finds, \
                      but {key} is empty: that network's mirror has nothing to read and its ownership \
