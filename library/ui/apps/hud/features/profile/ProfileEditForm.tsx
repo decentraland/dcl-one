@@ -2,8 +2,9 @@
 // your own passport. Drafts locally and saves once — the engine deploys a new profile version per
 // save, so a field-by-field save would deploy eleven times for one visit.
 
+import { DateField } from '@dcl/one-ui'
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { DateField, Select, TextArea, TextInput, Trash } from '../../design'
+import { Select, TextArea, TextInput, Trash } from '../../design'
 import type { Profile, ProfileEdit, ProfileInfo } from '@explorer-core/engine/protocol'
 import { FIELD_OPTIONS } from '@explorer-core/features/profile/profileFieldOptions'
 import {

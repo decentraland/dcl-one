@@ -115,6 +115,7 @@ pub mod settlement;
 pub mod store;
 pub mod stream;
 pub mod stripe;
+pub mod studio_grants;
 pub mod studios;
 pub mod trial;
 pub mod usage;
@@ -130,6 +131,8 @@ mod metrics_tests;
 mod receipts_tests;
 #[cfg(test)]
 mod reports_tests;
+#[cfg(test)]
+mod studio_grants_tests;
 #[cfg(test)]
 mod tests;
 #[cfg(test)]
@@ -178,7 +181,8 @@ pub struct RawSettings {
     /// signed requests may change the studios, and read what a read admin reads.
     pub write_admin_addresses: String,
     /// `CREDITS_ADMIN_WRITES_REQUIRE_BOUND_BODY` (false): refuse a wallet's
-    /// admin write that signs no `bodySha256` (`admin::require_write_admin`).
+    /// admin write (`admin::require_write_admin`) or studio grant
+    /// (`handlers::studio_operators`) that signs no `bodySha256`.
     pub admin_writes_require_bound_body: bool,
     /// `CREDITS_CAPTCHA_SECRET` (or `_FILE`): the hCaptcha secret; unset skips the token check.
     pub captcha_secret: Option<String>,
@@ -238,6 +242,9 @@ pub struct RawSettings {
     /// `DAILY_STUDIO_DEPOSIT_LIMIT_CENTS`): the most new studio budget one UTC
     /// day may add, every studio together; unset or negative refuses new budget.
     pub daily_studio_deposit_limit_cents: Option<i64>,
+    /// `CREDITS_STUDIO_GRANT_MAX_CENTS` (credits-server's `STUDIO_GRANT_MAX_CENTS`):
+    /// the most one studio grant may give; unset or negative refuses grants.
+    pub studio_grant_max_cents: Option<i64>,
     /// `CREDITS_USAGE_INDEX_ENABLED` (false): attach the CreditUsed index.
     pub usage_index_enabled: bool,
     /// `RPC_ENDPOINT_POLYGON` (or `_FILE`): the collections chain's JSON-RPC the index reads.
@@ -313,6 +320,7 @@ impl Default for RawSettings {
             checkout_cancel_url_builder: None,
             public_url: None,
             daily_studio_deposit_limit_cents: None,
+            studio_grant_max_cents: None,
             usage_index_enabled: false,
             usage_rpc_url: None,
             usage_chain_id: usage::CHAIN_POLYGON,
@@ -348,8 +356,8 @@ pub struct Settings {
     /// the studios with a signed request (`admin::require_write_admin`); they
     /// read too.
     pub write_admin_addresses: Vec<String>,
-    /// A wallet's admin write must sign its body (`bodySha256`); off, one
-    /// that signs none is accepted with a warning.
+    /// A wallet's admin write or studio grant must sign its body
+    /// (`bodySha256`); off, one that signs none is accepted with a warning.
     pub admin_writes_require_bound_body: bool,
     pub captcha_secret: Option<String>,
     pub captcha_verify_url: String,
@@ -382,6 +390,9 @@ pub struct Settings {
     /// The day's ceiling on new studio budget, in cents; `None` (unset or
     /// negative) refuses new budget (`studios.rs`).
     pub daily_studio_deposit_limit_cents: Option<i64>,
+    /// The ceiling on one studio grant, in cents; `None` (unset or negative)
+    /// refuses studio grants (`studio_grants.rs`).
+    pub studio_grant_max_cents: Option<i64>,
     /// The CreditUsed index (`usage.rs`); its contract is `credits_manager_contract`.
     pub usage: usage::Settings,
     /// Which MANA top-up transfers are credited (`handlers::topup`).
@@ -687,6 +698,7 @@ impl Settings {
             daily_studio_deposit_limit_cents: raw
                 .daily_studio_deposit_limit_cents
                 .filter(|c| *c >= 0),
+            studio_grant_max_cents: raw.studio_grant_max_cents.filter(|c| *c >= 0),
             usage,
             topup: handlers::topup::TopupPolicy {
                 start_block: raw.topup_start_block,
@@ -1271,6 +1283,7 @@ pub fn router(state: SharedState) -> Router {
         )
         .merge(handlers::admin::router())
         .merge(handlers::studios::router())
+        .merge(handlers::studio_operators::router())
         .layer(axum::extract::DefaultBodyLimit::max(64 * 1024))
         .layer(axum::middleware::from_fn(
             crate::shared::cors::cors_middleware,
@@ -1403,6 +1416,7 @@ pub fn shop_router(state: SharedState) -> Router {
         .route("/dev/topup/mock-card", post(handlers::packs::mock_topup))
         .merge(handlers::admin::shop_router())
         .merge(handlers::studios::router())
+        .merge(handlers::studio_operators::router())
         .layer(axum::extract::DefaultBodyLimit::max(64 * 1024))
         .layer(axum::middleware::from_fn(
             crate::shared::cors::cors_middleware,

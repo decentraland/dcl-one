@@ -45,7 +45,10 @@ macro_rules! field_json {
 macro_rules! message_json {
     ($ty:path; $($field:ident: $key:literal => $kind:ident),* $(,)?) => {
         impl $ty {
-            #[allow(dead_code)]
+            #[allow(
+                dead_code,
+                reason = "the table mirrors the proto, including messages no observed payload holds"
+            )]
             pub(crate) fn metrics_json(&self) -> Value {
                 let mut object = Map::new();
                 $(field_json!(object, self, $field, $key, $kind);)*
@@ -57,7 +60,10 @@ macro_rules! message_json {
 macro_rules! oneof_json {
     ($ty:path; $($variant:ident => $key:literal),* $(,)?) => {
         impl $ty {
-            #[allow(dead_code)]
+            #[allow(
+                dead_code,
+                reason = "the table mirrors the proto, including oneofs no observed payload holds"
+            )]
             pub(crate) fn metrics_json(&self) -> Value {
                 match self { $(Self::$variant(value) => json!({"$case": $key, $key: value.metrics_json()})),* }
             }

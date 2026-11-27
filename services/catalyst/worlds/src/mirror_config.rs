@@ -80,7 +80,6 @@ impl MirrorSettings {
     /// routable host (the SSRF guard of [`crate::http`]; plaintext would let
     /// a MITM plant worlds and files) and must not name this node
     /// (`own_urls`: PUBLIC_URL, CONTENT_URL, the bind address).
-    #[allow(clippy::too_many_arguments)]
     pub fn parse(
         source: &str,
         own_urls: &[String],
@@ -102,7 +101,10 @@ impl MirrorSettings {
         )
     }
 
-    #[allow(clippy::too_many_arguments)]
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "the private-source flag joins the parsed settings"
+    )]
     fn parse_with(
         source: &str,
         own_urls: &[String],

@@ -1,7 +1,7 @@
 // from: catalyrst/crates/catalyrst-testgate/src/nats.rs
 //! A test-owned loopback broker (`nats-server` at `*_NATS_SERVER_BIN`), isolated by an
 //! OS-selected port and reaped on drop.
-#![allow(dead_code)]
+#![allow(dead_code, reason = "each test binary uses a subset of these helpers")]
 
 use std::{
     io::{BufRead, BufReader},

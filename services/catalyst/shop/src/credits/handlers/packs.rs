@@ -3,6 +3,13 @@
 //! mocks behind `CREDITS_MOCK_CARD` (a pack purchase and a capped top-up
 //! granted without a charge).
 
+// Money and chain values: a silently truncated or sign-flipped cast is a bug.
+#![deny(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    clippy::cast_possible_wrap
+)]
+
 use axum::Json;
 use axum::extract::{OriginalUri, Path, State};
 use axum::http::HeaderMap;
@@ -66,6 +73,10 @@ pub struct UnityCreditPack {
     pub order: i32,
 }
 
+#[allow(
+    clippy::cast_possible_truncation,
+    reason = "float-to-int `as` saturates; pack credits are operator-set"
+)]
 fn unity_pack(p: &PackRow) -> Option<UnityCreditPack> {
     if !p.currency.eq_ignore_ascii_case("usd") {
         return None;

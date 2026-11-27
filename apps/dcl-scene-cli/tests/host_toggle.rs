@@ -3,6 +3,8 @@
 //! flag, the watcher's rebuild re-arms the loader stub and attaches the server
 //! isolate, `/scene` reports it running, and switching it off takes the key,
 //! the isolate and the loader's arming away again, with no restart between.
+#![allow(clippy::unwrap_used, reason = "test support")]
+
 mod common {
     pub mod preview;
     pub mod testgate;

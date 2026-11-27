@@ -4,6 +4,8 @@
 //! and the scene gatekeeper mints a second room the same way. Ignored unless
 //! `LIVEKIT_URL`, `LIVEKIT_API_KEY` and `LIVEKIT_API_SECRET` (the `lk` CLI's
 //! variables) name the server; see docs/testing.md.
+#![allow(clippy::unwrap_used, reason = "test support")]
+
 mod common {
     pub mod env;
     pub mod preview;
