@@ -8,9 +8,10 @@
 On a node that walks the nft and sales indexes, `/v1/bids` and the
 activity feed's bids legs read Polygon's legacy bids (ERC721BidV2) from
 `shop.nft_bid`, the sales fold's table. They no longer query the
-collections subgraph for them. Ethereum's legacy bids, and every legacy bid
-on a node that does not walk the indexes, keep the collections subgraph
-reader.
+collections subgraph for them. Every legacy bid on a node that does not walk
+the indexes keeps the collections subgraph reader. Ethereum's legacy bids
+follow the same reader
+([Ethereum legacy bids](2026-11-25-ethereum-bids-from-the-sales-index.md)).
 
 The wire shape is the subgraph's: the id is `<contract>-<token>-<bidder>`,
 `blockchainId` the bid id, `blockNumber` the bid's last event,
@@ -20,8 +21,8 @@ accepted reads `cancelled`: the contract emits nothing for it, and the
 subgraph kept it `open`, but it can no longer be accepted.
 
 Each read runs on one `REPEATABLE READ, READ ONLY` snapshot, at one instant
-taken once it is established, that the trades mirror's bids are read on too
-and the subgraph's Ethereum bids are filtered at. It checks:
+taken once it is established, that the trades mirror's bids are read on too.
+It checks:
 
 - the trades mirror and its trade-events verdicts are ready;
 
@@ -75,6 +76,3 @@ envelope, rather than being served without its seller or left out of a
   its seller from an item on the trade's chain, verified on testnets.
 - A bid dropped by another acceptance reads `cancelled` where the subgraph
   kept it `open`.
-
-Known gap, accepted. Ethereum ERC721Bid events are indexed. The legacy
-Ethereum bid reader still serves the configured subgraph.

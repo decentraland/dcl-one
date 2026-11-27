@@ -7139,6 +7139,10 @@
           "kind": "regular"
         },
         {
+          "name": "FlowMapPage.test.tsx",
+          "kind": "regular"
+        },
+        {
           "name": "FlowMapPage.tsx",
           "kind": "regular"
         },
@@ -7188,11 +7192,19 @@
           "kind": "regular"
         },
         {
+          "name": "HelpStatus.test.tsx",
+          "kind": "regular"
+        },
+        {
           "name": "HelpStatus.tsx",
           "kind": "regular"
         },
         {
           "name": "HelpTabs.module.css",
+          "kind": "regular"
+        },
+        {
+          "name": "HelpTabs.test.tsx",
           "kind": "regular"
         },
         {
@@ -9957,7 +9969,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/bevy-api.ts",
-      "sha256": "be34df8fd437d99cd57a64c7dfad7573619f474377268b97b8f77460e119989b"
+      "sha256": "dde4dc812625670927ce2037d6ca214fa7a5619f3e8fffebb65e7a4ee84bb1c9"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/bridge.ts",
@@ -10086,6 +10098,10 @@
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/session.ts",
       "sha256": "e1158dd00b70e175d36fd759f40719e5a8c0313315dbaf1efbc4649fd08e5922"
+    },
+    {
+      "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/settings.ts",
+      "sha256": "8267e44b7a2b5fff33aa4ba6a1f077c9c9ecca513d053868ec6692bd90b9415b"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/skyTime.ts",
@@ -10380,6 +10396,10 @@
       "sha256": "52fb1ecea238351094d405eea69a39b6772fa319cd8ff4cbe30a1211e641a5ed"
     },
     {
+      "path": "rendering/bevy-explorer/source/react-web/src/test/bridgeSettingsStream.test.ts",
+      "sha256": "7e684d1f9ea577e9ebb34be92dc1ee57a47eb988e932ef790009e9ca59a7b362"
+    },
+    {
       "path": "rendering/bevy-explorer/source/react-web/src/test/bridgeSkyTime.test.ts",
       "sha256": "1ceb411fa61c5e8b7d56c2ad561d8692561a5c7b85c92f666bfc3ebe41819719"
     },
@@ -10525,7 +10545,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/tsconfig.json",
-      "sha256": "21ef0328da9b00b6a64f62389866007b9a28dba21dfee75468039812d661ce2b"
+      "sha256": "a4bfe115cd806aa8e3996d899255d26c5bd1ac8329e13ee9ce2fe2bddb3478d7"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/vite.config.ts",
@@ -10597,6 +10617,7 @@
     "rendering/bevy-explorer/source/react-web/src/test/bridgeSceneLookup.test.ts",
     "rendering/bevy-explorer/source/react-web/src/test/bridgeSession.test.ts",
     "rendering/bevy-explorer/source/react-web/src/test/bridgeSettings.test.ts",
+    "rendering/bevy-explorer/source/react-web/src/test/bridgeSettingsStream.test.ts",
     "rendering/bevy-explorer/source/react-web/src/test/bridgeSkyTime.test.ts",
     "rendering/bevy-explorer/source/react-web/src/test/bridgeTextureOptimization.test.ts",
     "rendering/bevy-explorer/source/react-web/src/test/bridgeTravel.test.ts",
@@ -10685,7 +10706,7 @@
     },
     {
       "path": "library/explorer-core/engine/mockBridge.ts",
-      "sha256": "06d77f68efeec37bbf0e2e7e6841ba5bc3558f1b4875d64e87e538bf8525dd2e"
+      "sha256": "26cdc10c48663680f47dad11d73a4a1c297bc1d82e33394b7c8eae85a5ac43c5"
     },
     {
       "path": "library/explorer-core/engine/mockEvents.ts",
@@ -14093,7 +14114,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/settings/SettingsPanel.tsx",
-      "sha256": "cf5f4332d320fe914b7539571bf5c399939388438648a0a6dd249c139d627e07"
+      "sha256": "5ea03b84115f8488a8bf84b79022b73849032baf623d1e018692e92c21e8734b"
     },
     {
       "path": "library/ui/apps/hud/features/settings/askBeforeLeaving.ts",
@@ -14837,7 +14858,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/hosted/settings.clicks.test.tsx",
-      "sha256": "1ccbf22c8d138116dd72039a50241c0aa33cca38b697a740b88d7258361be1ed"
+      "sha256": "63c223c25671f190bf6233b1b4adba22cad1d885ef428456b1277524dc3cfad5"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/settings.test.tsx",
@@ -16237,11 +16258,11 @@
     },
     {
       "path": "library/ui/apps/sites/flow-map/FlowMapPage.tsx",
-      "sha256": "2d95c7d8c7060acfb7e16c2c3bea894cd804e3102e7042fcb050ba302db271e3"
+      "sha256": "4920607efe68202586a6c5f257c667b555e0baf1c9572eb22f39bb766a074369"
     },
     {
       "path": "library/ui/apps/sites/flow-map/flowmappage.css",
-      "sha256": "cd714aaf87d2be7d587b1123790e16493925f0d2aa6bb0f14809b2448e7ae354"
+      "sha256": "6bcfd932c5eb7dafc099d2f601d49cc5d2c97f4cab472196bd964e2865196302"
     },
     {
       "path": "library/ui/apps/sites/help/HelpAccordion.module.css",
@@ -16261,7 +16282,7 @@
     },
     {
       "path": "library/ui/apps/sites/help/HelpPage.module.css",
-      "sha256": "2d2722c0571f51d36481e7b1c33f3e7c7c56963c80d31bc38d294838371f816b"
+      "sha256": "dcd906fe90ea8d075172e411ab428b391a74c9b04da22ff28ce7dc800b703455"
     },
     {
       "path": "library/ui/apps/sites/help/HelpPage.tsx",
@@ -16277,19 +16298,19 @@
     },
     {
       "path": "library/ui/apps/sites/help/HelpStatus.module.css",
-      "sha256": "91aa2d6655d0d93ff2289d433b043346cb1823ee1208d2c5f4d0df864fd9551b"
+      "sha256": "2b1cd5d71859bace7f305ea6d9c7486a409ce2e83098feb98ae61785ee4315fe"
     },
     {
       "path": "library/ui/apps/sites/help/HelpStatus.tsx",
-      "sha256": "95562fe2cec88e5bc6b43d66ea37182addf2d48dab282dc540b7a357392daae0"
+      "sha256": "2a693276f03c813f19494f08cd3886b05f58924281e17152f59ce4862c58efa9"
     },
     {
       "path": "library/ui/apps/sites/help/HelpTabs.module.css",
-      "sha256": "bda408fd976b460a475f2cbb252f924abc23ac8b8d4f7696c59cd70607c8a443"
+      "sha256": "0ccb1220bb19672196fa413340aec2fcaa22a98caebac89f16fae7bec603be96"
     },
     {
       "path": "library/ui/apps/sites/help/HelpTabs.tsx",
-      "sha256": "0fb6e28bc620dbb8d7ce47d36d63086f3a20d056c149dc2a91a68da92301c4bc"
+      "sha256": "242373be0225d9481f3074165d3a96e69e71a67465282979e3b7d2c4725cb8bf"
     },
     {
       "path": "library/ui/apps/sites/home/CatchTheVibe.module.css",
@@ -16641,11 +16662,11 @@
     },
     {
       "path": "library/ui/apps/sites/social/CommunityCreate.module.css",
-      "sha256": "d1c0c75d1ec1bd73c6cf6b43198a92f241517b000ba6876acdcf6d7f5bc47418"
+      "sha256": "73984b00d968403223a07fc3ac8aed303d0a291c7aa6934e285bceed1246aa8b"
     },
     {
       "path": "library/ui/apps/sites/social/CommunityCreate.tsx",
-      "sha256": "9f81ab210c30da8074af1b2c2701b6ddd9e04109c99e239f77d0179fdd30a854"
+      "sha256": "be2afc26772ed837aa75f5832e7043a68807f6f191a3e7214f80831d69ccda86"
     },
     {
       "path": "library/ui/apps/sites/social/CommunityDetail.module.css",
@@ -56939,6 +56960,21 @@
       "kind": "test:runtime"
     },
     {
+      "from": "library/ui/apps/sites/flow-map/FlowMapPage.tsx",
+      "to": "library/ui/components/Button/Button.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/sites/flow-map/FlowMapPage.tsx",
+      "to": "library/ui/components/Button/Button.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/sites/flow-map/FlowMapPage.tsx",
+      "to": "library/ui/components/Button/Button.tsx",
+      "kind": "test:runtime"
+    },
+    {
       "from": "library/ui/apps/sites/help/HelpAccordion.module.css",
       "to": "library/ui/foundations/typography/text-styles.module.css",
       "kind": "native:composes"
@@ -57180,6 +57216,21 @@
     },
     {
       "from": "library/ui/apps/sites/help/HelpStatus.tsx",
+      "to": "library/ui/components/Button/Button.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/sites/help/HelpStatus.tsx",
+      "to": "library/ui/components/Button/Button.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/sites/help/HelpStatus.tsx",
+      "to": "library/ui/components/Button/Button.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/sites/help/HelpStatus.tsx",
       "to": "library/ui/foundations/icons/index.ts",
       "kind": "native:runtime"
     },
@@ -57194,21 +57245,6 @@
       "kind": "test:runtime"
     },
     {
-      "from": "library/ui/apps/sites/help/HelpTabs.module.css",
-      "to": "library/ui/foundations/typography/text-styles.module.css",
-      "kind": "native:composes"
-    },
-    {
-      "from": "library/ui/apps/sites/help/HelpTabs.module.css",
-      "to": "library/ui/foundations/typography/text-styles.module.css",
-      "kind": "production:composes"
-    },
-    {
-      "from": "library/ui/apps/sites/help/HelpTabs.module.css",
-      "to": "library/ui/foundations/typography/text-styles.module.css",
-      "kind": "test:composes"
-    },
-    {
       "from": "library/ui/apps/sites/help/HelpTabs.tsx",
       "to": "library/ui/apps/sites/help/HelpTabs.module.css",
       "kind": "native:runtime"
@@ -57221,6 +57257,36 @@
     {
       "from": "library/ui/apps/sites/help/HelpTabs.tsx",
       "to": "library/ui/apps/sites/help/HelpTabs.module.css",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/sites/help/HelpTabs.tsx",
+      "to": "library/ui/components/Tabs/Tabs.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/sites/help/HelpTabs.tsx",
+      "to": "library/ui/components/Tabs/Tabs.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/sites/help/HelpTabs.tsx",
+      "to": "library/ui/components/Tabs/Tabs.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/sites/help/HelpTabs.tsx",
+      "to": "library/ui/components/TabsBar/TabsBar.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/sites/help/HelpTabs.tsx",
+      "to": "library/ui/components/TabsBar/TabsBar.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/sites/help/HelpTabs.tsx",
+      "to": "library/ui/components/TabsBar/TabsBar.tsx",
       "kind": "test:runtime"
     },
     {
@@ -61961,6 +62027,21 @@
     {
       "from": "library/ui/apps/sites/social/CommunityCreate.tsx",
       "to": "library/ui/components/Dropdown/Dropdown.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/sites/social/CommunityCreate.tsx",
+      "to": "library/ui/components/InputWebCreatorTools/InputWebCreatorTools.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/sites/social/CommunityCreate.tsx",
+      "to": "library/ui/components/InputWebCreatorTools/InputWebCreatorTools.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/sites/social/CommunityCreate.tsx",
+      "to": "library/ui/components/InputWebCreatorTools/InputWebCreatorTools.tsx",
       "kind": "test:runtime"
     },
     {
