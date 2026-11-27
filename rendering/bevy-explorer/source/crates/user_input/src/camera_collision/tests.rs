@@ -283,6 +283,46 @@ fn the_shoulder_offset_eases_in_and_out() {
     assert!((previous - 0.75).abs() < 0.01, "{previous}");
 }
 
+/// The offsets of a shoulder swap from `from` to `to` metres along x at 4 m/s, a frame apart.
+fn swap(from: f32, to: f32) -> impl Iterator<Item = Vec3> {
+    let step = 4.0 * FRAME;
+    let frames = ((to - from).abs() / step).ceil() as usize + 60;
+    (1..=frames).map(move |frame| {
+        let moved = (frame as f32 * step).min((to - from).abs());
+        Vec3::new(from + moved * (to - from).signum(), 0.0, 0.0)
+    })
+}
+
+#[test]
+fn an_unobstructed_shoulder_offset_is_returned_as_given() {
+    let empty = SceneColliderData::default();
+    let free = CameraObstacles(vec![&empty]);
+    let mut state = CameraCollisionState::default();
+
+    for offset in swap(0.0, 0.6).chain(swap(0.6, -0.6)) {
+        let returned = shoulder_offset(&free, &mut state, Vec3::ZERO, offset, FRAME);
+        assert!(
+            returned.abs_diff_eq(offset, 1e-6),
+            "{offset:?}: {returned:?}"
+        );
+    }
+}
+
+#[test]
+fn a_swap_towards_a_wall_keeps_the_camera_clear_of_it() {
+    let colliders = wall_to_the_right(0.55);
+    let obstacles = CameraObstacles(vec![&colliders]);
+    let mut state = CameraCollisionState::default();
+
+    let mut last = 0.0;
+    for offset in swap(-0.6, 0.6) {
+        last = shoulder_offset(&obstacles, &mut state, Vec3::ZERO, offset, FRAME).x;
+        assert!(last <= 0.55 - CAMERA_RADIUS + 0.001, "{offset:?}: {last}");
+    }
+    let settled = 0.55 - SHOULDER_DISTANCE_FROM_OBSTACLE;
+    assert!((last - settled).abs() < 0.01, "{last}");
+}
+
 #[test]
 fn a_triangle_mesh_wall_pulls_the_camera_in() {
     // glTF colliders are triangle meshes: a 4 m square facing the target at z = 2.9
