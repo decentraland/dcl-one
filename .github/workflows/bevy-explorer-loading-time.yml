@@ -106,6 +106,36 @@ jobs:
           path: apps/bevy-explorer/e2e/report/
           if-no-files-found: warn
           retention-days: 90
+  # timeout-minutes counts only once a job starts: a measuring job that never leaves the queue (the
+  # runner offline, or busy with the scenarios job) would wait 24 hours and file nothing. Past the
+  # queue limit this cancels the run, and the issue job files a scheduled run's cancel as
+  # could-not-run.
+  watchdog:
+    name: Queue watchdog
+    if: vars.BEVY_E2E_WINDOWS_RUNNER != ''
+    runs-on: ubuntu-26.04
+    timeout-minutes: 160
+    permissions:
+      actions: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      # the scenarios job on the same runner can hold it for up to 100 minutes
+      QUEUE_TIMEOUT_MINUTES: 150
+    steps:
+      - name: Wait for the measuring job to start
+        run: |
+          deadline=$((SECONDS + 60 * QUEUE_TIMEOUT_MINUTES))
+          while [ "$SECONDS" -lt "$deadline" ]; do
+            status=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/jobs?per_page=100" \
+              --jq '.jobs[] | select(.name == "Measure (Windows GPU)") | .status' || true)
+            case "$status" in
+              in_progress | completed) exit 0 ;;
+            esac
+            sleep 60
+          done
+          echo "::warning title=Queue watchdog::the measuring job had not started after $QUEUE_TIMEOUT_MINUTES minutes; cancelling the run"
+          gh run cancel "$GITHUB_RUN_ID"
   issue:
     name: File the issue
     needs: measure

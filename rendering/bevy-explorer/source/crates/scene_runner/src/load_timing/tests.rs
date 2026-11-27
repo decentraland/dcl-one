@@ -464,3 +464,47 @@ fn a_new_arrival_keeps_the_last_ready_one_until_its_own_ring_is_ready() {
         Some(2)
     );
 }
+
+#[test]
+fn a_failed_neighbour_settles_the_first_ring() {
+    let mut world = world();
+    world.resource_mut::<ScenePointers>().insert(
+        IVec2::X,
+        PointerResult::Exists {
+            hash: "east".to_owned(),
+            urn: None,
+        },
+    );
+    world.insert_resource(Arrivals(1));
+    scene(&mut world, "home", &[IVec2::ZERO], 7);
+    let neighbour = scene(&mut world, "east", &[IVec2::X], 2);
+
+    world.run_system_once(report_scene_load_times).unwrap();
+    assert!(world.resource::<FirstRingTiming>().ready.is_none());
+
+    // the neighbour fails to load: it will load no further, so it holds nothing
+    world.entity_mut(neighbour).insert(SceneLoading::Failed);
+    world.run_system_once(report_scene_load_times).unwrap();
+    assert_eq!(
+        world
+            .resource::<FirstRingTiming>()
+            .ready
+            .map(|ready| ready.arrival),
+        Some(1)
+    );
+}
+
+#[test]
+fn a_realm_change_during_the_arrival_holds_the_first_ring() {
+    let mut world = world();
+    world.insert_resource(Arrivals(1));
+    let home = scene(&mut world, "home", &[IVec2::ZERO], 2);
+    world.run_system_once(report_scene_load_times).unwrap();
+
+    // the realm changes: its pointers are not fetched yet, whatever the old scene does
+    world.insert_resource(ScenePointers::default());
+    set_tick(&mut world, home, 7);
+    world.run_system_once(report_scene_load_times).unwrap();
+
+    assert!(world.resource::<FirstRingTiming>().ready.is_none());
+}

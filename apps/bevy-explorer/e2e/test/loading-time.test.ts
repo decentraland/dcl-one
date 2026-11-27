@@ -132,7 +132,7 @@ describe('loading time', () => {
 
   test('a teleport whose arrival is never seen leaves the player lost; one whose first ring times out does not', async () => {
     const never = new FakeConsole({ world_state: world(1), teleport: 'new location', scene_loading_state: loading({ arrival: 1 }) })
-    const unseen = await measureTeleport(new Explorer(never), GENESIS, MUSEUM, { deadline: Date.now() + 1000 })
+    const unseen = await measureTeleport(new Explorer(never), GENESIS, MUSEUM, { waitMs: 500 })
     assert.equal(unseen.lost, true)
     assert.equal(unseen.measurement.teleportMs, null)
 
@@ -145,9 +145,23 @@ describe('loading time', () => {
       },
       scene_loading_state: loading({ arrival: 1 })
     })
-    const timedOut = await measureTeleport(new Explorer(slow), GENESIS, MUSEUM, { deadline: Date.now() + 1000 })
+    const timedOut = await measureTeleport(new Explorer(slow), GENESIS, MUSEUM, { waitMs: 500 })
     assert.equal(timedOut.lost, false)
     assert.match(timedOut.measurement.error!, /first ring/)
+  })
+
+  test('a teleport near the deadline is skipped, and one whose wait the deadline cuts is not lost', async () => {
+    const fake = new FakeConsole({ world_state: world(1), teleport: 'new location', scene_loading_state: loading({ arrival: 1 }) })
+    const deadline = 1_000_000
+    const skipped = await measureTeleport(new Explorer(fake), GENESIS, MUSEUM, { deadline, now: () => deadline - 59_000 })
+    assert.match(skipped.measurement.error!, /deadline passed/)
+    assert.deepEqual(fake.sent('teleport'), [])
+
+    // enough left at the start; 300 ms left once the teleport is sent
+    const clock = [deadline - 61_000, deadline - 61_000]
+    const cut = await measureTeleport(new Explorer(fake), GENESIS, MUSEUM, { deadline, now: () => clock.shift() ?? deadline - 300 })
+    assert.equal(cut.lost, false)
+    assert.match(cut.measurement.error!, /deadline cut the wait short/)
   })
 
   test('the tour starts from the last location and visits each once', () => {

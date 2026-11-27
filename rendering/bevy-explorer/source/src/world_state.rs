@@ -10,12 +10,12 @@ use common::structs::{
 use console::{AddDebugSection, DebugInput, DebugInputKind, DebugSection, DoAddConsoleCommand};
 use input_manager::InputPriorities;
 use ipfs::IpfsResource;
-use scene_runner::load_timing::ArrivalsPlugin;
 use wallet::Wallet;
 
 /// `/world_state` and the [`Arrivals`] counter it and the autopilot read. It needs no window, HUD
 /// or input, so the client and the headless client add it alike (the autopilot expects it in the
-/// client). It adds [`ArrivalsPlugin`] unless the scene runner already has.
+/// client). The scene runner counts the arrivals
+/// ([`ArrivalsPlugin`](scene_runner::load_timing::ArrivalsPlugin)).
 pub struct WorldStatePlugin;
 
 impl Plugin for WorldStatePlugin {
@@ -40,9 +40,6 @@ impl Plugin for WorldStatePlugin {
                 command: "/changerealm {value}",
                 kind: DebugInputKind::Text,
             });
-        }
-        if !app.is_plugin_added::<ArrivalsPlugin>() {
-            app.add_plugins(ArrivalsPlugin);
         }
         app.add_console_command::<WorldStateCommand, _>(world_state_cmd)
             .add_debug_section(DebugSection {
@@ -153,6 +150,7 @@ mod tests {
 
     use bevy_console::{ConsoleCommandEntered, ConsoleResponder};
     use console::ConsolePlugin;
+    use scene_runner::load_timing::ArrivalsPlugin;
 
     use super::*;
 
@@ -202,6 +200,7 @@ mod tests {
                 add_bevy_console: false,
             },
             WorldStatePlugin,
+            ArrivalsPlugin,
         ))
         .init_resource::<Wallet>()
         .init_resource::<CurrentRealm>();
@@ -247,6 +246,7 @@ mod tests {
                 add_bevy_console: false,
             },
             WorldStatePlugin,
+            ArrivalsPlugin,
         ))
         .init_resource::<Wallet>()
         .init_resource::<CurrentRealm>()

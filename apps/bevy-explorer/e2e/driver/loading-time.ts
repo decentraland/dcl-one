@@ -51,6 +51,10 @@ export interface LoadingTimeResults {
 /** How long the first ring is waited for once the player has arrived. */
 export const FIRST_RING_TIMEOUT_MS = 180_000
 
+/** Less time than this before the run's deadline skips a teleport rather than cutting its waits
+ *  short. */
+export const MIN_TELEPORT_MS = 60_000
+
 /** The error of a client whose `/scene_loading_state` has no `firstRing`: no wait can succeed on
  *  it. */
 export const FIRST_RING_UNSUPPORTED = "the client's /scene_loading_state has no firstRing"
@@ -138,17 +142,20 @@ export async function measureTimeToWorld(
 }
 
 /** Teleport time from wherever the player is to `to`. `lost` is a teleport sent whose arrival was
- *  never seen: the player is somewhere unknown. */
+ *  never seen within the full wait: the player is somewhere unknown. A wait the run's deadline cut
+ *  short loses nothing. */
 export async function measureTeleport(
   explorer: Explorer,
   from: Location,
   to: Location,
-  options: { deadline?: number; now?: () => number } = {}
+  options: { deadline?: number; now?: () => number; waitMs?: number } = {}
 ): Promise<{ measurement: TeleportMeasurement; lost: boolean }> {
-  const { deadline = Infinity, now = Date.now } = options
+  const { deadline = Infinity, now = Date.now, waitMs = FIRST_RING_TIMEOUT_MS } = options
+  const wait = (): number => Math.max(0, Math.min(waitMs, deadline - now()))
   const base = { from: from.name, to: to.name }
-  if (deadline - now() <= 0) return { measurement: { ...base, teleportMs: null, error: "skipped: the run's deadline passed" }, lost: false }
+  if (deadline - now() < MIN_TELEPORT_MS) return { measurement: { ...base, teleportMs: null, error: "skipped: the run's deadline passed" }, lost: false }
   let sent = false
+  let cut = false
   let arrived = false
   try {
     const [x, y] = parsePosition(to.position)
@@ -157,15 +164,18 @@ export async function measureTeleport(
     const sentAt = now()
     sent = true
     await explorer.run(`/teleport ${x} ${y}`)
+    const arrivalTimeout = wait()
+    cut = arrivalTimeout < waitMs
     const { arrivals } = await until(() => explorer.worldState(), (state) => state.arrivals > before && state.inWorld, {
-      timeoutMs: firstRingTimeout(deadline, now),
+      timeoutMs: arrivalTimeout,
       what: `the arrival at ${to.name} (${to.position})`
     })
     arrived = true
-    const readyAt = await waitFirstRingReady(explorer, { arrival: arrivals, what: `the first ring after the teleport to ${to.name} (${to.position})`, timeoutMs: firstRingTimeout(deadline, now) })
+    const readyAt = await waitFirstRingReady(explorer, { arrival: arrivals, what: `the first ring after the teleport to ${to.name} (${to.position})`, timeoutMs: wait() })
     return { measurement: { ...base, teleportMs: readyAt - sentAt }, lost: false }
   } catch (error) {
-    return { measurement: { ...base, teleportMs: null, error: message(error) }, lost: sent && !arrived }
+    const reason = cut && sent && !arrived ? `the run's deadline cut the wait short: ${message(error)}` : message(error)
+    return { measurement: { ...base, teleportMs: null, error: reason }, lost: sent && !arrived && !cut }
   }
 }
 

@@ -240,7 +240,8 @@ comments on the open one; its unmeasured readings go in the same issue. Any othe
 on *the measurement could not run* when it has an `unmeasured` reading, a `slow` one on the
 fallback adapter (the GPU probe found no NVIDIA adapter), no readable `results.json`, or a
 measuring job that did not succeed (a run cut short leaves only the readings it finished; a
-scheduled run cancelled or past the job's timeout counts).
+scheduled run cancelled, past the job's timeout, or still queued after 150 minutes, when a
+watchdog job cancels it, counts).
 
 Each location's guest is a new account: its first sign-in deploys a profile to the target's
 catalyst, and its session reaches the target's analytics like a player's. Against the live client

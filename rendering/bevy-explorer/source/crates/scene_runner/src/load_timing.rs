@@ -21,8 +21,7 @@ pub const LOG_TARGET: &str = "scene_timing";
 pub const FIRST_RING_READY: &str = "player's scene and first ring ready";
 
 /// Counts the player's [`Arrivals`]: one each time the player's `OutOfWorld` is removed, in
-/// `PreUpdate`, before `Update` reads the count. [`crate::SceneRunnerPlugin`] adds it, as does the
-/// client's `/world_state` for an app without scenes; whichever comes first.
+/// `PreUpdate`, before `Update` reads the count. [`crate::SceneRunnerPlugin`] adds it.
 pub struct ArrivalsPlugin;
 
 impl Plugin for ArrivalsPlugin {
@@ -148,8 +147,7 @@ pub fn report_scene_load_times(
     }
 
     // from the parcels, not the spawned scenes: the lifecycle defers a neighbour's spawn until the
-    // player's scene has loaded. The `FIRST_RING_READY` line keeps its own rule above, so
-    // benchmark runs stay comparable across builds
+    // player's scene has loaded. The `FIRST_RING_READY` line keeps the spawned-scene rule above
     if !out_of_world && timing.ready.map_or(0, |ready| ready.arrival) < arrivals.0 {
         // the lifecycle runs later in the frame: its set is judged only around the parcel it saw
         let required = &containing_scene.live_scenes.required;

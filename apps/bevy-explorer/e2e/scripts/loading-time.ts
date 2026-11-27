@@ -122,8 +122,9 @@ try {
     await persistSoFar()
   }
 } finally {
-  ending.release()
+  // the signal handlers stay until the browsers are closed
   await closeSessions()
+  ending.release()
 }
 
 process.stdout.write(await persist())
