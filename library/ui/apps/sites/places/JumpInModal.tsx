@@ -1,5 +1,8 @@
 import { useEffect, useRef, useState, type MouseEvent } from 'react'
-import { GeneralClose, GeneralCopy, GeneralJumpIn, GeneralMapPin } from '../../../foundations/icons'
+import { Button } from '../../../components/Button/Button'
+import { CloseButton } from '../../../components/CloseButton/CloseButton'
+import { JumpInCTA } from '../../../components/JumpInCTA/JumpInCTA'
+import { GeneralCopy, GeneralMapPin } from '../../../foundations/icons'
 import dclLogo from '../assets/dcl-logo.svg'
 import { Dialog } from './Dialog'
 import type { PlaceCardCreator } from './cards/types'
@@ -56,9 +59,12 @@ function JumpInModal({ place, labels, onClose, onJumpIn }: JumpInModalProps) {
   const avatar = place.creator?.foundation ? dclLogo : place.creator?.avatarUrl
   return (
     <Dialog label={place.title} onClose={onClose} className={styles.modal}>
-      <button type="button" className={styles.close} aria-label={labels.close} onClick={onClose}>
-        <GeneralClose size={24} aria-hidden="true" />
-      </button>
+      <CloseButton
+        variant="filled"
+        className={styles.close}
+        aria-label={labels.close}
+        onClick={onClose}
+      />
       <div className={styles.heroWrap}>
         <div className={styles.hero}>
           {place.image ? <img className={styles.cover} src={place.image} alt="" /> : null}
@@ -84,20 +90,24 @@ function JumpInModal({ place, labels, onClose, onJumpIn }: JumpInModalProps) {
           </div>
           <div className={styles.ctaRow}>
             {place.jumpHref ? (
-              <a className={styles.jumpIn} href={place.jumpHref} onClick={onJumpIn}>
-                {labels.jumpIn}
-                <GeneralJumpIn size={24} aria-hidden="true" />
-              </a>
+              <JumpInCTA
+                size="xl"
+                className={styles.jumpIn}
+                href={place.jumpHref}
+                onClick={onJumpIn}
+                label={labels.jumpIn}
+              />
             ) : null}
             <span className={styles.copyWrap}>
-              <button
-                type="button"
-                className={styles.copy}
+              <Button
+                iconOnly
+                variant="outline"
+                size="lg"
                 aria-label={labels.copyLink}
                 onClick={copy}
               >
                 <GeneralCopy size={20} aria-hidden="true" />
-              </button>
+              </Button>
               <span role="status" className={copied ? styles.copied : styles.visuallyHidden}>
                 {copied ? labels.copied : ''}
               </span>

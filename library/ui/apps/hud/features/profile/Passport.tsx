@@ -92,6 +92,11 @@ export function Passport({
   const profile: Profile = pickedColor != null ? { ...stored, nameColor: hexToColor3(pickedColor) } : stored
   const friendUser = { address: userId, name: profile.name, picture: profile.picture }
   const inviteItems = useInviteToCommunityItems(userId, offersInvite(isSelf))
+  // Waits for your own profile, so your own passport never asks.
+  const { loadMutuals } = session.friends
+  useEffect(() => {
+    if (meKnown && !isSelf) loadMutuals(userId)
+  }, [meKnown, isSelf, userId, loadMutuals])
 
   // Only your own passport can be edited, so the claimed-name list is only worth fetching there.
   useEffect(() => {
@@ -148,6 +153,7 @@ export function Passport({
           : undefined
       }
       inviteItems={inviteItems}
+      mutuals={isSelf ? undefined : session.friends.mutuals[a]}
       onClose={onClose}
       photoActions={{
         setPublic: session.gallery.setPublic,

@@ -12,7 +12,7 @@ import creatorPlaceholder from '../assets/jump/card-creator-placeholder.webp'
 import decentralandLogo from '../assets/dcl-logo.svg'
 import eventPlaceholder from '../assets/jump/card-events-placeholder.webp'
 import placePlaceholder from '../assets/jump/card-places-placeholder.webp'
-import { Button } from '../shared/Button/Button'
+import { Button } from '../../../components/Button/Button'
 import {
   AccessTimeIcon,
   BellIcon,
@@ -137,9 +137,14 @@ function JumpCard({
   const bottom =
     actions ??
     (jumpInHref ? (
-      <Button href={jumpInHref} onClick={onJumpIn} className={styles.jumpIn}>
+      <Button
+        href={jumpInHref}
+        onClick={onJumpIn}
+        size="md"
+        trailingIcon={<JumpInIcon />}
+        className={styles.jumpIn}
+      >
         Jump In
-        <JumpInIcon />
       </Button>
     ) : null)
   const whenClass = [styles.chip, styles.date, when?.ended && styles.ended]

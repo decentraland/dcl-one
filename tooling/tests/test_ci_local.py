@@ -2,6 +2,9 @@
 import importlib.util
 import errno
 import io
+import os
+import shutil
+import subprocess
 import sys
 import tempfile
 from types import SimpleNamespace
@@ -49,11 +52,23 @@ class CiLocalTest(unittest.TestCase):
     def test_clippy_runs_from_the_catalyst_folder_and_lints_scene_cli_only_changes(self):
         steps = {s.name: s.command for s in ci.pre_push_steps({'services/catalyst/src/lib.rs'})}
         self.assertTrue(steps['catalyst clippy'].startswith('cd services/catalyst && cargo clippy --locked --workspace '))
+        self.assertEqual(steps['catalyst clippy (ts)'], 'cd services/catalyst && cargo clippy --locked '
+                         '--workspace --all-targets --features catalyst/ts -- -D warnings')
         self.assertNotIn('scene cli clippy', steps)
+        names = list(steps)
+        self.assertEqual(names.index('unused dependencies'), names.index('catalyst clippy (ts)') + 1)
+        self.assertEqual(steps['unused dependencies'], 'nix build --inputs-from . nixpkgs#cargo-machete -o '
+                         '.cache/cargo-machete && .cache/cargo-machete/bin/cargo-machete services/catalyst '
+                         'library/dcl-* apps/dcl-scene-cli')
         steps = {s.name: s.command for s in ci.pre_push_steps({'apps/dcl-scene-cli/src/main.rs'})}
         self.assertNotIn('catalyst clippy', steps)
+        self.assertNotIn('catalyst clippy (ts)', steps)
         self.assertEqual(steps['scene cli clippy'],
                          'cd services/catalyst && cargo clippy --locked -p dcl-scene-cli --all-targets -- -D warnings')
+        self.assertEqual(steps['scene cli unused dependencies'], 'nix build --inputs-from . nixpkgs#cargo-machete -o '
+                         '.cache/cargo-machete && .cache/cargo-machete/bin/cargo-machete apps/dcl-scene-cli')
+        self.assertIn('.cache/cargo-machete/bin/cargo-machete apps/dcl-scene-cli\n',
+                      (ci.ROOT / '.github/workflows/sdk.yml').read_text())
 
     def test_documentation_is_excluded_from_development_and_image_inputs(self):
         docs = {'DATABASE.md', 'services/catalyst/docs/events.md',
@@ -196,7 +211,7 @@ class CiLocalTest(unittest.TestCase):
         self.assertIn('gateway configuration', [step.name for step in ci.pre_commit_steps(changed)])
 
 
-class WindowsHookQueueTest(unittest.TestCase):
+class HookQueueTest(unittest.TestCase):
     def test_a_legitimate_run_holding_the_lock_longer_than_120_seconds_is_queued(self):
         attempts = []
         sleeps = []
@@ -229,6 +244,344 @@ class WindowsHookQueueTest(unittest.TestCase):
                     self.fail('invalid handle acquired')
             self.assertEqual(raised.exception.errno, errno.EBADF)
         sleeping.assert_not_called()
+
+    def test_a_held_lock_is_announced_on_posix(self):
+        for held, expected in ((False, [6]), (True, [6, 2])):
+            calls = []
+            def flock(handle, mode):
+                calls.append(mode)
+                if held and mode & 4:
+                    raise BlockingIOError
+            notice = io.StringIO()
+            with self.subTest(held=held), tempfile.TemporaryDirectory() as folder, \
+                    patch.object(ci, 'STATE', Path(folder)), patch.object(ci, 'WINDOWS', False), \
+                    patch.dict(sys.modules, {'fcntl': SimpleNamespace(LOCK_EX=2, LOCK_NB=4, flock=flock)}), \
+                    patch('sys.stderr', notice):
+                with ci.locked():
+                    self.assertEqual(calls, expected)
+                self.assertEqual(notice.getvalue().count('Waiting for another local CI run'), int(held))
+
+
+def stock_lfs_hook(name):
+    """What git-lfs 3.x writes."""
+    return ('#!/bin/sh\ncommand -v git-lfs >/dev/null 2>&1 || { printf >&2 "\\n%s\\n\\n" "This repository is '
+            "configured for Git LFS but 'git-lfs' was not found on your path. If you no longer wish to use Git LFS, "
+            f"remove this hook by deleting the '{name}' file in the hooks directory (set by 'core.hookspath'; usually "
+            f"'.git/hooks').\"; exit 2; }}\ngit lfs {name} \"$@\"\n")
+
+
+def old_lfs_hook(name):
+    """What git-lfs 2.x writes."""
+    return ('#!/bin/sh\ncommand -v git-lfs >/dev/null 2>&1 || { echo >&2 "\\nThis repository is configured for Git LFS '
+            "but 'git-lfs' was not found on your path. If you no longer wish to use Git LFS, remove this hook by "
+            f'deleting .git/hooks/{name}.\\n"; exit 2; }}\ngit lfs {name} "$@"\n')
+
+
+@unittest.skipIf(os.name == 'nt', 'the hooks are POSIX shell scripts, and symlinks need extra rights on Windows')
+class HookTest(unittest.TestCase):
+    """install and the hook entry points, each in its own scratch repository."""
+
+    def setUp(self):
+        folder = tempfile.TemporaryDirectory()
+        self.addCleanup(folder.cleanup)
+        self.folder = Path(folder.name)
+        config = self.folder / 'gitconfig'
+        config.write_text('[user]\n\tname = CI test\n\temail = ci@example.invalid\n[commit]\n\tgpgsign = false\n'
+                          '[tag]\n\tgpgsign = false\n[init]\n\tdefaultBranch = main\n')
+        environment = patch.dict(os.environ)
+        environment.start()
+        self.addCleanup(environment.stop)
+        for name in [name for name in os.environ if name.startswith('GIT_')] + ['CI_LOCAL_SKIP']:
+            os.environ.pop(name, None)
+        os.environ.update(GIT_CONFIG_NOSYSTEM='1', GIT_CONFIG_GLOBAL=str(config), HOME=str(self.folder),
+                          XDG_CONFIG_HOME=str(self.folder), GIT_CEILING_DIRECTORIES=str(self.folder.parent))
+        # The ceiling stops git searching above the temp folder, so until repo() makes one ROOT is no
+        # repository and an unisolated git call fails here.
+        for name, value in (('ROOT', self.folder), ('STATE', self.folder / 'state'), ('TREE', self.folder / 'state/tree')):
+            patcher = patch.object(ci, name, value)
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
+    def repo(self):
+        root = Path(tempfile.mkdtemp(dir=self.folder))
+        ci.git('init', '-q', cwd=root)
+        patcher = patch.object(ci, 'ROOT', root)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        return root
+
+    def hooks_path(self, root):
+        return ci.git('config', '--get', 'core.hooksPath', cwd=root, check=False)
+
+    def install(self):
+        with patch('builtins.print') as printed:
+            ok = ci.install()
+        self.output = ' '.join(str(arg) for call in printed.call_args_list for arg in call.args)
+        return ok
+
+    def test_install_replaces_the_stock_lfs_pre_push_and_undoes_the_old_hooks_path(self):
+        root = self.repo()
+        hooks = root / '.git/hooks'
+        for name in ('pre-push', 'post-checkout'):
+            (hooks / name).write_text(stock_lfs_hook(name))
+        (hooks / 'pre-commit').write_text(f'#!/bin/sh\n{ci.MARKER}\nexec python3 tooling/old-ci-local.py\n')
+        for attempt in ('first', 'again', 'after the old install set .githooks again'):
+            with self.subTest(attempt=attempt):
+                if attempt != 'again':
+                    ci.git('config', 'core.hooksPath', '.githooks', cwd=root)
+                self.assertTrue(self.install())
+                self.assertNotIn('runs these hooks again', self.output)
+                self.assertEqual(self.hooks_path(root), '')
+                for name, text in ci.HOOKS.items():
+                    self.assertEqual((hooks / name).read_bytes(), text.encode())
+                    self.assertTrue(os.access(hooks / name, os.X_OK))
+                self.assertEqual((hooks / 'post-checkout').read_text(), stock_lfs_hook('post-checkout'))
+
+    def test_install_from_a_linked_worktree_writes_the_shared_hooks(self):
+        root = self.repo()
+        ci.git('commit', '-q', '--allow-empty', '-m', 'first', cwd=root)
+        ci.git('worktree', 'add', '-q', str(self.folder / 'linked'), cwd=root)
+        with patch.object(ci, 'ROOT', self.folder / 'linked'):
+            self.assertTrue(self.install())
+        self.assertEqual((root / '.git/hooks/pre-commit').read_bytes(), ci.HOOKS['pre-commit'].encode())
+
+    def test_install_changes_nothing_over_another_hook(self):
+        for name, text in (('pre-commit', '#!/bin/sh\nnpx nano-staged\n'),
+                           ('pre-commit', '#!/bin/sh\n./lint.sh && exec python3 tooling/ci-local.py pre-commit\n'),
+                           ('pre-push', '#!/bin/sh\n./check.sh\ngit lfs pre-push "$@"\n'),
+                           ('pre-push', '#!/bin/sh\ncommand -v git-lfs >/dev/null || exit 2; ./lint.sh\n'
+                                        'git lfs pre-push "$@"\n'),
+                           ('pre-push', '#!/bin/sh\n./lint.sh || { echo failed; exit 2; }\ngit lfs pre-push "$@"\n'),
+                           ('pre-push', '#!/bin/sh\ncommand -v git-lfs >/dev/null 2>&1 && ./lint.sh || { echo x; exit 2; }\n'
+                                        'git lfs pre-push "$@"\n'),
+                           ('pre-push', stock_lfs_hook('pre-push').replace('#!/bin/sh', '#!/usr/bin/env bash')),
+                           ('pre-push', stock_lfs_hook('pre-push') + './extra.sh\n'),
+                           ('pre-push', stock_lfs_hook('pre-push').replace('git lfs pre-push', './other.sh')),
+                           ('pre-push', '#!/bin/sh\ncommand -v git-lfs >/dev/null 2>&1 || { :; }; ./check.sh; { exit 2; }\n'
+                                        'git lfs pre-push "$@"\n'),
+                           *(('pre-push', hook('pre-push').replace('This repository', injected))
+                             for hook in (stock_lfs_hook, old_lfs_hook)
+                             for injected in ('$(./check.sh)', '`./check.sh`', '"; ./check.sh; echo "')),
+                           ('pre-push', stock_lfs_hook('pre-push').replace('exit 2; }', 'exit 2; }; ./check.sh')),
+                           *(('pre-commit', f'#!/bin/sh\n./lint.sh {separator}{ci.MARKER}\n') for separator in (' ', '\f')),
+                           ('pre-commit', None)):
+            with self.subTest(hook=name, text=text):
+                root = self.repo()
+                hooks = root / '.git/hooks'
+                ci.git('config', 'core.hooksPath', '.githooks', cwd=root)
+                if text is None:
+                    (hooks / name).symlink_to(self.folder / 'missing')
+                else:
+                    (hooks / name).write_text(text)
+                self.assertFalse(self.install())
+                if text is None:
+                    self.assertTrue((hooks / name).is_symlink())
+                else:
+                    self.assertEqual((hooks / name).read_text(), text)
+                self.assertEqual([path.name for path in hooks.iterdir() if path.name in ci.HOOKS], [name])
+                self.assertEqual(self.hooks_path(root), '.githooks')
+
+    def test_install_refuses_a_hooks_path_it_did_not_set(self):
+        extra = self.folder / 'extra.gitconfig'
+        extra.write_text('[core]\n\thooksPath = .githooks\n')
+        for scope, key, value in (('local', 'core.hooksPath', '.husky'),
+                                  ('global', 'core.hooksPath', str(self.folder / 'elsewhere')),
+                                  ('global', 'core.hooksPath', ''),
+                                  ('local', 'core.hooksPath', ''),
+                                  ('local', 'include.path', str(extra))):
+            with self.subTest(scope=scope, key=key, value=value):
+                root = self.repo()
+                ci.git('config', f'--{scope}', key, value, cwd=root)
+                before = self.hooks_path(root)
+                self.assertFalse(self.install())
+                self.assertFalse((root / '.git/hooks/pre-commit').exists())
+                self.assertEqual(self.hooks_path(root), before)
+                ci.git('config', f'--{scope}', '--unset', key, cwd=root)
+
+    def test_install_refuses_a_folder_where_a_hook_goes(self):
+        root = self.repo()
+        (root / '.git/hooks/pre-commit').mkdir()
+        self.assertFalse(self.install())
+        self.assertTrue((root / '.git/hooks/pre-commit').is_dir())
+        self.assertFalse((root / '.git/hooks/pre-push').exists())
+
+    def test_install_reads_the_hooks_path_of_every_worktree_still_on_disk(self):
+        root = self.repo()
+        ci.git('commit', '-q', '--allow-empty', '-m', 'first', cwd=root)
+        linked, gone, orphan = self.folder / 'linked', self.folder / 'gone', self.folder / 'orphan'
+        for tree in (linked, gone, orphan):
+            ci.git('worktree', 'add', '-q', str(tree), cwd=root)
+        shutil.rmtree(gone)
+        (orphan / '.git').unlink()
+        ci.git('config', 'core.hooksPath', '.githooks', cwd=root)
+        ci.git('config', 'core.repositoryFormatVersion', '1', cwd=root)
+        ci.git('config', 'extensions.worktreeConfig', 'true', cwd=root)
+        ci.git('config', '--worktree', 'core.hooksPath', '.husky', cwd=linked)
+        self.assertFalse(self.install())
+        self.assertIn("'.husky'", self.output)
+        self.assertFalse((root / '.git/hooks/pre-commit').exists())
+        ci.git('config', '--worktree', '--unset', 'core.hooksPath', cwd=linked)
+        self.assertTrue(self.install())
+        self.assertEqual(self.hooks_path(root), '')
+
+    def test_install_needs_a_python3_that_runs(self):
+        run = subprocess.run
+        for failure in (subprocess.CompletedProcess(['python3'], 9009), FileNotFoundError('python3')):
+            def fake(command, *args, **kwargs):
+                if command[0] != 'python3':
+                    return run(command, *args, **kwargs)
+                if isinstance(failure, OSError):
+                    raise failure
+                return failure
+            with self.subTest(failure=failure):
+                root = self.repo()
+                with patch('subprocess.run', side_effect=fake):
+                    self.assertFalse(self.install())
+                self.assertFalse((root / '.git/hooks/pre-commit').exists())
+
+    def test_install_keeps_githooks_hooks_running_and_names_the_shared_ones_it_turns_back_on(self):
+        for tree, entry in (('main', 'commit-msg'), ('linked', 'post-commit'), ('main', 'lib')):
+            with self.subTest(tree=tree, entry=entry):
+                root = self.repo()
+                ci.git('commit', '-q', '--allow-empty', '-m', 'first', cwd=root)
+                linked = Path(tempfile.mkdtemp(dir=self.folder)) / 'linked'
+                ci.git('worktree', 'add', '-q', str(linked), cwd=root)
+                ci.git('config', 'core.hooksPath', '.githooks', cwd=root)
+                shared = root / '.git/hooks'
+                for folder in (root / '.githooks', linked / '.githooks', shared):
+                    folder.mkdir(exist_ok=True)
+                    (folder / 'post-commit').write_text(stock_lfs_hook('post-commit'))
+                    (folder / 'post-merge').write_text(old_lfs_hook('post-merge'))
+                (shared / 'commit-msg.sample').write_text('#!/bin/sh\nexit 1\n')
+                (shared / 'commit-msg').write_text('#!/bin/sh\n./check.sh "$1"\n')
+                custom = (root if tree == 'main' else linked) / '.githooks' / entry
+                if entry == 'lib':
+                    custom.mkdir()
+                else:
+                    custom.write_text('#!/bin/sh\n./check.sh "$1"\n')
+                self.assertFalse(self.install())
+                self.assertIn(str(custom), self.output)
+                self.assertNotIn(str(shared / 'commit-msg'), self.output)
+                self.assertTrue(custom.exists())
+                self.assertFalse((shared / 'pre-commit').exists())
+                self.assertEqual(self.hooks_path(root), '.githooks')
+                custom.rmdir() if entry == 'lib' else custom.unlink()
+                self.assertTrue(self.install())
+                self.assertEqual(self.hooks_path(root), '')
+                self.assertIn(f'runs these hooks again: {shared / "commit-msg"}', self.output)
+                for name in ('post-commit', 'post-merge', 'commit-msg.sample'):
+                    self.assertNotIn(str(shared / name), self.output)
+
+    def test_the_installed_hooks_run_ci_local_or_git_lfs_and_need_git_lfs(self):
+        root = self.repo()
+        (root / 'tooling').mkdir()
+        for name in ('ci-local.py', 'ci_paths.py'):
+            shutil.copy(Path(__file__).parents[1] / name, root / 'tooling' / name)
+        self.assertTrue(self.install())
+        stub, log, remote = self.folder / 'bin', self.folder / 'lfs.log', self.folder / 'remote.git'
+        stub.mkdir()
+        (stub / 'git-lfs').write_text('#!/bin/sh\n{ printf "[%s]" "$@"; echo; cat; } >> "$LFS_LOG"\nexit "${LFS_EXIT:-0}"\n')
+        (stub / 'git-lfs').chmod(0o755)
+        ci.git('init', '-q', '--bare', str(remote), cwd=root)
+        ci.git('remote', 'add', 'origin', str(remote), cwd=root)
+        environment = {**os.environ, 'PATH': f'{stub}{os.pathsep}{os.environ["PATH"]}', 'LFS_LOG': str(log),
+                       'CI_LOCAL_SKIP': '1'}
+        def git(*args, **extra):
+            return subprocess.run(['git', *args], cwd=root, env={**environment, **extra}, capture_output=True, text=True)
+        def pushed(old, new):
+            return f'[pre-push][origin][{remote}]\nrefs/heads/main {new} refs/heads/main {old}\n'
+        def refused_without_git_lfs():
+            result = subprocess.run([str(root / '.git/hooks/pre-push'), 'origin', str(remote)], cwd=root, input='',
+                                    env={**environment, 'PATH': str(self.folder / 'no-tools')}, capture_output=True,
+                                    text=True)
+            self.assertEqual(result.returncode, 2)
+            self.assertIn('git-lfs is not on PATH', result.stderr)
+        skipped = 'CI_LOCAL_SKIP=1, checks skipped'
+        ci.git('add', 'tooling', cwd=root)
+        result = git('commit', '-q', '-m', 'first')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn(skipped, result.stderr)
+        first = ci.git('rev-parse', 'HEAD', cwd=root)
+        result = git('push', '-q', 'origin', 'main', LFS_EXIT='1')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn(skipped, result.stderr)
+        self.assertEqual(ci.git('rev-parse', '--verify', '-q', 'main', cwd=remote, check=False), '')
+        result = git('push', '-q', 'origin', 'main')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(log.read_text(), pushed(ci.ZERO, first) * 2)
+        refused_without_git_lfs()
+        ci.git('rm', '-q', 'tooling/ci-local.py', cwd=root)
+        result = git('commit', '-q', '-m', 'second')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertNotIn(skipped, result.stderr)
+        second = ci.git('rev-parse', 'HEAD', cwd=root)
+        result = git('push', '-q', 'origin', 'main')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertNotIn(skipped, result.stderr)
+        self.assertEqual(log.read_text(), pushed(ci.ZERO, first) * 2 + pushed(first, second))
+        self.assertEqual(ci.git('rev-parse', 'main', cwd=remote), second)
+        refused_without_git_lfs()
+
+    def pre_push(self, line, passed=True):
+        uploads = []
+        run = subprocess.run
+        def fake(command, *args, **kwargs):
+            if command[:3] == ['git', 'lfs', 'pre-push']:
+                uploads.append((command[3:], kwargs.get('input')))
+                return subprocess.CompletedProcess(command, 0)
+            return run(command, *args, **kwargs)
+        with patch('subprocess.run', side_effect=fake), \
+                patch.object(ci, 'check_commit', return_value=passed) as check, \
+                patch.object(ci, 'changes_for_push', return_value=set()) as self.changes, \
+                patch('sys.stdin', io.StringIO(line)), patch('builtins.print'):
+            ok = ci.pre_push(['origin', 'https://example.invalid/repo.git'])
+        return ok, check, uploads
+
+    def test_pre_push_checks_each_pushed_commit_once_and_uploads_only_after_the_checks_pass(self):
+        root = self.repo()
+        ci.git('commit', '-q', '--allow-empty', '-m', 'first', cwd=root)
+        ci.git('tag', '-a', 'v1', '-m', 'v1', cwd=root)
+        tag, commit = ci.git('rev-parse', 'v1', cwd=root), ci.git('rev-parse', 'v1^{commit}', cwd=root)
+        self.assertNotEqual(tag, commit)
+        line = (f'(delete) {ci.ZERO} refs/heads/old {commit}\nrefs/tags/v1 {tag} refs/tags/v1 {ci.ZERO}\n'
+                f'refs/heads/main {commit} refs/heads/main {ci.ZERO}\n')
+        ok, check, uploads = self.pre_push(line)
+        self.assertTrue(ok)
+        check.assert_called_once_with(commit, set(), f'pre-push {commit[:10]}')
+        self.assertEqual(uploads, [(['origin', 'https://example.invalid/repo.git'], line)])
+        ok, check, uploads = self.pre_push(line, passed=False)
+        self.assertFalse(ok)
+        self.assertEqual(uploads, [])
+
+    def test_pre_push_compares_with_the_commit_the_remote_ref_names(self):
+        root = self.repo()
+        for message in ('first', 'second'):
+            ci.git('commit', '-q', '--allow-empty', '-m', message, cwd=root)
+        first, second = ci.git('rev-parse', 'HEAD~', 'HEAD', cwd=root).split()
+        blob = ci.git('hash-object', '-w', '--stdin', cwd=root, input='blob\n')
+        for name, target in (('on-commit', first), ('on-blob', blob)):
+            ci.git('tag', '-a', name, '-m', name, target, cwd=root)
+        for old, compared in ((ci.git('rev-parse', 'on-commit', cwd=root), first),
+                              (ci.git('rev-parse', 'on-blob', cwd=root), ci.ZERO), ('f' * 40, ci.ZERO)):
+            with self.subTest(compared=compared, old=old):
+                self.assertTrue(self.pre_push(f'refs/tags/t {second} refs/tags/t {old}\n')[0])
+                self.changes.assert_called_once_with(second, compared)
+
+    def test_ci_local_skip_skips_the_pre_commit_checks(self):
+        with patch.dict(os.environ, {'CI_LOCAL_SKIP': '1'}), patch.object(ci, 'locked') as locked, \
+                patch('sys.stderr', io.StringIO()):
+            self.assertTrue(ci.pre_commit())
+        locked.assert_not_called()
+
+    def test_clean_env_keeps_lfs_and_config_settings_and_drops_what_the_hooks_git_sets(self):
+        hook = {'GIT_DIR': '/hook/.git', 'GIT_INDEX_FILE': '/hook/index', 'GIT_EXEC_PATH': '/hook/libexec',
+                'GIT_AUTHOR_NAME': 'someone', 'GIT_EDITOR': ':'}
+        with patch.dict(os.environ, {**hook, 'GIT_LFS_SKIP_SMUDGE': '1', 'GIT_CONFIG_SYSTEM': '/dev/null'}):
+            env = ci.clean_env()
+        self.assertEqual(env['GIT_LFS_SKIP_SMUDGE'], '1')
+        self.assertEqual(env['GIT_CONFIG_SYSTEM'], '/dev/null')
+        self.assertEqual(env['GIT_CONFIG_GLOBAL'], os.environ['GIT_CONFIG_GLOBAL'])
+        self.assertFalse(set(hook) & set(env))
 
 
 if __name__ == '__main__':

@@ -14,8 +14,8 @@ use super::chain_walk::ChainNet;
 use super::signed::{MARKETPLACE_AUTH_SIGNERS, require_auth_metadata, require_signer};
 use super::wire::{ApiError, DataTotal, Params, strict_page};
 use super::{
-    MarketplaceState, SharedState, Source, listings, nft_reads, owned_items, trade_events, trades,
-    unavailable,
+    MarketplaceState, SharedState, Source, listings, nft_reads, owned_items, readers, trade_events,
+    trades, unavailable,
 };
 
 const PATH: &str = "/v1/cancelled-trades";
@@ -78,7 +78,7 @@ async fn read(
     )
     .await
     .map_err(|error| match error {
-        owned_items::ReadError::Db(e) => nft_reads::read_error(e),
+        owned_items::ReadError::Db(e) => readers::index_read_error(e),
         owned_items::ReadError::NotReady(source, message) => unavailable(source, &message),
     })?;
     sqlx::query("SELECT set_config('statement_timeout', $1, true)")
@@ -88,7 +88,7 @@ async fn read(
         ))
         .execute(&mut *tx)
         .await
-        .map_err(nft_reads::read_error)?;
+        .map_err(readers::index_read_error)?;
     let now = Utc::now();
     trades::readiness_on(state, &mut tx, now)
         .await
@@ -99,7 +99,7 @@ async fn read(
         .ok_or_else(nft_reads::land_unavailable)?;
     let land_ready = crate::land_authz::indexer::cursor_observed(&mut *tx, land.network)
         .await
-        .map_err(nft_reads::read_error)?
+        .map_err(readers::index_read_error)?
         .is_some_and(|cursor| {
             crate::land_authz::indexer::observation_ready(
                 &cursor,
@@ -130,7 +130,7 @@ async fn read(
             .bind(REASON)
             .fetch_one(&mut *tx)
             .await
-            .map_err(nft_reads::read_error)?;
+            .map_err(readers::index_read_error)?;
     if needs_land && !land_ready {
         return Err(nft_reads::land_unavailable());
     }

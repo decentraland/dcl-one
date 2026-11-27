@@ -8,6 +8,14 @@
 //! over a ready and a stale index and the reconciler's CreditUsed pass. The
 //! old test's `sql_capture` lock count is not carried (no capture hook).
 
+#![allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    clippy::cast_possible_wrap,
+    clippy::cast_precision_loss,
+    reason = "test fixtures use small literal values"
+)]
+
 use std::sync::Arc;
 
 use axum::http::{HeaderMap, StatusCode};

@@ -158,7 +158,6 @@ impl Database {
     /// reader row older than the stored asset row (`nft_updated_at`) creates
     /// the listing and leaves the asset row as it is, `fetched_at` included;
     /// the reply then carries the stored category and search text.
-    #[allow(clippy::too_many_arguments)]
     pub async fn insert_listing(
         &self,
         nft_id: &str,
@@ -191,8 +190,22 @@ impl Database {
         now: NaiveDateTime,
     ) -> Result<RentalListing, sqlx::Error> {
         let expiration = millis_to_naive(rental.expiration, now);
-        let min_days: Vec<i32> = rental.periods.iter().map(|p| p.min_days as i32).collect();
-        let max_days: Vec<i32> = rental.periods.iter().map(|p| p.max_days as i32).collect();
+        let column = |v: i64, field: &str| {
+            i32::try_from(v).map_err(|_| {
+                sqlx::Error::Encode(format!("{field} {v} does not fit its column").into())
+            })
+        };
+        let min_days = rental
+            .periods
+            .iter()
+            .map(|p| column(p.min_days, "minDays"))
+            .collect::<Result<Vec<i32>, _>>()?;
+        let max_days = rental
+            .periods
+            .iter()
+            .map(|p| column(p.max_days, "maxDays"))
+            .collect::<Result<Vec<i32>, _>>()?;
+        let chain_id = column(rental.chain_id, "chainId")?;
         let prices: Vec<String> = rental
             .periods
             .iter()
@@ -204,7 +217,7 @@ impl Database {
             .bind(&rental.token_id)
             .bind(nft_id)
             .bind(&rental.network)
-            .bind(rental.chain_id as i32)
+            .bind(chain_id)
             .bind(metadata.category)
             .bind(metadata.search_text)
             .bind(metadata.distance_to_plaza)

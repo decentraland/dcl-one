@@ -1,3 +1,11 @@
+#![allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    clippy::cast_possible_wrap,
+    clippy::cast_precision_loss,
+    reason = "test fixtures use small literal values"
+)]
+
 use std::sync::{Arc, Mutex};
 
 use axum::Router;
@@ -13,6 +21,35 @@ use crate::market::{Settings, market_router};
 use crate::shared::signed_fetch::test_support::{address, signed_headers};
 
 const MARKETPLACE: &str = r#"{"signer":"dcl:marketplace"}"#;
+
+const TEST_CONTRACT: &str = "0x0000000000000000000000000000000000000003";
+const PUBLICATION_MANAGER: &str = "0x0000000000000000000000000000000000000004";
+const CREDITS_MANAGER: &str = "0x0000000000000000000000000000000000000005";
+const AMOY_PUBLICATION_MANAGER: &str = "0x00000000000000000000000000000000000000a6";
+
+fn test_policy() -> anyhow::Result<WertPolicy> {
+    let extras =
+        format!("ethereum:{TEST_CONTRACT}:default,ethereum:{TEST_CONTRACT}:publicationFees");
+    WertPolicy::new(
+        None,
+        EvmAddress::parse(PUBLICATION_MANAGER).unwrap(),
+        Some(&extras),
+    )
+}
+
+fn settings_with_policy(api_url: &str, policy: WertPolicy) -> WertSettings {
+    WertSettings {
+        default_key: Arc::new(SigningKey::from_bytes(&[0x11; 32])),
+        publication_fees_key: Arc::new(SigningKey::from_bytes(&[0x22; 32])),
+        api_url: api_url.to_owned(),
+        api_key: "wert-api-key-example".to_owned(),
+        policy: Arc::new(policy),
+    }
+}
+
+fn test_settings(api_url: &str) -> WertSettings {
+    settings_with_policy(api_url, test_policy().unwrap())
+}
 
 fn message(amount: Value) -> Message {
     serde_json::from_value(json!({
@@ -129,11 +166,11 @@ fn settings_need_all_four_and_never_echo_a_value() {
     let key = format!("0x{}", "11".repeat(32));
     let url = Some("https://partner.example.com/api/v3/");
     assert!(
-        WertSettings::parse(None, Some(" "), None, None, &[])
+        WertSettings::parse(None, Some(" "), None, None, &[], test_policy)
             .unwrap()
             .is_none()
     );
-    let partial = WertSettings::parse(Some(&key), None, url, None, &[])
+    let partial = WertSettings::parse(Some(&key), None, url, None, &[], test_policy)
         .unwrap_err()
         .to_string();
     assert!(
@@ -142,9 +179,16 @@ fn settings_need_all_four_and_never_echo_a_value() {
         "{partial}"
     );
     let short = "11".repeat(31);
-    let bad_key = WertSettings::parse(Some(&short), Some(&key), url, Some("api-key-example"), &[])
-        .unwrap_err()
-        .to_string();
+    let bad_key = WertSettings::parse(
+        Some(&short),
+        Some(&key),
+        url,
+        Some("api-key-example"),
+        &[],
+        test_policy,
+    )
+    .unwrap_err()
+    .to_string();
     assert!(
         bad_key.contains("WERT_PRIVATE_KEY") && !bad_key.contains(&short),
         "{bad_key}"
@@ -155,6 +199,7 @@ fn settings_need_all_four_and_never_echo_a_value() {
         Some("http://partner.example.com"),
         Some("api-key-example"),
         &[],
+        test_policy,
     )
     .unwrap_err()
     .to_string();
@@ -165,6 +210,7 @@ fn settings_need_all_four_and_never_echo_a_value() {
         url,
         Some("api-key-example"),
         &[],
+        test_policy,
     )
     .unwrap()
     .unwrap();
@@ -174,6 +220,32 @@ fn settings_need_all_four_and_never_echo_a_value() {
         !debug.contains("api-key-example") && !debug.contains("1111") && !debug.contains("2222"),
         "{debug}"
     );
+}
+
+#[test]
+fn wert_extra_contract_config_rejects_malformed_tuples() {
+    let manager = EvmAddress::parse(PUBLICATION_MANAGER).unwrap();
+    for (input, refusal) in [
+        (format!("polygon:{TEST_CONTRACT}"), "network:address:target"),
+        (
+            format!("matic:{TEST_CONTRACT}:default"),
+            "unsupported network",
+        ),
+        (format!("polygon:{TEST_CONTRACT}:fees"), "invalid target"),
+        ("polygon:invalid:default".to_string(), "invalid EVM address"),
+        (
+            format!("polygon:{TEST_CONTRACT}:default,"),
+            "network:address:target",
+        ),
+    ] {
+        let error = WertPolicy::new(None, manager, Some(&input))
+            .err()
+            .expect("invalid startup configuration")
+            .to_string();
+        assert!(error.contains("WERT_EXTRA_CONTRACTS entry"), "{error}");
+        assert!(error.contains(refusal), "{error}");
+        assert!(!error.contains(&input), "{error}");
+    }
 }
 
 /// What the fake Wert API answers, and the requests it received.
@@ -244,7 +316,7 @@ fn request_body(target: Option<&str>) -> Value {
             "commodity": "MANA",
             "commodity_amount": 12.5,
             "network": "Ethereum",
-            "sc_address": "0x0000000000000000000000000000000000000003",
+            "sc_address": TEST_CONTRACT,
             "sc_input_data": "0xc0ffee",
         },
         "session": { "flow_type": "simple_full_restrict", "wallet_address": me, "commodity": "MANA", "phone": "+15550100" },
@@ -258,8 +330,9 @@ fn request_body(target: Option<&str>) -> Value {
 fn verifies(seed: u8, signature: &str, body: &Value) -> bool {
     let m = &body["message"];
     let text = format!(
-        "address:{}\ncommodity:mana\ncommodity_amount:12.5\nnetwork:ethereum\nsc_address:{}\nsc_input_data:{}",
+        "address:{}\ncommodity:mana\ncommodity_amount:12.5\nnetwork:{}\nsc_address:{}\nsc_input_data:{}",
         m["address"].as_str().unwrap(),
+        m["network"].as_str().unwrap().to_lowercase(),
         m["sc_address"].as_str().unwrap(),
         m["sc_input_data"].as_str().unwrap(),
     );
@@ -290,7 +363,7 @@ async fn it_signs_with_the_targets_key_and_creates_the_session() {
         json!({ "sessionId": "session-example", "requestId": "r" }),
     )
     .await;
-    let app = app_with(Some(WertSettings::for_tests(&url)));
+    let app = app_with(Some(test_settings(&url)));
     for (target, seed, other) in [
         (None, 0x11, 0x22),
         (Some("default"), 0x11, 0x22),
@@ -311,10 +384,144 @@ async fn it_signs_with_the_targets_key_and_creates_the_session() {
     }
 }
 
+fn request_for(network: &str, contract: &str, target: Target) -> Value {
+    let mut request = request_body(Some(target.name()));
+    request["message"]["network"] = json!(network);
+    request["message"]["sc_address"] = json!(contract);
+    request
+}
+
+#[tokio::test]
+async fn wert_contract_policy_signs_each_seeded_tuple_and_the_configured_extra() {
+    let (url, fake) = fake_wert(StatusCode::OK, json!({ "sessionId": "session-example" })).await;
+    let credits = EvmAddress::parse(CREDITS_MANAGER).unwrap();
+    let publication = EvmAddress::parse(PUBLICATION_MANAGER).unwrap();
+    let amoy_publication = EvmAddress::parse(AMOY_PUBLICATION_MANAGER).unwrap();
+    let extras = format!(
+        "amoy:{AMOY_PUBLICATION_MANAGER}:publicationFees, AMOY:{}:publicationFees",
+        AMOY_PUBLICATION_MANAGER.replace("a6", "A6"),
+    );
+    let policy = WertPolicy::new(
+        Some((ChainId::POLYGON, credits)),
+        publication,
+        Some(&extras),
+    )
+    .unwrap();
+
+    let polygon = DclContracts::for_chain(137).unwrap();
+    let ethereum = NameContracts::for_chain(1).unwrap();
+    let expected = [
+        (ChainId::POLYGON, credits, Target::Default),
+        (ChainId::POLYGON, publication, Target::PublicationFees),
+        (
+            ChainId::POLYGON,
+            polygon.marketplace_v2.into(),
+            Target::Default,
+        ),
+        (
+            ChainId::POLYGON,
+            polygon.offchain_marketplace.into(),
+            Target::Default,
+        ),
+        (
+            ChainId::POLYGON,
+            collection_store(ChainId::POLYGON).unwrap(),
+            Target::Default,
+        ),
+        (
+            ChainId::ETHEREUM,
+            ethereum.marketplace.into(),
+            Target::Default,
+        ),
+        (
+            ChainId::AMOY,
+            collection_store(ChainId::AMOY).unwrap(),
+            Target::Default,
+        ),
+        (ChainId::AMOY, amoy_publication, Target::PublicationFees),
+    ];
+    let offchain = NETWORKS.into_iter().flat_map(|(chain, _)| {
+        listings::offchain_marketplaces(chain.0 as i64)
+            .into_iter()
+            .map(move |market| {
+                (
+                    chain,
+                    EvmAddress::parse(market.address).unwrap(),
+                    Target::Default,
+                )
+            })
+    });
+    assert_eq!(
+        policy.contracts,
+        expected.into_iter().chain(offchain).collect()
+    );
+
+    let contracts = policy.contracts.clone();
+    let app = app_with(Some(settings_with_policy(&url, policy)));
+    let headers = signed_headers("post", PATH, MARKETPLACE, true).await;
+    for (chain, address, target) in &contracts {
+        let (_, network) = NETWORKS.into_iter().find(|(id, _)| id == chain).unwrap();
+        let sent = request_for(
+            &network.to_uppercase(),
+            &address.to_string().to_uppercase().replacen("0X", "0x", 1),
+            *target,
+        );
+        let (status, response) = post(app.clone(), PATH, headers.clone(), sent.clone()).await;
+        assert_eq!(
+            status,
+            StatusCode::OK,
+            "{network} {address} {target:?}: {response}"
+        );
+        let seed = match target {
+            Target::Default => 0x11,
+            Target::PublicationFees => 0x22,
+        };
+        assert!(verifies(
+            seed,
+            response["data"]["signature"].as_str().unwrap(),
+            &sent
+        ));
+    }
+    assert_eq!(fake.seen.lock().unwrap().len(), contracts.len());
+}
+
+#[tokio::test]
+async fn wert_contract_policy_refuses_unknown_wrong_chain_and_wrong_target() {
+    let (url, fake) = fake_wert(StatusCode::OK, json!({ "sessionId": "session-example" })).await;
+    let app = app_with(Some(test_settings(&url)));
+    let polygon_store = collection_store(ChainId::POLYGON).unwrap().to_string();
+    let headers = signed_headers("post", PATH, MARKETPLACE, true).await;
+    for (network, address, target) in [
+        (
+            "polygon",
+            "0x0000000000000000000000000000000000000099",
+            Target::Default,
+        ),
+        ("amoy", polygon_store.as_str(), Target::Default),
+        ("polygon", polygon_store.as_str(), Target::PublicationFees),
+        ("matic", polygon_store.as_str(), Target::Default),
+        ("polygon", "malformed", Target::Default),
+    ] {
+        let (status, body) = post(
+            app.clone(),
+            PATH,
+            headers.clone(),
+            request_for(network, address, target),
+        )
+        .await;
+        assert_eq!(
+            (status, body["message"].as_str()),
+            (StatusCode::BAD_REQUEST, Some("Invalid contract")),
+            "{network} {address} {target:?}: {body}",
+        );
+    }
+    assert!(fake.seen.lock().unwrap().is_empty());
+}
+
 #[tokio::test]
 async fn it_refuses_as_upstream_before_calling_wert() {
     let (url, fake) = fake_wert(StatusCode::OK, json!({ "sessionId": "session-example" })).await;
-    let app = app_with(Some(WertSettings::for_tests(&url)));
+    let app = app_with(Some(test_settings(&url)));
     let signed = || signed_headers("post", PATH, MARKETPLACE, true);
 
     let (status, body) = post(app.clone(), PATH, HeaderMap::new(), request_body(None)).await;
@@ -433,7 +640,7 @@ async fn a_session_wert_does_not_create_is_a_502_without_its_reply() {
         let (url, _fake) = fake_wert(status, reply).await;
         let headers = signed_headers("post", PATH, MARKETPLACE, true).await;
         let (code, body) = post(
-            app_with(Some(WertSettings::for_tests(&url))),
+            app_with(Some(test_settings(&url))),
             PATH,
             headers,
             request_body(None),
@@ -455,7 +662,7 @@ async fn a_session_wert_does_not_create_is_a_502_without_its_reply() {
 async fn both_mounts_serve_it_and_bind_the_signature_to_the_incoming_path() {
     let (url, _fake) = fake_wert(StatusCode::OK, json!({ "sessionId": "session-example" })).await;
     for mount in ["/shop-api", "/marketplace-api"] {
-        let app = Router::new().nest(mount, app_with(Some(WertSettings::for_tests(&url))));
+        let app = Router::new().nest(mount, app_with(Some(test_settings(&url))));
         let path = format!("{mount}{PATH}");
         let headers = signed_headers("post", &path, MARKETPLACE, true).await;
         let (status, body) = post(app.clone(), &path, headers, request_body(None)).await;

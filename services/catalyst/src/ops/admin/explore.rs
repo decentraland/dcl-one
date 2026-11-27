@@ -49,8 +49,6 @@
 //! user-authoritative row, so they are audited and not gated by
 //! `OPS_WRITES_ENABLED`.
 
-#![allow(clippy::result_large_err)]
-
 use axum::Json;
 use axum::extract::State;
 use axum::http::StatusCode;

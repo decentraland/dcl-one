@@ -52,11 +52,17 @@ fn skip_notice(test: &str, requirement: &str, detail: &str) -> String {
 /// libtest's per-test capture buffer, which is DISCARDED for every passing
 /// test — and a skip passes by construction, so the notice would reach nobody.
 /// fd 2 is not captured.
+#[allow(unsafe_code, reason = "writes to fd 2 past the test capture")]
+#[allow(
+    clippy::print_stderr,
+    reason = "the skip notice must bypass the test capture"
+)]
 fn emit_uncaptured(msg: &str) {
     #[cfg(unix)]
     {
         use std::io::Write;
         use std::os::fd::FromRawFd;
+        // SAFETY: fd 2 stays open for the process; ManuallyDrop never closes it.
         let mut fd2 = std::mem::ManuallyDrop::new(unsafe { std::fs::File::from_raw_fd(2) });
         if fd2.write_all(msg.as_bytes()).is_ok() {
             return;

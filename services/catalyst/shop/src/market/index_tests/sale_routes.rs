@@ -1286,6 +1286,62 @@ async fn sales_page_reads_one_published_network_and_refuses_a_withdrawn_warm_pag
         assert_eq!(code, StatusCode::OK, "{restored}");
         assert_eq!(restored["data"]["royalties"]["royaltiesWei"], "5");
     }
+    // Once the collections index owns Ethereum, the mirror's markers go and
+    // its projection publishes the v1 royalty catalogue with the rows it
+    // writes: the summary resolves the royalty from that copy.
+    let published: i64 = sqlx::query_scalar(
+        "SELECT block_number FROM shop.sale_publication WHERE network='ethereum'",
+    )
+    .fetch_one(&db.pool)
+    .await
+    .unwrap();
+    super::super::catalogue::owning::own(&db.pool, "ethereum", 1, published, 60).await;
+    sqlx::query("DELETE FROM shop.mirror_state WHERE network='ethereum'")
+        .execute(&db.pool)
+        .await
+        .unwrap();
+    let (code, unmarked) = get_json(&app, &format!("/v1/sales/summary?seller={CARL}")).await;
+    assert_eq!(code, StatusCode::OK, "{unmarked}");
+    assert_eq!(
+        unmarked["data"]["royalties"]["royaltiesWei"],
+        Value::Null,
+        "no copy published yet"
+    );
+    for copy in ["collections", "items"] {
+        sqlx::query(
+            "SELECT shop.publish_v1_royalty_catalogue($1, '-infinity'::timestamp, 'infinity'::timestamp)",
+        )
+        .bind(copy)
+        .execute(&db.pool)
+        .await
+        .unwrap();
+    }
+    let (code, owned) = get_json(&app, &format!("/v1/sales/summary?seller={CARL}")).await;
+    assert_eq!(code, StatusCode::OK, "{owned}");
+    assert_eq!(
+        owned["data"]["royalties"]["royaltiesWei"], "5",
+        "the projection's copy"
+    );
+    // Back to the mirrors for the rest.
+    sqlx::query(
+        "UPDATE shop.collection_projection SET owned_at=NULL, projected_through=NULL WHERE network='ethereum'",
+    )
+    .execute(&db.pool)
+    .await
+    .unwrap();
+    for mirror in ["collections", "items"] {
+        sqlx::query(
+            "INSERT INTO shop.mirror_state(mirror,network,source_url,chain_id,pass_started_at,last_complete_pass_at)
+             SELECT $1,'ethereum','https://copy.example',1,
+               CASE $1 WHEN 'items' THEN (SELECT min(mirrored_at) FROM shop.items WHERE network='ethereum')
+               ELSE (SELECT min(mirrored_at) FROM shop.collections WHERE network='ethereum') END,
+               timezone('UTC',now())",
+        )
+        .bind(mirror)
+        .execute(&db.pool)
+        .await
+        .unwrap();
+    }
     let set_seller = "UPDATE shop.sale_asset SET seller=$2 WHERE
         network='ethereum' AND block_number=$1 AND log_index=1";
     sqlx::query(set_seller)

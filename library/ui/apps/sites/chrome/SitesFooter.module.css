@@ -42,56 +42,15 @@
   line-height: 1.6;
   color: var(--dcl-neutrals-snow);
 }
-/* The first-party form fills the box decentraland.org gives its newsletter embed: the column's width (at most
-   450) by 65. The input takes no width of its own, so the form never widens the column past the wordmark. */
+/* The form keeps the 65px band decentraland.org gives its newsletter embed. Below 768px the shared field
+   puts its button under the input, so the band grows to hold both. */
 .newsform {
   display: flex;
-  align-items: center;
-  gap: var(--dcl-space-8);
+  flex-direction: column;
+  justify-content: center;
   width: 100%;
   max-width: 450px;
-  height: 65px;
-}
-.newsinput {
-  flex: 1 1 0;
-  width: 0;
-  min-width: 0;
-  height: 46px;
-  padding: 0 var(--dcl-space-16);
-  border: 1px solid var(--dcl-neutrals-white);
-  border-radius: var(--dcl-radius-xs);
-  background: var(--dcl-neutrals-snow);
-  color: #1b002e;
-  font: inherit;
-  font-size: var(--dcl-font-size-body-md);
-  letter-spacing: normal;
-}
-.newsinput::placeholder {
-  color: var(--dcl-neutrals-cloudy-sky);
-  opacity: 1;
-}
-.newsbtn {
-  flex: 0 0 auto;
-  height: 46px;
-  padding: 0 22px;
-  border: none;
-  border-radius: var(--dcl-radius-xs);
-  background: var(--dcl-primary-primary);
-  color: var(--dcl-neutrals-white);
-  font: inherit;
-  font-weight: 700;
-  font-size: var(--dcl-font-size-button-lg);
-  letter-spacing: 0.46px;
-  text-transform: uppercase;
-  white-space: nowrap;
-  cursor: pointer;
-}
-.newsbtn:hover {
-  background: #e0264b;
-}
-.newsbtn:disabled {
-  opacity: 0.6;
-  cursor: default;
+  min-height: 65px;
 }
 .newsnote {
   font-size: var(--dcl-font-size-button-sm);
@@ -406,7 +365,8 @@
   }
 }
 
-.footer :where(a, button, input):focus-visible {
+/* The links and the footer's own buttons; the shared field and Button draw their own focus. */
+.footer :where(a, .footdrop, .lang, .langopt):focus-visible {
   outline: 2px solid var(--dcl-primary-primary);
   outline-offset: 3px;
 }

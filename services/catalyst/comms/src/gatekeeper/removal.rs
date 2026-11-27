@@ -109,7 +109,10 @@ pub(super) async fn scene(
     .await
 }
 
-#[allow(clippy::too_many_arguments)]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "one argument per removal intent column"
+)]
 async fn root(
     tx: &mut PgConnection,
     root_key: &str,

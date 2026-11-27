@@ -11,7 +11,7 @@ use bevy::{
 use bevy_console::ConsoleCommandEntered;
 use common::{
     rpc::RpcStreamReceiver,
-    structs::{PlayerModifiers, PrimaryPlayerRes},
+    structs::{CameraZoomLevel, PlayerModifiers, PrimaryPlayerRes},
     sync::MutexExt,
 };
 use scene_runner::update_world::text_shape::{GlyphAtlases, Page};
@@ -94,6 +94,7 @@ fn harness() -> Harness {
     let (sender, hud) = RpcStreamSender::channel();
     app.world_mut()
         .send_event(SystemApi::GetReactionStream(sender));
+    app.world_mut().resource_mut::<AppConfig>().chat_reactions = true;
     app.update();
 
     Harness {
@@ -224,6 +225,7 @@ fn a_pick_with_no_room_to_carry_it_plays_and_is_not_counted_as_sent() {
     let mut island = harness.transport(TransportType::Archipelago);
     harness.pick("👍");
     harness.run(0.5);
+    assert_eq!(harness.stats().picked, 1);
     assert_eq!(harness.stats().played, 1);
     assert_eq!(harness.stats().sent, 0);
     assert!(sent(&mut island).is_empty());
@@ -256,6 +258,7 @@ fn an_emoji_the_wire_does_not_carry_does_nothing_anywhere() {
     assert!(sent(&mut wire).is_empty());
     assert!(harness.reported().is_empty());
     assert_eq!(harness.stats().refused_picks, 4);
+    assert_eq!(harness.stats().picked, 0);
     assert_eq!(harness.stats().played, 0);
 }
 
@@ -305,6 +308,8 @@ fn a_peers_reactions_play_one_at_a_time() {
         vec![(format!("{PEER:#x}"), "🔥".to_owned()); 3]
     );
     assert_eq!(harness.stats().played, 3);
+    // a peer's reactions are no pick of the local user's
+    assert_eq!(harness.stats().picked, 0);
     // nothing is kept on a peer once the gap after their last has run out
     harness.run(0.3);
     assert!(harness.app.world().get::<ReactionQueue>(peer).is_none());
@@ -416,6 +421,35 @@ fn a_sender_who_leaves_takes_their_waiting_reactions() {
     // a message of theirs still on its way in finds no one
     harness.hear(peer, "👍", 2.0, 1);
     harness.run(2.0);
+    assert_eq!(harness.streamed().len(), 1);
+}
+
+#[test]
+fn the_hud_hears_nothing_while_the_setting_is_off() {
+    let mut harness = harness();
+    let peer = harness.peer();
+    harness
+        .app
+        .world_mut()
+        .resource_mut::<AppConfig>()
+        .chat_reactions = false;
+    harness.pick("👍");
+    harness.hear(peer, "🔥", 1.0, 2);
+    harness.run(1.0);
+    assert!(harness.streamed().is_empty());
+    // they played all the same
+    assert_eq!(harness.stats().played, 3);
+
+    // switched back on, only what plays from then on is passed
+    harness
+        .app
+        .world_mut()
+        .resource_mut::<AppConfig>()
+        .chat_reactions = true;
+    harness.app.update();
+    assert!(harness.streamed().is_empty());
+    harness.pick("👍");
+    harness.app.update();
     assert_eq!(harness.streamed().len(), 1);
 }
 
@@ -609,9 +643,9 @@ impl Harness {
         })
     }
 
-    fn set_camera_distance(&mut self, distance: f32) {
+    fn set_camera_level(&mut self, level: CameraZoomLevel) {
         let mut cameras = self.app.world_mut().query::<&mut PrimaryCamera>();
-        cameras.single_mut(self.app.world_mut()).unwrap().distance = distance;
+        cameras.single_mut(self.app.world_mut()).unwrap().level = level;
     }
 
     /// A particle over the local player, its glyphs landed and a frame on.
@@ -1202,7 +1236,7 @@ fn in_first_person_the_local_users_own_are_not_drawn() {
     assert!(harness.drawn(mine));
 
     // one alive as the camera goes into the player's head is hidden
-    harness.set_camera_distance(0.0);
+    harness.set_camera_level(CameraZoomLevel::FirstPerson);
     harness.app.update();
     assert!(!harness.drawn(mine));
     // and the next gets no particle, while it is passed to the HUD as any is
@@ -1225,7 +1259,7 @@ fn in_first_person_the_local_users_own_are_not_drawn() {
         .unwrap();
     assert!(harness.drawn(theirs));
 
-    harness.set_camera_distance(1.0);
+    harness.set_camera_level(CameraZoomLevel::ThirdPerson);
     harness.app.update();
     assert!(harness.drawn(mine));
 }

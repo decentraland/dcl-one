@@ -408,7 +408,10 @@ fn spawn_flush(
 type Flushed = Result<HashMap<String, String>, SyncError>;
 
 /// [`spawn_flush`] with the batch written by `flush` (the tests' seam).
-#[allow(clippy::too_many_arguments)]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the flush task owns each shared handle it updates"
+)]
 fn spawn_flush_with<F>(
     pool: PgPool,
     storage: Option<Arc<Storage>>,
@@ -1178,7 +1181,10 @@ impl LiveSyncDeployer {
     /// `content[]` when the store holds them: each is touched
     /// ([`crate::deploy_remote_entity::touch_renders`]) once the entity is verified and holds
     /// its backlog slot, just before it is buffered.
-    #[allow(clippy::too_many_arguments)]
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "the remote deploy carries its context, report, retry and renders"
+    )]
     pub async fn deploy_entity_with_files(
         &self,
         entity_data: &[u8],

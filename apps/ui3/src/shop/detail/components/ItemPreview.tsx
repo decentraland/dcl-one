@@ -13,6 +13,7 @@ import { useShopWallet } from "../../wallet/context";
 import { avatarShape as profileShape, BASE_MALE, itemShapes, shapeLabel, type BodyShapeUrn } from "@shop/detail/lib/bodyShape";
 import { frameRenderer, rendererOptions } from "../lib/frameRenderer";
 import { pickRenderer } from "../lib/pickRenderer";
+import { decidePreviewDevice } from "../lib/previewDevice";
 import { itemUrn } from "@shop/detail/lib/urn";
 import { fetchWearableRules, keepEquipped, sharedEntityBase } from "../lib/wearable-rules";
 import { fetchEmoteClipUrl } from "../lib/emoteBase64";
@@ -181,16 +182,19 @@ function ExplorerItemPreview({ item, avatarShape = null, renderer }: ItemPreview
 // renderer where the `unity-wearable-preview` flag does, Babylon otherwise; one that fails to load gives way to the next.
 // Unity ships its own view and emote controls, as Bevy does after it, so the page draws its own only over Babylon.
 function WebItemPreview({ item, avatarShape = null, renderer }: ItemPreviewProps) {
+  const urn = item.urn ?? itemUrn(item);
+  const canPreview = !!urn && item.category !== "ens";
   const [show3d, setShow3d] = useState(renderer === "full");
   // Read on the client only: the device decides between Unity and Babylon, and whether to mount at all without WebGL.
+  // An item with no preview (a NAME) never asks, so it never pays for the link probe.
   const [fullDevice, setFullDevice] = useState<boolean | null>(renderer ? renderer === "full" : null);
   useEffect(() => {
-    const decision = pickRenderer();
-    if (!renderer) {
+    if (renderer || !canPreview) return;
+    return decidePreviewDevice((decision) => {
       setFullDevice(decision.renderer === "full");
       if (decision.reason !== "no-webgl") setShow3d(true);
-    }
-  }, [renderer]);
+    });
+  }, [renderer, canPreview]);
   const [view, setView] = useState<"avatar" | "item">("avatar");
   // What the preview reported, each for the frame and scene it reported it on: a new frame or scene starts loading.
   const [drawn, setDrawn] = useState<{ scene: string; by: PreviewRendererName } | null>(null);
@@ -199,8 +203,6 @@ function WebItemPreview({ item, avatarShape = null, renderer }: ItemPreviewProps
   const [bevyFailed, setBevyFailed] = useState(false);
   const [generation, setGeneration] = useState(0);
   const [replay, setReplay] = useState(0);
-  const urn = item.urn ?? itemUrn(item);
-  const canPreview = !!urn && item.category !== "ens";
   const isEmote = item.category === "emote";
   const { account } = useShopWallet();
   const wanted = canPreview && show3d;
@@ -292,7 +294,8 @@ function WebItemPreview({ item, avatarShape = null, renderer }: ItemPreviewProps
       ) : null}
       {ownControls && !isEmote ? <ViewToggle view={view} onView={setView} /> : null}
       {ownControls && isEmote ? <EmotePlaybar replay={replay} onReplay={() => setReplay((n) => n + 1)} /> : null}
-      {!show3d && canPreview ? (
+      {/* Offered once the device has decided: while the probe runs a click could not mount anything yet. */}
+      {!show3d && canPreview && fullDevice !== null ? (
         <button type="button" className="shop-preview__show" onClick={() => setShow3d(true)} data-testid="show-3d">
           {t("itemDetail.showPreview")}
         </button>

@@ -80,6 +80,12 @@ class EngineCacheTests(unittest.TestCase):
                        b'\0asm\x01\0\0\0fixture' if name.endswith('.wasm') else 'fixture')
         self.write(artifact.ENGINE_PARTS['bindings'] + '/Example.ts', 'export type Example = string;')
 
+    def preview_outputs(self):
+        for name in artifact.PREVIEW_REQUIRED:
+            part, _, file = name.partition('/')
+            self.write(artifact.PREVIEW_PARTS[part] + '/' + file,
+                       b'\0asm\x01\0\0\0fixture' if name.endswith('.wasm') else 'fixture')
+
     def pack(self, optimized=True):
         return artifact.pack_engine(self.cache, self.root, optimized=optimized, revision=SHA)
 
@@ -204,6 +210,7 @@ class EngineCacheTests(unittest.TestCase):
 
     def test_warm_build_skips_rust_but_runs_current_web_tests_and_preserves_provenance(self):
         app = self.root / 'apps/bevy-explorer'
+        preview = self.root / '.cache/avatar-preview'
         calls = []
         for name in ('index.html', 'app.html', 'engine/headless.html',
                      'bridge-scene/static/BevyExplorerUI/about', 'service_worker.js', 'preview_realm.js'):
@@ -215,6 +222,10 @@ class EngineCacheTests(unittest.TestCase):
             calls.append(args)
             if args[0] == 'wasm-pack' or args[:2] == ('bash', './scripts/gen-ts-bindings.sh'):
                 self.outputs()
+            elif args[:2] == ('bash', './build.sh'):
+                self.preview_outputs()
+            elif len(args) > 1 and str(args[1]).endswith('tools/package.py'):
+                self.write(Path(args[2]).relative_to(self.root).as_posix() + '/index.html', 'page')
             elif args[0] == 'node':
                 self.write(artifact.SOURCE + 'target/sandbox-worker.meta.json',
                            json.dumps({'outputs': {'worker': {'entryPoint': 'worker.js', 'exports': []}}}))
@@ -225,13 +236,18 @@ class EngineCacheTests(unittest.TestCase):
         with patch.object(build, 'ROOT', self.root), patch.object(build, 'SOURCE', self.source), \
                 patch.object(build, 'APP', app), patch.object(build, 'run', side_effect=command), \
                 patch.dict(os.environ, {'GITHUB_SHA': SHA}):
-            build.web(engine_cache=self.cache)
+            os.environ.pop('PNPM', None)
+            build.web(engine_cache=self.cache, preview_cache=preview)
             self.assertEqual(sum(c[0] == 'wasm-pack' for c in calls), 2)
             self.assertTrue(any(c[0] == 'bash' for c in calls))
+            self.assertIn(('bash', './build.sh'), calls)
+            # The optimized preview is packaged under the size limit.
+            self.assertIn(('--max-wasm-gzip', str(build.PREVIEW_MAX_WASM_GZIP)),
+                          [c[3:5] for c in calls if str(c[1]).endswith('tools/package.py')])
             self.assertFalse((self.cache / 'pkg/sandbox_worker.bundle.js').exists())
             calls.clear()
             with patch.dict(os.environ, {'GITHUB_SHA': 'b' * 40}):
-                build.web(no_opt=True, engine_cache=self.cache)
+                build.web(no_opt=True, engine_cache=self.cache, preview_cache=preview)
         self.assertFalse(any(c[0] in ('wasm-pack', 'bash') for c in calls))
         self.assertNotIn(('corepack', 'pnpm@12.21.0', '--dir', 'react-web', 'run', 'test:shared-inputs'), calls)
         self.assertIn(('node', './react-web/scripts/shared-inputs.mjs', '--check'), calls)
@@ -247,8 +263,18 @@ class EngineCacheTests(unittest.TestCase):
         self.assertTrue(any(c[0] == 'node' for c in calls))
         meta = artifact.verify(app / 'dist/web', self.root, allow_unoptimized=False)
         self.assertEqual(meta['engine']['revision'], SHA)
+        self.assertEqual(meta['preview']['revision'], SHA)
         self.assertEqual(meta['build_revision'], 'b' * 40)
         self.assertTrue(meta['optimized'])
+
+    def test_a_shell_that_carries_pnpm_runs_it_in_place_of_corepack(self):
+        with patch.dict(os.environ, {'PNPM': 'pnpm'}):
+            self.assertEqual(build.pnpm(), ('pnpm',))
+
+    def test_without_a_shell_pnpm_corepack_runs_the_pinned_version(self):
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop('PNPM', None)
+            self.assertEqual(build.pnpm(), ('corepack', 'pnpm@12.21.0'))
 
     def test_target_only_runs_the_cargo_steps_of_a_shared_build_and_nothing_else(self):
         calls = []

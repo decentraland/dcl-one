@@ -3,8 +3,8 @@
 //!
 //! The local user's pick plays at once and is sent to the players around them, gathered with
 //! their other picks into one message per emoji. A peer's message is held to what its sender
-//! may send, then its reactions play one at a time. Each one played is passed to the HUD on a
-//! stream.
+//! may send, then its reactions play one at a time. Each one played is passed to the HUD, which
+//! shows it on screen while the "Chat Reactions" setting is on.
 //!
 //! Over an avatar a reaction is a particle: an entity of its own in the world, drawn by one
 //! shared material (reaction.wgsl) with the emoji's mesh, whose glyphs are in a glyph atlas of
@@ -151,6 +151,8 @@ struct ReactionPlayed {
 /// What has happened to reactions this session, for the debug panel.
 #[derive(Resource, Default)]
 struct ReactionStats {
+    /// The local user's picks that played: no peer's reaction moves this.
+    picked: u32,
     /// The local user's picks that were no emoji the wire can carry, or had no one to send them.
     refused_picks: u32,
     /// Messages put on a room's transport, one per emoji per send.
@@ -394,6 +396,7 @@ fn accept_local_reactions(
         };
         outbox.push(tile);
         played.write(ReactionPlayed { player, emoji });
+        stats.picked += 1;
         stats.played += 1;
         reacted.write(PlayerReacted { emoji_index: tile });
     }
@@ -591,12 +594,14 @@ fn spawn_reaction_particles(
     }
 }
 
-/// Every reaction played, the local user's included, goes to the HUD on each stream it opened.
+/// Every reaction played, the local user's included, goes to the HUD to show on screen.
+/// Nothing is passed while the "Chat Reactions" setting is off: the HUD would show none of it.
 fn pipe_reactions_to_scene(
     mut played: EventReader<ReactionPlayed>,
     mut requests: EventReader<SystemApi>,
     mut senders: Local<Vec<RpcStreamSender<ReactionData>>>,
     players: Query<Option<&PlayerAddress>>,
+    config: Res<AppConfig>,
     mut stats: ResMut<ReactionStats>,
 ) {
     senders.extend(requests.read().filter_map(|ev| {
@@ -609,7 +614,7 @@ fn pipe_reactions_to_scene(
     senders.retain(|s| !s.is_closed());
     stats.subscribers = senders.len();
 
-    if senders.is_empty() {
+    if !config.chat_reactions || senders.is_empty() {
         played.clear();
         return;
     }

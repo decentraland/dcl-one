@@ -1,6 +1,7 @@
 //! `--json`: the command's result as one JSON document on stdout, nothing
 //! else there, for the commands that have a result; `start` prints one JSON
 //! event per line instead.
+#![allow(clippy::unwrap_used, reason = "test support")]
 
 #[cfg(unix)]
 mod common {
@@ -19,7 +20,10 @@ const SCENE: &str =
 /// A folder of this test alone. Its name has a random part, only this user
 /// can read or write it, and the test fails if the name exists; the second
 /// field removes the folder when the test ends.
-struct Fixture(PathBuf, #[allow(dead_code)] tempfile::TempDir);
+struct Fixture(
+    PathBuf,
+    #[allow(dead_code, reason = "held to remove the folder on drop")] tempfile::TempDir,
+);
 
 impl Fixture {
     fn empty(tag: &str) -> Self {

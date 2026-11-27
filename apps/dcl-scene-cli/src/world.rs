@@ -319,6 +319,7 @@ impl WorldAction {
             .map_err(|e| unreachable(&url, e))
     }
 
+    #[allow(clippy::print_stdout, reason = "the CLI writes to the terminal")]
     pub fn print_body(&self, body: &str) {
         if let WorldAction::SettingsSet(_) = self
             && let Ok(v) = serde_json::from_str::<Value>(body)
@@ -560,6 +561,7 @@ async fn get_world(
     Ok(body)
 }
 
+#[allow(clippy::print_stdout, reason = "the CLI writes to the terminal")]
 pub async fn settings_get(name: &str, target_content: Option<&str>) -> Result<()> {
     let body = get_world(name, target_content, "settings", "read the settings").await?;
     let mut steps = ux::Steps::new(1);
@@ -571,6 +573,7 @@ pub async fn settings_get(name: &str, target_content: Option<&str>) -> Result<()
     Ok(())
 }
 
+#[allow(clippy::print_stdout, reason = "the CLI writes to the terminal")]
 pub async fn permissions_list(name: &str, target_content: Option<&str>) -> Result<()> {
     let body = get_world(name, target_content, "permissions", "list the permissions").await?;
     let v: Value = serde_json::from_str(&body).context("parsing the permissions response")?;

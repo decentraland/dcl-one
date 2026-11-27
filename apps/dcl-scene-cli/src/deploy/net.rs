@@ -1307,6 +1307,7 @@ pub(super) async fn confirm_world_overwrite(
 }
 
 /// The question goes to stderr: stdout is the result's (`--json`, a pipe).
+#[allow(clippy::print_stderr, reason = "the CLI writes to the terminal")]
 fn prompt_continue() -> Result<bool> {
     eprint!("Continue? (y/N) ");
     std::io::stderr().flush().ok();
