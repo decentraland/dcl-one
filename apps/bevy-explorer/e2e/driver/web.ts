@@ -88,11 +88,11 @@ export const BOOT_ABANDONED = 'the boot was abandoned'
 export class WebConsole implements Console {
   readonly kind = 'web' as const
   readonly #driver: WebDriver
-  readonly #commandTimeoutMs: number
+  readonly commandTimeoutMs: number
 
   private constructor(driver: WebDriver, commandTimeoutMs: number) {
     this.#driver = driver
-    this.#commandTimeoutMs = commandTimeoutMs
+    this.commandTimeoutMs = commandTimeoutMs
   }
 
   /** Start Chrome on `url` and wait until the app frame answers console commands. */
@@ -137,7 +137,7 @@ export class WebConsole implements Console {
   async run(line: string): Promise<string> {
     const normalized = normalizeLine(line)
     try {
-      return await this.#driver.console(normalized, { timeout: this.#commandTimeoutMs })
+      return await this.#driver.console(normalized, { timeout: this.commandTimeoutMs })
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
       if (message === (await webDriverModule()).APP_GONE) throw new DocumentGoneError(normalized, message)

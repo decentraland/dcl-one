@@ -7,6 +7,8 @@ export interface Console {
   /** Run one console line and resolve with its `Ok` text; reject with a `ConsoleError` on `Err`. */
   run(line: string): Promise<string>
   close(): Promise<void>
+  /** How long the transport waits for one command, where it has a limit. */
+  readonly commandTimeoutMs?: number
   /** What the page said and how it looks now, the HUD included, where the transport can tell. */
   evidence?(): Promise<{ console: string[]; screenshot: Buffer | undefined }>
   /** Lay the page out at `[width, height]` CSS px in the same window, or at the window's size

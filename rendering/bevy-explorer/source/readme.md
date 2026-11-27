@@ -380,6 +380,16 @@ the [conventions ADR](../../../docs/adr/2026-11-17-console-command-conventions.m
   short by `--timeout-frames`. `/debug_pointer [true|false]` (preview only) shows or hides the
   pointer target in the debug overlay and replies JSON with what the pointer targets now: its
   `kind`, `crdtEntityId`, distances, entries, `hoverText`, `withinRange` and the `ray`.
+- Scenes: `/teleport x y [realm] --wait [--timeout-seconds S]` and `/reload --current --wait`
+  answer once the parcel's scene runs, shows its content (past tick 5, nothing blocking it) and a
+  frame with it was presented (`settled`, `sceneState`, `ticksWaited`, `renderedFrames`,
+  `settleMs`), or with `settled:false` and a `warning` naming what it waited for. A teleport
+  waits for the player to land first and adds `arrived`, `sceneReady`, `sceneHash`; on a parcel
+  with no scene, or one whose scene refuses the player, it settles on landing; a reload
+  waits for the new instance of the scene and adds `reloaded` and a `hint`.
+  `/scene_loading_state` reads the parcel scene under the player (`playerParcel`, `outOfWorld`,
+  `sceneHash`, `stage`, `state`, `blockedBy`, `isReady`) beside its counts of every scene by load
+  stage.
 - Raycasts: `/raycast_stats` (the capped tier's `budgetMs`, `ran`, `deferred`, `spentMs` and the
   uncapped tier's `uncappedRan`, `uncappedSpentMs`) and `/raycast_budget [ms|auto]` (override the
   capped budget, a tenth of the target frame, from 0 to 10 ms). On the web, these and the two pointer commands go

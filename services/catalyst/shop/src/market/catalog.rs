@@ -706,6 +706,24 @@ pub fn unified_trades_cte(now_p: &str, since_p: &str) -> String {
 /// trades that sell from those contracts, as a semi-join that stays hashed
 /// whatever the array's length.
 pub fn unified_trades_cte_of(now_p: &str, since_p: &str, contracts_p: Option<&str>) -> String {
+    unified_trades_cte_for_listing(now_p, since_p, contracts_p, None)
+}
+
+pub(super) fn unified_trades_cte_for_listing(
+    now_p: &str,
+    since_p: &str,
+    contracts_p: Option<&str>,
+    listing_type: Option<super::shop::ShopListingType>,
+) -> String {
+    use super::shop::ShopListingType;
+
+    // Two price legs can share a materialized CTE. Filter the trade kind
+    // before it verifies rows that neither leg can use.
+    let trade_kind = match listing_type {
+        Some(ShopListingType::Primary) => "t.type = 'public_item_order'",
+        Some(ShopListingType::Secondary) => "t.type = 'public_nft_order'",
+        None => "t.type IN ('public_item_order', 'public_nft_order')",
+    };
     use super::chain_walk::ChainNet;
     let of = contracts_p
         .map(|p| format!(" AND sent.contract_address IN (SELECT unnest({p}::text[]))"))
@@ -733,7 +751,7 @@ pub fn unified_trades_cte_of(now_p: &str, since_p: &str, contracts_p: Option<&st
            LEFT JOIN shop.trade_assets_erc721 sent_erc721 ON sent_erc721.asset_id = sent.id \
            JOIN shop.trade_assets recv ON recv.trade_id = t.id AND recv.direction = 'received' AND recv.asset_type IN (1, 2) \
            JOIN shop.trade_assets_erc20 recv_erc20 ON recv_erc20.asset_id = recv.id \
-           WHERE t.type IN ('public_item_order', 'public_nft_order') \
+           WHERE {trade_kind} \
              AND t.expires_at > {now_p} AND t.effective_since <= {now_p} \
              AND NOT EXISTS (SELECT 1 FROM shop.trade_cancellations c WHERE c.target_hashed_signature = t.hashed_signature) \
              AND {listable} \
