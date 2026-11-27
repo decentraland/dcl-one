@@ -12238,8 +12238,9 @@ async fn catalog_serves_the_verified_amoy_rows_with_their_chain_id() {
             .unwrap();
         assert!(
             result.status.success(),
-            "{}",
-            String::from_utf8_lossy(&result.stdout)
+            "{}\n{}",
+            String::from_utf8_lossy(&result.stdout),
+            String::from_utf8_lossy(&result.stderr)
         );
         assert!(String::from_utf8_lossy(&result.stdout).contains("1 passed"));
         return;
@@ -12250,6 +12251,8 @@ async fn catalog_serves_the_verified_amoy_rows_with_their_chain_id() {
     };
     let pool = &state.pool;
     let contract = contract_of(&tag(), 1);
+    let token = (alloy_primitives::U256::from(1u64) << 216u32 | alloy_primitives::U256::from(1u64))
+        .to_string();
     for item in ["1", "3"] {
         seed_item_row(pool, &contract, item, CREATOR).await;
     }
@@ -12260,12 +12263,16 @@ async fn catalog_serves_the_verified_amoy_rows_with_their_chain_id() {
          FROM unnest(ARRAY['collections','items']) m CROSS JOIN unnest(ARRAY['ethereum','matic']) n;
          INSERT INTO shop.nft (network,contract_address,token_id,owner,item_id,
            minted_block,minted_at,transferred_block,transferred_log,transferred_at)
-         VALUES ('matic','{contract}',1,'{WALLET_A}',1,1,1,1,0,1);
+         VALUES ('matic','{contract}',{token},'{WALLET_A}',1,1,1,1,0,1);
          INSERT INTO shop.legacy_order (network,marketplace_address,order_id,
            contract_address,token_id,seller,price,expires_at,status,created_block,
            created_log,created_at,updated_block,updated_log,updated_at)
-         VALUES ('matic','{CREATOR}','legacy-1','{contract}',1,'{WALLET_A}',20,
-           4102444800000,'open',1,0,1,1,0,1)"
+         VALUES ('matic','{CREATOR}','legacy-1','{contract}',{token},'{WALLET_A}',20,
+           4102444800000,'open',1,0,1,1,0,1),
+                ('matic','{CREATOR}','legacy-sold','{contract}',{token},'{WALLET_A}',20,
+           0,'sold',1,0,1,2,0,2),
+                ('matic','{CREATOR}','legacy-cancelled','{contract}',{token},'{WALLET_A}',20,
+           0,'cancelled',1,0,1,3,0,3)"
     ))).execute(pool).await.unwrap();
     super::owned_items::test_support::publish(pool, &[ChainNet::Matic], false, Duration::ZERO)
         .await;
@@ -12289,17 +12296,112 @@ async fn catalog_serves_the_verified_amoy_rows_with_their_chain_id() {
     ] {
         sqlx::query(statement).execute(pool).await.unwrap();
     }
+    let (trade, _) = insert_trade_on(
+        pool,
+        "MATIC",
+        80_002,
+        "public_nft_order",
+        WALLET_A,
+        Asset {
+            asset_type: 3,
+            contract: contract.clone(),
+            value: token.clone(),
+        },
+        Asset {
+            asset_type: 1,
+            contract: listings::mana_token(80_002).unwrap().to_owned(),
+            value: "1000".into(),
+        },
+    )
+    .await;
+    let orders = format!("/v1/orders?network=MATIC&contractAddress={contract}");
+    for watched in [true, false, true] {
+        let watch = if watched {
+            "INSERT INTO shop.nft_contract (network, contract_address, walked_from_block)
+             VALUES ('matic', $1, 1)"
+        } else {
+            "DELETE FROM shop.nft_contract WHERE network = 'matic' AND contract_address = $1"
+        };
+        assert_eq!(
+            sqlx::query(watch)
+                .bind(&contract)
+                .execute(pool)
+                .await
+                .unwrap()
+                .rows_affected(),
+            1
+        );
+        let (code, page) = get(testnet.clone(), &format!("{orders}&status=open")).await;
+        assert_eq!(code, StatusCode::OK, "{page}");
+        let rows = page["data"].as_array().unwrap();
+        assert_eq!(rows.len(), if watched { 2 } else { 0 }, "{page}");
+        assert_eq!(page["total"], if watched { "2" } else { "0" }, "{page}");
+        if watched {
+            assert!(rows.iter().any(|row| row["id"] == "legacy-1"), "{page}");
+            assert!(rows.iter().any(|row| row["id"] == trade), "{page}");
+        }
+        for (route, count) in [("v1", 1), ("v2", 2)] {
+            let path = format!(
+                "/{route}/catalog?network=MATIC&contractAddress={contract}&onlyListing=true"
+            );
+            let (code, listings) = get(testnet.clone(), &path).await;
+            assert_eq!(code, StatusCode::OK, "{listings}");
+            assert_eq!(listings["total"], usize::from(watched), "{listings}");
+            if watched {
+                assert_eq!(listings["data"][0]["chainId"], 80_002, "{listings}");
+                assert_eq!(listings["data"][0]["listings"], count, "{listings}");
+            } else {
+                assert_eq!(listings["data"], json!([]), "{listings}");
+            }
+        }
+        if !watched {
+            for (status, id) in [
+                ("transferred", "legacy-1"),
+                ("sold", "legacy-sold"),
+                ("cancelled", "legacy-cancelled"),
+            ] {
+                let (code, page) = get(testnet.clone(), &format!("{orders}&status={status}")).await;
+                assert_eq!(code, StatusCode::OK, "{page}");
+                assert_eq!(page["total"], "1", "{page}");
+                assert_eq!(page["data"].as_array().unwrap().len(), 1, "{page}");
+                assert_eq!(page["data"][0]["id"], id, "{page}");
+                assert_eq!(page["data"][0]["status"], status, "{page}");
+            }
+        }
+    }
     for route in ["v1", "v2"] {
         let path = format!("/{route}/catalog?network=MATIC&contractAddress={contract}");
-        let (code, listings) = get(testnet.clone(), &format!("{path}&onlyListing=true")).await;
-        assert_eq!(code, StatusCode::OK, "{listings}");
-        assert_eq!(listings["total"], 1);
-        assert_eq!(listings["data"][0]["chainId"], 80002);
         let (code, mint) = get(testnet.clone(), &format!("{path}&onlyMinting=true")).await;
         assert_eq!(code, StatusCode::OK, "{mint}");
         assert_eq!(mint["total"], 0, "the unverified item cannot mint");
     }
 
+    sqlx::query(
+        "INSERT INTO shop.nft_event (network, block_number, log_index, block_time, kind, emitter,
+                                     contract_address, token_id, from_address, to_address)
+         VALUES ('matic', 101, 0, 101, 'transfer', $1, $1, $2::numeric, $3, $4)",
+    )
+    .bind(&contract)
+    .bind(&token)
+    .bind(WALLET_A)
+    .bind(WALLET_B)
+    .execute(pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "UPDATE shop.chain_cursor SET last_block = 101 WHERE indexer = 'nft' AND network = 'matic'",
+    )
+    .execute(pool)
+    .await
+    .unwrap();
+    for route in ["v1", "v2"] {
+        let path =
+            format!("/{route}/catalog?network=MATIC&contractAddress={contract}&onlyListing=true");
+        let (code, page) = get(testnet.clone(), &path).await;
+        assert_eq!(code, StatusCode::OK, "{page}");
+        assert_eq!(page["total"], 0, "{page}");
+        assert_eq!(page["data"], json!([]), "{page}");
+    }
     own.drop().await;
 }
 

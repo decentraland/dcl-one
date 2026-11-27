@@ -866,6 +866,7 @@ fn book_from(
     let land_joins = if land {
         format!(
             "LEFT JOIN land_authz.index_cursor land_fold ON land_fold.network = '{}' AND o.network = 'ethereum' \
+               AND land_fold.land_registry = $1 AND land_fold.estate_registry = $2 \
              LEFT JOIN land_authz.token_right tr ON o.network = 'ethereum' AND tr.token_address = o.contract_address AND tr.token_id = o.token_id",
             served.land_network,
         )
@@ -964,7 +965,7 @@ fn book_from(
 /// reads `transferred`. `book_from` and the catalog aggregation supply
 /// `BOOK_NFT_FOLD_JOIN` on their checked snapshot.
 pub(super) fn book_status(land: bool) -> String {
-    let nft = super::catalog::nft_owner_at_fold_sql("n", "nft_fold.folded_block");
+    let nft = super::catalog::nft_owner_at_fold_sql("n", "nft_fold");
     let nft_backed = format!("(n.owner = o.seller AND {nft})");
     let backed = if land {
         let land = super::catalog::land_owner_at_fold_sql("tr", "land_fold.folded_block");

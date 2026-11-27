@@ -5631,9 +5631,11 @@ Invariants:
   token's owner (`shop.nft`, or `land_authz.token_right` for LAND and
   estates). An open order reads `open` while the published fold proves its
   seller holds it. An owner row or a raw transfer beyond the fold withholds
-  that proof, as does an unfinished NFT contract backfill or refold. An
-  unproven open order reads `transferred` before the status filter, total
-  and page. The reader serves only
+  that proof, as does an unfinished NFT contract backfill or refold. A
+  testnet collection also needs an active watch and a verified collection
+  row on the served chain. The Ethereum NAME registrar uses its fixed
+  deployment. An unproven open order reads `transferred` before the status
+  filter, total and page. The reader serves only
   the orders of the catalogue the nft index walks on the served chain (a
   `shop.collections` row of that `chain_id`, `testnet_verified` on a
   testnet) and of that chain's LAND and Estate registries and DCLRegistrar,
@@ -5658,8 +5660,9 @@ Invariants:
   refold queued, its book is not read. The `nft-index` message names the
   queued refold separately from a book behind its published fold, and
   `catalyst_shop_order_book_readiness_refusals_total` counts them by
-  network, route and reason (`refold_queued` or `fold_behind`). An earlier
-  binary can republish that network
+  network, route and reason (`refold_queued` or `fold_behind`). The reader
+  reports a queued refold once the book reaches the published fold.
+  An earlier binary can republish that network
   without draining the queue. Refusals can continue until a writer with
   the order fold takes the walk and publishes. Another network's queue
   does not withhold this one. Operators can inspect the queue with no read

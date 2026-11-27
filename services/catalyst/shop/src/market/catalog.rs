@@ -571,12 +571,25 @@ pub fn uint_or_null(expr: &str) -> String {
     format!("(CASE WHEN {expr} ~ '^(0|[1-9][0-9]{{0,77}})$' THEN {expr}::numeric END)")
 }
 
-/// The NFT owner's row is covered by the publication and no later event or
-/// unfinished contract history puts it in doubt. The aliases name trusted
-/// query fragments used by both legacy and v3 orders.
-pub(super) fn nft_owner_at_fold_sql(nft: &str, folded_block: &str) -> String {
+/// Prove the NFT owner against the cursor's published fold. Testnet
+/// collections require an active watch. The mainnets and the Ethereum NAME
+/// registrar have fixed coverage. The aliases are trusted query fragments.
+pub(super) fn nft_owner_at_fold_sql(nft: &str, cursor: &str) -> String {
+    use super::chain_walk::ChainNet;
+
+    let folded_block = format!("{cursor}.folded_block");
     format!(
         "({nft}.transferred_block <= {folded_block}
+          AND ({cursor}.chain_id IN ({ethereum}, {polygon})
+            OR ({cursor}.network = 'ethereum' AND {nft}.contract_address = '{registrar}')
+            OR EXISTS (
+                SELECT FROM shop.nft_contract watched
+                JOIN shop.collections active ON active.network = watched.network
+                   AND active.contract_address = watched.contract_address
+                WHERE watched.network = {nft}.network AND watched.contract_address = {nft}.contract_address
+                  AND active.chain_id = {cursor}.chain_id AND active.testnet_verified
+            )
+          )
           AND NOT EXISTS (
               SELECT FROM shop.nft_event e
               WHERE e.network = {nft}.network AND e.contract_address = {nft}.contract_address
@@ -588,6 +601,9 @@ pub(super) fn nft_owner_at_fold_sql(nft: &str, folded_block: &str) -> String {
               WHERE watched.network = {nft}.network AND watched.contract_address = {nft}.contract_address
                 AND (watched.refold_owed OR ({backfill_pending}))
           ))",
+        ethereum = ChainNet::Ethereum.chain_id(),
+        polygon = ChainNet::Matic.chain_id(),
+        registrar = super::nft_index::Catalogue::Testnet.registrar(),
         backfill_pending = super::nft_index::BACKFILL_PENDING_SQL,
     )
 }
@@ -605,7 +621,7 @@ pub(super) fn land_owner_at_fold_sql(right: &str, folded_block: &str) -> String 
 
 /// Ownership of the sent ERC-721 in the same snapshot as the trade verdict.
 fn nft_trade_backed_sql(now_p: &str, token_num: &str, eth: i64, matic: i64) -> String {
-    use super::chain_walk::{ChainNet, MAX_CLOCK_SKEW, READY_WINDOW};
+    use super::chain_walk::{MAX_CLOCK_SKEW, READY_WINDOW};
     use crate::land_authz::{LAND_MAINNET, LAND_SEPOLIA};
     let land = if eth == 11_155_111 {
         LAND_SEPOLIA
@@ -638,21 +654,8 @@ fn nft_trade_backed_sql(now_p: &str, token_num: &str, eth: i64, matic: i64) -> S
                    AND n.token_id = {token_num}
               WHERE c.indexer = 'nft' AND c.network = lower(t.network) AND {nft_ready}
                 AND n.owner = lower(t.signer) AND {nft_owner_at_fold}
-                AND (c.chain_id IN ({ethereum}, {polygon})
-                  OR (c.network = 'ethereum' AND n.contract_address = '{registrar}')
-                  OR EXISTS (
-                      SELECT FROM shop.nft_contract watched
-                      JOIN shop.collections active ON active.network = watched.network
-                         AND active.contract_address = watched.contract_address
-                      WHERE watched.network = n.network AND watched.contract_address = n.contract_address
-                        AND active.chain_id = c.chain_id AND active.testnet_verified
-                  )
-                )
           ) END)",
-        ethereum = ChainNet::Ethereum.chain_id(),
-        polygon = ChainNet::Matic.chain_id(),
-        registrar = super::nft_index::Catalogue::Testnet.registrar(),
-        nft_owner_at_fold = nft_owner_at_fold_sql("n", "c.folded_block"),
+        nft_owner_at_fold = nft_owner_at_fold_sql("n", "c"),
         land_owner_at_fold = land_owner_at_fold_sql("n", "c.folded_block"),
         window = READY_WINDOW.num_seconds(),
         skew = MAX_CLOCK_SKEW.num_seconds(),
