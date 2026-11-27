@@ -2,7 +2,10 @@
 //! flying the photo camera. The HUD opens and closes the mode and declares it as focus, which
 //! reserves input above scenes; the keys read here are the mode's own.
 
-use bevy::{platform::collections::HashSet, prelude::*, render::view::ViewUserValue};
+use bevy::{
+    ecs::system::SystemParam, platform::collections::HashSet, prelude::*,
+    render::view::ViewUserValue,
+};
 use common::{
     inputs::{CommonInputAction, SystemAction, CAMERA_SET, CAMERA_ZOOM, MOVE_SET, POINTER_SET},
     sets::{PostUpdateSets, SceneSets},
@@ -22,10 +25,10 @@ use scene_runner::{
     },
     ContainingScene,
 };
-use tween::SystemTween;
+use tween::{SystemTween, SystemTweenData};
 
 use crate::photo_camera::{
-    Look, PhotoCamera, PhotoCameraInput, PhotoCameraSettings, PhotoModeSource,
+    Look, PhotoCamera, PhotoCameraInput, PhotoCameraSettings, PhotoModeSource, PhotoPose,
 };
 
 /// The `CursorLocks` entry photo mode holds while its cursor is locked.
@@ -48,6 +51,73 @@ pub enum PhotoModeRequest {
 pub struct PhotoModeChanged {
     pub active: bool,
     pub source: PhotoModeSource,
+}
+
+/// What keeps photo mode closed.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PhotoModeBlock {
+    /// A scene's `CameraModeArea` or `VirtualCamera` holds the camera.
+    SceneCamera,
+    /// The player is out of the world, and the camera looks at it from above.
+    OutOfWorld,
+}
+
+/// Why photo mode cannot open, and closes if it is open: the one rule for it. A request to
+/// enable it is dropped while this holds, so a command that opens it asks here first.
+pub fn photo_mode_block(camera: &PrimaryCamera, out_of_world: bool) -> Option<PhotoModeBlock> {
+    if camera.scene_override.is_some() {
+        Some(PhotoModeBlock::SceneCamera)
+    } else if out_of_world {
+        Some(PhotoModeBlock::OutOfWorld)
+    } else {
+        None
+    }
+}
+
+/// Puts the open photo camera in a pose at once, for a console command (`/photo_mode --position`):
+/// the follow target, the rendered camera and its projection in the frame it is asked, so the
+/// pose is there for the next frame's render and nothing eases toward it.
+#[derive(SystemParam)]
+pub struct PhotoCameraPlacer<'w, 's> {
+    commands: Commands<'w, 's>,
+    camera: Query<
+        'w,
+        's,
+        (
+            Entity,
+            &'static mut Transform,
+            Option<&'static mut Projection>,
+            &'static mut PhotoCamera,
+            Has<SystemTween>,
+        ),
+        With<PrimaryCamera>,
+    >,
+    player: Query<'w, 's, &'static GlobalTransform, With<PrimaryUser>>,
+    settings: Res<'w, PhotoCameraSettings>,
+}
+
+impl PhotoCameraPlacer<'_, '_> {
+    /// Places the photo camera and returns where it is now: the pose asked for, or the nearest
+    /// point within reach of the player. `None` while photo mode is not open.
+    pub fn place(&mut self, pose: &PhotoPose) -> Option<Transform> {
+        let (entity, mut transform, projection, mut photo, tweening) =
+            self.camera.single_mut().ok()?;
+        if tweening {
+            // the opening transition from first person would carry the camera to where the mode
+            // opened; the pose lands instead
+            self.commands
+                .entity(entity)
+                .remove::<(SystemTween, SystemTweenData)>();
+        }
+        let player_position = self.player.single().ok().map(GlobalTransform::translation);
+        *transform = photo.place(pose, &self.settings, player_position);
+        if let Some(mut projection) = projection {
+            if let Projection::Perspective(perspective) = &mut *projection {
+                perspective.fov = photo.fov.current.to_radians();
+            }
+        }
+        Some(*transform)
+    }
 }
 
 /// A scene UI root hidden for photo mode, holding the display it had.
@@ -92,8 +162,7 @@ fn read_photo_mode_keys(
     let Ok((primary, mut photo)) = camera.single_mut() else {
         return;
     };
-    let out_of_world = player.single().unwrap_or(false);
-    if primary.scene_override.is_some() || out_of_world {
+    if photo_mode_block(primary, player.single().unwrap_or(false)).is_some() {
         requests.write(PhotoModeRequest::Disable);
         return;
     }
@@ -150,8 +219,7 @@ pub(crate) fn apply_photo_mode_requests(
     }
 
     if enable {
-        let out_of_world = player.single().unwrap_or(false);
-        if primary.scene_override.is_some() || out_of_world {
+        if photo_mode_block(primary, player.single().unwrap_or(false)).is_some() {
             return;
         }
         let first_person = primary.view() == CameraView::FirstPerson;
@@ -375,5 +443,141 @@ fn button(input_manager: &InputManager, action: SystemAction) -> f32 {
         1.0
     } else {
         0.0
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+
+    use common::structs::CameraZoomLevel;
+
+    use super::*;
+
+    /// A pose a console command asks for, placed in the frame it is asked.
+    #[derive(Resource, Default)]
+    struct Asked(Option<PhotoPose>);
+
+    #[derive(Resource, Default)]
+    struct Placed(Option<Transform>);
+
+    fn place(mut asked: ResMut<Asked>, mut placed: ResMut<Placed>, mut placer: PhotoCameraPlacer) {
+        if let Some(pose) = asked.0.take() {
+            placed.0 = placer.place(&pose);
+        }
+    }
+
+    /// Photo mode's opening and closing with the engine's own camera transition, a first-person
+    /// camera at eye height and a player at the origin.
+    fn app() -> (App, Entity, Entity) {
+        let mut app = App::new();
+        app.add_event::<PhotoModeRequest>()
+            .add_event::<PhotoModeChanged>()
+            .init_resource::<PhotoCameraSettings>()
+            .init_resource::<CursorLocks>()
+            .insert_resource(avatar::dynamic_nametag::NametagsVisible(true))
+            .init_resource::<Time>()
+            .init_resource::<Asked>()
+            .init_resource::<Placed>()
+            .add_systems(Update, (place, apply_photo_mode_requests).chain())
+            .add_systems(PostUpdate, tween::update_system_tween);
+        let camera = app
+            .world_mut()
+            .spawn((
+                Transform::from_xyz(0.0, 1.8, 0.0),
+                Projection::Perspective(PerspectiveProjection::default()),
+                PrimaryCamera {
+                    level: CameraZoomLevel::FirstPerson,
+                    ..Default::default()
+                },
+            ))
+            .id();
+        let player = app
+            .world_mut()
+            .spawn((PrimaryUser::default(), GlobalTransform::IDENTITY))
+            .id();
+        (app, camera, player)
+    }
+
+    /// A quarter of a second.
+    fn frame(app: &mut App) {
+        app.world_mut()
+            .resource_mut::<Time>()
+            .advance_by(Duration::from_secs_f64(0.25));
+        app.update();
+    }
+
+    fn ask(app: &mut App, pose: PhotoPose) -> Option<Transform> {
+        app.world_mut().resource_mut::<Asked>().0 = Some(pose);
+        frame(app);
+        app.world_mut().resource_mut::<Placed>().0.take()
+    }
+
+    #[test]
+    fn a_scene_camera_or_a_player_out_of_the_world_keeps_photo_mode_closed() {
+        let camera = PrimaryCamera::default();
+        assert_eq!(photo_mode_block(&camera, false), None);
+        assert_eq!(
+            photo_mode_block(&camera, true),
+            Some(PhotoModeBlock::OutOfWorld)
+        );
+
+        // a request to open it is dropped meanwhile
+        let (mut app, camera, player) = app();
+        app.world_mut()
+            .entity_mut(player)
+            .insert(OutOfWorld::default());
+        app.world_mut()
+            .send_event(PhotoModeRequest::Enable(PhotoModeSource::Console));
+        frame(&mut app);
+        assert!(app.world().get::<PhotoCamera>(camera).is_none());
+        // and there is no camera to place
+        assert_eq!(ask(&mut app, PhotoPose::default()), None);
+    }
+
+    #[test]
+    fn a_pose_placed_while_photo_mode_opens_from_first_person_drops_the_opening_transition() {
+        let (mut app, camera, _) = app();
+        app.world_mut()
+            .send_event(PhotoModeRequest::Enable(PhotoModeSource::Console));
+        frame(&mut app);
+        // opening from first person eases the camera out to behind the eye
+        assert!(app.world().get::<PhotoCamera>(camera).is_some());
+        assert!(app.world().get::<SystemTween>(camera).is_some());
+        assert!(app.world().get::<SystemTweenData>(camera).is_some());
+
+        let position = Vec3::new(10.0, 5.0, -10.0);
+        let point = Vec3::new(10.0, 1.0, -20.0);
+        let pose = PhotoPose {
+            position: Some(position),
+            look_at: Some(point),
+            fov: Some(40.0),
+        };
+        let placed = ask(&mut app, pose).expect("photo mode is open");
+        assert_eq!(placed.translation, position);
+        // the transition is gone, with its bookkeeping, and the pose is on the rendered camera
+        assert!(app.world().get::<SystemTween>(camera).is_none());
+        assert!(app.world().get::<SystemTweenData>(camera).is_none());
+        let rendered = |app: &App| *app.world().get::<Transform>(camera).unwrap();
+        assert_eq!(rendered(&app), placed);
+        let off = placed
+            .forward()
+            .angle_between(point - position)
+            .to_degrees();
+        assert!(off < 0.01, "{off}");
+        let Some(Projection::Perspective(perspective)) = app.world().get::<Projection>(camera)
+        else {
+            panic!("a perspective camera");
+        };
+        assert!((perspective.fov - 40f32.to_radians()).abs() < 1e-5);
+        let photo = app.world().get::<PhotoCamera>(camera).unwrap();
+        assert_eq!(photo.target, placed);
+        assert!(photo.following);
+
+        // nothing carries it off afterwards
+        for _ in 0..8 {
+            frame(&mut app);
+        }
+        assert_eq!(rendered(&app), placed);
     }
 }

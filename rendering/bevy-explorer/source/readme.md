@@ -304,7 +304,7 @@ the [conventions ADR](../../../docs/adr/2026-11-17-console-command-conventions.m
   `/home_state` (the signed-in account's home and the home that applies at startup;
   `/home_clear` takes that account's home back), `/entity_screen_position <entity>
   [--bounds]` (pixels, `normalized` and `screen`), `/photo_mode [on|off]` (the camera reel's in-world camera: its state, or open or
-  close it) and `/take_photo` (a photo, captured and uploaded; the reply is the state, a refusal
+  close it; `--position`, `--look-at` and `--fov` place it, replying once it is there) and `/take_photo` (a photo, captured and uploaded; the reply is the state, a refusal
   names why), plus the older `/player_position`, `/get_user_data`, `/connected_players`, `/time`
   and the scene commands.
 - Frames: `/screenshot` alone replies the frame as raw base64 PNG at full size; with

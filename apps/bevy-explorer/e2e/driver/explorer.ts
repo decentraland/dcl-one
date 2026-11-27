@@ -33,6 +33,16 @@ export interface PhotoModeState {
   unavailable?: Record<string, string>
 }
 
+/** What `/photo_mode` with a pose flag reports once the photo camera is placed: the state, with
+ *  `placed` (Decentraland world coordinates, where `position` is the engine's). `settled` is false,
+ *  with a `warning`, when photo mode did not open within `timeoutSeconds`. */
+export interface PhotoPoseState extends PhotoModeState {
+  placed: [number, number, number] | null
+  settled: boolean
+  settleMs: number
+  warning?: string
+}
+
 export interface WorldState {
   inWorld: boolean
   arrivals: number
@@ -773,6 +783,25 @@ export class Explorer {
    *  closes it first (the change lands a frame later: `waitPhotoMode`). */
   photoMode(state?: 'on' | 'off'): Promise<PhotoModeState> {
     return this.json<PhotoModeState>(state ? `/photo_mode ${state}` : '/photo_mode')
+  }
+
+  /** Places the photo camera (opening photo mode when it is closed): `position` and `lookAt` are
+   *  Decentraland world coordinates, `position` within 50 m of the player, `fov` vertical degrees
+   *  (10 to 120). Resolves once it is there, or after `timeoutSeconds` (5 by default) with
+   *  `settled: false`. A pose photo mode cannot take rejects with `{"refused", "cause"}` as the
+   *  error's output. */
+  placePhotoCamera(pose: {
+    position?: [number, number, number]
+    lookAt?: [number, number, number]
+    fov?: number
+    timeoutSeconds?: number
+  }): Promise<PhotoPoseState> {
+    let line = '/photo_mode'
+    if (pose.position) line += ` --position ${pose.position.join(' ')}`
+    if (pose.lookAt) line += ` --look-at ${pose.lookAt.join(' ')}`
+    if (pose.fov !== undefined) line += ` --fov ${pose.fov}`
+    if (pose.timeoutSeconds !== undefined) line += ` --timeout-seconds ${pose.timeoutSeconds}`
+    return this.json<PhotoPoseState>(line)
   }
 
   waitPhotoMode(active: boolean, timeoutMs = 5000): Promise<PhotoModeState> {

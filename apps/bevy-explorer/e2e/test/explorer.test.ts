@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { describe, test } from 'node:test'
 import { ConsoleError, FakeConsole, commandOf, redactLine } from '../driver/console.ts'
-import { type CameraModeChange, type CaptureSequence, type CommandRecord, Explorer, type MoveReport, parseLiveScenes, parsePortables, parseSmartWearables, saveCaptureFrames, type WorldState } from '../driver/explorer.ts'
+import { type CameraModeChange, type CaptureSequence, type CommandRecord, Explorer, type MoveReport, parseLiveScenes, type PhotoPoseState, parsePortables, parseSmartWearables, saveCaptureFrames, type WorldState } from '../driver/explorer.ts'
 import { enterWorld } from '../driver/session.ts'
 
 function world(overrides: Partial<WorldState> = {}): string {
@@ -231,6 +231,18 @@ describe('Explorer', () => {
     assert.equal((await explorer.takePhoto()).captures, 1)
     await explorer.photoMode('off')
     assert.equal((await explorer.waitPhotoMode(false, 1000)).active, false)
+  })
+
+  test('placePhotoCamera sends the pose flags and parses the placed state', async () => {
+    const placed: PhotoPoseState = {
+      active: true, requested: true, position: [8, 4, -8], storage: [0, 500], storageLoaded: true, phase: 'idle', captures: 0, uploaded: 0, failed: 0, lastPhotoId: null, lastError: null,
+      fov: 40, placed: [8, 4, 8], settled: true, settleMs: 17
+    }
+    const fake = new FakeConsole({ photo_mode: JSON.stringify(placed) })
+    const explorer = new Explorer(fake)
+    assert.deepEqual(await explorer.placePhotoCamera({ position: [8, 4, 8], lookAt: [8, 1, 16], fov: 40 }), placed)
+    await explorer.placePhotoCamera({ lookAt: [-1, 0, 2], timeoutSeconds: 2 })
+    assert.deepEqual(fake.lines, ['/photo_mode --position 8 4 8 --look-at 8 1 16 --fov 40', '/photo_mode --look-at -1 0 2 --timeout-seconds 2'])
   })
 
   test('connectedPlayers is empty on the no-players text', async () => {

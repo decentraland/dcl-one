@@ -470,6 +470,17 @@ State, in every build:
   controls the camera). With `on` or `off` it opens or closes the mode, which lands a frame
   later; the second word is the source the analytics record, `console` by default (the HUD's
   buttons pass `button`). The debug panel's "Photo mode" section binds it.
+  `--position x y z`, `--look-at x y z` and `--fov F` (Decentraland world coordinates, degrees
+  from 10 to 120) place the photo camera, opening photo mode first when it is closed (with `on`
+  or no state; not with `off`), and reply the same state once the camera is there, with `placed`
+  (where it landed, Decentraland world coordinates, where `position` is the engine's), `settled`
+  and `settleMs`. A part not given stays as it is; aiming levels the roll. `--timeout-seconds S`
+  (5 by default, at most 300, only with a pose flag) bounds the landing: when photo mode has not
+  opened by then, or a scene camera or leaving the world keeps it closed, `settled` is `false`
+  and `warning` says why. Refused, `{"refused", "cause"}`, before anything opens: a position
+  more than 50 m from the player (`cause.limit` `reach`), a scene holding the camera
+  (`cause.holder` `scene`), the player out of the world, or another pose still landing
+  (`cause.holder` `photo_mode --position`).
 - `/take_photo [button|shortcut|console]`: a photo in photo mode, captured from the window, cut to
   the photo frame, encoded and uploaded to the camera-reel service; the reply is the same state,
   and a refusal names why (mode off, a photo in flight, the storage unknown or full, the capture
