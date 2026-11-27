@@ -7074,6 +7074,10 @@
           "kind": "regular"
         },
         {
+          "name": "Rail.test.tsx",
+          "kind": "regular"
+        },
+        {
           "name": "Rail.tsx",
           "kind": "regular"
         },
@@ -7103,6 +7107,10 @@
         },
         {
           "name": "UsersTable.module.css",
+          "kind": "regular"
+        },
+        {
+          "name": "UsersTable.test.tsx",
           "kind": "regular"
         },
         {
@@ -16110,11 +16118,11 @@
     },
     {
       "path": "library/ui/apps/sites/events/AllEvents.module.css",
-      "sha256": "1d0501a3ddbfd2329897d919cd63efe3603b6186a36690a24bcc6eb1e71dbe61"
+      "sha256": "7e80888ea7a346a4eb2bd0594373d37b5aed722e9d965064a77f95574b1731f6"
     },
     {
       "path": "library/ui/apps/sites/events/AllEvents.tsx",
-      "sha256": "d65466b372ef011fb21b8198d2977d96725549008baa3a36edd89d20bf66fc39"
+      "sha256": "a94452bd7574966ec02208ba506cbfa8e545d62554ea1781b05060dad161005a"
     },
     {
       "path": "library/ui/apps/sites/events/Busy.module.css",
@@ -16126,11 +16134,11 @@
     },
     {
       "path": "library/ui/apps/sites/events/DetailModal.module.css",
-      "sha256": "d1058bdac7f96cdbbb6808fb9c097747b33252ed8bd759584e413a463ce51a3a"
+      "sha256": "f43cbbc6b224f92895f59c9430991d9307e4765216421cd8161af194bcaa9926"
     },
     {
       "path": "library/ui/apps/sites/events/DetailModal.tsx",
-      "sha256": "78336b7ec7515355ab1317843df18fc672013bdd7221ec8e293fd5ed989a23fc"
+      "sha256": "aa398d25534f89e906151a1660496bab11c7269d1eaa955a0e2ad6d85b9b1b99"
     },
     {
       "path": "library/ui/apps/sites/events/Dialog.module.css",
@@ -16194,11 +16202,11 @@
     },
     {
       "path": "library/ui/apps/sites/events/Rail.module.css",
-      "sha256": "e57b44e159e130533f36b16fd5aef1fd712360de49e91e6bd1ef8f04c387f04e"
+      "sha256": "773f54b93a11e18169aa8bade8b01ce07c24db4200908488ffdbd1436cd32be5"
     },
     {
       "path": "library/ui/apps/sites/events/Rail.tsx",
-      "sha256": "0e2d20b985d8c86cb4a6e596f6d069636b6efb5b58f3656b2309ea2bf5a4c55b"
+      "sha256": "13b36666d9583a6537d88bbd586eb0a09f8f33e4d55c55c46ebb674c98e28000"
     },
     {
       "path": "library/ui/apps/sites/events/RejectEventModal.tsx",
@@ -16218,11 +16226,11 @@
     },
     {
       "path": "library/ui/apps/sites/events/UsersTable.module.css",
-      "sha256": "865dbf7dc79c450ce4760c8cb617a66c93216e7275f1c24cf8f625a6e0da3a01"
+      "sha256": "7a44c1cbc08e987c37ed1c3848ef2714d598af4cb7a56c4b03e8b9d94419dfad"
     },
     {
       "path": "library/ui/apps/sites/events/UsersTable.tsx",
-      "sha256": "2edd0a6c180b14f5766466ced7c0ae152498334c7542c1fb9ba9b786a2ee8919"
+      "sha256": "5412b5dd053ec5fdb0669b661424914b1432253cec4062a487508f6cdfd23a10"
     },
     {
       "path": "library/ui/apps/sites/events/admin-copy.ts",
@@ -55941,6 +55949,21 @@
     },
     {
       "from": "library/ui/apps/sites/events/DetailModal.tsx",
+      "to": "library/ui/components/CloseButton/CloseButton.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/sites/events/DetailModal.tsx",
+      "to": "library/ui/components/CloseButton/CloseButton.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/sites/events/DetailModal.tsx",
+      "to": "library/ui/components/CloseButton/CloseButton.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/sites/events/DetailModal.tsx",
       "to": "library/ui/components/EventCard/EventCard.tsx",
       "kind": "native:runtime"
     },
@@ -56541,6 +56564,21 @@
     },
     {
       "from": "library/ui/apps/sites/events/Rail.tsx",
+      "to": "library/ui/components/Button/Button.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/sites/events/Rail.tsx",
+      "to": "library/ui/components/Button/Button.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/sites/events/Rail.tsx",
+      "to": "library/ui/components/Button/Button.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/sites/events/Rail.tsx",
       "to": "library/ui/foundations/icons/index.ts",
       "kind": "native:runtime"
     },
@@ -56807,6 +56845,21 @@
     {
       "from": "library/ui/apps/sites/events/UsersTable.tsx",
       "to": "library/ui/components/InputField/InputField.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/sites/events/UsersTable.tsx",
+      "to": "library/ui/components/InputField/InputFieldWebControls.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/sites/events/UsersTable.tsx",
+      "to": "library/ui/components/InputField/InputFieldWebControls.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/sites/events/UsersTable.tsx",
+      "to": "library/ui/components/InputField/InputFieldWebControls.tsx",
       "kind": "test:runtime"
     },
     {
