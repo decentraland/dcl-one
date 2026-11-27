@@ -7860,7 +7860,7 @@ async fn own_polygon(pool: &PgPool) {
 async fn mirror_passes(pool: &PgPool, network: &str, chain: Option<i64>) {
     sqlx::query(
         "INSERT INTO shop.mirror_state (mirror, network, source_url, last_complete_pass_at, chain_id, marks_item_rows) \
-         SELECT m, $1, 'test', timezone('UTC', now()), $2, m = 'items' AND $2 IN (11155111, 80002) \
+         SELECT m, $1, 'test', timezone('UTC', now()), $2, m = 'items' AND COALESCE($2 IN (11155111, 80002), false) \
          FROM unnest(ARRAY['collections', 'items']) m \
          ON CONFLICT (mirror, network) DO UPDATE SET last_complete_pass_at = EXCLUDED.last_complete_pass_at, \
              chain_id = EXCLUDED.chain_id, marks_item_rows = EXCLUDED.marks_item_rows",
@@ -7882,6 +7882,101 @@ fn collection_contracts(body: &Value) -> Vec<String> {
         .collect();
     out.sort();
     out
+}
+
+#[tokio::test]
+async fn a_cold_native_catalogue_waits_for_each_network() {
+    let Some(own) = super::tests::support::OwnDb::create("catalogue-cutover").await else {
+        return;
+    };
+    let pool = &own.pool;
+    let t = tag();
+    let (polygon, ethereum) = (contract_of(&t, 1), contract_of(&t, 2));
+    let mut both = vec![polygon.clone(), ethereum.clone()];
+    both.sort();
+
+    let mut settings = Settings::for_tests();
+    settings.market.indexes.collections_enabled = true;
+    settings.market.indexes.collections_owned = super::chain_walk::ChainNet::ALL.to_vec();
+    let state = Arc::new(super::MarketplaceState::new(
+        pool.clone(),
+        crate::http::Outbound::for_tests(),
+        settings.clone(),
+    ));
+    let app = || market_router(state.clone());
+    let ethereum_page = "/v1/collections?network=ETHEREUM";
+    let polygon_page = "/v1/collections?network=MATIC";
+    let combined_page = "/v1/collections";
+
+    mirrors::collections::upsert(
+        pool,
+        super::graph::Network::Matic,
+        137,
+        false,
+        &[mirrors::collections::fixture(&polygon, "C", CREATOR, true)],
+    )
+    .await
+    .unwrap();
+    own_polygon(pool).await;
+    for page in [ethereum_page, combined_page] {
+        let (status, body) = get(app(), page).await;
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{page}: {body}");
+        assert_eq!(body["source"], "collections-index", "{page}: {body}");
+    }
+    let (status, body) = get(app(), polygon_page).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(collection_contracts(&body), [polygon]);
+
+    // A pass for a different chain and a legacy pass with no chain cannot
+    // serve while Ethereum's native catalogue is cold.
+    for chain in [Some(11155111), None] {
+        mirror_passes(pool, "ethereum", chain).await;
+        let (status, body) = get(app(), ethereum_page).await;
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body}");
+        assert_eq!(body["source"], "collections-index", "{body}");
+    }
+    mirror_passes(pool, "ethereum", Some(1)).await;
+    let (status, body) = get(app(), ethereum_page).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert!(collection_contracts(&body).is_empty());
+
+    mirrors::collections::upsert(
+        pool,
+        super::graph::Network::Ethereum,
+        1,
+        false,
+        &[mirrors::collections::fixture(&ethereum, "C", CREATOR, true)],
+    )
+    .await
+    .unwrap();
+    mirror_passes(pool, "ethereum", Some(1)).await;
+    let (status, body) = get(app(), ethereum_page).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(collection_contracts(&body), [ethereum]);
+    let (status, body) = get(app(), combined_page).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(collection_contracts(&body), both);
+
+    settings.market.indexes.collections_owned = vec![super::chain_walk::ChainNet::Matic];
+    settings.eth_collections_subgraph_url = Some("http://127.0.0.1:9".into());
+    let partial = Arc::new(super::MarketplaceState::new(
+        pool.clone(),
+        crate::http::Outbound::for_tests(),
+        settings,
+    ));
+    let (status, body) = get(market_router(partial), combined_page).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(collection_contracts(&body), both);
+
+    super::catalogue::owning::own(pool, "ethereum", 1, 101, 0).await;
+    sqlx::query("DELETE FROM shop.mirror_state WHERE network = 'ethereum'")
+        .execute(pool)
+        .await
+        .unwrap();
+    let (status, body) = get(app(), combined_page).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(collection_contracts(&body), both);
+    own.drop().await;
 }
 
 /// A read returns rows only of networks the gate checked: a network left by
@@ -8044,6 +8139,37 @@ async fn lambdas_never_read_a_subgraph_for_a_network_the_index_owns() {
     own.drop().await;
 }
 
+#[tokio::test]
+async fn a_pending_native_network_prevents_a_partial_graph_fallback() {
+    let Some(own) = super::tests::support::OwnDb::create("catalogue-pending-lambdas").await else {
+        return;
+    };
+    let up = FakeGraph::new();
+    let eth_url = serve_graph(up.clone()).await;
+    let mut settings = market_settings(&eth_url, &eth_url, false);
+    settings.matic_collections_subgraph_url = None;
+    settings.market.indexes.collections_enabled = true;
+    settings.market.indexes.collections_owned = vec![super::chain_walk::ChainNet::Matic];
+
+    seed_item_row(&own.pool, &contract_of(&tag(), 1), "0", CREATOR).await;
+    mirror_passes(&own.pool, "matic", Some(137)).await;
+    let state = Arc::new(super::MarketplaceState::new(
+        own.pool.clone(),
+        crate::http::Outbound::for_tests(),
+        settings,
+    ));
+    state.test_allow_loopback.store(true, Ordering::Relaxed);
+    let (status, body) = get(
+        super::router(state),
+        "/lambdas/collections/wearables?textSearch=hat",
+    )
+    .await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body}");
+    assert_eq!(body["source"], "items-mirror", "{body}");
+    assert!(up.requests.lock().unwrap().is_empty());
+    own.drop().await;
+}
+
 /// A catalogue whose Polygon the collections index owns, published now at
 /// block 100: one approved Polygon item, both mirrors' passes, local trades,
 /// a MANA price, and both subgraph readers on `up` (one sale of the item).
@@ -8104,6 +8230,48 @@ async fn owned_polygon_market(up: &Arc<FakeGraph>) -> Option<(PgPool, SharedStat
     .await
     .unwrap();
     Some((pool, state, polygon))
+}
+
+#[tokio::test]
+async fn direct_collection_readers_answer_after_both_catalogues_publish() {
+    let up = FakeGraph::new();
+    let Some((pool, state, polygon)) = owned_polygon_market(&up).await else {
+        return;
+    };
+    super::catalogue::owning::own(&pool, "ethereum", 1, 100, 0).await;
+    let mut settings = state.settings.clone();
+    settings.market.indexes.collections_enabled = true;
+    settings.market.indexes.collections_owned = super::chain_walk::ChainNet::ALL.to_vec();
+    let direct_readers = Arc::new(super::MarketplaceState::new(
+        pool.clone(),
+        crate::http::Outbound::for_tests(),
+        settings,
+    ));
+    direct_readers
+        .test_allow_loopback
+        .store(true, Ordering::Relaxed);
+    let jobs = crate::jobs::Jobs::new();
+    let ctx = job_ctx(&jobs).await;
+    for mirror in [mirrors::Mirror::Collections, mirrors::Mirror::Items] {
+        mirrors::run_tick(&direct_readers, mirror, &ctx)
+            .await
+            .unwrap();
+    }
+    assert!(
+        up.requests.lock().unwrap().is_empty(),
+        "both mirrors skip owned networks"
+    );
+    for route in [
+        format!("/v1/owners?contractAddress={polygon}&itemId=1"),
+        "/v1/trendings".to_string(),
+    ] {
+        let (status, body) = get(market_router(direct_readers.clone()), &route).await;
+        assert_eq!(status, StatusCode::OK, "{route}: {body}");
+    }
+    assert!(!up.requests.lock().unwrap().is_empty());
+    drop(direct_readers);
+    drop(state);
+    pool.close().await;
 }
 
 /// A warm sales memo can supply ranking inputs even when the graph stalls.

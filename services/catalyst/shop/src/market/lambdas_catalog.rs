@@ -558,8 +558,7 @@ impl UrnSource {
 
 /// Where the URNs come from: the catalogue, read through its gate; the
 /// subgraphs only where the mirrors refused and no network belongs to the
-/// collections index (the legacy path the mirrors had, which never stands
-/// in for the index: a network it owns answers from it, or the envelope).
+/// collections index or is waiting for its first native publication.
 async fn urn_source(state: &MarketplaceState) -> Result<UrnSource, Response> {
     match catalogue::begin_checked(
         state,
@@ -575,10 +574,7 @@ async fn urn_source(state: &MarketplaceState) -> Result<UrnSource, Response> {
         // index owns, so no subgraph stands in; lamb2's own 500.
         Err(refusal) if refusal.refused.is_none() => Err(lambdas_internal_error()),
         Err(refusal)
-            if refusal.refused.is_some()
-                && !refusal.by_index
-                && refusal.owned.is_empty()
-                && graph::any_collections_reader(&state.index) =>
+            if refusal.may_fall_back_to_graph && graph::any_collections_reader(&state.index) =>
         {
             Ok(UrnSource::Subgraphs)
         }
