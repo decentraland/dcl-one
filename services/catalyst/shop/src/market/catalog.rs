@@ -160,6 +160,17 @@ impl CatalogFilters {
             || self.max_price.is_some()
     }
 
+    // Concrete contract and item lookups use the scoped book query, so
+    // they avoid reading a price prefix across unrelated orders.
+    fn uses_price_prefix(&self) -> bool {
+        self.sort_by == Some(CatalogSortBy::Cheapest)
+            && !self.has_listing_filters()
+            && self.contract_addresses.is_empty()
+            && self.ids.is_empty()
+            && self.item_id.is_none()
+            && clamp_skip(self.skip) <= MAX_PAGE_LIMIT - clamp_first(self.first, MAX_PAGE_LIMIT)
+    }
+
     fn needs_resales(&self) -> bool {
         !self.only_minting
             && (self.has_listing_filters() || (self.explicit_sort && self.sorts_on_listings()))
@@ -992,7 +1003,7 @@ fn build_legacy_orders_cte(
         }
         let order_rows = match (rows, net) {
             (LegacyRows::PricePrefix, _) => "legacy_price_prefix o".to_owned(),
-            // The Polygon fold derives item_id from the high bits of token_id.
+            // nft_index::FOLD_NFT_SQL sets Polygon item_id = div(token_id, ITEM_SHIFT).
             // Use the same interval to reach the page's orders by their index.
             (LegacyRows::RankedPage, ChainNet::Matic) => format!(
                 "catalog_candidates candidate JOIN LATERAL (
@@ -1769,6 +1780,31 @@ fn catalog_page_error(e: sqlx::Error) -> Response {
     }
 }
 
+async fn rank_catalog_page(
+    read: &mut CatalogueRead,
+    f: &CatalogFilters,
+    is_v2: bool,
+    books: Option<&CatalogScope>,
+) -> Result<Option<RankedCatalogPage>, sqlx::Error> {
+    let Some(scope) = books.filter(|scope| {
+        !is_v2
+            && scope.reads_book
+            && scope.nets.len() == ChainNet::ALL.len()
+            && f.uses_price_prefix()
+    }) else {
+        return Ok(None);
+    };
+    let probe = build_catalog_price_prefix(f, scope, read.now.timestamp_millis());
+    let rows = sqlx::query_as_with(sqlx::AssertSqlSafe(probe.sql), probe.args)
+        .fetch_all(&mut *read.tx)
+        .await?;
+    // A full prefix proves only prices before its frontier. An empty
+    // page may still need the original count query for a nonzero skip.
+    let ranked = RankedCatalogPage::covered(rows);
+    tracing::debug!(covered = ranked.is_some(), "catalog price prefix evaluated");
+    Ok(ranked)
+}
+
 async fn fetch_page(
     state: &MarketplaceState,
     read: &mut CatalogueRead,
@@ -1779,26 +1815,9 @@ async fn fetch_page(
     // The read's clock: the trades check decided on the same instant.
     let now = read.now.naive_utc();
     let since = super::trades::mirrored_since(&state.settings, now);
-    let ranked = if let Some(scope) = books.filter(|scope| {
-        !is_v2
-            && scope.reads_book
-            && scope.nets.len() == ChainNet::ALL.len()
-            && f.sort_by == Some(CatalogSortBy::Cheapest)
-            && !f.has_listing_filters()
-            && (f.search.is_none() || f.ids.is_empty())
-    }) {
-        let probe = build_catalog_price_prefix(f, scope, read.now.timestamp_millis());
-        let rows: Vec<RankedCatalogItem> =
-            sqlx::query_as_with(sqlx::AssertSqlSafe(probe.sql), probe.args)
-                .fetch_all(&mut *read.tx)
-                .await
-                .map_err(catalog_page_error)?;
-        // A full prefix proves only prices before its frontier. An empty
-        // page may still need the original count query for a nonzero skip.
-        RankedCatalogPage::covered(rows)
-    } else {
-        None
-    };
+    let ranked = rank_catalog_page(read, f, is_v2, books)
+        .await
+        .map_err(catalog_page_error)?;
     let (sql, args) = build_catalog_page_query(f, is_v2, now, since, false, books, ranked.as_ref());
     let rows = sqlx::query_with(sqlx::AssertSqlSafe(sql), args)
         .fetch_all(&mut *read.tx)
@@ -2195,6 +2214,7 @@ mod tests {
         );
         let contract = "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
         let owner = "0xcccccccccccccccccccccccccccccccccccccccc";
+        let unrelated = "0xdddddddddddddddddddddddddddddddddddddddd";
         sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
             "INSERT INTO shop.collections
                 (network,contract_address,chain_id,name,creator,owner,urn,is_completed,
@@ -2218,16 +2238,18 @@ mod tests {
                 transferred_block,transferred_log,transferred_at)
              VALUES ('ethereum','{contract}',1,'{owner}',NULL,'1',1,1,1,0,1),
                     ('ethereum','{contract}',2,'{owner}',NULL,'1',1,1,1,0,1),
+                    ('ethereum','{contract}',3,'{owner}',NULL,'1',1,1,1,0,1),
                     ('matic','{contract}',{ITEM_ID_SHIFT}::numeric+1,'{owner}',1,NULL,1,1,1,0,1),
                     ('matic','{contract}',{ITEM_ID_SHIFT}::numeric+2,'{owner}',1,NULL,1,1,1,0,1);
              INSERT INTO shop.legacy_order
                (network,marketplace_address,order_id,contract_address,token_id,seller,price,expires_at,status,
                 created_block,created_log,created_at,updated_block,updated_log,updated_at)
-             SELECT network,'{contract}',token::text,'{contract}',token,'{owner}',price,5000,'open',1,0,1,1,0,1
-             FROM (VALUES ('ethereum',1::numeric,5),('ethereum',2,80),
-                          ('matic',{ITEM_ID_SHIFT}::numeric+1,5),('matic',{ITEM_ID_SHIFT}::numeric+2,90)) offers(network,token,price)
+             SELECT network,'{contract}',token::text,'{contract}',token,'{owner}',price,expiry,'open',1,0,1,1,0,1
+             FROM (VALUES ('ethereum',1::numeric,5,5000),('ethereum',2,80,5000),('ethereum',3,1,2000),
+                          ('matic',{ITEM_ID_SHIFT}::numeric+1,5,5000),
+                          ('matic',{ITEM_ID_SHIFT}::numeric+2,90,5000)) offers(network,token,price,expiry)
              UNION ALL
-             SELECT 'matic','{contract}','extra-'||g,'{contract}',g,'{owner}',8,5000,'open',1,0,1,1,0,1
+             SELECT 'matic','{contract}','extra-'||g,'{unrelated}',g,'{owner}',8,5000,'open',1,0,1,1,0,1
              FROM generate_series(1,{CATALOG_PRICE_PREFIX_LIMIT}) g;"
         )))
         .execute(&db.pool)
@@ -2261,17 +2283,12 @@ mod tests {
                     skip: Some(skip),
                     ..Default::default()
                 };
+                assert!(f.uses_price_prefix());
                 let now = read.now.naive_utc();
-                let prefix = build_catalog_price_prefix(&f, &scope, read.now.timestamp_millis());
-                let prices: Vec<RankedCatalogItem> =
-                    sqlx::query_as_with(sqlx::AssertSqlSafe(prefix.sql), prefix.args)
-                        .fetch_all(&mut *read.tx)
-                        .await
-                        .unwrap();
-                assert_eq!(
-                    !prices.is_empty() && prices.iter().all(|item| item.covered),
-                    expected_coverage
-                );
+                let ranked = rank_catalog_page(&mut read, &f, false, Some(&scope))
+                    .await
+                    .unwrap();
+                assert_eq!(ranked.is_some(), expected_coverage);
                 let (old, args) =
                     build_catalog_page_query(&f, false, now, None, false, Some(&scope), None);
                 let expected = sqlx::query_with(sqlx::AssertSqlSafe(old), args)
@@ -2291,11 +2308,91 @@ mod tests {
                 if skip == 0 {
                     assert_eq!(page[0].network, Network::Ethereum);
                     assert_eq!(page[1].network, Network::Matic);
+                    assert_eq!(page[0].min_listing_price.as_deref(), Some("5"));
                     assert_eq!(page[0].max_listing_price.as_deref(), Some("80"));
                     assert_eq!(page[1].max_listing_price.as_deref(), Some("90"));
                 }
             }
         }
+
+        let mut read = catalogue::begin_unchecked(&state).await;
+        read.now = chrono::DateTime::from_timestamp_millis(2000).unwrap();
+        for targeted in [
+            CatalogFilters {
+                contract_addresses: vec![contract.to_owned()],
+                ..Default::default()
+            },
+            CatalogFilters {
+                ids: vec![format!("{contract}-1")],
+                ..Default::default()
+            },
+            CatalogFilters {
+                item_id: Some("1".to_owned()),
+                ..Default::default()
+            },
+        ] {
+            let filters = CatalogFilters {
+                sort_by: Some(CatalogSortBy::Cheapest),
+                first: Some(2),
+                ..targeted
+            };
+            assert!(!filters.uses_price_prefix());
+            let (page, total) = fetch_page(&state, &mut read, &filters, false, Some(&scope))
+                .await
+                .unwrap();
+            assert_eq!(page.len(), 2);
+            assert_eq!(page[0].network, Network::Ethereum);
+            assert_eq!(page[1].network, Network::Matic);
+            let expected_total = if filters.contract_addresses.is_empty() {
+                2
+            } else {
+                4
+            };
+            assert_eq!(total, expected_total);
+        }
+        drop(read);
+
+        sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
+            "DELETE FROM shop.legacy_order WHERE contract_address = '{unrelated}';
+             UPDATE shop.chain_cursor SET last_block = 101
+             WHERE indexer = 'nft' AND network = 'matic';
+             INSERT INTO shop.nft_event
+                (network, block_number, log_index, block_time, kind, emitter, contract_address,
+                 token_id, from_address, to_address)
+             VALUES ('matic', 101, 1, 2, 'transfer', '{contract}', '{contract}',
+                     {ITEM_ID_SHIFT}::numeric+2, '{owner}', '{unrelated}');"
+        )))
+        .execute(&db.pool)
+        .await
+        .unwrap();
+        let mut read = catalogue::begin_unchecked(&state).await;
+        read.now = chrono::DateTime::from_timestamp_millis(2000).unwrap();
+        let filters = CatalogFilters {
+            sort_by: Some(CatalogSortBy::Cheapest),
+            first: Some(8),
+            ..Default::default()
+        };
+        let ranked = rank_catalog_page(&mut read, &filters, false, Some(&scope))
+            .await
+            .unwrap()
+            .expect("the exhausted prefix proves even the unpriced item");
+        assert_eq!(ranked.items.len(), 4);
+        let (page, total) = fetch_page(&state, &mut read, &filters, false, Some(&scope))
+            .await
+            .unwrap();
+        assert_eq!(total, 4);
+        assert_eq!(page.len(), 4);
+        assert_eq!(page[1].network, Network::Matic);
+        assert_eq!(page[1].max_listing_price.as_deref(), Some("5"));
+        assert_eq!(page[3].min_listing_price, None);
+        assert!(
+            !CatalogFilters {
+                skip: Some(MAX_PAGE_LIMIT),
+                ..filters
+            }
+            .uses_price_prefix()
+        );
+        drop(read);
         db.drop().await;
     }
 

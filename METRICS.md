@@ -371,8 +371,9 @@ change and 64,532 after it. Temporary blocks fell from 1,437 to zero.
 Each p95 uses 20 warm, alternating executions per variant. The new
 timings include both SQL statements. At offsets 0, 37, 500, and 15,000,
 the rows and exact totals matched the original query in both plan
-modes. The first two offsets used the price prefix. The latter two
-used the full query because the prefix could not prove the page.
+modes. The first two offsets used the price prefix. At offset 500
+the prefix could not prove the page, so the reader used the full query.
+Deep offsets such as 15,000 go straight to the full query.
 
 ## Latest sale per token
 
