@@ -116,14 +116,24 @@ function matchingPublicItem(
 export function decentralandPublicNavSections(
   area: DecentralandNavigationArea | '' | undefined,
   pathname: string,
-  { search, marketplaceEligible }: { search?: string; marketplaceEligible?: boolean } = {}
+  {
+    search,
+    marketplaceEligible,
+    translateLabel = (label) => label
+  }: {
+    search?: string
+    marketplaceEligible?: boolean
+    translateLabel?: (label: string) => string
+  } = {}
 ): { desktop: NavBarSection[]; mobile: NavBarSection[] } {
   const current = decentralandNavigationSection(area)
   const path = pathname.replace(/\/$/, '')
   const params = new URLSearchParams(search)
   const desktop: NavBarSection[] = []
   const mobile: NavBarSection[] = []
-  for (const { id, label, href, items } of publicNavigation) {
+  for (const entry of publicNavigation) {
+    const { id, href, items } = entry
+    const label = translateLabel(entry.label)
     const active = id === current
     const visible = items.filter((item) => !item.marketplaceOnly || marketplaceEligible)
     const match = active ? matchingPublicItem(visible, path, params) : undefined
@@ -131,7 +141,7 @@ export function decentralandPublicNavSections(
       label,
       active,
       items: visible.map((item) => ({
-        label: item.label,
+        label: translateLabel(item.label),
         href: item.href,
         ...(item.target ? { target: item.target } : {}),
         active: item === match

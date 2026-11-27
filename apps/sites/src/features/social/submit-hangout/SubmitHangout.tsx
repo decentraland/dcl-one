@@ -308,7 +308,6 @@ function SubmitHangoutInner({
                 <div className={styles.schedulePanel}>
                   {reviewNotice && <Notice tone={reviewTone}>{reviewNotice}</Notice>}
                   <div className={styles.sections}>
-                    <h2>{text("Event details")}</h2>
                     <fieldset className={styles.editorSection}><legend>{text("Schedule")}</legend>{fields("schedule")}</fieldset>
                     <fieldset className={styles.editorSection}><legend>{text("Location")}</legend>{fields("location")}</fieldset>
                     <HangoutAssociations draft={d} options={options} canChangeCommunity={canChangeCommunity} onEdit={onEdit} />
@@ -598,7 +597,7 @@ function StepFields({
         <InputWebCreatorTools className={styles.field} label={text("Date")} type="date" value={draft.startDate} onChange={(e) => onEdit({ startDate: e.target.value })} />
         <InputWebCreatorTools className={styles.field} label={text("Start (UTC)")} type="time" value={draft.startTime} onChange={(e) => onEdit({ startTime: e.target.value })} />
         <InputWebCreatorTools className={styles.field} label={text("Duration (hours)")} type="number" min="0.25" max="24" step="0.25" value={draft.durationHours} onChange={(event) => onEdit({ durationHours: Number(event.target.value) })} />
-        <Switch className={styles.repeatField} label={text("Repeat Hangout")} checked={draft.recurrent} onCheckedChange={(recurrent) => onEdit({ recurrent })} />
+        <Switch className={styles.repeatField} label={text("Repeat Event")} checked={draft.recurrent} onCheckedChange={(recurrent) => onEdit({ recurrent })} />
         {draft.recurrent && (
           <FormField className={styles.field} label={text("Repeat")}>
             {(id) => (

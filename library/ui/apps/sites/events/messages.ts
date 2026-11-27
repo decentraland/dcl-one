@@ -645,7 +645,7 @@ const messages = {
     '기간(시간)',
     '所要時間（時間）'
   ],
-  'Repeat Hangout': [
+  'Repeat Event': [
     'Repetir evento',
     'Répéter l’événement',
     '重复活动',
@@ -745,6 +745,13 @@ const messages = {
   Collection: ['Colección', 'Collection', '系列', '컬렉션', 'コレクション'],
   Item: ['Elemento', 'Objet', '道具', '아이템', 'アイテム'],
   Community: ['Comunidad', 'Communauté', '社区', '커뮤니티', 'コミュニティ'],
+  'Untitled community': [
+    'Comunidad sin nombre',
+    'Communauté sans nom',
+    '未命名社区',
+    '이름 없는 커뮤니티',
+    '名前のないコミュニティ'
+  ],
   'Current community': [
     'Comunidad actual',
     'Communauté actuelle',

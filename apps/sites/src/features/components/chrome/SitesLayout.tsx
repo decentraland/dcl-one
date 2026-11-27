@@ -3,6 +3,7 @@ import { Link } from "react-router";
 import { useQuery } from "@tanstack/react-query";
 import {
   SitesFooter,
+  SitesLocaleContext,
   type FooterCopy,
   SitesSectionNavigation,
   type SitesSectionItem,
@@ -20,6 +21,7 @@ import { subscribeSiteNewsletter } from "@web-core/newsletter";
 import { sitesShopClient } from "@/data/lib/auth/shop-client";
 
 import SitesTopBar from "./SitesTopBar";
+import { sitesNavigationLabel } from "./sites-navigation-copy";
 import styles from "./SitesLayout.module.css";
 
 type SitesLayoutProps = {
@@ -57,6 +59,7 @@ export default function SitesLayout({
   const pageId = useId();
   const auth = useChromeAuth();
   const profile = useContext(ProfileNavigationContext);
+  const locale = useContext(SitesLocaleContext)?.locale ?? "en";
   const isIn = signedIn ?? auth.signedIn;
   const address = account ?? auth.account;
   const layoutClass = overlayNav === "mobile" ? styles.mobileOverlay : overlayNav ? styles.overlay : undefined;
@@ -83,7 +86,7 @@ export default function SitesLayout({
       sections={section ? (closeMenu) => <SitesSectionNavigation {...section} closeMenu={closeMenu} /> : undefined}
     >
       <div className={styles.body}>
-        <a className={styles.skip} href={`#${pageId}`}>Skip to content</a>
+        <a className={styles.skip} href={`#${pageId}`}>{sitesNavigationLabel(locale, "Skip to content")}</a>
         <div className={styles.page} id={pageId} tabIndex={-1}>{children}</div>
         <SitesFooter footerCopy={footerCopy} docsUrl={docsUrl} onSubscribe={subscribeSiteNewsletter} />
       </div>

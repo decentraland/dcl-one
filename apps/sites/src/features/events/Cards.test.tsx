@@ -257,6 +257,10 @@ describe("when event cards reveal their actions", () => {
           expect(screen.getByRole("status").textContent).toBe("Copied"),
         );
       });
+      it("should describe the Copy link button with the visible confirmation", async () => {
+        const tooltip = await screen.findByRole("tooltip", { name: "Copied" });
+        expect(screen.getByRole("button", { name: "Copy link: Poker Night" }).getAttribute("aria-describedby")).toBe(tooltip.id);
+      });
       it("should copy the actual card link without navigating", async () => {
         await waitFor(() => expect(copy).toHaveBeenCalled());
         expect(copy).toHaveBeenCalledWith(

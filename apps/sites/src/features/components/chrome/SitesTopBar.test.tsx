@@ -25,6 +25,7 @@ import { setIdentity } from "@/data/lib/auth/session";
 import { primeRemoteFlags } from "@dcl/one-ui/apps/shop/remote-flags";
 import ChromeNavBridge from "./ChromeNavBridge";
 import SitesTopBar from "./SitesTopBar";
+import SitesLayout from "./SitesLayout";
 
 vi.hoisted(() => {
   Object.assign(window, {
@@ -141,6 +142,21 @@ function pendingWalletRead() {
 type Menu = ReturnType<typeof within>;
 
 describe("Sites native chrome integration", () => {
+  describe("when the visitor switches to Spanish on Events", () => {
+    beforeEach(() => {
+      render(<Host pathname="/events" locale="es"><SitesLayout active="whatson">Events content</SitesLayout></Host>);
+    });
+
+    it("should localize the shared skip link", () => {
+      expect(screen.getByRole("link", { name: "Saltar al contenido" })).toBeTruthy();
+    });
+
+    it("should localize the navigation and keep the Events link active", () => {
+      fireEvent.click(screen.getByRole("button", { name: "Descubrir" }));
+      expect(screen.getByRole("link", { name: "Eventos" }).getAttribute("aria-current")).toBe("page");
+    });
+  });
+
   describe("when the visitor is signed out", () => {
     beforeEach(() => {
       render(<Host />);

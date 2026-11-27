@@ -16266,7 +16266,7 @@
     },
     {
       "path": "library/ui/apps/sites/events/cards.tsx",
-      "sha256": "79b19a1bd23529290d6f69cc1a6a9516a6dde490accb19f4a9494ede90839dc4"
+      "sha256": "3abd05f2d9b0cfb2bbad32d0c9c2e0363dc4552d4658fb971f997600685876e9"
     },
     {
       "path": "library/ui/apps/sites/events/ldsubmithangoutview.css",
@@ -16278,7 +16278,7 @@
     },
     {
       "path": "library/ui/apps/sites/events/messages.ts",
-      "sha256": "6c713d91705f676d84ac2e2b84ef99c3f1630684602b53259cecc9916c46d1f2"
+      "sha256": "4081c847c25ac6251c084d4893a3b48088ba16f0fdfaa2c34abed8b570f4250b"
     },
     {
       "path": "library/ui/apps/sites/events/types.ts",
@@ -17150,7 +17150,7 @@
     },
     {
       "path": "library/ui/components/NavBar/NavBar.navigation.ts",
-      "sha256": "a8073c3151edae86b50fe8ff1bee4674371e8d3e869b403137d89bc7cf8194d2"
+      "sha256": "fcf66e83ee6a793441cf8219f5edaae060285b71518759660bdde31783c0a102"
     },
     {
       "path": "library/ui/components/NavBar/NavBar.profile.module.css",
@@ -57105,6 +57105,21 @@
     {
       "from": "library/ui/apps/sites/events/cards.tsx",
       "to": "library/ui/components/PlaceCard/PlaceCard.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/sites/events/cards.tsx",
+      "to": "library/ui/components/Tooltip/Tooltip.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/sites/events/cards.tsx",
+      "to": "library/ui/components/Tooltip/Tooltip.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/sites/events/cards.tsx",
+      "to": "library/ui/components/Tooltip/Tooltip.tsx",
       "kind": "test:runtime"
     },
     {

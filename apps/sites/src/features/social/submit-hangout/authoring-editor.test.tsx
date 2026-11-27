@@ -45,6 +45,11 @@ describe("when a signed-in creator opens the single-page Events editor", () => {
     vi.resetAllMocks();
   });
 
+  it("should label the event details section once", () => {
+    expect(screen.getAllByText("Event details")).toHaveLength(1);
+    expect(screen.getByRole("group", { name: "Event details" })).toBeTruthy();
+  });
+
   it("should keep each field's limits, type and rows", () => {
     expect(screen.getByRole("textbox", { name: "Event Name" })).toHaveProperty("maxLength", 150);
     expect(screen.getByRole("textbox", { name: "Event Description" })).toHaveProperty("maxLength", 5000);
@@ -58,8 +63,8 @@ describe("when a signed-in creator opens the single-page Events editor", () => {
     expect(screen.getByLabelText("Start (UTC)")).toHaveProperty("type", "time");
   });
 
-  it("should show the repeat options only while Repeat Hangout is on", async () => {
-    const repeat = screen.getByRole<HTMLInputElement>("switch", { name: "Repeat Hangout" });
+  it("should show the repeat options only while Repeat Event is on", async () => {
+    const repeat = screen.getByRole<HTMLInputElement>("switch", { name: "Repeat Event" });
     expect(repeat.checked).toBe(false);
     expect(screen.queryByRole("combobox", { name: "Repeat" })).toBeNull();
     expect(screen.queryByLabelText("Ends")).toBeNull();
@@ -170,7 +175,7 @@ describe("when a signed-in creator opens the single-page Events editor", () => {
       const duration = screen.getByRole("spinbutton", { name: "Duration (hours)" });
       await user.clear(duration);
       await user.type(duration, "3");
-      await user.click(screen.getByRole("switch", { name: "Repeat Hangout" }));
+      await user.click(screen.getByRole("switch", { name: "Repeat Event" }));
       await user.type(screen.getByLabelText("Ends"), "2099-07-29");
       await user.click(screen.getByRole("button", { name: "Preview" }));
       const preview = within(screen.getByRole("dialog"));
