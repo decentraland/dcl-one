@@ -516,6 +516,18 @@ pub fn at<'a>(v: &'a Value, path: &str) -> Option<&'a Value> {
     Some(cur)
 }
 
+/// Compare the two raw expiry encodings on the Graph before paging.
+/// Nest the OR under AND so it can share a query with field filters and
+/// the count cursor. The boundary matches the wire's unit conversion.
+pub(super) fn graph_unexpired(field: &str, now_ms: i64) -> Value {
+    let threshold = super::nft_index::LEGACY_EXPIRY_UNIT_THRESHOLD.to_string();
+    let gt = format!("{field}_gt");
+    json!([{ "or": [
+        { (&gt): now_ms.div_euclid(1_000).to_string(), (format!("{field}_lt")): threshold },
+        { (&gt): now_ms.to_string(), (format!("{field}_gte")): threshold },
+    ] }])
+}
+
 /// The subgraph's unix seconds as the wire's milliseconds.
 pub fn seconds_to_ms(seconds: i64) -> i64 {
     seconds.saturating_mul(1000)

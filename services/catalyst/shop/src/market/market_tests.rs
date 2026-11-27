@@ -11160,6 +11160,74 @@ async fn an_amoy_item_bid_requires_a_verified_amoy_creator() {
 }
 
 #[tokio::test]
+async fn graph_bids_filter_both_expiry_units_before_paging_and_counting() {
+    let Some(own) = super::tests::support::OwnDb::create("graph_bid_expiry").await else {
+        return;
+    };
+    let graph = FakeGraph::new();
+    let url = serve_graph(graph.clone()).await;
+    let state = Arc::new(super::MarketplaceState::new(
+        own.pool.clone(),
+        crate::http::Outbound::for_tests(),
+        market_settings(&url, &url, true),
+    ));
+    state.test_allow_loopback.store(true, Ordering::Relaxed);
+    assert!(!super::bids::book_here(&state));
+    super::trade_events::tests::publish_cursors(&own.pool).await;
+
+    let now = chrono::Utc::now().timestamp();
+    let future = now + 3600;
+    let past = now - 3600;
+    let expiry = [
+        ("future-seconds", future, 10),
+        ("future-millis", future * 1000 + 123, 13),
+        ("past-seconds", past, 10),
+        ("past-millis", past * 1000 + 456, 13),
+    ];
+    let contract = contract_of(&tag(), 1);
+    graph.set(
+        "bids",
+        expiry
+            .into_iter()
+            .enumerate()
+            .map(|(position, (id, expires, digits))| {
+                let expires = expires.to_string();
+                assert_eq!(expires.len(), digits);
+                json!({
+                    "id": id, "bidder": WALLET_B, "seller": WALLET_A, "nftAddress": contract,
+                    "tokenId": "1", "price": "100", "status": "open", "expiresAt": expires,
+                    "createdAt": (now - 10 + position as i64).to_string(),
+                    "updatedAt": "1", "blockNumber": "1", "blockchainId": "0x01"
+                })
+            })
+            .collect(),
+    );
+    let app = market_router(state);
+    for (skip, id, expires) in [
+        (0, Some("future-millis"), future * 1000 + 123),
+        (1, Some("future-seconds"), future * 1000),
+        (2, None, 0),
+    ] {
+        let (status, body) = get(
+            app.clone(),
+            &format!("/v1/bids?network=MATIC&status=open&seller={WALLET_A}&limit=1&offset={skip}"),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["data"]["total"], 2, "{body}");
+        let rows = body["data"]["results"].as_array().unwrap();
+        if let Some(id) = id {
+            assert_eq!(rows.len(), 1, "{body}");
+            assert_eq!(rows[0]["id"], id, "{body}");
+            assert_eq!(rows[0]["expiresAt"], expires, "{body}");
+        } else {
+            assert!(rows.is_empty(), "{body}");
+        }
+    }
+    own.drop().await;
+}
+
+#[tokio::test]
 async fn a_graph_backed_bids_page_releases_its_local_snapshot_before_the_graph() {
     let Some(own) = super::tests::support::OwnDb::create("graph_bid_snapshot").await else {
         return;
