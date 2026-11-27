@@ -150,7 +150,7 @@ impl AppSetting for FarLodRingSetting {
     }
 
     fn is_disabled(config: &AppConfig) -> bool {
-        config.scene_imposter_distances.is_empty()
+        config.distant_scenes_off()
     }
 
     fn category() -> super::SettingCategory {

@@ -300,7 +300,8 @@ applies on the next one. All of them are hidden in preview mode.
 "Distant Scene Rendering" (Graphics; Off, Normal, Ultra) is the one switch for what draws past
 the scenes around the player. Normal and Ultra set the imposter distances, Ultra's tiles finer
 nearby. Off removes the imposters and turns far LODs off: the engine reads the far LOD count
-through `AppConfig::far_lods_cap`, which is 0 while there are no imposter distances. It keeps the
+through `AppConfig::far_lods_cap`, which is 0 while there are no imposter distances, and at 0
+(Off, or "Max Far LODs" at 0) spawns and keeps no far LOD. It keeps the
 "Max Far LODs" and "Far LOD Ring" values, which the panel shows disabled until it is turned on
 again, as "Unlimited Avatars" does to "Max Avatars". Live scenes and near LODs are unchanged.
 

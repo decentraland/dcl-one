@@ -711,8 +711,9 @@ fn update_scene_lods(
         in_range.read(center, rings.scan(), preview.is_preview, &pointers, &tiling);
     }
     let scenes = &in_range.scenes;
-    // no far LOD can be offered this session: none is kept or spawned
-    let far_off = ipfs.far_lods_off();
+    // no far LOD can be offered this session, or none may show (Distant Scene Rendering off or
+    // Max Far LODs at 0): none is kept or spawned
+    let far_off = ipfs.far_lods_off() || config.far_lods_cap() == 0;
 
     let shown = |hash: &str| {
         live_scenes

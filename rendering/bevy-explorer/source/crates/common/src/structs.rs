@@ -845,10 +845,15 @@ impl Default for AppConfig {
 }
 
 impl AppConfig {
-    /// How many far LODs may load or show at once: none while Distant Scene Rendering is off
-    /// (no imposter distances), else `max_far_lods`, which is kept for when it is turned on.
+    /// True while Distant Scene Rendering is off: no imposter distances, and so no far LODs.
+    pub fn distant_scenes_off(&self) -> bool {
+        self.scene_imposter_distances.is_empty()
+    }
+
+    /// How many far LODs may load or show at once: none while Distant Scene Rendering is off,
+    /// else `max_far_lods`, which is kept for when it is turned on.
     pub fn far_lods_cap(&self) -> usize {
-        if self.scene_imposter_distances.is_empty() {
+        if self.distant_scenes_off() {
             0
         } else {
             self.max_far_lods

@@ -14200,7 +14200,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/settings/SettingsPanel.tsx",
-      "sha256": "56e2ebf90c64f4fe9f7be2d456c98b4e06727352c74abe8d2b8a0fa28d59adc5"
+      "sha256": "2af7e950fa662ff3f5710136cee1c781f9265828049bbc632f68deac90d74b84"
     },
     {
       "path": "library/ui/apps/hud/features/settings/askBeforeLeaving.ts",

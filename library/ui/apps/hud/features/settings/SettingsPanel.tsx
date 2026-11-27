@@ -99,7 +99,7 @@ const SECTIONS: Record<string, { title: string; match?: RegExp }[]> = {
     { title: 'General', match: /graphics quality|preset/i },
     { title: 'Display', match: /resolution|fullscreen|window|v[ -]?sync|fps|frame[ -]?rate|monitor/i },
     { title: 'Post Processing', match: /msaa|anti[ -]?alias|\baa\b|hdr|bloom|outline|ssao|occlusion|depth of field|\bdof\b|fog|cel shad/i },
-    { title: 'Landscape and Foliage', match: /grass|foliage|landscape|scene (load )?distance|distant scene|lod|environment/i },
+    { title: 'Landscape and Foliage', match: /grass|foliage|landscape|distant scene|environment/i },
     { title: 'Sun', match: /\bsun\b|\bsky\b/i },
     { title: 'Scene Lighting', match: /light|ambient/i },
     { title: 'Shadows', match: /shadow|^quality$|texture/i },
