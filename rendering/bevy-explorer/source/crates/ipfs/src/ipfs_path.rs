@@ -68,6 +68,13 @@ impl IpfsAsset for bevy_kira_audio::AudioSource {
     }
 }
 
+/// The SHA-256 of `input` in base64url: the cache name of anything named by a url or path, 43
+/// characters whatever its length.
+pub(crate) fn digest_name(input: &str) -> String {
+    let digest = multihash_codetable::Code::Sha2_256.digest(input.as_bytes());
+    BASE64_URL_SAFE_NO_PAD.encode(digest.digest())
+}
+
 /// The name an asset is cached under.
 #[derive(Debug, Clone)]
 pub enum CacheKey {
@@ -226,11 +233,7 @@ impl IpfsType {
                 .or_else(|| {
                     // not in the content map, or no content map registered: only a url can still
                     // be fetched (see `url_target`)
-                    is_url(file_path).then(|| {
-                        let digest =
-                            multihash_codetable::Code::Sha2_256.digest(file_path.as_bytes());
-                        Cow::Owned(BASE64_URL_SAFE_NO_PAD.encode(digest.digest()))
-                    })
+                    is_url(file_path).then(|| Cow::Owned(digest_name(file_path)))
                 }),
             IpfsType::UrlCached { hash, .. } => Some(Cow::Borrowed(hash)),
             IpfsType::Entity { hash, .. } => Some(Cow::Borrowed(hash)),
@@ -395,8 +398,7 @@ where
                     .rsplit_once('.')
                     .ok_or(anyhow::anyhow!("url specified malformed (no '.')"))?;
 
-                let digest = multihash_codetable::Code::Sha2_256.digest(url.as_bytes());
-                let hash = BASE64_URL_SAFE_NO_PAD.encode(digest.digest());
+                let hash = digest_name(url);
 
                 Ok(IpfsType::UrlCached {
                     url: url.to_owned(),
@@ -578,8 +580,7 @@ impl IpfsPath {
     }
 
     pub fn new_from_url(url: &str, ext: &str) -> Self {
-        let digest = multihash_codetable::Code::Sha2_256.digest(url.as_bytes());
-        let hash = BASE64_URL_SAFE_NO_PAD.encode(digest.digest());
+        let hash = digest_name(url);
         Self {
             key_values: Default::default(),
             ipfs_type: {
