@@ -1,7 +1,10 @@
-use crate::render::{RetryImposter, SceneImposter};
+use crate::{
+    debug_imposters::{install_debug_shaders, tag_new_tiles, update_tile_colors},
+    render::{DebugImpostersEnabled, RetryImposter, SceneImposter},
+};
 use bevy::prelude::*;
 use bevy_console::ConsoleCommand;
-use common::structs::{AppConfig, SceneLoadDistance};
+use common::structs::{AppConfig, DebugInfo, SceneLoadDistance};
 use console::{AddDebugSection, DebugInput, DebugInputKind, DebugSection, DoAddConsoleCommand};
 
 pub(super) struct LodDebugPanelPlugin;
@@ -10,6 +13,16 @@ impl Plugin for LodDebugPanelPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<LodOutlines>()
             .add_console_command::<LodOutlinesCommand, _>(set_lod_outlines)
+            .add_console_command::<DebugImpostersCommand, _>(toggle_debug_imposters)
+            .add_systems(Startup, install_debug_shaders)
+            .add_systems(
+                PostUpdate,
+                (
+                    tag_new_tiles,
+                    update_tile_colors.run_if(resource_changed::<DebugImpostersEnabled>),
+                )
+                    .chain(),
+            )
             .add_systems(
                 Update,
                 draw_lod_outlines.run_if(|show: Res<LodOutlines>| show.0),
@@ -30,18 +43,48 @@ impl Plugin for LodDebugPanelPlugin {
                     ("Imposter VRAM (bytes)", "vram"),
                 ],
                 actions: &[],
-                inputs: &[DebugInput {
-                    label: "Color LOD tile outlines",
-                    field: "outlines",
-                    command: "/lod_outlines {value}",
-                    kind: DebugInputKind::Toggle,
-                }],
+                inputs: &[
+                    DebugInput {
+                        label: "Debug imposters",
+                        field: "debug_imposters",
+                        command: "/debug_imposters {value}",
+                        kind: DebugInputKind::Toggle,
+                    },
+                    DebugInput {
+                        label: "Color LOD tile outlines",
+                        field: "outlines",
+                        command: "/lod_outlines {value}",
+                        kind: DebugInputKind::Toggle,
+                    },
+                ],
             });
     }
 }
 
 #[derive(Resource, Default)]
 struct LodOutlines(bool);
+
+#[derive(clap::Parser, ConsoleCommand)]
+#[command(name = "/debug_imposters")]
+struct DebugImpostersCommand {
+    #[arg(action = clap::ArgAction::Set)]
+    on: Option<bool>,
+}
+
+fn toggle_debug_imposters(
+    mut input: ConsoleCommand<DebugImpostersCommand>,
+    mut enabled: ResMut<DebugImpostersEnabled>,
+    mut debug: ResMut<DebugInfo>,
+) {
+    if let Some(Ok(command)) = input.take() {
+        enabled.0 = command.on.unwrap_or(!enabled.0);
+        if !enabled.0 {
+            debug.info.remove("Imposter memory");
+            debug.info.remove("Imposter states");
+        }
+        input.reply_ok(format!("imposter debug info: {}", enabled.0));
+    }
+}
 
 #[derive(clap::Parser, ConsoleCommand)]
 #[command(name = "/lod_outlines")]
@@ -95,6 +138,7 @@ fn lod_state(
     config: Res<AppConfig>,
     distance: Res<SceneLoadDistance>,
     outlines: Res<LodOutlines>,
+    debug: Res<DebugImpostersEnabled>,
     tiles: Query<Has<RetryImposter>, With<SceneImposter>>,
     assets: Res<Assets<boimp::Imposter>>,
 ) {
@@ -108,6 +152,7 @@ fn lod_state(
             }
         }
         input.reply_ok(serde_json::json!({
+            "debug_imposters": debug.0,
             "outlines": outlines.0, "enabled": !config.scene_imposter_distances.is_empty(), "distances": config.scene_imposter_distances,
             "load": distance.load, "range": distance.load_imposter, "multisample": config.scene_imposter_multisample,
             "ready":ready, "pending":pending, "assets":assets.len(),

@@ -1,7 +1,9 @@
 use bevy::asset::{RenderAssetTransferPriority, RenderAssetUsages};
-use bevy::math::{IVec2, Vec3, Vec3Swizzles};
+use bevy::math::{Vec2, Vec3, Vec3Swizzles};
 use bevy::reflect::prelude::*;
 use bevy::render::mesh::{Indices, Mesh, MeshBuilder, PrimitiveTopology};
+use bevy::transform::components::Transform;
+use common::partition::PARCEL_SIZE;
 
 use crate::imposter_spec::ImposterSpec;
 use crate::render::SceneImposter;
@@ -25,67 +27,52 @@ impl Default for ImposterMesh {
 }
 
 impl ImposterMesh {
-    pub fn from_spec(spec: &ImposterSpec, target: &SceneImposter) -> Mesh {
-        let level_shift = 1 << target.level;
-        let parcel_min = ((target.parcel + IVec2::Y * level_shift) * IVec2::new(16, -16)).as_vec2();
-        let parcel_max = ((target.parcel + IVec2::X * level_shift) * IVec2::new(16, -16)).as_vec2();
+    pub(crate) fn render_proxy(
+        spec: &ImposterSpec,
+        source_level: usize,
+        target: &SceneImposter,
+    ) -> Option<(Transform, Self)> {
+        // Extend the proxy to the world floor. Keep the bake's transform when
+        // clipping the vertices so the shader samples the same baked region.
+        let min = Vec3::new(
+            spec.region_min.x,
+            spec.region_min.y.min(0.0),
+            spec.region_min.z,
+        );
+        let max = spec.region_max;
+        let transform = Transform::from_translation((min + max) * 0.5)
+            .with_scale((max - min).max(Vec3::splat(0.001)) * (1.0 + source_level as f32 / 1000.0));
 
-        let spec_mid = ((spec.region_min + spec.region_max) / 2.0).xz();
-        let spec_size = (spec.region_max - spec.region_min).xz();
-        let effective_min = (parcel_min - spec_mid) / spec_size;
-        let effective_max = (parcel_max - spec_mid) / spec_size;
+        let unit = Self::default();
+        if target.as_ingredient {
+            return Some((transform, unit));
+        }
 
-        // When baking this imposter as an ingredient for a coarser parent mip,
-        // push the *outer* faces (those facing away from the sibling children,
-        // derived from this tile's position in the parent 2x2) out past the
-        // parcel-clamped spec region so the baked overhang renders. The push is
-        // the fixed world-space `spec.overhang` (the level-0 content lean-over,
-        // a few metres, constant across mip levels) expressed in the cube's
-        // normalised space per-axis — so it does not balloon with the imposter's
-        // footprint. The *inner* faces stay clamped so adjacent children don't
-        // double-blend their overlapping transparent edges. For normal display
-        // the overhang is 0 and the cube is the parcel-clamped spec region.
-        let overhang = if target.as_ingredient {
-            spec.overhang
-        } else {
-            0.0
-        };
-        let push_x = overhang / spec_size.x.max(1e-4);
-        let push_z = overhang / spec_size.y.max(1e-4);
-        let push_y = overhang / (spec.region_max.y - spec.region_min.y).max(1e-4);
-        // Offset within the parent 2x2 (0 = min side, 1 = max side) per axis.
-        // World x grows with parcel.x; world z is parcel.y negated, so parcel.y
-        // offset 0 sits on the +z (max) side.
-        let off_x = (target.parcel.x >> target.level) & 1;
-        let off_y = (target.parcel.y >> target.level) & 1;
-        let min_x = if off_x == 0 {
-            -0.5 - push_x
-        } else {
-            effective_min.x.max(-0.5)
-        };
-        let max_x = if off_x == 1 {
-            0.5 + push_x
-        } else {
-            effective_max.x.min(0.5)
-        };
-        let min_z = if off_y == 1 {
-            -0.5 - push_z
-        } else {
-            effective_min.y.max(-0.5)
-        };
-        let max_z = if off_y == 0 {
-            0.5 + push_z
-        } else {
-            effective_max.y.min(0.5)
-        };
+        let origin = target.parcel.as_vec2() * Vec2::new(PARCEL_SIZE, -PARCEL_SIZE);
+        let size = (1 << target.level) as f32 * PARCEL_SIZE;
+        let tile_min = origin - Vec2::new(0.0, size);
+        let tile_max = origin + Vec2::new(size, 0.0);
+        let center = transform.translation.xz();
+        let scale = transform.scale.xz();
 
-        let builder = Self {
-            min: Vec3::new(min_x, -0.5 - push_y, min_z),
-            max: Vec3::new(max_x, 0.5 + push_y, max_z),
-            with_bake_attributes: target.as_ingredient,
-        };
+        let min = ((tile_min - center) / scale).max(unit.min.xz());
+        let max = ((tile_max - center) / scale).min(unit.max.xz());
+        if !min.cmplt(max).all() {
+            return None;
+        }
 
-        builder.build()
+        if min == unit.min.xz() && max == unit.max.xz() {
+            return Some((transform, unit));
+        }
+
+        Some((
+            transform,
+            Self {
+                min: Vec3::new(min.x, unit.min.y, min.y),
+                max: Vec3::new(max.x, unit.max.y, max.y),
+                with_bake_attributes: false,
+            },
+        ))
     }
 }
 
@@ -137,5 +124,91 @@ impl MeshBuilder for ImposterMesh {
         mesh.transfer_priority = RenderAssetTransferPriority::Immediate;
 
         mesh
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use bevy::math::IVec2;
+    use bevy::render::mesh::MeshAabb;
+
+    use super::*;
+
+    #[test]
+    fn adjacent_parcels_do_not_overlap_when_using_the_same_two_level_fallback() {
+        let spec = ImposterSpec {
+            scale: 52.48464,
+            region_min: Vec3::new(-576.0, 0.9433594, -64.0),
+            region_max: Vec3::new(-512.0, 12.00592, 0.0),
+            overhang: 4.4367585,
+        };
+        let footprint = |x| {
+            let target = SceneImposter {
+                parcel: IVec2::new(x, 1),
+                level: 0,
+                as_ingredient: false,
+            };
+            let (transform, mesh) = ImposterMesh::render_proxy(&spec, 2, &target).unwrap();
+            let aabb = mesh.build().compute_aabb().unwrap();
+            let min = transform.transform_point(aabb.min().into()).xz();
+            let max = transform.transform_point(aabb.max().into()).xz();
+            (min, max)
+        };
+
+        let (left_min, left_max) = footprint(-35);
+        let (right_min, right_max) = footprint(-34);
+
+        assert_eq!(left_min, Vec2::new(-560.0, -32.0));
+        assert_eq!(left_max, Vec2::new(-544.0, -16.0));
+        assert_eq!(right_min, Vec2::new(-544.0, -32.0));
+        assert_eq!(right_max, Vec2::new(-528.0, -16.0));
+    }
+
+    #[test]
+    fn a_coarser_bake_outside_the_requested_tile_has_no_proxy() {
+        let spec = ImposterSpec {
+            scale: 16.0,
+            region_min: Vec3::new(-576.0, 1.0, -32.0),
+            region_max: Vec3::new(-562.0, 12.0, -16.0),
+            overhang: 0.0,
+        };
+        let target = SceneImposter {
+            parcel: IVec2::new(-35, 1),
+            level: 0,
+            as_ingredient: false,
+        };
+
+        assert!(ImposterMesh::render_proxy(&spec, 2, &target).is_none());
+    }
+
+    #[test]
+    fn ready_tile_stays_inside_its_edges_during_display() {
+        let spec = ImposterSpec {
+            scale: 32.0,
+            region_min: Vec3::new(-64.0, 1.0, 0.0),
+            region_max: Vec3::new(-32.0, 12.0, 32.0),
+            overhang: 0.0,
+        };
+        let mut target = SceneImposter {
+            parcel: IVec2::new(-4, -2),
+            level: 1,
+            as_ingredient: false,
+        };
+        let (transform, displayed) = ImposterMesh::render_proxy(&spec, 1, &target).unwrap();
+        assert_eq!(
+            transform.transform_point(displayed.min).xz(),
+            Vec2::new(-64.0, 0.0)
+        );
+        assert_eq!(
+            transform.transform_point(displayed.max).xz(),
+            Vec2::new(-32.0, 32.0)
+        );
+
+        target.as_ingredient = true;
+        let (bake_transform, ingredient) = ImposterMesh::render_proxy(&spec, 1, &target).unwrap();
+        assert_eq!(bake_transform, transform);
+        assert_eq!(ingredient.min, Vec3::splat(-0.5));
+        assert_eq!(ingredient.max, Vec3::splat(0.5));
+        assert!(ingredient.with_bake_attributes);
     }
 }

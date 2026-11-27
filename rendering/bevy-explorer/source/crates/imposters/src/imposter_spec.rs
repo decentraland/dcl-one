@@ -27,8 +27,8 @@ pub struct ImposterSpec {
     pub region_max: Vec3,
     /// World-space distance the baked texture holds content past the
     /// parcel-clamped region (the level-0 `bound_tolerance`, carried up the mip
-    /// chain as `max(children)`). Used to expose that overhang when this
-    /// imposter is baked as an ingredient — see `ImposterMesh::from_spec`.
+    /// chain as `max(children)`). Used to size the camera when this imposter
+    /// is baked as an ingredient.
     /// Defaults to 0 for specs written before this field existed.
     #[serde(default)]
     pub overhang: f32,

@@ -1,6 +1,7 @@
 #![forbid(unsafe_code)]
 
 pub mod bake_scene;
+mod debug_imposters;
 mod debug_panel;
 pub mod floor_imposter;
 pub mod imposter_mesh;
@@ -12,9 +13,9 @@ use std::path::PathBuf;
 use bake_scene::DclImposterBakeScenePlugin;
 use bevy::prelude::*;
 use bevy_console::ConsoleCommand;
-use common::structs::{AppConfig, DebugInfo, SceneLoadDistance};
+use common::structs::{AppConfig, SceneLoadDistance};
 use console::DoAddConsoleCommand;
-use render::{DclImposterRenderPlugin, DebugImpostersEnabled, SceneImposter};
+use render::{DclImposterRenderPlugin, SceneImposter};
 
 #[derive(Resource, Clone)]
 pub struct DclImposterPlugin {
@@ -26,31 +27,9 @@ impl Plugin for DclImposterPlugin {
     fn build(&self, app: &mut App) {
         app.add_plugins((DclImposterBakeScenePlugin, DclImposterRenderPlugin))
             .add_preview_console_command::<ImpostDistanceCommand, _>(set_impost_distance)
-            .add_preview_console_command::<ImpostMultisampleCommand, _>(set_impost_multi)
-            .add_preview_console_command::<DebugImpostersCommand, _>(toggle_debug_imposters);
+            .add_preview_console_command::<ImpostMultisampleCommand, _>(set_impost_multi);
         app.insert_resource(self.clone());
         app.add_plugins(debug_panel::LodDebugPanelPlugin);
-    }
-}
-
-#[derive(clap::Parser, ConsoleCommand)]
-#[command(name = "/debug_imposters")]
-struct DebugImpostersCommand {
-    on: Option<bool>,
-}
-
-fn toggle_debug_imposters(
-    mut input: ConsoleCommand<DebugImpostersCommand>,
-    mut enabled: ResMut<DebugImpostersEnabled>,
-    mut debug: ResMut<DebugInfo>,
-) {
-    if let Some(Ok(command)) = input.take() {
-        enabled.0 = command.on.unwrap_or(!enabled.0);
-        if !enabled.0 {
-            debug.info.remove("Imposter memory");
-            debug.info.remove("Imposter states");
-        }
-        input.reply_ok(format!("imposter debug info: {}", enabled.0));
     }
 }
 

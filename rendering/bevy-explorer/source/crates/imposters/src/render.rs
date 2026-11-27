@@ -1162,40 +1162,26 @@ fn load_imposters(
             .entity(entity)
             .despawn_related::<Children>()
             .try_with_children(|c| {
-                if let Some((imposter, spec)) = maybe_imposter {
-                    let (mesh, aabb) = if error == 0 {
+                let volume = maybe_imposter.and_then(|(imposter, spec)| {
+                    let (transform, proxy) =
+                        ImposterMesh::render_proxy(&spec, scene_imposter.level, base_imposter)?;
+                    Some((imposter, transform, proxy))
+                });
+                if let Some((imposter, transform, proxy)) = volume {
+                    let unit = ImposterMesh::default();
+                    let (mesh, aabb) = if proxy.min == unit.min && proxy.max == unit.max {
                         (imposter_meshes.cube.clone(), imposter_meshes.aabb)
                     } else {
-                        let mut mesh = ImposterMesh::from_spec(&spec, base_imposter);
-                        let aabb = mesh.compute_aabb().unwrap();
-                        mesh.transfer_priority = RenderAssetTransferPriority::Immediate;
-
-                        (meshes.add(mesh), aabb)
+                        (
+                            meshes.add(proxy.build()),
+                            Aabb::from_min_max(proxy.min, proxy.max),
+                        )
                     };
 
-                    // Stretch the cube's y down to the world floor without
-                    // touching the material's imposter_data (which still
-                    // holds the original bake spec_mid/scale, so UV math
-                    // stays aligned with the baked texture). Fragments at
-                    // world y in [0, original region_min.y] sample at V<0
-                    // and discard — the floor imposter quad covers the gap.
-                    let floor_y = 0.0_f32.min(spec.region_min.y);
-                    let mid_y = (floor_y + spec.region_max.y) * 0.5;
-                    let scale_y = spec.region_max.y - floor_y;
-                    let scale_xz = spec.region_max - spec.region_min;
-                    let scale = Vec3::new(scale_xz.x, scale_y, scale_xz.z);
-                    let translation = Vec3::new(
-                        (spec.region_min.x + spec.region_max.x) * 0.5,
-                        mid_y,
-                        (spec.region_min.z + spec.region_max.z) * 0.5,
-                    );
                     c.spawn((
                         Mesh3d(mesh),
                         MeshMaterial3d(imposter),
-                        Transform::from_translation(translation).with_scale(
-                            scale.max(Vec3::splat(0.001))
-                                * (1.0 + scene_imposter.level as f32 / 1000.0),
-                        ),
+                        transform,
                         // ShowAabbGizmo { color },
                         aabb,
                         NotShadowCaster,
