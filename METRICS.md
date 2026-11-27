@@ -123,6 +123,29 @@ lookup from `trade_assets_erc721_token_idx` and sorted at most one matching
 trade per token in this fixture. The timestamp sort also leaves the
 `(signer, created_at DESC)` index order available to the planner.
 
+### Newest Ethereum NFT browse (2026-11-27)
+
+On PostgreSQL 17.6 on Apple Silicon, a synthetic fixture held 3.5M NFTs,
+102,000 items, 5,100 collections, 92,000 LAND and estate rights and 368,000
+LAND authorization events. The page and capped count for `first=24`
+were executed together from exact prepared SQL with forced generic plans
+over 20 warmed repetitions.
+
+| `/v1/nfts` | First before / after | p50 before / after | p95 before / after | Max before / after |
+| --- | ---: | ---: | ---: | ---: |
+| Ethereum | 698 / 346 ms | 685 / 261 ms | 1,157 / 302 ms | 1,198 / 304 ms |
+| Polygon | 189 / 125 ms | 168 / 117 ms | 211 / 155 ms | 297 / 182 ms |
+
+`EXPLAIN (ANALYZE, BUFFERS, SETTINGS)` showed the Ethereum LAND page doing
+92,000 first-transfer lookups and joining token details before limiting.
+Newest unfiltered pages still rank by those first transfers and attach
+details only to the top LAND window. The unfiltered capped count reads
+NAMEs first and can reach the cap before visiting the collection and
+LAND legs. The paired pages and totals returned identical rows. Separate
+v3 order enrichment of the 24 Ethereum tokens took 0.2–0.8 ms. The
+eight Ethereum runs in a mixed four-client probe had a median of 362 ms
+and a maximum of 399 ms. These are local SQL timings.
+
 ## Ethereum collections-v1 first walk
 
 On 2026-11-26 the Ethereum `collections` walk (`shop::market::collections_v1`) ran its first history over `rpc.decentraland.org/mainnet`, which takes at most 10,000 blocks per `eth_getLogs`, with the default settings (10,000-block windows, a budget of 100 `eth_getLogs` per pass) and an empty scratch database. It walked from block 8,828,687 to the head, 17,671,095 blocks, in 18 passes run back to back, with 7,108 HTTP requests in all: `eth_getLogs` plus the headers of each window's bracket and of the blocks holding logs. That run recorded only the total. A two-pass rerun over the same start counted the requests by kind. Each pass spent its 100-request budget on `eth_getLogs`, about one per 10,000-block window: 989,704 and 1,000,000 blocks. Each pass also sent about 300 other requests, for the chain, the head, each window's bracket and the blocks holding logs: 299 and 302. So the full walk's `eth_getLogs` came to about 1,770, one per window, and the rest were headers. It took 2,198 s, plus the pause between passes a job adds (`MARKETPLACE_INDEX_INTERVAL_SECS`, 5 s, or 30 s under the mirror posture). It kept 438 `add_item`, 73,506 `issue` and 52 `ownership_transferred` rows. The 438 items and the 73,506 mints equal the collections subgraph's v1 items and their total supply at block 26,499,473. After the catch-up, each pass reads the same 42-address filter over the new blocks only. The command is in the `measure_the_first_walk` test, which prints each pass's `eth_getLogs` and other requests (`COLLECTIONS_V1_MEASURE_PASSES` stops it early).
