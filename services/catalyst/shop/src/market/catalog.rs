@@ -571,6 +571,38 @@ pub fn uint_or_null(expr: &str) -> String {
     format!("(CASE WHEN {expr} ~ '^(0|[1-9][0-9]{{0,77}})$' THEN {expr}::numeric END)")
 }
 
+/// The NFT owner's row is covered by the publication and no later event or
+/// unfinished contract history puts it in doubt. The aliases name trusted
+/// query fragments used by both legacy and v3 orders.
+pub(super) fn nft_owner_at_fold_sql(nft: &str, folded_block: &str) -> String {
+    format!(
+        "({nft}.transferred_block <= {folded_block}
+          AND NOT EXISTS (
+              SELECT FROM shop.nft_event e
+              WHERE e.network = {nft}.network AND e.contract_address = {nft}.contract_address
+                AND e.token_id = {nft}.token_id AND e.kind = 'transfer'
+                AND e.block_number > {folded_block}
+          )
+          AND NOT EXISTS (
+              SELECT FROM shop.nft_contract watched
+              WHERE watched.network = {nft}.network AND watched.contract_address = {nft}.contract_address
+                AND (watched.refold_owed OR ({backfill_pending}))
+          ))",
+        backfill_pending = super::nft_index::BACKFILL_PENDING_SQL,
+    )
+}
+
+pub(super) fn land_owner_at_fold_sql(right: &str, folded_block: &str) -> String {
+    format!(
+        "({right}.updated_block <= {folded_block}
+          AND NOT EXISTS (
+              SELECT FROM land_authz.authz_event e
+              WHERE e.token_address = {right}.token_address AND e.token_id = {right}.token_id
+                AND e.kind = 'transfer' AND e.block_number > {folded_block}
+          ))"
+    )
+}
+
 /// Ownership of the sent ERC-721 in the same snapshot as the trade verdict.
 fn nft_trade_backed_sql(now_p: &str, token_num: &str, eth: i64, matic: i64) -> String {
     use super::chain_walk::{ChainNet, MAX_CLOCK_SKEW, READY_WINDOW};
@@ -599,18 +631,13 @@ fn nft_trade_backed_sql(now_p: &str, token_num: &str, eth: i64, matic: i64) -> S
                 AND c.full_replay_started AND c.folded_block IS NOT NULL
                 AND c.folded_at BETWEEN {now_p} - interval '{window} seconds'
                                     AND {now_p} + interval '{skew} seconds'
-                AND n.owner = lower(t.signer) AND n.updated_block <= c.folded_block
-                AND NOT EXISTS (
-                    SELECT FROM land_authz.authz_event e
-                    WHERE e.token_address = n.token_address AND e.token_id = n.token_id
-                      AND e.kind = 'transfer' AND e.block_number > c.folded_block
-                )
+                AND n.owner = lower(t.signer) AND {land_owner_at_fold}
           ) ELSE EXISTS (
               SELECT FROM shop.chain_cursor c
               JOIN shop.nft n ON n.network = c.network AND n.contract_address = sent.contract_address
                    AND n.token_id = {token_num}
               WHERE c.indexer = 'nft' AND c.network = lower(t.network) AND {nft_ready}
-                AND n.owner = lower(t.signer) AND n.transferred_block <= c.folded_block
+                AND n.owner = lower(t.signer) AND {nft_owner_at_fold}
                 AND (c.chain_id IN ({ethereum}, {polygon})
                   OR (c.network = 'ethereum' AND n.contract_address = '{registrar}')
                   OR EXISTS (
@@ -621,22 +648,12 @@ fn nft_trade_backed_sql(now_p: &str, token_num: &str, eth: i64, matic: i64) -> S
                         AND active.chain_id = c.chain_id AND active.testnet_verified
                   )
                 )
-                AND NOT EXISTS (
-                    SELECT FROM shop.nft_event e
-                    WHERE e.network = n.network AND e.contract_address = n.contract_address
-                      AND e.token_id = n.token_id AND e.kind = 'transfer'
-                      AND e.block_number > c.folded_block
-                )
-                AND NOT EXISTS (
-                    SELECT FROM shop.nft_contract watched
-                    WHERE watched.network = n.network AND watched.contract_address = n.contract_address
-                      AND (watched.refold_owed OR ({backfill_pending}))
-                )
           ) END)",
         ethereum = ChainNet::Ethereum.chain_id(),
         polygon = ChainNet::Matic.chain_id(),
         registrar = super::nft_index::Catalogue::Testnet.registrar(),
-        backfill_pending = super::nft_index::BACKFILL_PENDING_SQL,
+        nft_owner_at_fold = nft_owner_at_fold_sql("n", "c.folded_block"),
+        land_owner_at_fold = land_owner_at_fold_sql("n", "c.folded_block"),
         window = READY_WINDOW.num_seconds(),
         skew = MAX_CLOCK_SKEW.num_seconds(),
         main_land = LAND_MAINNET.land_registry,
@@ -881,10 +898,12 @@ fn build_legacy_orders_cte(
             FROM shop.legacy_order o
             JOIN shop.nft n USING (network, contract_address, token_id)
             JOIN shop.collections c USING (network, contract_address)
+            {nft_fold}
             {wearable_item}
             WHERE o.network = ANY({nets}) AND {collection_chain}
               AND o.status = 'open' AND o.expires_at > {now} AND {status} = 'open'
               AND CASE WHEN o.network = 'matic' THEN n.item_id ELSE i.item_id END IS NOT NULL",
+        nft_fold = super::orders::BOOK_NFT_FOLD_JOIN,
         wearable_item = legacy_wearable_item_join(books.catalogue),
         collection_chain = catalogue_chain_sql("c", books.catalogue),
         status = super::orders::book_status(false),

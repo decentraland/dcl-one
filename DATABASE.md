@@ -5629,9 +5629,11 @@ Invariants:
   follows restores the orders whose creation remains.
 - `transferred` is not stored: a reader derives it on its snapshot from the
   token's owner (`shop.nft`, or `land_authz.token_right` for LAND and
-  estates). An open order reads `open` only while that owner is its seller;
-  another owner, none (burned, dissolved) or no row reads `transferred`,
-  before the status filter, the total and the page. The reader serves only
+  estates). An open order reads `open` while the published fold proves its
+  seller holds it. An owner row or a raw transfer beyond the fold withholds
+  that proof, as does an unfinished NFT contract backfill or refold. An
+  unproven open order reads `transferred` before the status filter, total
+  and page. The reader serves only
   the orders of the catalogue the nft index walks on the served chain (a
   `shop.collections` row of that `chain_id`, `testnet_verified` on a
   testnet) and of that chain's LAND and Estate registries and DCLRegistrar,
@@ -5653,9 +5655,16 @@ Invariants:
   network's. The queue holds a repair window's tokens until the next fold.
   The trigger costs one primary-key read of `shop.legacy_order_cursor` per
   order event written; transfers do not fire it. While a network has a
-  refold queued, its book is not read (`legacy_orders::caught_up`, on the
-  read's snapshot): an earlier binary can republish the same height
-  without folding it. Another network's queue does not withhold it.
+  refold queued, its book is not read. The `nft-index` message names the
+  queued refold separately from a book behind its published fold, and
+  `catalyst_shop_order_book_readiness_refusals_total` counts them by
+  network, route and reason (`refold_queued` or `fold_behind`). An earlier
+  binary can republish that network
+  without draining the queue. Refusals can continue until a writer with
+  the order fold takes the walk and publishes. Another network's queue
+  does not withhold this one. Operators can inspect the queue with no read
+  traffic using `SELECT network, count(*) FROM shop.legacy_order_refold
+  GROUP BY network`.
 - The book stands only while the nft walk's recovery point at its block
   (`shop.chain_checkpoint`) carries its hash. Every binary's rewind drops the
   points past its target, so a branch republished at the same height carries
