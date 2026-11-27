@@ -757,6 +757,18 @@ mod tests {
     }
 
     #[test]
+    fn chat_bubbles_are_listed_with_the_chat_settings() {
+        let config = AppConfig::default();
+        let mut settings = Settings {
+            settings: Vec::default(),
+        };
+        settings.add_enum_setting::<ChatBubbleVisibility>(&config);
+        settings.add_enum_setting::<ChatReactionsSetting>(&config);
+        let categories: Vec<_> = settings.get().into_iter().map(|s| s.category).collect();
+        assert_eq!(categories, ["Chat", "Chat"]);
+    }
+
+    #[test]
     fn prepasses_follow_the_avatar_outline() {
         let mut world = World::new();
         let primary = world
