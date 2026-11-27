@@ -602,9 +602,12 @@ fn schema_layout() -> String {
 }
 
 fn main() -> anyhow::Result<()> {
-    // The posture writes the environment clap reads, so it expands first,
-    // while this is the only thread.
-    posture::apply_to_process_env()?;
+    // The posture writes the environment clap reads, so it expands first.
+    // SAFETY: no other thread has started yet.
+    #[allow(unsafe_code, reason = "the posture writes the process environment")]
+    unsafe {
+        posture::apply_to_process_env()?;
+    }
     // The complete clap tree exceeds the default Windows debug stack. This
     // parser-only thread returns plain values and finishes before V8 or runtime
     // initialization.
@@ -656,6 +659,10 @@ fn serve_preflight(config: &Config, env: &posture::Lookup) -> anyhow::Result<()>
     Ok(())
 }
 
+#[allow(
+    clippy::print_stdout,
+    reason = "subcommands print their reports, JSON and SQL to stdout"
+)]
 async fn run(cli: Cli) -> anyhow::Result<()> {
     match cli.command {
         Command::Serve(config) => catalyst::serve::serve(*config).await,

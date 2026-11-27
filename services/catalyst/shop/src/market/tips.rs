@@ -802,7 +802,10 @@ mod tests {
         chrono::Utc::now().timestamp()
     }
 
-    #[allow(clippy::too_many_arguments)]
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "one argument per seeded transfer column"
+    )]
     async fn transfer(
         pool: &PgPool,
         block: i64,

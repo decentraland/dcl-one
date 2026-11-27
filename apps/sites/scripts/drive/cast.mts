@@ -331,7 +331,9 @@ async function signedFetch(w: Wallet, method: string, url: string, metadata: Rec
   const timestamp = String(Date.now());
   const meta = JSON.stringify(metadata);
   const headers: Record<string, string> = { "x-identity-timestamp": timestamp, "x-identity-metadata": meta };
-  (await chain(w, `${method}:${pathname}:${timestamp}:${meta}`.toLowerCase())).forEach((link, i) => {
+  // crypto-middleware 6.x payload: method and path folded, metadata signed verbatim
+  const payload = `${method.toLowerCase()}:${pathname.toLowerCase()}:${timestamp}:${meta}`;
+  (await chain(w, payload)).forEach((link, i) => {
     headers[`x-identity-auth-chain-${i}`] = JSON.stringify(link);
   });
   return fetch(url, { method, headers });

@@ -340,6 +340,10 @@ pub async fn apply_schema(pool: &PgPool) -> Result<(), ApplySchemaError> {
 /// next test process drops every `catalyst_test_lib_<pid>_*` whose pid is
 /// gone.
 #[cfg(any(test, feature = "scratch"))]
+#[allow(
+    clippy::print_stderr,
+    reason = "test support names its databases on stderr"
+)]
 pub mod scratch {
     use super::*;
     use tokio::sync::OnceCell;
@@ -802,6 +806,7 @@ pub mod scratch {
 
     /// `/proc` is absent on macOS. Signal zero probes existence without sending
     /// a signal; permission denied also proves that a process still exists.
+    #[allow(unsafe_code, reason = "libc signal-zero probe for a process")]
     pub(super) fn process_alive(pid: u32) -> bool {
         if pid == std::process::id() {
             return true;

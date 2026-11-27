@@ -20,6 +20,7 @@ import { registerProfile } from './domains/profile'
 import { registerFriends } from './domains/friends'
 import { registerChat } from './domains/chat'
 import { registerDm } from './domains/dm'
+import { registerReactions } from './domains/reactions'
 import { registerNearbyMutes } from './domains/nearbyMutes'
 import { registerUiSound } from './domains/uiSound'
 import { registerEmotes } from './domains/emotes'
@@ -71,6 +72,7 @@ export function main(): void {
     registerFriends(ctx)
     registerChat(ctx, avatarModifiers)
     registerDm(ctx)
+    registerReactions(ctx)
     registerUiSound(ctx)
     registerVoice(ctx)
     registerNearbyMutes(ctx)

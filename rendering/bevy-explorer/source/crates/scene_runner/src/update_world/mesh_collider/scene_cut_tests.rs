@@ -488,16 +488,16 @@ fn an_avatar_that_leaves_what_it_starts_inside_is_still_stopped_at_the_edge_of_a
 fn a_sweep_that_does_not_touch_a_scene_leaves_its_bvh_unflushed() {
     let mut colliders = scene(&AROUND_A_NOTCH);
     add_slab(&mut colliders, 0);
-    let waiting = colliders.changed_colliders.len();
+    let waiting = colliders.changes.changed.len();
     assert!(waiting > 0);
 
     // in the notch, above the slab
     assert!(sweep(&mut colliders, Vec3::new(24.0, 1.5, -4.0), Vec3::NEG_Z, 4.0).is_none());
-    assert_eq!(colliders.changed_colliders.len(), waiting);
+    assert_eq!(colliders.changes.changed.len(), waiting);
 
     // in the scene
     assert!(sweep(&mut colliders, Vec3::new(8.0, 1.5, -4.0), Vec3::NEG_Z, 4.0).is_none());
-    assert!(colliders.changed_colliders.is_empty());
+    assert!(colliders.changes.changed.is_empty());
 }
 
 #[test]

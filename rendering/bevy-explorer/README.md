@@ -17,6 +17,9 @@ engine pin). Sites runs the same shared HUD as the Explorer, so it has no separa
 - `/play/engine/`, `/play/bridge-scene/`, `/play/service_worker.js`, `/play/preview_realm.js`: the
   web artifact imported by `tooling/fetch-play.py` into `.cache/play/<manifest-hash>` (production:
   `build/client/play`, described by `/play/sites-play.json`).
+- `/avatar-preview/` and `/assets/avatar-preview/`: the avatar preview (`rendering/avatar-preview`),
+  compiled from this workspace's crates in the same artifact; its page revalidates and its
+  content-hashed files are immutable ([publication](../avatar-preview/README.md#publication)).
 - `library/explorer-core/engine/generated`: bindings from `crates/system_api_types`, which both HUD
   hosts compile; regenerate with `source/scripts/gen-ts-bindings.sh` and commit the result.
 

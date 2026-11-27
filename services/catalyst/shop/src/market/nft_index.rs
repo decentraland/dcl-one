@@ -606,6 +606,7 @@ pub async fn fold(
         .execute(&mut *tx)
         .await?;
     super::chain_walk::analyze_if_stale(&mut tx, "shop", "nft_event", since < 0).await?;
+    owner.check(&mut tx).await?;
     let contracts: Vec<String> = sqlx::query_scalar("SELECT contract_address FROM shop.nft_contract WHERE network = $1 AND refold_owed FOR UPDATE")
         .bind(net.db_name())
         .fetch_all(&mut *tx)
@@ -660,15 +661,12 @@ pub async fn fold(
         .fetch_one(&mut *tx)
         .await?;
     if backfills_owed > 0 {
-        // At the end, beside the fence that locks the same row, so the
-        // cursor's row lock lasts only until the commit.
         sqlx::query("UPDATE shop.chain_cursor SET folded_block = NULL, folded_at = NULL WHERE indexer = $1 AND network = $2")
             .bind(INDEXER_NFT)
             .bind(net.db_name())
             .execute(&mut *tx)
             .await?;
     }
-    owner.check(&mut tx).await?;
     tx.commit().await?;
     Ok(FoldCounts {
         nfts,
@@ -1235,13 +1233,14 @@ impl ChainIndex for NftIndex {
                     }
                 }
                 let mut tx = pool.begin().await?;
-                insert_events(&mut tx, self.net, &rows).await?;
                 // Late rows near the head below the producers' cursors are read again.
                 let blocks = rows.iter().map(|r| r.block_number);
                 if let (Some(first), Some(last)) = (blocks.clone().min(), blocks.max()) {
                     super::notice_cursor::replay(&mut tx, INDEXER_NFT, self.net, first - 1, last)
                         .await?;
                 }
+                owner.check(&mut tx).await?;
+                insert_events(&mut tx, self.net, &rows).await?;
                 sqlx::query(
                     "UPDATE shop.nft_contract SET backfilled_to_block = $3, refold_owed = ($3 >= walked_from_block - 1) \
                      WHERE network = $1 AND contract_address = $2",
@@ -1251,7 +1250,6 @@ impl ChainIndex for NftIndex {
                 .bind(w.reached as i64)
                 .execute(&mut *tx)
                 .await?;
-                owner.check(&mut tx).await?;
                 tx.commit().await?;
                 next = w.reached as i64 + 1;
             }
