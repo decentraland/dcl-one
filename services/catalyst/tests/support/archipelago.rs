@@ -6,7 +6,7 @@
 //! state over a pool that never connects (nothing but `/hot-scenes` and the
 //! v4 fence reach the database), and one bound listener serving the
 //! primary's stats mount (`comms::archipelago::mounts`).
-#![allow(dead_code)]
+#![allow(dead_code, reason = "each test binary uses a subset of these fixtures")]
 
 use std::sync::Arc;
 

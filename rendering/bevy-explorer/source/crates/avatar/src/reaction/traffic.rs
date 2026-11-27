@@ -5,7 +5,8 @@
 use std::collections::VecDeque;
 
 use bevy::prelude::*;
-use comms::{chat_reaction::atlas_index_to_emoji, pulse::pacing::TokenBucket};
+use common::token_bucket::TokenBucket;
+use comms::chat_reaction::atlas_index_to_emoji;
 use dcl_component::proto_components::kernel::comms::rfc4;
 
 /// Picks are sent this long after the last one, in seconds.

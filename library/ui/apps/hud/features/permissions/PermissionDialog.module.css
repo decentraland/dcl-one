@@ -1,6 +1,6 @@
 /* Scene permission prompt (e.g. ChangeRealm). Restores the native/unity dialog the react-web HUD
    dropped, in the design-system violet treatment shared with the Create-a-Community modal. */
-/* Just the card — the popup layer (PopupHost .dim/.pop) draws the scrim and DPI-scales it. */
+/* Just the card — the popup layer (PopupHost's ModalBackdrop) draws the scrim and DPI-scales it. */
 .modal {
   display: flex;
   flex-direction: column;

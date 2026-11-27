@@ -2,7 +2,6 @@
 //! `social.archipelago_v4_*` (created by `schema.sql`, the comms section of
 //! `schema/40_social.sql`), with a small pool of its own. Needs
 //! `CATALYST_TEST_DATABASE_URL`; skips otherwise.
-#![allow(dead_code)]
 
 use sqlx::PgPool;
 use sqlx::postgres::PgPoolOptions;

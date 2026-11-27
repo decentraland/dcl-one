@@ -54,7 +54,7 @@ describe('editor host signing inside the web shell', () => {
     const headers = fetched.mock.lastCall![1]!.headers as Record<string, string>
     const { signer, message } = sign![1] as { signer: string; message: string }
     expect(signer).toBe(EPHEMERAL)
-    expect(message).toBe(['put', '/projects/p1/manifest', headers['x-identity-timestamp'], headers['x-identity-metadata']].join(':').toLowerCase())
+    expect(message).toBe(['put', '/projects/p1/manifest', headers['x-identity-timestamp'], headers['x-identity-metadata']].join(':'))
     expect(JSON.parse(headers['x-identity-auth-chain-2'])).toEqual({ type: 'ECDSA_SIGNED_ENTITY', payload: message, signature: '0xsigned' })
     expect(read.mock.calls.filter(([key]) => String(key).startsWith('single-sign-on-'))).toEqual([])
   })
