@@ -353,6 +353,9 @@ pub(super) async fn personal_rows(
                 .iter()
                 .filter_map(|pick| normalize_item_id(&pick.item_id))
                 .collect(),
+            Err(ApiError::Database(e)) if super::super::nft_reads::cancelled(&e) => {
+                return Err(e.into());
+            }
             Err(e) => {
                 tracing::warn!(error = ?e, "suggestions: could not read favorites");
                 Vec::new()

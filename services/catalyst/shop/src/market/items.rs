@@ -1030,7 +1030,7 @@ pub async fn catalog_items_page(
     let rate = rate_to_numeric_string(rate);
     let (rows, total) = run_items(state, read, &filters, Some(&rate), Some(&catalog))
         .await
-        .map_err(IntoResponse::into_response)?;
+        .map_err(readers::index_api_error)?;
     let data = rows
         .iter()
         .map(|r| CreditCatalogItem {

@@ -12014,6 +12014,142 @@ async fn a_names_page_by_latest_sale_reads_the_admitted_index() {
 }
 
 #[tokio::test]
+async fn v3_catalogue_statement_errors_use_the_read_bound() {
+    let graph = FakeGraph::new();
+    let url = serve_graph(graph.clone()).await;
+    let Some((state, own)) = state_over_own(&url, true).await else {
+        return;
+    };
+    let pool = &state.pool;
+    let contract = contract_of(&tag(), 1);
+    for item in ["1", "2"] {
+        seed_item_row(pool, &contract, item, CREATOR).await;
+    }
+    sqlx::raw_sql(
+        "UPDATE shop.items SET search_is_collection_approved=true, search_is_store_minter=true, price=1e18;
+         INSERT INTO shop.mirror_state (mirror,network,source_url,last_complete_pass_at)
+         SELECT m,n,'test',timezone('UTC',now())
+         FROM unnest(ARRAY['collections','items']) m CROSS JOIN unnest(ARRAY['ethereum','matic']) n;
+         INSERT INTO economy.price_snapshots (source,mana_usd,taken_at)
+         VALUES ('coingecko',0.02,timezone('UTC',now()));",
+    )
+    .execute(pool)
+    .await
+    .unwrap();
+    super::owned_items::test_support::publish(
+        pool,
+        &super::chain_walk::ChainNet::ALL,
+        false,
+        Duration::ZERO,
+    )
+    .await;
+    super::trade_events::tests::publish_cursors(pool).await;
+    insert_trade(
+        pool,
+        "public_item_order",
+        CREATOR,
+        Asset {
+            asset_type: 4,
+            contract: contract.clone(),
+            value: "2".into(),
+        },
+        Asset {
+            asset_type: 1,
+            contract: listings::mana_token(137).unwrap().into(),
+            value: "1000000000000000000".into(),
+        },
+    )
+    .await;
+    graph.set(
+        "sales",
+        (0..6)
+            .map(|id| {
+                json!({
+                    "id": format!("sale-{id}"),
+                    "timestamp": (chrono::Utc::now().timestamp() - 30).to_string(),
+                    "price": "1000000000000000000",
+                    "searchContractAddress": contract,
+                    "searchItemId": "2",
+                    "item": { "creator": CREATOR },
+                })
+            })
+            .collect(),
+    );
+    let app = || market_router(state.clone());
+    let related =
+        format!("/v3/catalog/related?contractAddress={contract}&itemId=1&listingType=primary");
+    let importable = format!("/v3/catalog/importable?seller={CREATOR}");
+    let trades_routes = [
+        related.as_str(),
+        importable.as_str(),
+        "/v3/catalog/shop?first=1",
+        "/v3/catalog/legacy?first=1",
+        "/v3/catalog/items?first=1",
+        "/v3/catalog/unified?groupBy=item&first=1",
+        "/v3/catalog/trending?first=1",
+        "/v3/catalog/suggested?first=1",
+    ];
+    let creators = "/v3/catalog/creators?days=7";
+    for uri in trades_routes.into_iter().chain([creators]) {
+        let (code, body) = get(app(), uri).await;
+        assert_eq!(code, StatusCode::OK, "{uri}: {body}");
+    }
+    let (code, body) = get(app(), &related).await;
+    assert_eq!(code, StatusCode::OK, "{body}");
+    assert_eq!(body["data"][0]["itemId"], "2", "{body}");
+    sqlx::raw_sql(
+        "CREATE FUNCTION shop.catalog_test_bound() RETURNS boolean LANGUAGE plpgsql AS $$
+         BEGIN RAISE EXCEPTION 'private fixture detail' USING ERRCODE = '57014'; END;
+         $$;
+         ALTER TABLE shop.trades RENAME TO catalog_test_trades;
+         CREATE VIEW shop.trades AS SELECT * FROM shop.catalog_test_trades WHERE shop.catalog_test_bound();",
+    )
+    .execute(pool)
+    .await
+    .unwrap();
+
+    let expected_bytes =
+        axum::body::to_bytes(super::nft_reads::timed_out().into_body(), usize::MAX)
+            .await
+            .unwrap();
+    let expected: Value = serde_json::from_slice(&expected_bytes).unwrap();
+    for uri in trades_routes {
+        let (code, body) = get(app(), uri).await;
+        assert_eq!(code, StatusCode::SERVICE_UNAVAILABLE, "{uri}: {body}");
+        assert_eq!(body, expected, "{uri}");
+    }
+
+    sqlx::raw_sql(
+        "DROP VIEW shop.trades;
+         ALTER TABLE shop.catalog_test_trades RENAME TO trades;
+         ALTER TABLE shop.items RENAME TO catalog_test_items;
+         CREATE VIEW shop.items AS SELECT * FROM shop.catalog_test_items WHERE shop.catalog_test_bound();",
+    )
+    .execute(pool)
+    .await
+    .unwrap();
+    state.readers.clear();
+    for uri in [related.as_str(), creators] {
+        let (code, body) = get(app(), uri).await;
+        assert_eq!(code, StatusCode::SERVICE_UNAVAILABLE, "{uri}: {body}");
+        assert_eq!(body, expected, "{uri}");
+    }
+
+    sqlx::raw_sql(
+        "CREATE OR REPLACE FUNCTION shop.catalog_test_bound() RETURNS boolean LANGUAGE plpgsql AS $$
+         BEGIN RAISE EXCEPTION 'private fixture detail'; END;
+         $$;",
+    )
+    .execute(pool)
+    .await
+    .unwrap();
+    let (code, body) = get(app(), &related).await;
+    assert_eq!(code, StatusCode::INTERNAL_SERVER_ERROR, "{body}");
+    assert_eq!(body, json!({"message":"database error","ok":false}));
+    own.drop().await;
+}
+
+#[tokio::test]
 async fn catalog_resales_read_the_published_legacy_book_and_v3_listings() {
     use super::chain_walk::ChainNet;
 
