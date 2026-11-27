@@ -1,5 +1,6 @@
 import { createContext, useContext, useMemo, useState } from 'react'
 import type { ComponentType, ReactNode } from 'react'
+import { Button } from '../../../components/Button/Button'
 
 import type {
   FlowEdge,
@@ -384,9 +385,9 @@ function AsciiDetails({ source, label }: { source: string; label: string }) {
     <details className="fm-ascii">
       <summary>View as text &#x2014; the ascii original, for copy-paste</summary>
       <div className="fm-ascii-body">
-        <button type="button" className="fm-copybtn" onClick={copy}>
+        <Button variant="secondary" size="sm" className="fm-copybtn" onClick={copy}>
           {copied ? 'Copied \u{2713}' : 'Copy'}
-        </button>
+        </Button>
         <pre tabIndex={0} aria-label={label}>
           {source}
         </pre>
