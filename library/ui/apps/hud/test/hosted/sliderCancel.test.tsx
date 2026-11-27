@@ -17,7 +17,12 @@ async function world(): Promise<Harness> {
 
 const cancel = { kind: 'systemAction', action: 'Cancel', pressed: true } as const
 
-/** The Backpack open, with the hair colour popup over it; its Hue bar dragged, so it holds the focus. */
+/** The engine's word on the keyboard (boot.js on the web, the CEF bridge natively): it reports every keyboard claim,
+ *  the HUD's declared text focus included, and lets it go a few frames after the HUD does. */
+const engineKeyboard = window as Window & { __engineTextFocus?: boolean }
+
+/** The Backpack open, with the hair colour popup over it; its Hue bar dragged, so it holds the focus, and the engine
+ *  reports the keyboard claimed by it. */
 async function draggedHueBar(): Promise<{ h: Harness; bar: HTMLInputElement }> {
   const h = await world()
   act(() => h.session().backpack.toggle())
@@ -27,6 +32,7 @@ async function draggedHueBar(): Promise<{ h: Harness; bar: HTMLInputElement }> {
   act(() => bar.focus())
   fireEvent.change(bar, { target: { value: '0.5' } })
   expect(document.activeElement).toBe(bar)
+  engineKeyboard.__engineTextFocus = true
   return { h, bar }
 }
 
@@ -44,6 +50,7 @@ function popupWith(control: React.JSX.Element): HTMLElement {
 }
 
 afterEach(() => {
+  engineKeyboard.__engineTextFocus = false
   resetPopups()
   act(() => setBindingsSnapshot([])) // module store leaks across tests
   document.body.innerHTML = ''
@@ -66,6 +73,10 @@ describe('the cancel key on a focused slider', () => {
       fireEvent.keyDown(bar, { key: 'Escape', code: 'Escape' })
     })
     expect(h.session().backpack.open).toBe(true)
+    // until the engine lets the bar's claim go, a Cancel it resolved is still dropped (the declaration race)
+    act(() => h.driver.emit(cancel))
+    expect(h.session().backpack.open).toBe(true)
+    engineKeyboard.__engineTextFocus = false
     act(() => h.driver.emit(cancel))
     expect(h.session().backpack.open).toBe(false)
   })
@@ -123,6 +134,7 @@ describe('the cancel key on a focused slider', () => {
   it('closes a popup a slider sits in (the shared Slider, as in the Volume panel)', async () => {
     await world()
     const slider = popupWith(<input type="range" aria-label="Master" />)
+    engineKeyboard.__engineTextFocus = true
     act(() => {
       fireEvent.keyDown(slider, { key: 'Escape', code: 'Escape' })
     })

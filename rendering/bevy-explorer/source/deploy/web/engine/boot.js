@@ -36,8 +36,9 @@
 //       heartbeat stops and that is no crash, so the watchdog and the host stand down
 //       (library/explorer-core/engine/bridgeChannel.ts reads it, through each host's engineExited)
 //     __engineHeartbeat / reportEngineError / __rearmCrashWatchdog — crash watchdog plumbing
-//     __engineTextFocus — true while an engine-rendered text field holds keyboard focus (the
-//       wasm keeps it current via __setEngineTextFocus); HUD hotkeys must not fire while set
+//     __engineTextFocus — true while a text field holds the keyboard: an engine-rendered one, or
+//       the HUD's own declared `text` focus (the wasm keeps it current via __setEngineTextFocus);
+//       HUD hotkeys must not fire while set
 //     __onEngineCrash(message, source) — OPTIONAL host callback; the watchdog calls it instead of
 //       rendering any overlay (React owns the error UI). The watchdog also posts the engine's
 //       Explorer Error itself (engine_crash_event): the engine can no longer.
@@ -311,9 +312,10 @@ publish()
 const config = window.__bevyBootConfig ?? {}
 
 // ---- engine text focus (CALLED BY THE WASM — src/web.rs update_text_focus) -----------------------
-// True while an engine-rendered text field (e.g. a scene textinput) holds keyboard focus. Those
-// fields live on the canvas, so DOM focus checks can't see them — the HUD's systemAction
-// dispatcher reads this flag instead to leave keys alone while the user is typing.
+// True while an engine-rendered text field (e.g. a scene textinput) holds keyboard focus, and
+// while the HUD declares `text` focus (the engine reports every keyboard claim). Engine fields
+// live on the canvas, so DOM focus checks can't see them — the HUD's systemAction dispatcher
+// reads this flag instead to leave keys alone while the user is typing.
 window.__engineTextFocus = false
 window.__setEngineTextFocus = (focused) => {
   window.__engineTextFocus = !!focused

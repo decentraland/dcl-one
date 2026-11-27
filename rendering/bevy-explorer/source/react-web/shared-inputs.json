@@ -10031,7 +10031,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/deploy/web/engine/boot.js",
-      "sha256": "905c61b426284d357693dc41d1f8ec9b366ebc49e5a01a49824cb74a3956d72a"
+      "sha256": "79998743f3851d3b6b46ccf1a982d1753b85c7b6ef33a6d6ba05e8fea4e1277a"
     },
     {
       "path": "rendering/bevy-explorer/source/deploy/web/engine/content_cache.js",
@@ -14205,7 +14205,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/session/useEngineSession.ts",
-      "sha256": "7473140bc69d096813b8588068cf0439a8d2023499908a0a7dd6bff7f83d1be9"
+      "sha256": "a0fecb602dd5bcab36d47d9ac486c2f97662291779b618d104b2ce2f1134cc32"
     },
     {
       "path": "library/ui/apps/hud/features/settings/KeyBindingsTab.module.css",
@@ -15001,7 +15001,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/hosted/sliderCancel.test.tsx",
-      "sha256": "182e2a329bcc1a40b9c0cbfbb84daf95b643c84a814515e622f562485a7c9b67"
+      "sha256": "83e97b1f03f63636267ef6f619b9b8787aafa0cf63e1f2652d54e8f8ad909467"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/systemActionShortcuts.test.tsx",

@@ -1628,7 +1628,8 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
   // Engine hotkey edges arrive on the run-once driver subscription; dispatch through a ref
   // assigned every render so the handler sees current toggles/state without stale closures
   // (same idiom as chatOpenRef).
-  const systemActionRef = useRef<(action: string, pressed: boolean) => void>(() => {})
+  // `heldByHud`: the HUD held the key from the engine itself and acts on it (a slider's cancel key).
+  const systemActionRef = useRef<(action: string, pressed: boolean, heldByHud?: boolean) => void>(() => {})
   // The active press-a-key capture. Only the newest matters: the engine has no capture
   // cancel (a stale request resolves on the NEXT input), so anything but the active id is
   // dropped when an inputCaptured message lands.
@@ -5253,7 +5254,7 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
       if (!isCancelKey(e) || !isEditableTarget(e.target)) return
       const field = e.target as HTMLElement
       field.blur()
-      if (isSliderTarget(field)) systemActionRef.current('Cancel', true)
+      if (isSliderTarget(field)) systemActionRef.current('Cancel', true, true)
     }
     document.addEventListener('focusin', update, true)
     document.addEventListener('focusout', onFocusOut, true)
@@ -5393,7 +5394,7 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
   // keys fire regardless of where keyboard focus sits. The engine already resolves nothing
   // while `text` focus is declared; the DOM-focus guards stay as defence for the declaration
   // race (a keystroke landing before the uiFocus relay does).
-  systemActionRef.current = (action, pressed) => {
+  systemActionRef.current = (action, pressed, heldByHud = false) => {
     // Scroll edges (both edges — held scrolls continuously) drive the hovered panel via
     // the driver above. Wheel-sourced edges are skipped: the DOM scrolled natively on the
     // wheel event itself, and acting on its echo would double-scroll.
@@ -5406,8 +5407,11 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
       return
     }
     if (!pressed || (phase !== 'world' && phase !== 'lobby') || isInputLocked()) return
-    if (isEditableTarget(document.activeElement)) return
-    if ((window as EngineFocusWindow).__engineTextFocus) return
+    // A key the HUD held from the engine itself never reached it, and the text focus these
+    // guards see is the field's own declaration, still being released (the engine reports
+    // the HUD's text focus in __engineTextFocus too).
+    if (!heldByHud && isEditableTarget(document.activeElement)) return
+    if (!heldByHud && (window as EngineFocusWindow).__engineTextFocus) return
     if (EDITOR_BUILD && !hudActsOn(editorMode, action)) return
     // 'Cancel' is the one action handled even with a popup open: the engine resolved the
     // cancel key or gamepad button, and this is the single layered close — the most recent of
