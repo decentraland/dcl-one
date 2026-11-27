@@ -3,7 +3,7 @@ import { Quaternion, Vector3 } from '@dcl/sdk/math';
 import {
   AIR_JUMP_IMPULSE, ACCEL_CURVE_END, ACCEL_CURVE_START, AIR_ACCEL, AIR_DRAG, AIR_MAX_ACCEL, EXTERNAL_ENV_DRAG, EXTERNAL_GROUND_FRICTION,
   GROUND_ACCEL, GROUND_MAX_ACCEL, MAX_EXTERNAL_SPEED,
-  SLOPE_SPEED_FACTOR, SLOPE_SPEED_MAX_ANGLE, TURN_FULL_TIME, TURN_MAX_DEGREES_SEC, VEC3_FORWARD, VEC3_HORIZONTAL_MASK, VEC3_RIGHT,
+  SLOPE_SPEED_FACTOR, SLOPE_SPEED_MAX_ANGLE, TURN_RATE, VEC3_FORWARD, VEC3_HORIZONTAL_MASK, VEC3_RIGHT,
   VEC3_UP, VEC3_ZERO,
 } from './constants';
 import { horizontalResync, playerRotation, prevActualVelocity, prevExternalVelocity, tickTime, velocity } from '.';
@@ -318,8 +318,9 @@ function setOrientation(moveX: number, moveZ: number, stun: boolean) {
   }
   targetOrientation = heading === null || stun ? orientation : heading;
 
-  // A slow glide lets a key spiral turn the heading fast. A lower TURN_MAX_DEGREES_SEC falls further behind on every lap
-  // until the avatar flies backwards.
+  // Each tick the facing moves TURN_RATE * tickTime of the way to the heading along the rotation between them (a
+  // normalized quaternion lerp): a gap of g degrees closes by 2 * atan2(f sin(g/2), 1 - f + f cos(g/2)), so a small gap
+  // eases out exponentially and an about-turn opens at 22.6 degrees a frame at 60 fps.
   if (targetOrientation != orientation) {
     if (Math.abs(targetOrientation - orientation) < 1) {
       orientation = targetOrientation;
@@ -327,13 +328,9 @@ function setOrientation(moveX: number, moveZ: number, stun: boolean) {
       orientation = relativeDegrees(targetOrientation, orientation);
       // an about-turn (W to S) turns left, whichever way rounding puts the heading
       if (targetOrientation - orientation > 179.9) orientation += 360;
-      let perc = Math.min(tickTime / TURN_FULL_TIME, 1);
-      orientation = Math.max(
-        orientation - TURN_MAX_DEGREES_SEC * tickTime,
-        Math.min(
-          orientation + TURN_MAX_DEGREES_SEC * tickTime,
-          targetOrientation * perc + orientation * (1 - perc)
-        ));
+      const gap = (targetOrientation - orientation) * Math.PI / 180;
+      const f = Math.min(TURN_RATE * tickTime, 1);
+      orientation += 2 * Math.atan2(f * Math.sin(gap / 2), 1 - f + f * Math.cos(gap / 2)) * 180 / Math.PI;
       orientation = relativeDegrees(180, orientation);
     }
   }
