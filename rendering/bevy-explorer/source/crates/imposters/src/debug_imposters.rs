@@ -271,7 +271,9 @@ mod tests {
             let mut ppm = b"P6\n64 64\n255\n".to_vec();
             ppm.extend(
                 pixels
-                    .chunks_exact(4)
+                    .as_chunks::<4>()
+                    .0
+                    .iter()
                     .flat_map(|bgra| [bgra[2], bgra[1], bgra[0]]),
             );
             std::fs::write(
