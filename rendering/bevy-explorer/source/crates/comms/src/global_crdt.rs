@@ -1527,18 +1527,23 @@ impl SceneMessageBus<'_, '_> {
         match comms_type {
             CommsMessageType::String => {
                 if let Some(sender) = self.string_senders.get(&scene.scene_id) {
-                    let _ = sender.send(
+                    let sent = sender.send(
                         json!({
                             "message": String::from_utf8(scene.data).unwrap_or_default(),
                             "sender": address,
                         })
                         .to_string(),
                     );
+                    if sent.is_ok() {
+                        self.scene_topics.record_delivered(&scene.scene_id);
+                    }
                 }
             }
             CommsMessageType::Binary => {
                 if let Some(sender) = self.binary_senders.get(&scene.scene_id) {
-                    let _ = sender.send((address, scene.data));
+                    if sender.send((address, scene.data)).is_ok() {
+                        self.scene_topics.record_delivered(&scene.scene_id);
+                    }
                 }
             }
             CommsMessageType::CommsData => {

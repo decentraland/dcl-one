@@ -52,13 +52,19 @@ and main-thread time each frame there is spare time, whether or not the player c
   check until the next dispatch. The margin absorbs that unless the forwarder is far behind,
   most likely right after a replay. Updates sent between a spawn and the forwarder's swap are
   replayed uncounted. Each backend reports what a spawn replays (`replayed_global_updates`): the
-  native forwarder what the new receiver holds, the web relay nothing. The slow tick keeps a
-  scene's other channels, such as scene comms, moving.
+  native forwarder what the new receiver holds, the web relay nothing.
+- **Unread peer messages make a scene due too.** A scene's inbound message queues, the string
+  and binary buses (1,024 each) and the topic inbox (645), also drain only at a tick, and drop
+  new messages when full. `SceneMessageTraffic::delivered_to` counts the peer messages handed
+  to a scene's queues, by scene hash; each dispatch records it (`scene_messages_read`), and a
+  capped scene with `SCENE_MESSAGE_BACKLOG_DUE` (160, a quarter of the topic inbox) or more since
+  is due whatever its band. The count is summed over the three queues, so the release comes no
+  later than any one queue's quarter.
 - **A rate is a minimum interval.** `update_scene_priority` leaves a capped scene out of the
   frame's queue until `1 / rate` seconds have passed since it was last sent. A scene that is due
   is ordered by the existing key, with its age taken from when its interval passed, at least a
   frame (`queue_age`): holding a scene back does not rank it as starved, so a scene behind the
-  camera still yields first. A scene released on unread global updates keeps its age since it
+  camera still yields first. A scene released on an unread backlog keeps its age since it
   was last sent. Age grows a frame at a time, so
   the interval counts as passed within a quarter of a frame of it: jitter cannot miss an
   interval of whole frames, and one of a frame and a half always waits for the second frame. A
@@ -77,8 +83,8 @@ and main-thread time each frame there is spare time, whether or not the player c
   bands measured from the player would cap the scenes they frame.
 - **Inspectable.** Each scene's context holds its current cap (`tick_rate_cap`), and
   `SceneUpdates::skipped_rate_capped` counts the scene-frames the cap skipped and
-  `released_by_global_updates` the ticks sent before their band allowed on unread global
-  updates; the runtime debug
+  `released_by_backlog` the ticks sent before their band allowed on unread global updates or
+  peer messages; the runtime debug
   panel's "Scene Tick Rates" section (`/scene_tick_rate_state`) shows them, whether the behind
   cap applies at the camera's pitch, and why nothing is capped when that is so
   (`tick_rate_caps_lifted`). `/scene_tick_rate_caps false` lifts every cap, so one build
@@ -95,10 +101,13 @@ and main-thread time each frame there is spare time, whether or not the player c
   the same frame. Walking through a busy area spawns scenes often, so the release can take back
   part of the saving there; the measurement reports the panel's `released` count to show how
   much, and whether replayed copies need a threshold of their own.
-- Scene message buses (binary and string, `MAX_NETWORK_MESSAGE_QUEUE`, 1,024 each) also drain
-  only at a tick and drop new messages when full, and nothing releases a capped scene for them.
-  A scene 16 m or more behind the camera, or past 80 m, that receives more than about 1,024 or
-  512 messages a second from peers loses the excess.
+- On the client every scene shares one crdt context, so the global-update release follows the
+  island's update rate: at about 500 updates a second every capped scene is due about every
+  half second, and the 1/s and 0.5/s caps act as about 2/s where the island is busiest. A scene
+  receiving peer messages is likewise due at least every 160 of them. The panel's `released`
+  next to `skipped` shows how much of the cap a spot keeps.
+- A capped scene loses peer messages only when more than the remaining room in a queue (at
+  least 485 topic messages, or 864 bus messages) arrive between its release and its dispatch.
 - The photo and cinematic exemptions lift every cap, not just the scenes the camera frames. A
   scene that keeps a cinematic camera or camera-mode area active while the player is inside it
   ticks the whole world at the full rate for that time. Measuring the bands from the rendering

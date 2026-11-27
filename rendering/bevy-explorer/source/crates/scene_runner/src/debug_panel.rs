@@ -13,7 +13,7 @@ use crate::{
         CurrentSceneLoading, PointerResult, SceneLoading, SuperUserScene, PARCEL_SIZE,
     },
     renderer_context::RendererSceneContext,
-    scene_partition::{behind_cap_applies, tick_rate_caps_lifted, SCENE_TICK_RATE_CAPS},
+    scene_partition::{camera_tick_rate_caps, SCENE_TICK_RATE_CAPS},
     scene_traffic::{Batch, SceneTraffic, Tick},
     update_world::{
         gltf_container::{GltfLoadingCount, SceneResourceLookup},
@@ -658,16 +658,14 @@ fn tick_rate_state(
     if input.take().is_none() {
         return;
     }
-    let camera = rendering_camera.single().ok();
+    let (caps_lifted, behind_cap) =
+        camera_tick_rate_caps(rendering_camera.single().ok(), updates.tick_rate_caps_off);
     let totals = json!({
         "capsOn": !updates.tick_rate_caps_off,
         "skipped": updates.skipped_rate_capped,
-        "released": updates.released_by_global_updates,
+        "released": updates.released_by_backlog,
     });
-    if let Some(reason) = tick_rate_caps_lifted(
-        camera.map(|(_, primary, photo_mode)| (primary, photo_mode)),
-        updates.tick_rate_caps_off,
-    ) {
+    if let Some(reason) = caps_lifted {
         let reason = format!("{reason}: every scene ticks at the full rate.");
         let mut reply = totals;
         reply["unavailable"] = json!({"full": reason, "capped": reason, "behindCap": reason});
@@ -689,8 +687,6 @@ fn tick_rate_state(
             Some(band) => capped[band] += 1,
         }
     }
-    let behind_cap =
-        camera.is_some_and(|(camera, ..)| behind_cap_applies(camera.forward().as_vec3()));
     let mut reply = totals;
     reply["full"] = json!(full);
     reply["capped"] = json!(capped);

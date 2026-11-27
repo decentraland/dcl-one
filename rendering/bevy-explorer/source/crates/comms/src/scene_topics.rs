@@ -107,9 +107,16 @@ impl SceneTopicRouter<'_, '_> {
                 .iter()
                 .find(|inbox| inbox.hash == scene_hash && !inbox.sender.is_closed())
                 .is_some_and(|inbox| inbox.sender.send((sender, payload)).is_ok());
-        if !delivered {
+        if delivered {
+            self.traffic.record_delivered(scene_hash);
+        } else {
             self.traffic.receive_dropped += 1;
         }
+    }
+
+    /// Count a peer message handed to the bus queue of the scene with `scene_hash`.
+    pub(crate) fn record_delivered(&mut self, scene_hash: &str) {
+        self.traffic.record_delivered(scene_hash);
     }
 
     pub(crate) fn record_banned(&mut self, is_topic: bool) {

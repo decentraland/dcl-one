@@ -17,9 +17,27 @@ pub struct SceneMessageTraffic {
     pub(crate) filtered_inbound: u64,
     pub(crate) filtered_outbound: u64,
     pub(crate) invalid: u64,
+    /// Peer messages handed to each scene's inbound queues (string bus, binary bus, topic inbox),
+    /// by scene hash. A scene drains them only while it ticks.
+    delivered_to_scene: bevy::platform::collections::HashMap<String, u64>,
 }
 
 impl SceneMessageTraffic {
+    /// The peer messages handed to the inbound queues of the scene with `hash` since startup.
+    pub fn delivered_to(&self, hash: &str) -> u64 {
+        self.delivered_to_scene.get(hash).copied().unwrap_or(0)
+    }
+
+    /// Count a peer message handed to an inbound queue of the scene with `hash`.
+    pub fn record_delivered(&mut self, hash: &str) {
+        match self.delivered_to_scene.get_mut(hash) {
+            Some(count) => *count += 1,
+            None => {
+                self.delivered_to_scene.insert(hash.to_owned(), 1);
+            }
+        }
+    }
+
     /// Topic publishes (sent, dropped).
     pub fn publishes(&self) -> (u64, u64) {
         (self.published, self.publish_dropped)

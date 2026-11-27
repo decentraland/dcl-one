@@ -53,7 +53,8 @@ pub fn release_scene_hash(world: DeferredWorld, context: HookContext) {
 pub const BEHIND_SCENE_TICK_PENALTY: f32 = 4.0;
 
 /// The most ticks a second of a scene whose nearest parcel is under each distance (m) from the
-/// player, nearest band first, rounded to whole frames (`tick_rate_allows`). A scene beyond the last band ticks at `FAR_SCENE_TICK_RATE`.
+/// player, nearest band first, rounded to whole frames (`tick_rate_allows`). A scene beyond the
+/// last band ticks at `FAR_SCENE_TICK_RATE`.
 pub(crate) const SCENE_TICK_RATE_BANDS: [(f32, f32); 5] = [
     (16.0, 40.0),
     (32.0, 30.0),
@@ -63,8 +64,8 @@ pub(crate) const SCENE_TICK_RATE_BANDS: [(f32, f32); 5] = [
 ];
 
 /// The ticks a second of a scene beyond the last band, so it keeps reading the channels it
-/// reads only while ticking. Unread global updates make it due sooner
-/// (`GLOBAL_UPDATE_BACKLOG_DUE`).
+/// reads only while ticking. Unread global updates and peer messages make it due sooner
+/// (`GLOBAL_UPDATE_BACKLOG_DUE`, `SCENE_MESSAGE_BACKLOG_DUE`).
 pub(crate) const FAR_SCENE_TICK_RATE: f32 = 0.5;
 
 /// The most ticks a second of a scene behind the camera.
@@ -115,6 +116,22 @@ pub(crate) fn tick_rate_caps_lifted(
     }
 }
 
+/// What the rendering camera, `camera` (with whether it frames a photo), allows this frame: why no
+/// scene is capped, or None while the bands cap them (`tick_rate_caps_lifted`), and whether the
+/// behind cap applies at its pitch (`behind_cap_applies`).
+pub(crate) fn camera_tick_rate_caps(
+    camera: Option<(&GlobalTransform, &PrimaryCamera, bool)>,
+    caps_off: bool,
+) -> (Option<&'static str>, bool) {
+    let lifted = tick_rate_caps_lifted(
+        camera.map(|(_, primary, photo_mode)| (primary, photo_mode)),
+        caps_off,
+    );
+    let behind_cap =
+        camera.is_some_and(|(camera, ..)| behind_cap_applies(camera.forward().as_vec3()));
+    (lifted, behind_cap)
+}
+
 /// The most ticks a second of a scene at `partition`: its distance band's rate, or
 /// `FAR_SCENE_TICK_RATE` beyond the last band, at most `BEHIND_SCENE_TICK_RATE` behind the
 /// camera from the second band on. In the nearest band the player can back into the scene's
@@ -156,6 +173,11 @@ pub(crate) fn tick_rate_allows(rate: f32, age: f64, frame: f64) -> bool {
 /// holds all of them again, so an overflow that drops their originals loses none.
 pub(crate) const GLOBAL_UPDATE_BACKLOG_DUE: u64 =
     common::structs::SCENE_GLOBAL_UPDATE_CAPACITY as u64 / 4;
+
+/// The peer messages handed to a capped scene's inbound queues (string bus, binary bus, topic
+/// inbox) since its last dispatch from which it is due: a quarter of the smallest queue, the
+/// topic inbox (645 messages; each bus holds 1,024). Each queue drops new messages when full.
+pub(crate) const SCENE_MESSAGE_BACKLOG_DUE: u64 = 160;
 
 /// Where partitions are measured from: distance from the player, facing from the rendering
 /// camera (a `PrimaryCamera` with a `Camera`). Without one, as on the headless server whose

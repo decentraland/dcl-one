@@ -34,6 +34,7 @@ use common::{
 };
 use comms::{
     global_crdt::{CrdtContexts, GlobalCrdtState},
+    scene_messages::SceneMessageTraffic,
     SceneRoomConnection, SetCurrentScene,
 };
 use dcl_component::{
@@ -63,9 +64,9 @@ use crate::{
     asset_preload::plugin::AssetPreloadPlugin,
     initialize_scene::{CurrentImposterScene, SuperUserScene},
     scene_partition::{
-        behind_cap_applies, publish_download_priorities, queue_age, scene_tick_rate,
-        tick_rate_allows, tick_rate_caps_lifted, update_scene_partitions, Partition,
-        BEHIND_SCENE_TICK_PENALTY, GLOBAL_UPDATE_BACKLOG_DUE,
+        camera_tick_rate_caps, publish_download_priorities, queue_age, scene_tick_rate,
+        tick_rate_allows, update_scene_partitions, Partition, BEHIND_SCENE_TICK_PENALTY,
+        GLOBAL_UPDATE_BACKLOG_DUE, SCENE_MESSAGE_BACKLOG_DUE,
     },
 };
 use common::partition::PartitionData;
@@ -131,9 +132,9 @@ pub struct SceneUpdates {
     /// Scene-frames skipped because the scene's distance band allowed no tick yet
     /// (`scene_tick_rate`).
     pub(crate) skipped_rate_capped: u64,
-    /// Ticks sent to a capped scene before its band allowed, because of the global updates it
-    /// had not read (`GLOBAL_UPDATE_BACKLOG_DUE`).
-    pub(crate) released_by_global_updates: u64,
+    /// Ticks sent to a capped scene before its band allowed, because of the global updates or
+    /// peer messages it had not read (`GLOBAL_UPDATE_BACKLOG_DUE`, `SCENE_MESSAGE_BACKLOG_DUE`).
+    pub(crate) released_by_backlog: u64,
     /// Whether `/scene_tick_rate_caps false` turned the distance bands off.
     pub(crate) tick_rate_caps_off: bool,
     /// Named scene entities that must be scheduled every frame (e.g. the
@@ -425,7 +426,7 @@ impl Plugin for SceneRunnerPlugin {
             skipped_in_flight: 0,
             skipped_already_sent: 0,
             skipped_rate_capped: 0,
-            released_by_global_updates: 0,
+            released_by_backlog: 0,
             tick_rate_caps_off: false,
         });
 
@@ -622,6 +623,7 @@ fn update_scene_priority(
     rendering_camera: Query<(&GlobalTransform, &PrimaryCamera, Has<PhotoMode>), With<Camera>>,
     crdt_context_ids: Res<CrdtContexts>,
     crdt_contexts: Query<&GlobalCrdtState>,
+    scene_messages: Res<SceneMessageTraffic>,
     imposter_scene: Res<CurrentImposterScene>,
     mut updates: ResMut<SceneUpdates>,
     time: Res<Time>,
@@ -640,14 +642,9 @@ fn update_scene_priority(
     );
 
     let elapsed = time.elapsed_secs_f64();
-    let camera = rendering_camera.single().ok();
-    let rate_capped = tick_rate_caps_lifted(
-        camera.map(|(_, primary, photo_mode)| (primary, photo_mode)),
-        updates.tick_rate_caps_off,
-    )
-    .is_none();
-    let behind_capped =
-        camera.is_some_and(|(camera, ..)| behind_cap_applies(camera.forward().as_vec3()));
+    let (caps_lifted, behind_capped) =
+        camera_tick_rate_caps(rendering_camera.single().ok(), updates.tick_rate_caps_off);
+    let rate_capped = caps_lifted.is_none();
     let imposter_hash = match &imposter_scene.0 {
         Some((PointerResult::Exists { hash, .. }, _)) => Some(hash.as_str()),
         _ => None,
@@ -735,24 +732,30 @@ fn update_scene_priority(
                 return None;
             }
             let age = time.elapsed_secs_f64() - context.last_sent;
-            context.due_on_global_updates = false;
+            context.due_on_backlog = false;
             if let Some(rate) = context.tick_rate_cap {
                 if !tick_rate_allows(rate, age, time.delta_secs_f64()) {
-                    // its scene host drops the oldest global updates past its capacity, so a
-                    // scene that has many unread is due whatever its band
-                    let unread = global_updates_sent(&crdt_context_ids, &crdt_contexts, &context)
-                        .saturating_sub(context.global_updates_read);
-                    if unread < GLOBAL_UPDATE_BACKLOG_DUE {
+                    // its scene host drops global updates and peer messages past its queues'
+                    // capacity, so a scene that has many unread is due whatever its band
+                    let unread_updates =
+                        global_updates_sent(&crdt_context_ids, &crdt_contexts, &context)
+                            .saturating_sub(context.global_updates_read);
+                    let unread_messages = scene_messages
+                        .delivered_to(&context.hash)
+                        .saturating_sub(context.scene_messages_read);
+                    if unread_updates < GLOBAL_UPDATE_BACKLOG_DUE
+                        && unread_messages < SCENE_MESSAGE_BACKLOG_DUE
+                    {
                         skipped_rate_capped += 1;
                         return None;
                     }
-                    context.due_on_global_updates = true;
+                    context.due_on_backlog = true;
                 }
             }
             updates.eligible_jobs += 1;
             let age = queue_age(
                 context.tick_rate_cap,
-                context.due_on_global_updates,
+                context.due_on_backlog,
                 age,
                 time.delta_secs_f64(),
             );
@@ -816,13 +819,19 @@ fn global_updates_sent(
 }
 
 /// Record a dispatch at `now`: the scene is in flight, and it reads every global update its host
-/// holds, `sent`. Returns whether the scene was sent before its band allowed, on unread global
-/// updates.
-fn record_dispatch(context: &mut RendererSceneContext, now: f64, sent: u64) -> bool {
+/// holds, `sent`, and every peer message its inbound queues hold, `delivered`. Returns whether the
+/// scene was sent before its band allowed, on an unread backlog.
+fn record_dispatch(
+    context: &mut RendererSceneContext,
+    now: f64,
+    sent: u64,
+    delivered: u64,
+) -> bool {
     context.set_in_flight(true);
     context.last_sent = now;
     context.global_updates_read = sent;
-    std::mem::take(&mut context.due_on_global_updates)
+    context.scene_messages_read = delivered;
+    std::mem::take(&mut context.due_on_backlog)
 }
 
 /// The queue key of a scene due this frame: its distance over its queue age (`queue_age`), 0
@@ -1291,6 +1300,7 @@ mod player_scenes_tests {
             contexts.0.insert(String::new(), shared);
             world.insert_resource(contexts);
         }
+        world.init_resource::<SceneMessageTraffic>();
         world.init_resource::<Time>();
         world.init_resource::<CurrentImposterScene>();
     }
@@ -1373,9 +1383,12 @@ mod player_scenes_tests {
             .get_mut::<RendererSceneContext>(east)
             .unwrap()
             .last_sent = sent;
-        frame(&mut world, 1.0);
-        assert!(!queued(&world).contains(&east));
-        frame(&mut world, 1.0);
+        // quarter-second frames pin the 2 s interval: its tolerance is a sixteenth of a second
+        for _ in 0..7 {
+            frame(&mut world, 0.25);
+            assert!(!queued(&world).contains(&east));
+        }
+        frame(&mut world, 0.25);
         assert!(queued(&world).contains(&east));
     }
 
@@ -1556,10 +1569,70 @@ mod player_scenes_tests {
         let sent = world.get::<GlobalCrdtState>(crdt).unwrap().sent();
         let now = world.resource::<Time>().elapsed_secs_f64();
         let mut context = world.get_mut::<RendererSceneContext>(east).unwrap();
-        assert!(record_dispatch(&mut context, now, sent));
+        assert!(record_dispatch(&mut context, now, sent, 0));
         // its reply arrives
         context.set_in_flight(false);
-        assert!(!record_dispatch(&mut context, now, sent));
+        assert!(!record_dispatch(&mut context, now, sent, 0));
+        context.set_in_flight(false);
+        world
+            .resource_mut::<Time>()
+            .advance_by(Duration::from_secs_f32(0.1));
+        world.run_system_once(update_scene_priority).unwrap();
+        assert!(!queued(&world).contains(&east));
+    }
+
+    /// A capped scene whose inbound queues hold many peer messages it has not read is due before
+    /// its band allows, so its message buses drop none.
+    #[test]
+    fn a_far_scene_with_unread_peer_messages_is_due() {
+        let mut world = World::new();
+        let Scenes { east, .. } = scenes(&mut world);
+        live_scene(&mut world, east, IVec2::new(3, 2));
+        world
+            .get_mut::<RendererSceneContext>(east)
+            .unwrap()
+            .tick_number = SCENE_LOADED_TICK;
+        world.entity_mut(east).insert(Partition(PartitionData {
+            sqr_distance: 100.0 * 100.0,
+            parcel_distance: 6,
+            is_behind: false,
+        }));
+        world.spawn((
+            PrimaryCamera::default(),
+            Camera::default(),
+            GlobalTransform::default(),
+        ));
+        scene_loop_resources(&mut world);
+        let hash = world
+            .get::<RendererSceneContext>(east)
+            .unwrap()
+            .hash
+            .to_string();
+        let mut traffic = world.resource_mut::<SceneMessageTraffic>();
+        for _ in 0..SCENE_MESSAGE_BACKLOG_DUE - 1 {
+            traffic.record_delivered(&hash);
+        }
+        // another scene's messages fill other queues
+        for _ in 0..SCENE_MESSAGE_BACKLOG_DUE {
+            traffic.record_delivered("another scene");
+        }
+        world
+            .resource_mut::<Time>()
+            .advance_by(Duration::from_secs_f32(0.1));
+
+        world.run_system_once(update_scene_priority).unwrap();
+        assert!(!queued(&world).contains(&east));
+
+        world
+            .resource_mut::<SceneMessageTraffic>()
+            .record_delivered(&hash);
+        world.run_system_once(update_scene_priority).unwrap();
+        assert!(queued(&world).contains(&east));
+        // its dispatch reads the backlog, so the next frame holds it again
+        let delivered = world.resource::<SceneMessageTraffic>().delivered_to(&hash);
+        let now = world.resource::<Time>().elapsed_secs_f64();
+        let mut context = world.get_mut::<RendererSceneContext>(east).unwrap();
+        assert!(record_dispatch(&mut context, now, 0, delivered));
         context.set_in_flight(false);
         world
             .resource_mut::<Time>()
@@ -1935,11 +2008,12 @@ fn send_scene_updates(
     scene_realms: Res<comms::global_crdt::SceneRealms>,
     screen_areas: ScreenAreas,
     preview_mode: Res<PreviewMode>,
-    (mut buf, mut realm_info_cache, crdt_context_ids, crdt_contexts): (
+    (mut buf, mut realm_info_cache, crdt_context_ids, crdt_contexts, scene_messages): (
         Local<Vec<u8>>,
         Local<RealmInfoCache>,
         Res<CrdtContexts>,
         Query<&GlobalCrdtState>,
+        Res<SceneMessageTraffic>,
     ),
 ) {
     let updates = &mut *updates;
@@ -2194,8 +2268,9 @@ fn send_scene_updates(
         context.state = SceneState::Broken;
     } else {
         let sent = global_updates_sent(&crdt_context_ids, &crdt_contexts, &context);
-        if record_dispatch(&mut context, now, sent) {
-            updates.released_by_global_updates += 1;
+        let delivered = scene_messages.delivered_to(&context.hash);
+        if record_dispatch(&mut context, now, sent, delivered) {
+            updates.released_by_backlog += 1;
         }
         dcl_assert!(!updates.jobs_in_flight.contains(&ent));
         updates.jobs_in_flight.insert(ent);

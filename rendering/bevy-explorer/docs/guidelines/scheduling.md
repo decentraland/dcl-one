@@ -150,13 +150,14 @@ Priority: the scenes the player is in (the one they stand in,
 plus portables and global scenes) are 0; any other scene is its squared distance from the
 player to the nearest point of its nearest parcel (its `Partition`, refreshed each frame by
 `update_scene_partitions`); both are divided by the time since the scene was last sent, or for
-a capped scene since its interval passed (`queue_age`, below), so a starved scene rises. A scene behind the rendering camera (every corner of every parcel behind
+a capped scene its band let through since its interval passed (`queue_age`, below), so a
+starved scene rises. A scene behind the rendering camera (every corner of every parcel behind
 it) counts as four times farther (`BEHIND_SCENE_TICK_PENALTY`), so it keeps ticking, subject to
-the tick rate bands below, and yields first when frame time runs short. Distance is always from the player; only facing comes from
-the camera, and with no rendering camera (headless) nothing is behind. The same partitions rank
-the ipfs request slots (`publish_download_priorities`, on frames with a download waiting; which
-hashes take part is settled by component hooks on `SceneHash` and `PartitionedDownloads`, not by
-a system in this set); see the
+the tick rate bands below, and yields first when frame time runs short. Distance is always from
+the player; only facing comes from the camera, and with no rendering camera (headless) nothing
+is behind. The same partitions rank the ipfs request slots (`publish_download_priorities`, on
+frames with a download waiting; which hashes take part is settled by component hooks on
+`SceneHash` and `PartitionedDownloads`, not by a system in this set); see the
 [ADR](../../../../docs/adr/2026-11-02-explorer-nearest-first-priority.md). A scene is skipped
 while in flight, broken, or blocked (unless it is the system scene), and is not sent twice in
 one frame. A scene that has not replied for ten seconds is marked broken and its slot freed.
@@ -172,9 +173,10 @@ frame's queue until `1 / rate` seconds have passed since it was last sent. The t
 last sent grows a frame at a time, so the interval counts as passed within a quarter of a frame
 of it (`tick_rate_allows`). The effective rate is a whole number of frames per tick: at 60 fps
 the 40 and 30 bands both tick every other frame, 30 times a second; at 30 fps or below they tick
-every frame. A capped scene that is due ranks by the time since its interval passed, at least a
-frame, instead of the time since it was last sent (`queue_age`), so holding it back does not
-rank it as starved.
+every frame. A capped scene its band let through ranks by the time since its interval passed,
+at least a frame, instead of the time since it was last sent (`queue_age`), so holding it back
+does not rank it as starved; a scene released on an unread backlog keeps the time since it was
+last sent.
 
 | Distance from the player to the scene's nearest parcel | Ticks a second, in front | Behind the camera |
 |---|---|---|
@@ -192,7 +194,10 @@ most `SCENE_GLOBAL_UPDATE_CAPACITY` of them between its ticks, so a capped scene
 `GLOBAL_UPDATE_BACKLOG_DUE` (a quarter of the capacity) delivered since its last dispatch
 (`GlobalCrdtState::sent`, which includes the updates a spawning scene's receiver replays to the
 whole context where the backend replays them, `replayed_global_updates`, against the count it
-recorded then) is due whatever its band. The behind cap applies from 16 m on, since nearer the
+recorded then) is due whatever its band. Its inbound message queues (string and binary buses,
+topic inbox) are bounded too, so a capped scene with `SCENE_MESSAGE_BACKLOG_DUE` peer messages
+handed to them since its last dispatch (`SceneMessageTraffic::delivered_to`) is due as well.
+The behind cap applies from 16 m on, since nearer the
 player can back into a scene's colliders and hears its audio, and only while the camera is near
 level (`behind_cap_applies`), because the behind test ignores pitch. A
 scene keeps the full rate while it is one of the player's scenes, at the player's position while
@@ -201,10 +206,10 @@ scene under the inspector or the scene being baked into an imposter, and until i
 `SCENE_LOADED_TICK`, since loading waits on a scene's first ticks. Without a rendering camera
 (headless), or while the photo camera (`PhotoMode`) or a scene's cinematic camera frames the
 view, nothing is capped. A due scene is ordered by the queue's key like any other, so under
-scene-thread pressure a scene released on unread global updates can wait frames. The runtime
+scene-thread pressure a scene released on an unread backlog can wait frames. The runtime
 debug panel's "Scene Tick Rates" section (`/scene_tick_rate_state`) counts the scenes the loop
 schedules at each cap, whether the behind cap applies at the camera's pitch, the scene-frames
-the cap has skipped and the ticks sent before their band allowed on unread global updates, and
+the cap has skipped and the ticks sent before their band allowed on an unread backlog, and
 names the reason while nothing is capped; `/scene_tick_rate_caps false` (its "Turn the caps
 off" button, bound to `capsOn`) lifts every cap, to compare with and without them on one build;
 the skipped and released totals stay readable while the caps are off. See the
