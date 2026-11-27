@@ -3960,6 +3960,14 @@
           "kind": "regular"
         },
         {
+          "name": "MutualFriends.module.css",
+          "kind": "regular"
+        },
+        {
+          "name": "MutualFriends.tsx",
+          "kind": "regular"
+        },
+        {
           "name": "friendDialogs.tsx",
           "kind": "regular"
         },
@@ -10049,7 +10057,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/gallery.ts",
-      "sha256": "7599f5a68b718a466a4e0dfacdc737c5a9ec4f918491fbb6994b7195baea1f75"
+      "sha256": "baeffcf8c69c042b8a47c5276daa4484ed00f0c8b155f8fbc9905caed6072310"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/gifting.ts",
@@ -10101,7 +10109,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/profile.ts",
-      "sha256": "d1f5520ec7b78ec30bb91ea88bde52a70c4281cd1d4d2b6075100c1fdbf9a7fa"
+      "sha256": "69612c63e5fd14b0a64266221f0e63a29cb702ab6681f5dd412e5c861f63093a"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/randomizer.ts",
@@ -10377,7 +10385,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/bridgeProfileReads.test.ts",
-      "sha256": "286b2341add50a03e783664ea3fe35bf55021223d0830169c9b5e986314e20a7"
+      "sha256": "f8fc0de4968ad74abb72899c768b07d28e4134bca150592ea0c4695c191f74ca"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/bridgeRandomizer.test.ts",
@@ -10722,7 +10730,7 @@
     },
     {
       "path": "library/explorer-core/engine/mockBridge.ts",
-      "sha256": "6e2e1b2d5a9030bc96e9e958c7f70c239edc165096c8f2e1c0217c4c3bf7043d"
+      "sha256": "5a59a309c92f9c342861468814c04cffb703be237fef87a6d3c50742ddbe595d"
     },
     {
       "path": "library/explorer-core/engine/mockEvents.ts",
@@ -10762,7 +10770,7 @@
     },
     {
       "path": "library/explorer-core/engine/protocol.ts",
-      "sha256": "658e6b88ef7493f3e95f974422d6319f9e64f10f3ad39c489833165a7d06a150"
+      "sha256": "b15743fc078fc68976878634cc0bf610707efb3a0db2eeb5b382d6457cbf1cb6"
     },
     {
       "path": "library/explorer-core/engine/requestIds.ts",
@@ -11114,7 +11122,7 @@
     },
     {
       "path": "library/explorer-core/lib/identity.ts",
-      "sha256": "f497c25e7b3a786ed1b7432edda5028158711ecfd94fc8a3a04bc42bbc04ba27"
+      "sha256": "17c499ae3a951a7e1e09f7dfd3f05d7b94b9056357635556123c9ef23ca50f5a"
     },
     {
       "path": "library/explorer-core/lib/inputLock.ts",
@@ -12982,7 +12990,7 @@
     },
     {
       "path": "library/ui/apps/hud/design/Glyphs.tsx",
-      "sha256": "3e92a0d343bc86964eb5c521deb8804bc9e069d9280b6744317764a8dcaaec35"
+      "sha256": "40bf0862555eaea32bedc5d1eb4571166406137fa35d1de2995572e5efa5a127"
     },
     {
       "path": "library/ui/apps/hud/design/HeaderButton.tsx",
@@ -13166,7 +13174,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/chat/ProfileCardPresentation.tsx",
-      "sha256": "89cbd403389f952c9582228a0425b2c117d77778b082bf1b29b142d6b6d008ba"
+      "sha256": "ee0dfca90a8a7bef6ca507d34c6840b327d0d7839dfc2ee1b83885aab2fb1cbe"
     },
     {
       "path": "library/ui/apps/hud/features/chat/ReactionLane.module.css",
@@ -13486,11 +13494,11 @@
     },
     {
       "path": "library/ui/apps/hud/features/friends/FriendRequestPopup.module.css",
-      "sha256": "b76c978a496fa3eb4d977b06af9c57a8ff3590ec35c666c8abfbbde4e07b3ba1"
+      "sha256": "5206760ee5adc3ca29977643028a1c168458db099263e62e2570e124fd74e207"
     },
     {
       "path": "library/ui/apps/hud/features/friends/FriendRequestPopup.tsx",
-      "sha256": "6be93e329d3b623ccefd530e5bb200dc3ac6beea704e86290ebd0bfca6e42d3e"
+      "sha256": "4bbb16748457137b33b31666ede2bc9f28556dd5d09ca50cc0727a9c16c97083"
     },
     {
       "path": "library/ui/apps/hud/features/friends/FriendsIcons.tsx",
@@ -13503,6 +13511,14 @@
     {
       "path": "library/ui/apps/hud/features/friends/FriendsPanel.tsx",
       "sha256": "d71dcc9750b988747f60d00c5952632e045e4109fb61b53e7a715f3047fc7229"
+    },
+    {
+      "path": "library/ui/apps/hud/features/friends/MutualFriends.module.css",
+      "sha256": "c31c37e0d64feffcacc99dc270c6ce46cc812d8e94a9be1ec76b8e2c95f052ec"
+    },
+    {
+      "path": "library/ui/apps/hud/features/friends/MutualFriends.tsx",
+      "sha256": "5097284f5c7d6eabac91d3b0ebc1e393daebde2ff7cdfd9c0b01acc438593bb0"
     },
     {
       "path": "library/ui/apps/hud/features/friends/friendDialogs.tsx",
@@ -13706,7 +13722,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/lobby/LobbyProfileMenu.tsx",
-      "sha256": "fa5aa11e1bd0217177310a8e164a0cece03a8ed40058177eaedba599508e33f2"
+      "sha256": "f1da56bafa5eccda95c9b23923d3fc17f4a170c869e69d0ed5701dcb1dae7cd5"
     },
     {
       "path": "library/ui/apps/hud/features/lobby/LobbyRail.module.css",
@@ -14034,7 +14050,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/profile/Passport.tsx",
-      "sha256": "55e5436297185f114c2c065a36ff42d9752aa34efb20ba41074d8d4fb9530c6c"
+      "sha256": "4db12d6649e2a5e7f2fbc194247b2dd2109d063fbaa9e57887fbfbca626bd528"
     },
     {
       "path": "library/ui/apps/hud/features/profile/ProfileEditForm.module.css",
@@ -14054,11 +14070,11 @@
     },
     {
       "path": "library/ui/apps/hud/features/profile/ProfilePassport.module.css",
-      "sha256": "c2519e89544e327acf4a2e671c6232950142042ea9380c6b43a498c5ff509a2a"
+      "sha256": "04eb44a8c89083bb4ac0feb7c9a1c8cf35242f6456be3b28882329666b8cf557"
     },
     {
       "path": "library/ui/apps/hud/features/profile/ProfilePassport.tsx",
-      "sha256": "3a8350ca3379753109315441ff3aefbd50a55ff57b8723535efe3198702f1ee3"
+      "sha256": "b4650b73843f93c84c9ce6dea0a75cd1617a3101620983f9d81b74620516f49a"
     },
     {
       "path": "library/ui/apps/hud/features/profileCard/ProfileCard.tsx",
@@ -14174,7 +14190,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/sidebar/panels/MePanel.tsx",
-      "sha256": "046cf2d5a75d866b7b36f9f295f8458999e8caf4a4f7c9be9eba94af1f589818"
+      "sha256": "a1563a4f574dc6aa8222f13bed3995abb9aeac3437e5c4bd8b0c0849df3151da"
     },
     {
       "path": "library/ui/apps/hud/features/sidebar/panels/ShopPanel.module.css",
@@ -14382,7 +14398,7 @@
     },
     {
       "path": "library/ui/apps/hud/styles/tokens.css",
-      "sha256": "7b86409442e05e1a3799b2afeef176019cf41071507d5670c6d3dae498b9bc2a"
+      "sha256": "059f71a85e8e126491c6fc717cfff231b15ab8478a9ea29f54ebdcfac57154e3"
     },
     {
       "path": "library/ui/apps/hud/test/armedButton.test.tsx",
@@ -14818,7 +14834,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/hosted/passport.container.test.tsx",
-      "sha256": "cc3dd2f0e5644163be60af22f30163e11159d4786493919625dd55e2fc71b4ec"
+      "sha256": "f78b5bafc2b2733e7b306190d2085761bd52b7b0305bac56053312f1aa4cf758"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/permissions.test.tsx",
@@ -14994,11 +15010,11 @@
     },
     {
       "path": "library/ui/apps/hud/test/profile.edit.test.tsx",
-      "sha256": "97f59c8e09b8d2ceecdb8f7e42b2eb51819aadf2bfc6c5b3663a09877b13853c"
+      "sha256": "602d5e43dc1d761b682e67b4006a37ff18193748acad1585127fc88e7480ee33"
     },
     {
       "path": "library/ui/apps/hud/test/profile.passport.test.tsx",
-      "sha256": "2732c011812a7cff43834b2ff75c2d025c22843b9d26b9a62a0d8532187bba58"
+      "sha256": "0cec3580570f4b504fabbdeaa31bf5fb1d6b2640ed66c32d54b932beaff52626"
     },
     {
       "path": "library/ui/apps/hud/test/profile.passportCreations.test.tsx",
@@ -29133,6 +29149,21 @@
     },
     {
       "from": "library/ui/apps/hud/features/friends/FriendRequestPopup.tsx",
+      "to": "library/ui/apps/hud/features/friends/MutualFriends.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/friends/FriendRequestPopup.tsx",
+      "to": "library/ui/apps/hud/features/friends/MutualFriends.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/friends/FriendRequestPopup.tsx",
+      "to": "library/ui/apps/hud/features/friends/MutualFriends.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/friends/FriendRequestPopup.tsx",
       "to": "library/ui/apps/hud/features/session/SessionContext.tsx",
       "kind": "native:runtime"
     },
@@ -29399,6 +29430,51 @@
     {
       "from": "library/ui/apps/hud/features/friends/FriendsPanel.tsx",
       "to": "library/ui/index.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/friends/MutualFriends.tsx",
+      "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/friends/MutualFriends.tsx",
+      "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/friends/MutualFriends.tsx",
+      "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/friends/MutualFriends.tsx",
+      "to": "library/ui/apps/hud/features/friends/MutualFriends.module.css",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/friends/MutualFriends.tsx",
+      "to": "library/ui/apps/hud/features/friends/MutualFriends.module.css",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/friends/MutualFriends.tsx",
+      "to": "library/ui/apps/hud/features/friends/MutualFriends.module.css",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/friends/MutualFriends.tsx",
+      "to": "library/ui/apps/hud/features/session/profileStore.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/friends/MutualFriends.tsx",
+      "to": "library/ui/apps/hud/features/session/profileStore.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/friends/MutualFriends.tsx",
+      "to": "library/ui/apps/hud/features/session/profileStore.ts",
       "kind": "test:runtime"
     },
     {
@@ -32804,6 +32880,21 @@
     {
       "from": "library/ui/apps/hud/features/lobby/LobbyProfileMenu.tsx",
       "to": "library/explorer-core/lib/cancelLayers.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/lobby/LobbyProfileMenu.tsx",
+      "to": "library/explorer-core/lib/identity.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/lobby/LobbyProfileMenu.tsx",
+      "to": "library/explorer-core/lib/identity.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/lobby/LobbyProfileMenu.tsx",
+      "to": "library/explorer-core/lib/identity.ts",
       "kind": "test:runtime"
     },
     {
@@ -39138,6 +39229,21 @@
     },
     {
       "from": "library/ui/apps/hud/features/profile/ProfilePassport.tsx",
+      "to": "library/ui/apps/hud/assets/voice/call.png",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/profile/ProfilePassport.tsx",
+      "to": "library/ui/apps/hud/assets/voice/call.png",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/profile/ProfilePassport.tsx",
+      "to": "library/ui/apps/hud/assets/voice/call.png",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/profile/ProfilePassport.tsx",
       "to": "library/ui/apps/hud/design/index.ts",
       "kind": "native:runtime"
     },
@@ -39179,6 +39285,21 @@
     {
       "from": "library/ui/apps/hud/features/profile/ProfilePassport.tsx",
       "to": "library/ui/apps/hud/features/communities/InviteToCommunity.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/profile/ProfilePassport.tsx",
+      "to": "library/ui/apps/hud/features/friends/MutualFriends.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/profile/ProfilePassport.tsx",
+      "to": "library/ui/apps/hud/features/friends/MutualFriends.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/profile/ProfilePassport.tsx",
+      "to": "library/ui/apps/hud/features/friends/MutualFriends.tsx",
       "kind": "test:runtime"
     },
     {
@@ -68654,6 +68775,11 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/ui/apps/hud/features/friends/FriendsPanel.tsx",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/ui/apps/hud/features/friends/MutualFriends.tsx",
       "kind": "type"
     },
     {

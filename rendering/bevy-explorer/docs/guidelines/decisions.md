@@ -1038,11 +1038,25 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   show seams between the slices, so here they are radii, borders and gradients with the sprites'
   colours. The canvas scales by the smaller of width and height, as every menu page does, where
   unity-explorer's scales by width.
-- **Jump to Location closes the passport.** unity-explorer's passport does not close itself
-  when its Jump to Location runs; here the passport closes once the friend's parcel or World is
-  known, as it already does for a photo's teleport. A friend found nowhere leaves it open, and
+- **Jump to Location closes the passport once it has somewhere to go.** unity-explorer's passport
+  closes when its header button is clicked, whatever the jump finds, and stays open after the same
+  entry of its options menu; here both close it once the friend's parcel or World is
+  known, as a photo's teleport does. A friend found nowhere leaves it open, and
   nothing is shown, as there. The profile card offers the jump after View Profile, since its rows
   already follow a different order from unity-explorer's user menu.
+- **The passport offers no Call to a blocked user.** unity-explorer's passport shows Call
+  whatever the block state; here Call follows Chat, hidden for a user you blocked and for one who
+  blocked you.
+- **ACCEPT FRIEND on the passport shows its result.** As in unity-explorer, the click accepts;
+  here "Accepting Friend Request" and then the result show over the passport.
+- **The passport menu's profile entry is a row with no copy buttons.** unity-explorer's entry
+  centres a large picture over the name and the wallet, each with a copy button; here it is the
+  shared menu header, the picture beside the name and wallet, and the passport header copies both.
+- **The passport's header tips open below their buttons.** unity-explorer's open above, over the
+  panel's top edge; here the panel clips at that edge, so the tips open below.
+- **A guest's Call from the passport is refused by a notice.** unity-explorer asks a guest to
+  upgrade the account for Call and for a new direct message; here Call says voice chat is not
+  available to guests, and Chat opens the conversation.
 - **INVITE FRIENDS is for a signed-in player only.** unity-explorer's copy runs for any
   identity it holds. Here neither kind of guest gets the button: not the throwaway guest, and not a
   guest account. As there, it copies the deployment site's `/invite/<address>`
