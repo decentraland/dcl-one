@@ -1,8 +1,9 @@
 // @vitest-environment jsdom
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { createMemoryRouter, RouterProvider } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { HangoutOptions } from "@/data/lib/catalyst/landings/hangout-options";
 import type { TrackFn } from "./machine";
 import SubmitHangout from "./SubmitHangout";
 
@@ -48,5 +49,59 @@ describe("when signed in to the hangout wizard", () => {
       await waitFor(() => expect(router.state.location.pathname).toBe("/events"));
       expect((upload.mock.calls[0]?.[2] as AbortSignal).aborted).toBe(true);
     });
+  });
+});
+
+describe("when the hangout wizard reaches its details and location steps", () => {
+  let user: ReturnType<typeof userEvent.setup>;
+  let options: HangoutOptions;
+  const trackCtx = { sid: "test", story: "landings/submit-hangout", variant: "wizard" };
+  const categories = [{ name: "music", label: "Music" }];
+
+  function open(step: string) {
+    const router = createMemoryRouter([
+      { path: "/edit", element: <SubmitHangout trackCtx={trackCtx} categories={categories} signedIn options={options} track={vi.fn()} /> },
+    ], { initialEntries: [`/edit?step=${step}`] });
+    render(<RouterProvider router={router} />);
+    return router;
+  }
+
+  beforeEach(() => {
+    user = userEvent.setup();
+    options = { profile: null, profileError: null, communities: [], communitiesError: null, worlds: ["music.dcl.eth"], worldsError: null };
+  });
+  afterEach(() => { cleanup(); vi.restoreAllMocks(); });
+
+  it("should name the category select by its label and keep the chosen category", async () => {
+    open("details");
+    const category = screen.getByRole<HTMLSelectElement>("combobox", { name: "Category" });
+    expect(category.value).toBe("");
+    await user.selectOptions(category, "music");
+    expect(category.value).toBe("music");
+  });
+
+  it("should keep the LAND coordinate entered in X", () => {
+    open("location");
+    const x = screen.getByRole<HTMLInputElement>("spinbutton", { name: "X" });
+    fireEvent.change(x, { target: { value: "12" } });
+    expect(x.value).toBe("12");
+    expect(screen.getByRole("spinbutton", { name: "Y" })).toHaveProperty("value", "0");
+  });
+
+  it("should suggest the account's worlds for a world hangout", async () => {
+    open("location");
+    await user.selectOptions(screen.getByRole("combobox", { name: "Location Type" }), "world");
+    const world = screen.getByLabelText("World");
+    expect(world.getAttribute("list")).toBe("hangout-worlds");
+    expect(document.querySelector('#hangout-worlds option[value="music.dcl.eth"]')).toBeTruthy();
+    expect(world.getAttribute("aria-describedby")).toBeNull();
+  });
+
+  it("should describe the world field with the failure when suggestions could not load", async () => {
+    options = { ...options, worlds: [], worldsError: "Worlds unavailable" };
+    open("location");
+    await user.selectOptions(screen.getByRole("combobox", { name: "Location Type" }), "world");
+    const description = document.getElementById(screen.getByLabelText("World").getAttribute("aria-describedby") ?? "");
+    expect(description?.textContent).toBe("World suggestions could not load. You can enter the world name.");
   });
 });
