@@ -860,3 +860,365 @@ mod tests {
         assert_eq!(end.grading.global.untonemapped_mix, 0.0);
     }
 }
+
+/// The composer run in an app, with time stepped by hand: what each event that can arrive while
+/// the player's camera blends does to it, and a texture camera turned back on.
+#[cfg(test)]
+mod app_tests {
+    use std::time::Duration;
+
+    use bevy::{platform::collections::HashSet, time::TimeUpdateStrategy};
+    use common::structs::{CameraMove, CinematicSettings, PrimaryPlayerRes};
+    use dcl_component::proto_components::sdk::components::PbVirtualCamera;
+    use dcl_types::SceneId;
+    use scene_runner::{
+        initialize_scene::{LiveScenes, PointerResult, PortableScenes, ScenePointers},
+        parcel_to_vec3,
+    };
+
+    use super::*;
+
+    /// a tenth of the scene blend
+    const STEP: Duration = Duration::from_millis(100);
+    /// more steps than any blend here takes
+    const SETTLE: usize = 25;
+
+    fn exposure(exposure: f32) -> PostProcessing {
+        PostProcessing {
+            exposure: Some(exposure),
+            ..default()
+        }
+    }
+
+    struct Test {
+        app: App,
+        player: Entity,
+        camera: Entity,
+        scenes: u32,
+    }
+
+    impl Test {
+        fn new() -> Self {
+            let mut pointers = ScenePointers::default();
+            pointers.set_realm(IVec2::splat(-8), IVec2::splat(8));
+            let mut app = App::new();
+            app.add_plugins(MinimalPlugins)
+                .insert_resource(TimeUpdateStrategy::ManualDuration(STEP))
+                .insert_resource(pointers)
+                .init_resource::<LiveScenes>()
+                .init_resource::<PortableScenes>()
+                .register_required_components::<PrimaryCamera, PrimaryBlend>()
+                .add_systems(PostUpdate, (show_primary, show_other_cameras));
+            let player = app.world_mut().spawn(GlobalTransform::default()).id();
+            app.insert_resource(PrimaryPlayerRes(player));
+            let camera = app
+                .world_mut()
+                .spawn((
+                    PrimaryCamera::default(),
+                    CameraLook::default(),
+                    Camera::default(),
+                    Projection::default(),
+                    Tonemapping::default(),
+                    ColorGrading::default(),
+                ))
+                .id();
+            Self {
+                app,
+                player,
+                camera,
+                scenes: 0,
+            }
+        }
+
+        /// A scene on `parcel`, and its `engine.CameraEntity` with `settings`.
+        fn scene_on(&mut self, parcel: IVec2, settings: Option<PostProcessing>) -> Entity {
+            self.scenes += 1;
+            let hash = format!("scene {parcel}");
+            let world = self.app.world_mut();
+            let scene = world.spawn_empty().id();
+            let scene_camera = world.spawn_empty().id();
+            if let Some(settings) = settings {
+                world.entity_mut(scene_camera).insert(settings);
+            }
+            let mut context = RendererSceneContext::new(
+                SceneId::DUMMY,
+                hash.clone(),
+                String::new(),
+                false,
+                self.scenes,
+                String::new(),
+                parcel,
+                HashSet::from_iter([parcel]),
+                vec![],
+                default(),
+                vec![],
+                scene,
+                0.0,
+                false,
+                "7",
+                false,
+                false,
+            );
+            context.associate_bevy_entity(SceneEntityId::CAMERA, scene_camera);
+            world.entity_mut(scene).insert(context);
+            world.resource_mut::<ScenePointers>().insert(
+                parcel,
+                PointerResult::Exists {
+                    hash: hash.clone(),
+                    urn: None,
+                },
+            );
+            world
+                .resource_mut::<LiveScenes>()
+                .scenes
+                .insert(hash, scene);
+            scene_camera
+        }
+
+        fn stand_on(&mut self, parcel: IVec2) {
+            self.app
+                .world_mut()
+                .entity_mut(self.player)
+                .insert(GlobalTransform::from_translation(parcel_to_vec3(parcel)));
+        }
+
+        fn step(&mut self, steps: usize) {
+            for _ in 0..steps {
+                self.app.update();
+            }
+        }
+
+        fn now(&self) -> f64 {
+            self.app.world().resource::<Time>().elapsed_secs_f64()
+        }
+
+        /// the exposure the player's camera shows
+        fn exposure(&self) -> f32 {
+            self.app
+                .world()
+                .get::<ColorGrading>(self.camera)
+                .unwrap()
+                .global
+                .exposure
+        }
+
+        /// The step on which the camera's look changes shows what was shown before, and the
+        /// next one has moved towards the new look.
+        fn assert_continues_towards(&mut self, target: f32) {
+            let before = self.exposure();
+            self.step(1);
+            assert!(
+                (self.exposure() - before).abs() < 1e-5,
+                "jumped from {before}"
+            );
+            self.step(1);
+            let next = self.exposure();
+            assert!(
+                (next - target).abs() < (before - target).abs() && next != target,
+                "from {before} towards {target}: {next}"
+            );
+        }
+
+        fn progress(&self) -> f32 {
+            self.app
+                .world()
+                .get::<PrimaryBlend>(self.camera)
+                .unwrap()
+                .progress
+        }
+
+        /// What `update_camera_position` records when the camera starts a move.
+        fn move_camera(&mut self, to: Option<Entity>, time: f32) {
+            let started = self.now();
+            let to = to.map(|origin| {
+                CameraOverride::Cinematic(CinematicSettings {
+                    origin,
+                    allow_manual_rotation: false,
+                    yaw_range: None,
+                    pitch_range: None,
+                    roll_range: None,
+                    look_at_entity: None,
+                    transition: None,
+                    fov: 1.0,
+                })
+            });
+            self.app
+                .world_mut()
+                .get_mut::<PrimaryCamera>(self.camera)
+                .unwrap()
+                .last_move = Some(CameraMove { to, time, started });
+        }
+    }
+
+    /// Walking into another scene blends over a second, and walking on mid-way blends on from
+    /// what is shown.
+    #[test]
+    fn a_scene_change_blends_and_a_second_one_continues_from_mid_way() {
+        let mut test = Test::new();
+        test.scene_on(IVec2::new(0, 0), Some(exposure(1.0)));
+        test.scene_on(IVec2::new(1, 0), Some(exposure(3.0)));
+        test.scene_on(IVec2::new(2, 0), Some(exposure(-3.0)));
+        test.stand_on(IVec2::new(0, 0));
+        test.step(SETTLE);
+        assert_eq!(test.exposure(), 1.0);
+
+        test.stand_on(IVec2::new(1, 0));
+        test.step(5);
+        let mid = test.exposure();
+        assert!(1.5 < mid && mid < 2.5, "half way: {mid}");
+        assert!(test.progress() < 1.0);
+
+        test.stand_on(IVec2::new(2, 0));
+        test.assert_continues_towards(-3.0);
+        test.step(SETTLE);
+        assert_eq!(test.exposure(), -3.0);
+        assert_eq!(test.progress(), 1.0);
+    }
+
+    /// A scene adding or removing its settings blends like a scene change, since the camera's
+    /// look changes source; editing them applies at once.
+    #[test]
+    fn adding_or_removing_settings_blends_and_editing_them_applies_at_once() {
+        let mut test = Test::new();
+        let scene_camera = test.scene_on(IVec2::ZERO, None);
+        test.stand_on(IVec2::ZERO);
+        test.step(SETTLE);
+        assert_eq!(test.exposure(), 0.0);
+
+        test.app
+            .world_mut()
+            .entity_mut(scene_camera)
+            .insert(exposure(2.0));
+        test.assert_continues_towards(2.0);
+        test.step(SETTLE);
+        assert_eq!(test.exposure(), 2.0);
+
+        test.app
+            .world_mut()
+            .entity_mut(scene_camera)
+            .insert(exposure(1.0));
+        test.step(1);
+        assert_eq!(test.exposure(), 1.0);
+
+        test.app
+            .world_mut()
+            .entity_mut(scene_camera)
+            .remove::<PostProcessing>();
+        test.assert_continues_towards(0.0);
+        test.step(SETTLE);
+        assert_eq!(test.exposure(), 0.0);
+    }
+
+    /// A virtual camera's settings blend in over the camera's move to it. Despawned mid-way, the
+    /// camera's move back blends out from what is shown.
+    #[test]
+    fn a_virtual_camera_blends_over_the_move_and_out_from_mid_way_when_despawned() {
+        let mut test = Test::new();
+        test.scene_on(IVec2::ZERO, Some(exposure(1.0)));
+        test.stand_on(IVec2::ZERO);
+        test.step(SETTLE);
+        let virtual_camera = test
+            .app
+            .world_mut()
+            .spawn((
+                VirtualCamera(PbVirtualCamera::default()),
+                PostProcessing {
+                    exposure: Some(3.0),
+                    saturation: Some(0.0),
+                    ..default()
+                },
+            ))
+            .id();
+
+        test.move_camera(Some(virtual_camera), 2.0);
+        test.step(10);
+        let mid = test.exposure();
+        assert!(1.5 < mid && mid < 2.5, "half way: {mid}");
+        let progress = test.progress();
+        assert!(0.3 < progress && progress < 0.7, "{progress}");
+
+        test.app.world_mut().despawn(virtual_camera);
+        test.move_camera(None, 0.5);
+        test.assert_continues_towards(1.0);
+        test.step(SETTLE);
+        assert_eq!(test.exposure(), 1.0);
+        let grading = test.app.world().get::<ColorGrading>(test.camera).unwrap();
+        assert_eq!(grading.midtones.saturation, 1.0);
+    }
+
+    /// The player turning bloom off applies at once, mid-blend included.
+    #[test]
+    fn bloom_turned_off_mid_blend_goes_at_once() {
+        let mut test = Test::new();
+        test.scene_on(
+            IVec2::new(0, 0),
+            Some(PostProcessing {
+                bloom_intensity: Some(2.0),
+                ..default()
+            }),
+        );
+        test.scene_on(IVec2::new(1, 0), Some(exposure(1.0)));
+        test.stand_on(IVec2::new(0, 0));
+        test.step(SETTLE);
+        assert!(test.app.world().get::<Bloom>(test.camera).is_some());
+
+        test.stand_on(IVec2::new(1, 0));
+        test.step(3);
+        assert!(test.progress() < 1.0);
+        test.app
+            .world_mut()
+            .get_mut::<CameraLook>(test.camera)
+            .unwrap()
+            .bloom = None;
+        test.step(1);
+        assert!(test.app.world().get::<Bloom>(test.camera).is_none());
+        test.step(SETTLE);
+        assert!(test.app.world().get::<Bloom>(test.camera).is_none());
+    }
+
+    /// A texture camera shows its scene's settings changed while it was off once it is on again.
+    #[test]
+    fn a_texture_camera_shows_settings_changed_while_it_was_off() {
+        let mut test = Test::new();
+        let scene = test.app.world_mut().spawn(exposure(2.0)).id();
+        let texture_camera = test
+            .app
+            .world_mut()
+            .spawn((
+                Camera::default(),
+                CameraLook::default(),
+                Projection::default(),
+                Tonemapping::default(),
+                ColorGrading::default(),
+                ChildOf(scene),
+            ))
+            .id();
+        let shown = |test: &Test| {
+            test.app
+                .world()
+                .get::<ColorGrading>(texture_camera)
+                .unwrap()
+                .global
+                .exposure
+        };
+        let set_active = |test: &mut Test, active: bool| {
+            test.app
+                .world_mut()
+                .get_mut::<Camera>(texture_camera)
+                .unwrap()
+                .is_active = active;
+        };
+        test.step(2);
+        assert_eq!(shown(&test), 2.0);
+
+        set_active(&mut test, false);
+        test.step(1);
+        test.app.world_mut().entity_mut(scene).insert(exposure(3.0));
+        test.step(3);
+        assert_eq!(shown(&test), 2.0);
+
+        set_active(&mut test, true);
+        test.step(1);
+        assert_eq!(shown(&test), 3.0);
+    }
+}

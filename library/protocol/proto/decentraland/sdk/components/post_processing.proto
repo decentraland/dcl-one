@@ -18,7 +18,11 @@ option (common.ecs_component_id) = 1226;
 //
 // Every field is optional: an unset field keeps the explorer's default. Values are relative to
 // the explorer's defaults (multipliers and offsets), and out-of-range values are clamped.
-// Changes made by the scene itself apply immediately; a scene can animate them.
+// Changes to a component the scene has set apply immediately; a scene can animate them.
+// Adding or removing the component on engine.CameraEntity blends over the same time as moving
+// between scenes, since the camera changes from or to the explorer's defaults (or a portable
+// experience's settings). For a first change that applies immediately, add an empty component
+// when the scene loads.
 // If the player has turned bloom or depth of field off in their settings, a scene cannot turn
 // it on.
 message PBPostProcessing {

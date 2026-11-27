@@ -3,6 +3,8 @@
 //! `untonemapped_mix`, the depth of field's `linear_ramp`, `rgb_to_hsv`), whose own workspace has
 //! no renderer to test them with; the test is here because CI runs this crate's GPU tests.
 
+use std::sync::{Arc, Mutex};
+
 use bevy::{
     core_pipeline::{
         dof::{DepthOfField, DepthOfFieldMode},
@@ -12,7 +14,10 @@ use bevy::{
     prelude::*,
     render::{
         camera::RenderTarget,
-        render_resource::{CachedPipelineState, PipelineCache, PipelineDescriptor, ShaderDefVal},
+        gpu_readback::{Readback, ReadbackComplete},
+        render_resource::{
+            CachedPipelineState, PipelineCache, PipelineDescriptor, ShaderDefVal, TextureUsages,
+        },
         view::{ColorGrading, ColorGradingGlobal, Msaa},
         RenderApp,
     },
@@ -20,10 +25,11 @@ use bevy::{
 use common::structs::default_color_grading;
 use pipeline_test::{compile_pipelines, gpu_errors, headless_app, render_target};
 
-/// Four HDR cameras draw a lit cube without a device error: one with no curve and an exposure,
+/// Five HDR cameras draw a lit cube without a device error: one with no curve and an exposure,
 /// whose grading pass runs without a curve; one with the explorer's own grading and dither, its
-/// curve faded halfway out, a hue rotation and a white balance; and two with a scene's linear
-/// depth of field ramp, Gaussian and bokeh. Needs a GPU, so `#[ignore]`d:
+/// curve faded halfway out, a hue rotation and a white balance; two with a scene's linear depth
+/// of field ramp, Gaussian and bokeh; and one with no curve and no grading, which the first must
+/// come out brighter than (bevy skips the pass for no curve). Needs a GPU, so `#[ignore]`d:
 ///
 /// ```text
 /// cargo test -p visuals post_processing_variants_compile_and_draw -- --ignored --nocapture
@@ -82,9 +88,24 @@ fn post_processing_variants_compile_and_draw() {
             DebandDither::Disabled,
             linear_dof(DepthOfFieldMode::Bokeh),
         ),
+        (
+            Tonemapping::None,
+            ColorGrading::default(),
+            DebandDither::Disabled,
+            None,
+        ),
     ];
+    let mut targets = Vec::new();
     for (order, (tonemapping, grading, dither, dof)) in cameras.into_iter().enumerate() {
         let target = render_target(&mut app);
+        if let Some(image) = app
+            .world_mut()
+            .resource_mut::<Assets<Image>>()
+            .get_mut(&target)
+        {
+            image.texture_descriptor.usage |= TextureUsages::COPY_SRC;
+        }
+        targets.push(target.clone());
         let mut camera = app.world_mut().spawn((
             Camera3d::default(),
             Camera {
@@ -122,6 +143,14 @@ fn post_processing_variants_compile_and_draw() {
     for _ in 0..5 {
         app.update();
     }
+
+    // the no-curve cameras' targets, the one with an exposure and the one with none
+    let exposed = brightness(&mut app, &targets[0]);
+    let plain = brightness(&mut app, &targets[4]);
+    assert!(
+        exposed > plain * 1.2,
+        "exposure +1 without a curve: {exposed} against {plain}"
+    );
 
     let errors = errors.lock().unwrap();
     assert!(errors.is_empty(), "GPU errors:\n{}", errors.join("\n\n"));
@@ -167,4 +196,32 @@ fn post_processing_variants_compile_and_draw() {
         compiled("depth of field pipeline", &["DUAL_INPUT"]),
         "the bokeh depth of field pipeline did not compile"
     );
+}
+
+/// The mean of the colour channels of an 8-bit target, read back from the GPU.
+fn brightness(app: &mut App, target: &Handle<Image>) -> f32 {
+    let read = Arc::new(Mutex::new(None));
+    let sink = read.clone();
+    let entity = app
+        .world_mut()
+        .spawn(Readback::texture(target.clone()))
+        .observe(move |event: Trigger<ReadbackComplete>| {
+            *sink.lock().unwrap() = Some(event.event().0.clone());
+        })
+        .id();
+    let start = std::time::Instant::now();
+    let bytes = loop {
+        app.update();
+        if let Some(bytes) = read.lock().unwrap().take() {
+            break bytes;
+        }
+        assert!(start.elapsed().as_secs() < 30, "GPU readback timed out");
+    };
+    app.world_mut().despawn(entity);
+    // 64 texels of 4 bytes fill each 256-byte row; the alpha byte is left out
+    let colour: Vec<f32> = bytes
+        .chunks_exact(4)
+        .flat_map(|texel| texel[..3].iter().map(|&byte| f32::from(byte)))
+        .collect();
+    colour.iter().sum::<f32>() / colour.len() as f32
 }
