@@ -331,6 +331,11 @@ from HUD-side key matching. The rules:
   where the engine deliberately resolves nothing (`UiText`). There: match with
   `isCancelKey`, and `stopPropagation()` anything you consumed so the blur rule doesn't
   also fire on the same press.
+- **What counts as a text field is one rule in two places**: `isEditableTarget` (the HUD's
+  `text` focus) and the engine page's key forwarding (`isTextField` in
+  `../deploy/web/engine/boot.js`). A checkbox (every switch) or a radio is not one: Escape and
+  movement still reach the engine from it, and Space and Enter press it. Change both together;
+  `src/test/bootKeyForwarding.test.ts` fails when they disagree.
 - **A new panel/popup/overlay must be visible to `uiFocus`** — panels via the session's
   `anyPanelOpen`, dialogs via the popup stack (`openPopup`), full-screen input freezes via
   `inputLock`. If the engine can't see that your surface is active, scenes keep receiving
