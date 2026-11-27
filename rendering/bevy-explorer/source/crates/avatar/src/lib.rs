@@ -1695,6 +1695,7 @@ fn process_avatar(
                     commands.entity(scene_ent).try_insert(Visibility::Hidden);
                 }
 
+                drop_vertex_colors(&mut meshes, h_mesh);
                 upload_cpu_mesh(&mut meshes, h_mesh);
 
                 let hidden = def.hides.contains(&WearableCategory::BODY_SHAPE)
@@ -2065,6 +2066,7 @@ fn process_avatar(
                 }
 
                 if let Some(h_mesh) = maybe_h_mesh {
+                    drop_vertex_colors(&mut meshes, h_mesh);
                     upload_cpu_mesh(&mut meshes, h_mesh);
                     meshes_top = meshes_top.max(top_above_head(
                         scene_ent,
@@ -2726,6 +2728,20 @@ fn remove_attach_points_from_avatar_shape(
         commands.entity(entity).try_remove::<AttachPoints>();
         #[cfg(feature = "explorer")]
         commands.entity(entity).try_remove::<NametagHeadOffset>();
+    }
+}
+
+/// An avatar's colour is its material's and its texture's alone: the material would multiply a
+/// mesh's glTF vertex colours into it.
+fn drop_vertex_colors(meshes: &mut Assets<Mesh>, mesh: impl Into<AssetId<Mesh>>) {
+    let id = mesh.into();
+    if meshes
+        .get(id)
+        .is_some_and(|mesh| mesh.contains_attribute(Mesh::ATTRIBUTE_COLOR))
+    {
+        if let Some(mesh) = meshes.get_mut(id) {
+            mesh.remove_attribute(Mesh::ATTRIBUTE_COLOR);
+        }
     }
 }
 

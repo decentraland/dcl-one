@@ -443,6 +443,33 @@ fn only_the_wearables_that_failed_are_left_out() {
 }
 
 #[test]
+fn an_avatar_mesh_loses_its_vertex_colours_and_nothing_else() {
+    let mesh = || {
+        Mesh::new(
+            bevy::render::mesh::PrimitiveTopology::TriangleList,
+            RenderAssetUsages::MAIN_WORLD,
+        )
+        .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, vec![[0.0f32; 3]; 3])
+        .with_inserted_attribute(Mesh::ATTRIBUTE_UV_0, vec![[0.0f32; 2]; 3])
+    };
+    let mut meshes = Assets::<Mesh>::default();
+    let coloured = meshes.add(
+        mesh().with_inserted_attribute(Mesh::ATTRIBUTE_COLOR, vec![[0.0f32, 0.0, 0.0, 1.0]; 3]),
+    );
+    let plain = meshes.add(mesh());
+
+    drop_vertex_colors(&mut meshes, &coloured);
+    drop_vertex_colors(&mut meshes, &plain);
+
+    for handle in [&coloured, &plain] {
+        let mesh = meshes.get(handle).unwrap();
+        assert!(!mesh.contains_attribute(Mesh::ATTRIBUTE_COLOR));
+        assert!(mesh.contains_attribute(Mesh::ATTRIBUTE_POSITION));
+        assert!(mesh.contains_attribute(Mesh::ATTRIBUTE_UV_0));
+    }
+}
+
+#[test]
 fn a_bone_is_scaled_below_its_avatar_whatever_scales_the_avatar() {
     let mut world = World::new();
     // a scene holds the avatar at a scale of nothing while its body is built
