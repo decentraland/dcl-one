@@ -13,6 +13,7 @@ import { useShopWallet } from "../../wallet/context";
 import { avatarShape as profileShape, BASE_MALE, itemShapes, shapeLabel, type BodyShapeUrn } from "@shop/detail/lib/bodyShape";
 import { frameRenderer, rendererOptions } from "../lib/frameRenderer";
 import { pickRenderer } from "../lib/pickRenderer";
+import { decidePreviewDevice } from "../lib/previewDevice";
 import { itemUrn } from "@shop/detail/lib/urn";
 import { fetchWearableRules, keepEquipped, sharedEntityBase } from "../lib/wearable-rules";
 import { fetchEmoteClipUrl } from "../lib/emoteBase64";
@@ -185,11 +186,11 @@ function WebItemPreview({ item, avatarShape = null, renderer }: ItemPreviewProps
   // Read on the client only: the device decides between Unity and Babylon, and whether to mount at all without WebGL.
   const [fullDevice, setFullDevice] = useState<boolean | null>(renderer ? renderer === "full" : null);
   useEffect(() => {
-    const decision = pickRenderer();
-    if (!renderer) {
+    if (renderer) return;
+    return decidePreviewDevice((decision) => {
       setFullDevice(decision.renderer === "full");
       if (decision.reason !== "no-webgl") setShow3d(true);
-    }
+    });
   }, [renderer]);
   const [view, setView] = useState<"avatar" | "item">("avatar");
   // What the preview reported, each for the frame and scene it reported it on: a new frame or scene starts loading.

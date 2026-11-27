@@ -6,4 +6,7 @@
   height: 100%;
   border: 0;
   background: transparent;
+  /* The Shop's root is dark and the preview documents declare no scheme: a mismatch paints the iframe an opaque
+     white backdrop over the rarity glow, whatever the renderer draws (as Sites' WearablePreview.module.css). */
+  color-scheme: light;
 }

@@ -6,7 +6,7 @@ import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { Link } from "react-router";
 
 import PreviewFrame, { UNITY_LOAD_TIMEOUT_MS, type PreviewFrameOptions } from "../../detail/components/PreviewFrame";
-import { pickRenderer } from "../../detail/lib/pickRenderer";
+import { decidePreviewDevice } from "../../detail/lib/previewDevice";
 import { REMOTE_FLAG, useRemoteFlagState } from "../lib/remoteFlags";
 import "./livepromo.css";
 
@@ -58,8 +58,9 @@ export default function LivePromo({ to, urns, title, cta, ariaLabel, fallback, f
 
   useEffect(() => {
     if (typeof window.matchMedia === "function" && window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
-    if (pickRenderer().renderer !== "full") return;
-    setAllowed(true);
+    return decidePreviewDevice((decision) => {
+      if (decision.renderer === "full") setAllowed(true);
+    });
   }, []);
 
   useEffect(() => {
