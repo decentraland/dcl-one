@@ -19,7 +19,7 @@
 //! open-listing reads leave it out.
 //!
 //! The verdicts close a trade only while the network's cursor is published
-//! (`chain_walk::published_sql_on`: a fold published within 30 minutes; a
+//! (`crate::chain_index::catalogue::published_sql_on`: a fold published within 30 minutes; a
 //! pass in progress keeps the previous publish): an index still catching up
 //! could show a stale signature index as a cancellation, and would miss the
 //! latest executions.
@@ -29,7 +29,7 @@
 //! called by `trades::ready`; the stored records of `/v1/trades` carry no
 //! status and wait for the trades mirror only), and
 //! `unified_trades` lists a trade only while its network's cursor is ready
-//! and no verdict closed it ([`listable_on_chain_sql`]), in the same
+//! and its open verdict is published ([`listable_on_chain_sql`]), in the same
 //! statement, so a cursor that falls behind after the gate drops the trade
 //! instead of listing it again. `/v1/bids` reports `sold` and `cancelled`
 //! from the same verdicts, and `GET /v1/trades/{hashed_signature}/accept`
@@ -877,15 +877,54 @@ pub fn unverifiable_sql(t: &str) -> String {
 }
 
 /// The SQL predicate "trade `t` may be served as an open listing" for the
-/// open-listing feeds (a bound `now_p`): its network's verdicts are current
-/// ([`verdicts_current_sql`]) and no verdict closed it (sold, cancelled) or
-/// left it unverifiable ([`unverifiable_sql`]). Fails closed: a trade of a
-/// network whose index is behind is not listed, whatever its row says.
+/// open-listing feeds (a bound `now_p`): its network has published verdicts
+/// and folded this trade's recorded events. The trade needs an open
+/// verdict from a venue the index watches. A late import may already have
+/// closed in the log. For V3, the fold also needs its cancellation digest.
+/// A trade can arrive between the indexer's digest pass and verdict fold.
 pub fn listable_on_chain_sql(t: &str, now_p: &str) -> String {
+    let watched = DEPLOYMENTS
+        .iter()
+        .flat_map(|(chain, deployments)| {
+            deployments
+                .iter()
+                .map(move |(address, _, requires_digest)| {
+                    format!("({chain}::bigint, '{address}', {requires_digest})")
+                })
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
     format!(
-        "({current} AND NOT EXISTS (SELECT 1 FROM shop.trade_chain_state tcs \
-                 WHERE tcs.trade_id = {t}.id AND (tcs.status <> 'open' OR tcs.digest_failed_at IS NOT NULL)))",
-        current = verdicts_current_sql(t, now_p)
+        "EXISTS (SELECT FROM shop.chain_cursor c
+                 JOIN (VALUES {watched}) AS venue(chain_id, address, requires_digest)
+                   ON venue.chain_id = c.chain_id AND venue.address = lower({t}.contract)
+                 JOIN shop.trade_chain_state s ON s.trade_id = {t}.id AND s.network = c.network
+                 WHERE c.indexer = 'trade_events' AND c.network = lower({t}.network)
+                   AND c.chain_id = {t}.chain_id AND {ready}
+                   AND s.status = 'open' AND s.digest_failed_at IS NULL
+                   AND s.folded_block BETWEEN 0 AND c.folded_block
+                   AND (NOT venue.requires_digest OR s.digest IS NOT NULL)
+                   AND NOT EXISTS (
+                       SELECT FROM shop.trade_event e
+                       WHERE e.network = c.network AND e.marketplace_address = venue.address
+                         AND e.block_number > c.folded_block
+                         AND e.hashed_signature IN ({t}.hashed_signature, s.digest)
+                         AND ((e.kind = 'traded' AND e.signer = {t}.signer)
+                           OR (e.kind = 'signature_cancelled' AND e.caller = {t}.signer))
+                   )
+                   AND NOT EXISTS (
+                       SELECT FROM shop.trade_event e
+                       WHERE e.network = c.network AND e.marketplace_address = venue.address
+                         AND e.block_number > c.folded_block AND e.new_index IS NOT NULL
+                         AND e.kind = 'signer_index_increased' AND e.caller = {t}.signer
+                   )
+                   AND NOT EXISTS (
+                       SELECT FROM shop.trade_event e
+                       WHERE e.network = c.network AND e.marketplace_address = venue.address
+                         AND e.block_number > c.folded_block AND e.new_index IS NOT NULL
+                         AND e.kind = 'contract_index_increased'
+                   ))",
+        ready = verdicts_ready_sql("c", now_p),
     )
 }
 
@@ -964,7 +1003,7 @@ fn unreadable(e: sqlx::Error) -> Response {
 }
 
 /// [`unreadable`]'s source and reason.
-fn unreadable_reason(e: sqlx::Error) -> (Source, String) {
+pub(super) fn unreadable_reason(e: sqlx::Error) -> (Source, String) {
     tracing::warn!(error = %e, "cannot read shop.chain_cursor; treating the trade-events index as not current");
     (
         Source::TradeEventsIndex,
@@ -973,7 +1012,7 @@ fn unreadable_reason(e: sqlx::Error) -> (Source, String) {
 }
 
 /// The readiness rule of the trade-events cursor as the verdict SQL reads
-/// it: the publish marker ([`chain_walk::published_sql_on`]: a fold
+/// it: the publish marker ([`crate::chain_index::catalogue::published_sql_on`]: a fold
 /// published within 30 minutes, not `folded_block = last_block`, which every
 /// pass breaks while it walks and folds), with the chains this process serves
 /// ([`super::catalog::served_chains`], the trade-events walk's
@@ -981,7 +1020,7 @@ fn unreadable_reason(e: sqlx::Error) -> (Source, String) {
 /// lends its verdicts.
 pub(crate) fn verdicts_ready_sql(alias: &str, now_p: &str) -> String {
     let (ethereum, matic) = super::catalog::served_chains();
-    chain_walk::published_sql_on(alias, now_p, ethereum, matic)
+    crate::chain_index::catalogue::published_sql_on(alias, now_p, ethereum, matic)
 }
 
 /// The chain verdict of trade `t` (`sold` | `cancelled`), NULL when open or

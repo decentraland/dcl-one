@@ -62,8 +62,13 @@ integrated web client, Sites supplies its origin's service URLs at boot.
 On desktop, native HTTP Fetch from the bundled bridge or an operator-selected
 `--system-scene` can reach loopback and LAN services outside preview, including through
 an explicit HTTP service override. The HTTP client blocks link-local and metadata addresses.
-Ordinary and authoritative hosted scenes use their own address policies. For native scene
-WebSockets, access to private resolved addresses is preview-only.
+Ordinary and authoritative hosted scenes use their own address policies. Native scene
+WebSockets follow the same rule as native Fetch: preview (on desktop or on an authoritative
+server launched in preview), the bundled bridge and an operator-selected `--system-scene` on
+desktop may use `ws://` and reach loopback and LAN addresses; every other scene, including
+every non-preview scene on the authoritative server, needs `wss://` to a public address.
+Link-local and metadata addresses stay blocked in every mode. TLS
+certificates are checked against the operating system's trust store.
 
 Use HTTPS for remote deployments. Plain HTTP sends signed headers and any request
 credentials in cleartext.
@@ -255,9 +260,9 @@ State, in every build:
   on the player, nearest first, so part of the crowd is behind the camera.
   `seed <n>` gives the avatar at each position the same look in every session of one build, so
   two runs compare the same crowd; `seed` alone goes back to a new crowd each time.
-  `cap <n>` sets Max Avatars for the session only (1 to 1025), past the setting's range, and
-  `cap all` sets no cap, so real players and scene avatars hide no demo avatar: either wins
-  over the Max Avatars setting, which it neither changes nor saves, until `cap` alone goes back
+  `cap <n>` sets Max Avatars for the session only (1 to 1025), past the setting's range (1 to 100), and
+  `cap all` sets no cap, as the player's Unlimited Avatars setting does, so real players and scene avatars hide no demo avatar: either wins
+  over the Max Avatars and Unlimited Avatars settings, which it neither changes nor saves, until `cap` alone goes back
   to the setting. The reply is JSON: `count`, `built` (demo avatars whose build finished), `shown` (not
   hidden) and `drawn` (a mesh in some view this frame), `cap` (the one in force, `"all"` for none), `sessionCap`
   (what `cap` set, else `null`),
@@ -311,19 +316,32 @@ State, in every build:
   replaces the text of the bubble showing that message, for tests (the HUD's translations come
   through `SystemApi::SetChatBubbleText`); `/nametag_official <address> [bool]`
   reads or sets, for the session, whether a wallet's nametag carries the official badge.
-- `/reaction_state`: the situational reactions, as JSON: `outbox` (the local user's picks not yet
-  sent), `refusedPicks`, `sent` (messages put on a room's transport, one per emoji per send: none
-  with no room to carry it), `received` (peers' messages), `queued` (the reactions waiting to
-  play, and the senders with any waiting or inside the gap after their last), `played`,
-  `streamed` (the reactions passed to the HUD) to `subscribers` streams, and `dropped` by cause:
-  `blocked`, `duplicate`, `unknownEmoji`, `rateLimited` and `queueFull`. The counts are of the
-  session.
-  `/reaction_send <emoji>` reacts as the local user, the way the system API's `sendReaction` does:
-  the reaction is sent to the players nearby and reported to analytics as a pick is, and an emoji
-  the wire has no index for does nothing. The debug panel's "React with a heart" runs it.
+- `/reaction_state`: the situational reactions, as JSON: `world` (the Chat bubbles and
+  reactions setting lets them show over avatars), `screenLane` (the Chat Reactions setting
+  passes them to the HUD), `picked` (the local user's picks that played, which no peer's
+  reaction moves), `outbox` (the local user's picks not yet sent), `refusedPicks`, `sent`
+  (messages put on a room's transport, one per emoji per send: none with no room to carry it),
+  `received` (peers' messages), `queued` (the reactions waiting to play, and the senders with any
+  waiting or inside the gap after their last), `played`, `particles` (alive, drawn as of the last
+  frame, and waiting for their emoji's glyphs: to be rastered, or for room in a full atlas),
+  `atlas` (the size in pixels of the glyph atlas page the emoji are drawn from), `streamed` (the
+  reactions passed to the HUD) to `subscribers` streams, and `dropped` by cause: `blocked`,
+  `duplicate`, `unknownEmoji`, `rateLimited`, `queueFull`, `particleCap`, `notShown` (reactions
+  that played with no particle, nothing being drawn over their player: no avatar or a hidden
+  one, far from the camera, or the local user in first person) and `noGlyphs` (reactions that
+  played with no particle, their emoji not laid out or with no glyph in colour). The counts are
+  of the session.
+  `/reaction_send <emoji>` reacts as the local user, the way the HUD's Reactions button does: the
+  reaction is sent to the players nearby and reported to analytics, and an emoji the wire has no
+  index for does nothing. The debug panel's "React with a heart" runs it.
   `/reaction_simulate <local|nearest|address> <emoji> [count]` takes a message as if that player
   had sent it, through the checks a peer's message passes, and sends nothing to anyone; it
   replies with the `target` taken and the emoji's wire `index`.
+  `/reaction_atlas_rebuild` has the reactions' glyph atlas rebuilt at its next upkeep, as a
+  glyph that finds no room in it does: its textures are replaced, the glyphs no particle shows
+  are freed and every particle alive gets a mesh for the new page; an atlas with no glyph to
+  free is left as it is. It replies with nothing. The debug panel's "Rebuild the glyph atlas"
+  runs it.
 - `/nearby_mutes`: the wallets whose nearby voice the account muted (`muted`, the first 32 of
   `count`), the `account` and where its saved list stands (`load`: `idle` signed out, `loading`,
   `loaded`, `failed`). `/nearby_mute on|off <address>` mutes or unmutes one, as the profile
@@ -341,7 +359,8 @@ State, in every build:
   Retry through that bridge; the console commands remain available for diagnostics.
   The [modal reference](connection-lost-modal.md) records Unity assets, dimensions and platform differences.
 - `/bevy_variants`: the abgen Bevy variants client as JSON: `base` (the variants origin, `null`
-  when off), `state` (on, off and why, or waiting for the GPU's texture formats), `formats` (the
+  when off or waiting for the endpoint flag), `baseSource` (what set it), `state` (on, off and
+  why, waiting for the endpoint flag, or waiting for the GPU's texture formats), `formats` (the
   variant formats this build takes and those it does not), `manifestCounts` (manifests loaded,
   none, failed, not eligible and pending), `manifests` (each entity's manifest state: scene,
   wearable or emote), `served` (variants downloaded and read from the cache), `servedByFormat`
@@ -446,6 +465,22 @@ On the web only:
 - `/scene_loop_mode <both|relay|deadline|legacy>`: switches the scheduling mode without a
   reload, as `?sceneLoop=` sets it at load; the engine's loop takes it at its next frame and
   each relay at its next step. The reply names the mode; an unknown name fails with the list.
+
+Movement:
+
+- `/movement_state`: the active locomotion settings, the last completed movement step's
+  `requested`, `actual` and `external` velocities in SDK axes, whether the player is on the ground
+  and its height over it (the debug panel's Locomotion section).
+
+Scene animations:
+
+- `/scene_animations` (JSON: the `models` that animate and how many are `withAnimator`; the
+  clips `playing`, `stopped` by their scene and `finished`; `finishReports`, the ended clips
+  reported to their scenes; and up to 32 `clips`, each with its `scene`, `entity`, `clip`,
+  `state`, `weight`, `speed`, `seekSeconds`, `durationSeconds` and `looping`). The debug panel's
+  Scene animations section shows the counts. A clip that ended reads `finished` until its
+  scene writes the Animator again: `stopped` after a write that keeps its state stopped, and
+  `playing` after one that plays it again.
 
 The HUD and input:
 

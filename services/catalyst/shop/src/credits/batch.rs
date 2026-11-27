@@ -29,6 +29,13 @@
 //! listing not paid in the chain's MANA, a second line or a second unit with
 //! a Credits part answers 400, before anything is reserved or signed.
 
+// Money and chain values: a silently truncated or sign-flipped cast is a bug.
+#![deny(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    clippy::cast_possible_wrap
+)]
+
 use std::str::FromStr;
 
 use alloy_primitives::{Address, B256, U256};
@@ -789,7 +796,8 @@ pub(super) async fn derive_line(
             AssetKind::Name => "name",
             _ => "other",
         },
-        asset_chain_id: asset.chain_id.0 as i64,
+        asset_chain_id: crate::types::chain_id_column(asset.chain_id.0)
+            .map_err(|e| ApiError::Internal(e.to_string()))?,
         asset_contract: asset.contract.to_string(),
         asset_item_id,
         asset_token_id,
@@ -809,7 +817,10 @@ pub(super) async fn derive_line(
 /// The whole flow for `lines` on behalf of `signer` (lowercase, from the
 /// verified auth chain); `single` shapes the messages. `metadata` is the
 /// signed auth-chain metadata, read only for a Credits part (below).
-#[allow(clippy::too_many_arguments)]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "one argument per part of the signed request"
+)]
 pub async fn authorize_group(
     state: &State,
     signer: &str,
@@ -878,7 +889,12 @@ pub async fn authorize_group(
         .map_err(|e| ApiError::Internal(format!("invalid credits signer key: {e}")))?;
     let buyer = EvmAddress::parse(signer)
         .map_err(|_| ApiError::bad_request("Invalid or missing signed-fetch authentication"))?;
-    let chain_id = ChainId(settings.usage.chain_id as u64);
+    let chain_id = ChainId(u64::try_from(settings.usage.chain_id).map_err(|_| {
+        ApiError::Internal(format!(
+            "invalid usage chain id {}",
+            settings.usage.chain_id
+        ))
+    })?);
     let manager = EvmAddress::parse(contract).map_err(|_| {
         ApiError::Internal("CREDITS_MANAGER_CONTRACT is not an address".to_string())
     })?;
@@ -1119,8 +1135,13 @@ pub async fn authorize_group(
     );
     let salt_hex = bytes32_hex(salt);
     let now = chrono::Utc::now();
-    let expires_at_s = now.timestamp() as u64 + settings.credit_ttl_seconds;
-    let expires_at = chrono::DateTime::from_timestamp(expires_at_s as i64, 0)
+    let expires_at_s = u64::try_from(now.timestamp())
+        .ok()
+        .and_then(|t| t.checked_add(settings.credit_ttl_seconds))
+        .ok_or_else(|| ApiError::Internal("expiry out of range".into()))?;
+    let expires_at = i64::try_from(expires_at_s)
+        .ok()
+        .and_then(|t| chrono::DateTime::from_timestamp(t, 0))
         .ok_or_else(|| ApiError::Internal("expiry out of range".into()))?
         .naive_utc();
     let identity = CreditIdentity {
@@ -1136,14 +1157,15 @@ pub async fn authorize_group(
     let group = NewGroup {
         id: &salt_hex,
         address: signer,
-        chain_id: chain_id.0 as i64,
+        chain_id: crate::types::chain_id_column(chain_id.0)
+            .map_err(|e| ApiError::Internal(e.to_string()))?,
         contract: &manager.to_string(),
         credit_hash: &credit_hash,
         quoted_cents: quoted_total.get(),
         charged_cents: charged_total.get(),
         amount_wei: &value.get().to_string(),
         oracle_rate: &recorded_rate.rate().to_string(),
-        oracle_decimals: recorded_rate.decimals() as i16,
+        oracle_decimals: i16::from(recorded_rate.decimals()),
         source,
         expires_at,
         lines: &records,
@@ -1230,10 +1252,17 @@ async fn replayed(
         .ok_or_else(|| ApiError::Internal("a replayed authorization has no value".into()))?;
     let identity = CreditIdentity {
         sender: buyer.address(),
-        chain_id: row.chain_id.unwrap_or(chain_id.0 as i64) as u64,
+        chain_id: match row.chain_id {
+            Some(c) => u64::try_from(c).map_err(|_| {
+                ApiError::Internal(format!("a replayed authorization has chain id {c}"))
+            })?,
+            None => chain_id.0,
+        },
         manager: stored_manager,
         value,
-        expires_at: row.expires_at.and_utc().timestamp() as u64,
+        expires_at: u64::try_from(row.expires_at.and_utc().timestamp()).map_err(|_| {
+            ApiError::Internal("a replayed authorization expires before 1970".into())
+        })?,
         salt: B256::from_str(&row.id).map_err(|_| {
             ApiError::Internal("a replayed authorization has a non-bytes32 id".into())
         })?,
@@ -1268,7 +1297,8 @@ fn credit_out(
             id: bytes32_hex(identity.salt),
             amount: amount.clone(),
             available_amount: amount.clone(),
-            expires_at: identity.expires_at as i64,
+            expires_at: i64::try_from(identity.expires_at)
+                .map_err(|_| ApiError::Internal("credit expiry is past i64".into()))?,
             signature,
             contract: format!("{:#x}", identity.manager),
         },

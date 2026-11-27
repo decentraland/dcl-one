@@ -284,8 +284,13 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
     user. In a stream `MuteSpeakerFromCommunityVoiceChat` is still sent, so every client shows the
     same state (a focus pause is the exception, below).
   - Don't play calls at the nearby-voice volume. Calls and streams follow `Voice Chat Volume` and
-    nearby players `Voice Volume`, both scaled by `Master`. Capture uses the system's default
-    microphone; a device picker is next work.
+    nearby players `Voice Volume`, both scaled by `Master`.
+  - Don't rebuild a microphone route to change its input. On the web, Settings › Sounds ›
+    Microphone (`config.audio.microphone`) moves each live track in place with livekit's
+    `setDeviceId`, under the same publication. An unplugged input is left to livekit, which
+    restarts the track on the system default; once the page lists the chosen input again, the
+    track moves back. The page reports the input each track captures from. Native capture uses the
+    system's default microphone.
   - Don't loop the call tune in the audio layer, which has no loop: the one-shot clip is
     re-triggered every 3.056 s (its length) while ringing.
   - Don't auto-subscribe the voice room. Like every room it joins with `auto_subscribe: false`,
@@ -425,17 +430,39 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   unity-explorer stores no community history. A new DM or DM reaction from them is not stored,
   since a DM history is never trimmed. A DM thread stored before the block is read back whole:
   hiding it would reveal that the other side blocked you, who is otherwise shown as offline.
-- **Situational reactions.** An emoji a player reacts with travels as unity-explorer's rfc4
-  `Reaction` and is sent, limited and played one at a time as unity-explorer does, with these
-  differences. Only the indices that name an emoji are taken (unity-explorer takes any under 4096
-  and draws the blank tiles), and an emoji with no index is not sent or shown. A message's copy
-  by the other room is told by its stamp and its index together, and the stamps sent only move
-  on: the sender's uptime as a float stops telling two messages of one send apart after a few
-  hours. What a sender may send is counted on the sender's own entity, so a player who leaves or
-  is blocked takes their waiting reactions with them; unity-explorer plays them out. A sender's
-  reactions play 0.2 s apart whichever messages they came in; unity-explorer starts the gap
-  afresh for a message that finds none of theirs waiting, which lets a sender of one-reaction
-  messages play twenty a second.
+- **Situational reactions.** An emoji picked from the chat's Reactions button rises over the
+  avatar with unity-explorer's numbers (lifetimes, speeds, sizes, the follow, the sway, the size
+  curve) and travels as its rfc4 `Reaction`, with these differences. The particle fades by alpha,
+  as it is drawn in the blended pass; unity-explorer dithers. It is drawn over blended meshes
+  too, so its place against the nametag does not flip as it sways. As in unity-explorer it is drawn over
+  solid geometry with no depth test, so a player who reacts behind a wall shows where they
+  stand; other players' are drawn within 25 m of the camera and the local player's at any
+  distance. None is drawn over an avatar that is hidden (by a scene, by the avatar limit, by a
+  block or with nametags off): it would show where the avatar stands. Nor is the local player's
+  own in first person, where it would rise from inside the camera and cover the view. A
+  reaction that plays while none would be drawn over its player gets no particle, and so asks
+  nothing of the glyph atlas; it still reaches the HUD. The Chat bubbles and reactions setting
+  at None turns the particles off with the bubbles, those in flight too; unity-explorer's
+  reactions read no setting. The emoji is the engine's colour font's, not unity-explorer's
+  atlas tile, and is laid out in that font: in a text font an emoji whose base character the
+  font has (©, ™, ‼) would come out in one colour.
+  Only the indices that name an emoji are taken (unity-explorer takes any under 4096 and draws
+  the blank tiles), and an emoji with no index is not sent or shown. A message's copy by the
+  other room is told by its stamp and its index together, and the stamps sent only move on: the
+  sender's uptime as a float stops telling two messages of one send apart after a few hours. What
+  a sender may send is counted on the sender's own entity, so a player who leaves or is blocked
+  takes their waiting reactions with them; unity-explorer plays them out. A sender's reactions
+  play 0.2 s apart whichever messages they came in; unity-explorer starts the gap afresh for a
+  message that finds none of theirs waiting, which lets a sender of one-reaction messages play
+  twenty a second. In the HUD, Cancel closes the bar, the full picker takes the bar's place
+  while it is open, and a pick with no index still becomes a recent emoji. The
+  reactions on screen scale with the HUD, are solved to where each ends and animated to there,
+  fade in place under reduced motion and are drawn in the system's emoji.
+  `reaction_visualization` is sent for a change of the setting only, never for the value a
+  session starts with. unity-explorer also sends it when its settings controller first applies
+  the saved value and that differs from its settings asset's (`chatReactionsEnabled`, true), so
+  it can send one `state: false` in a session where the player changed nothing: the two clients'
+  counts of the event are not alike.
 - **Community creation and editing.** The form follows unity-explorer's (fields, limits, texts,
   the content check's two refusal screens, every HTTP 400 read as the check's answer), with
   these differences. CANCEL on the refusal screen asks "Discard this community?" first, as the
@@ -690,6 +717,22 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   better than a late answer. A share of the target frame, not a fixed time, keeps the cap the same
   part of the main thread at any frame rate. See [Interaction](interaction.md#scene-raycasts).
 
+- **The player camera's look speed is the engine's own.** The three zoom levels, their orbit
+  rings, fields of view, shoulder offsets and the 0.5 s blend between them are unity-explorer's.
+  The pointer still turns the camera through this engine's sensitivity and smoothing settings, so
+  the vertical travel across an orbit and the easing of a turn differ from unity-explorer's, which
+  runs each level's axes with their own gain, acceleration and deceleration.
+- **The camera's field of view does not widen while running.** unity-explorer adds up to 15
+  degrees in first and third person while the avatar runs.
+- **The zoom levels have no gamepad D-pad or stick binding.** unity-explorer steps the level with
+  D-pad up and down and cycles it with the right stick pressed down. Here the D-pad is the scene's
+  actions 1 and 3 and the right stick turns the camera, so the bumpers step the level, as they
+  zoomed before, and the cycle is the V key only.
+- **A scene that forces first person on a drone camera keeps the player's aim.** unity-explorer's
+  first-person camera then comes back with the aim it had when the player last left first person.
+  Here the camera has one aim, so first person looks along the heading and pitch the drone had.
+- **The Camera Zoom sensitivity setting scales photo mode only.** The player camera reads which
+  way the wheel turned, not how far, so the setting has nothing to scale there.
 - **Photo mode follows the engine's cursor convention.** unity-explorer's in-world camera has its
   own Lock/Unlock cursor actions. Here right-click toggles the lock as everywhere else, left-drag
   looks while the cursor is free (Unity's drag), and Escape closes photo mode. The gallery key (G,
@@ -714,10 +757,33 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   unity-explorer disables. Jump In treats a photo as taken in a World when the HUD's `worldOfRealm`
   accepts its realm, so hyphenated ENS names and Worlds-server realm URLs count, where
   unity-explorer's test is `^[a-zA-Z0-9.]+\.eth$` and sends those photos to a Genesis City parcel.
+- **The third-person and drone cameras collide with scene geometry.** Each is pulled in front of
+  the scene colliders on both `CL_PHYSICS` and `CL_POINTER` and of the terrain, with unity-explorer's
+  camera radius, distances and easing times. The layer rule is unity-explorer's, kept so a scene
+  behaves the same in both clients: a physics-only collider, often an invisible wall, lets the
+  camera through, where the avatar and the photo camera stop at any `CL_PHYSICS` collider. A
+  collider stops the camera only inside the space its scene is drawn in. The shoulder offset
+  moves the pivot before the collision and eases (0.2 s in, 0.5 s out, never past the centre),
+  where unity-explorer shifts the camera after the collision and shortens the shift at once,
+  which jumped the camera sideways as a wall came in range and most of all in corners.
+- **A mesh that holds a camera obstacle does not fade; everything else between the camera and
+  the player does.** While camera collisions are on, a scene mesh whose own entity holds a
+  collider on both `CL_PHYSICS` and `CL_POINTER` is drawn opaque: the camera stops in front of
+  it. Every other scene mesh, the grass and avatars fade in the cone between the camera and the
+  player, because the camera passes through them and they would hide the player. That includes
+  a mesh whose collider is off for the player (an item attached to an avatar, anything under
+  the scene's player or camera entity) and a glTF wall whose collider is a separate `_collider`
+  node: the wall drawn is another mesh with no collider, so it still fades where it comes near
+  the line of sight. With `/camera_collisions false` nothing is exempt. The fade is the cone
+  alone. Scene meshes near the camera used to fade across the whole screen as well, for a
+  camera that passed into geometry; it now stops in front of obstacles, so that fade only made
+  nearby meshes it does not enter see-through, and is gone for every mesh, with collisions on
+  or off.
 - **The photo camera stops at scene geometry instead of sliding.** unity-explorer moves a capsule
   character controller, which slides along walls; here the move is swept and refused whole when
   the camera's sphere would cross a scene collider. A collider the camera starts inside (the player
-  camera has no wall avoidance, so photo mode can open in one) does not block it, so it can leave.
+  camera passes through physics-only colliders, so photo mode can open in one) does not block it,
+  so it can leave.
 - **No camera-to-player dither in photo mode.** unity-explorer keeps fading what stands between the
   camera and the avatar; here the fade showed in the photos, so the dither depth is zero while the
   mode is on and the player camera's depth comes back when it closes.
@@ -889,7 +955,7 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   to 100 characters. The pin doesn't pulse.
   This explorer loads no global portable experience at startup: unity-explorer loads the quests'
   one (`globalpx.dcl.eth`) from `alfa-global-portable-experiences`; here it is loaded with the
-  launch option (`--portables` or `?portables=`, e.g. `basiccontroller.dcl.eth;globalpx.dcl.eth`).
+  launch option (`--portables` or `?portables=`, e.g. `movecontroller.dcl.eth;globalpx.dcl.eth`).
 - **Arrival is checked on every position report.** unity-explorer checks the route only after
   the player's squared distance from the map's origin has changed by 300 map units, which can
   skip the arrival spot when the player stops on it or reaches it sideways, so the route never
@@ -1109,6 +1175,13 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
 - **A plate stands clear of the mention ring.** The plate floats 2 units over the name's box,
   as in unity-explorer, and the ring of a mention reaches 3 units out of that box. While the
   ring shows, the plate rises by the ring's width, so it never covers the ring's top edge.
+- **SDK Animator: a reversed clip, a dropped state, a new model and weights.** A clip with a
+  negative `speed` (re)starts on its last frame, as the protocol defines the initial state; a
+  clip left out of a later `states` list stops; the Animator is applied to the model a new
+  `src` loads without waiting for the scene's next write; `weight` is kept between 0 and 1,
+  and clips playing together mix by their normalised weights. Unity's player for legacy clips
+  passes `speed` and `weight` through, starts every clip on its first frame, leaves a dropped
+  clip as it was and gives each clip a layer of its own. Do not copy those.
 
 ## Deliberate choices that look like mistakes
 
@@ -1331,3 +1404,21 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   a slice plus the avatar work); the commands `process_avatar` queues, which are applied after
   it; wearables much heavier than the base set; a target above 60 fps (the slice is 1.7 ms at
   144 fps); and the native client.
+- **`shouldReset` restarts a playing clip on every Animator write.** The protocol's comment says
+  the state is restored when it goes from stopped to playing. Scenes restart a clip that is
+  already playing by writing it again with `playing` and `shouldReset`
+  (`Animator.playSingleAnimation`), so a write restarts it. On a stopped state the flag rewinds
+  the clip, which shows only in where its next play starts: `Animator.stopAllAnimations` stops
+  its clips "at 0 or at the current cursor position" by setting the flag or not, and
+  `playSingleAnimation` sets it on every other state. A state with `playing` unset does not
+  play.
+- **A clip played once tells its scene when it ends.** The engine writes the scene's Animator
+  back with that state's `playing` false, once, so a scene need not time the clip. The clip
+  then stops contributing and the model holds the pose it ended on. The Unity client writes
+  the same report.
+  Without the report the scene's own state would still say `playing`, and its next write about
+  any other clip would play the finished one again. A clip can end while its scene's tick is
+  running, and that tick's write still says `playing`: the engine keeps the clip ended, applies
+  the rest of the write and sends the scene the result before its next tick, so the scene
+  always reads the end. To play the clip again, the scene writes `playing` after it has read
+  the end. A model is watched for an end only while its Animator plays a clip once.

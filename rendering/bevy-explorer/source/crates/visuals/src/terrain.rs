@@ -24,8 +24,7 @@ use common::{
     sets::PostUpdateSets,
     structs::{CurrentRealm, EngineMovementControl, LandscapeDistance, PrimaryUser},
     terrain::{
-        height, texel_value, uv_size, Occupancy, PlayerTerrainHeight, TerrainChange,
-        TerrainTargets, MAX_STEPS, ZERO,
+        height, texel_value, uv_size, Occupancy, TerrainChange, TerrainTargets, MAX_STEPS, ZERO,
     },
 };
 use dcl_component::SceneEntityId;
@@ -55,7 +54,6 @@ impl Plugin for TerrainPlugin {
 
         app.init_resource::<TerrainSurface>()
             .init_resource::<LandscapeDistance>()
-            .init_resource::<PlayerTerrainHeight>()
             .init_resource::<TerrainTextureWrites>()
             .add_plugins(ExtractResourcePlugin::<TerrainTextureWrites>::default())
             .add_plugins(MaterialPlugin::<TerrainFlatMaterial>::default())
@@ -63,7 +61,7 @@ impl Plugin for TerrainPlugin {
             .add_systems(
                 PostUpdate,
                 (
-                    (sync, (update_texture, player_height))
+                    (sync, update_texture)
                         .chain()
                         .in_set(TerrainSet)
                         .before(PostUpdateSets::ColliderUpdate),
@@ -320,11 +318,6 @@ impl TerrainSurface {
         })
     }
 
-    /// Height below a Bevy position.
-    pub fn height_at(&self, position: Vec3) -> f32 {
-        self.height(position.x, -position.z)
-    }
-
     /// Height of the 1 m triangulated surface the collider and nearby ground use: the height
     /// function at whole metres, each cell split along Unity's (x0, z0)-(x1, z1) diagonal.
     pub fn cell_height_at(&self, position: Vec3) -> f32 {
@@ -538,20 +531,6 @@ fn sync(
     if coast != surface.coast {
         surface.coast = coast;
         surface.changes.params = true;
-    }
-}
-
-fn player_height(
-    surface: Res<TerrainSurface>,
-    player: Query<&GlobalTransform, With<PrimaryUser>>,
-    mut height: ResMut<PlayerTerrainHeight>,
-) {
-    let Ok(player) = player.single() else {
-        return;
-    };
-    let position = player.translation();
-    if position.is_finite() {
-        height.0 = surface.height_at(position);
     }
 }
 

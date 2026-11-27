@@ -74,30 +74,9 @@
 }
 
 .pictureEdit:focus-visible,
-.input:focus-visible,
 .link:focus-visible {
   outline: 2px solid var(--dcl-text-primary);
   outline-offset: 2px;
-}
-
-.input {
-  box-sizing: border-box;
-  width: 100%;
-  padding: var(--dcl-space-12) var(--dcl-space-16);
-  border: 1px solid transparent;
-  border-radius: var(--dcl-radius-sm);
-  background: var(--dcl-neutrals-white);
-  color: var(--dcl-neutrals-black);
-  font: inherit;
-  font-size: var(--dcl-font-size-body-md);
-}
-
-.input:focus {
-  border-color: var(--dcl-action-primary);
-}
-
-.input::placeholder {
-  color: var(--dcl-neutrals-gray);
 }
 
 .error {

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useId, useRef, useState } from 'react'
 import { JumpInCTA } from '../../../components/JumpInCTA/JumpInCTA'
-import { Button } from '../shared/Button/Button'
+import { Button } from '../../../components/Button/Button'
 import { EditorPause, GeneralAudioOff, GeneralAudioOn } from '../../../foundations/icons'
 import avatarFace from '../assets/avatar_face.webp'
 import glow from '../assets/ellipse_gradient.webp'
@@ -201,7 +201,7 @@ function VibeCard({
           {/* Stopped, the play control is source's duration chip: play mark and the clip length. */}
           <Button
             className={styles.playChip}
-            variant="quaternary"
+            variant="dark"
             size="sm"
             aria-label={`${playing ? labels.pause : labels.play}: ${item.creator.name}`}
             aria-pressed={playing}
@@ -213,18 +213,18 @@ function VibeCard({
             }}
           >
             {playing ? (
-              <EditorPause size={16} aria-hidden="true" />
+              <EditorPause className={styles.chipIcon} size={16} aria-hidden="true" />
             ) : (
-              <>
+              <span className={styles.playLabel}>
                 <span className={styles.playIcon} aria-hidden="true" />
                 <span className={styles.duration}>{duration ?? '0:00'}</span>
-              </>
+              </span>
             )}
           </Button>
           {playing ? (
             <Button
               className={styles.muteChip}
-              variant="quaternary"
+              variant="dark"
               size="sm"
               aria-label={muted ? labels.unmute : labels.mute}
               onClick={() => {
@@ -235,9 +235,9 @@ function VibeCard({
               }}
             >
               {muted ? (
-                <GeneralAudioOff size={16} aria-hidden="true" />
+                <GeneralAudioOff className={styles.chipIcon} size={16} aria-hidden="true" />
               ) : (
-                <GeneralAudioOn size={16} aria-hidden="true" />
+                <GeneralAudioOn className={styles.chipIcon} size={16} aria-hidden="true" />
               )}
             </Button>
           ) : null}

@@ -36,6 +36,104 @@ type NativeProps =
       ref?: Ref<HTMLAnchorElement>
     })
 
+/** The Explorer HUD's looks: a fill or an outline over a scene, a panel or a dialog. */
+export type ButtonHudVariant =
+  | 'primary'
+  | 'secondary'
+  | 'ghost'
+  | 'light'
+  | 'outline'
+  | 'accent'
+  | 'dark'
+  | 'tint'
+  | 'scrim'
+  | 'faint'
+  | 'veil'
+  | 'glass'
+  | 'shade'
+  | 'clear'
+  | 'darkOutline'
+  | 'whisper'
+  | 'method'
+  | 'navigate'
+  | 'navigateExit'
+/** `bare` takes its size from the caller's class and is not dimmed while disabled. */
+export type ButtonHudSize =
+  | 'sm'
+  | 'md'
+  | 'lg'
+  | 'row'
+  | 'card'
+  | 'cardSm'
+  | 'header'
+  | 'modal'
+  | 'dialog'
+  | 'cta'
+  | 'start'
+  | 'bare'
+
+type DefaultLook = {
+  appearance?: 'default'
+  size?: 'xl' | 'lg' | 'md' | 'sm'
+  /** Responsive uses the mobile dimensions below 768px or with a coarse primary pointer. */
+  viewport?: 'desktop' | 'mobile' | 'responsive'
+  loading?: boolean
+  leadingIcon?: ReactNode
+  trailingIcon?: ReactNode
+  startIcon?: ReactNode
+  endIcon?: ReactNode
+  forceState?: 'hover' | 'pressed' | 'focus'
+  contentLayout?: 'intrinsic' | 'fill'
+} & ({ iconOnly?: false } | ({ iconOnly: true } & AccessibleName)) &
+  ({ variant?: Exclude<Variant, 'iconOnly'> } | ({ variant: 'iconOnly' } & AccessibleName)) &
+  ({ tone?: never } | { tone?: 'danger'; variant?: 'primary' | 'outline'; iconOnly?: false })
+
+/** The fill of the Explorer HUD's icon control. */
+export type ButtonHudControlVariant = 'ghost' | 'solid' | 'dark' | 'faint'
+
+/**
+ * Not in Figma: the Explorer HUD's button. Its content is the button's own children, laid out in a
+ * row 8px apart, and it has no loading state or icon slots.
+ */
+type HudLook = {
+  appearance: 'hud'
+  control?: never
+  active?: never
+  variant?: ButtonHudVariant
+  size?: ButtonHudSize
+  /** Overrides the size's corner radius. */
+  radius?: 'md' | 'button' | 'pill'
+}
+
+/**
+ * Not in Figma: the Explorer HUD's icon control (close, back, a menu's toggle, a count). `square`,
+ * `circle` and `pill` are a 30px box (`sm` 26px, `lg` 32px; a pill grows to its content) with a
+ * `ghost` fill unless `variant` says otherwise. As a button it sets `aria-pressed` from `active`;
+ * pass `aria-pressed={undefined}` for a control that is not a toggle. As a link it sets none.
+ */
+type HudControlLook = {
+  appearance: 'hud'
+  control: 'square' | 'circle' | 'pill'
+  variant?: ButtonHudControlVariant
+  size?: 'sm' | 'md' | 'lg'
+  /** The selected or pressed look. */
+  active?: boolean
+  radius?: never
+}
+
+/**
+ * Not in Figma: the dark button of a full-screen HUD header, with a faint ring that keeps it
+ * readable over a busy background. `header` is a 40px circle and `headerPill` a 46px pill.
+ */
+type HudHeaderLook = {
+  appearance: 'hud'
+  control: 'header' | 'headerPill'
+  variant?: never
+  size?: never
+  active?: never
+  radius?: never
+}
+
 export type ButtonProps = NativeProps &
   Content & {
     /**
@@ -45,39 +143,115 @@ export type ButtonProps = NativeProps &
     dangerouslySetInnerHTML?: never
     children?: ReactNode
     label?: ReactNode
-    size?: 'xl' | 'lg' | 'md' | 'sm'
-    /** Responsive uses the mobile dimensions below 768px or with a coarse primary pointer. */
-    viewport?: 'desktop' | 'mobile' | 'responsive'
-    loading?: boolean
-    leadingIcon?: ReactNode
-    trailingIcon?: ReactNode
-    startIcon?: ReactNode
-    endIcon?: ReactNode
-    forceState?: 'hover' | 'pressed' | 'focus'
-    contentLayout?: 'intrinsic' | 'fill'
-  } & ({ iconOnly?: false } | ({ iconOnly: true } & AccessibleName)) &
-  ({ variant?: Exclude<Variant, 'iconOnly'> } | ({ variant: 'iconOnly' } & AccessibleName)) &
-  ({ tone?: never } | { tone?: 'danger'; variant?: 'primary' | 'outline'; iconOnly?: false })
+  } & (DefaultLook | HudLook | HudControlLook | HudHeaderLook)
 
-export function Button({
+type HudProps<T = ButtonProps> = T extends { appearance: 'hud' } ? Omit<T, 'appearance'> : never
+type DefaultProps<T = ButtonProps> = T extends { appearance: 'hud' } ? never : Omit<T, 'appearance'>
+
+function hudLook(
+  control: HudProps['control'],
+  variant: HudProps['variant'],
+  size: HudProps['size'],
+  radius: HudProps['radius'],
+  active: boolean
+) {
+  if (control === undefined)
+    return {
+      className: styles.hud,
+      'data-variant': variant ?? 'primary',
+      'data-size': size ?? 'md',
+      'data-radius': radius
+    }
+  if (control === 'header' || control === 'headerPill')
+    return { className: styles.hudHeader, 'data-shape': control === 'header' ? 'circle' : 'pill' }
+  return {
+    className: styles.hudControl,
+    'data-shape': control,
+    'data-variant': variant ?? 'ghost',
+    'data-size': size ?? 'md',
+    'data-active': active || undefined
+  }
+}
+
+function HudButton({
+  variant,
+  size,
+  radius,
+  control,
+  active = false,
+  className,
   children,
   label,
-  variant = 'primary',
-  size = 'xl',
-  tone,
-  viewport = 'desktop',
-  loading = false,
-  leadingIcon,
-  trailingIcon,
-  startIcon,
-  endIcon,
-  iconOnly = false,
-  forceState,
-  className,
-  contentLayout = 'intrinsic',
   disabled = false,
   ...native
-}: ButtonProps) {
+}: HudProps) {
+  const look = hudLook(control, variant, size, radius, active)
+  const common = { ...look, className: [look.className, className].filter(Boolean).join(' ') }
+  const toggle = control === 'square' || control === 'circle' || control === 'pill'
+  const content = children === undefined ? label : children
+  if (typeof native.href === 'string') {
+    const { href, target, rel, onClick, ...anchor } = native
+    return (
+      <a
+        {...anchor}
+        {...common}
+        dangerouslySetInnerHTML={undefined}
+        href={disabled ? undefined : href}
+        target={target}
+        rel={secureRel(target, rel)}
+        role={disabled ? (anchor.role ?? 'link') : anchor.role}
+        aria-disabled={disabled || anchor['aria-disabled']}
+        data-disabled={disabled || undefined}
+        onClick={
+          disabled ? (event: MouseEvent<HTMLAnchorElement>) => event.preventDefault() : onClick
+        }
+      >
+        {content}
+      </a>
+    )
+  }
+  const { type = 'button', ...button } = native as ButtonHTMLAttributes<HTMLButtonElement> & {
+    ref?: Ref<HTMLButtonElement>
+  }
+  return (
+    <button
+      aria-pressed={toggle ? active : undefined}
+      {...button}
+      {...common}
+      dangerouslySetInnerHTML={undefined}
+      type={type}
+      disabled={disabled}
+    >
+      {content}
+    </button>
+  )
+}
+
+export function Button({ appearance = 'default', ...props }: ButtonProps) {
+  if (appearance === 'hud') return <HudButton {...(props as HudProps)} />
+  return <DefaultButton {...(props as DefaultProps)} />
+}
+
+function DefaultButton(props: DefaultProps) {
+  const {
+    children,
+    label,
+    variant = 'primary',
+    size = 'xl',
+    tone,
+    viewport = 'desktop',
+    loading = false,
+    leadingIcon,
+    trailingIcon,
+    startIcon,
+    endIcon,
+    iconOnly = false,
+    forceState,
+    className,
+    contentLayout = 'intrinsic',
+    disabled = false,
+    ...native
+  } = props
   const layout = contentLayout === 'fill' ? 'fill' : 'intrinsic'
   const compact = iconOnly || variant === 'iconOnly'
   const unavailable =

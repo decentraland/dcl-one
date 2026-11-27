@@ -66,9 +66,13 @@ pub struct ProcessorSettings {
     /// How long an id cursor keeps a gap at least (see [`Gap`]).
     pub gap_grace: Duration,
     /// The marketplace items mirror runs (`MARKETPLACE_MIRRORS_ENABLED`).
-    /// Without it the sales job would hold at the first sale, so it is not
-    /// started.
     pub items_mirror_enabled: bool,
+    /// The collections index owns Polygon's catalogue
+    /// (`MARKETPLACE_COLLECTIONS_INDEX_OWNS` lists `matic`): a sale waits for
+    /// its publication, not for the items mirror. Without either, the sales
+    /// job would hold at the first sale of an item the catalogue lacks, so
+    /// it is not started.
+    pub polygon_owned: bool,
 }
 
 impl Default for ProcessorSettings {
@@ -80,6 +84,7 @@ impl Default for ProcessorSettings {
             deployment_max_lag: None,
             gap_grace: Duration::from_secs(600),
             items_mirror_enabled: false,
+            polygon_owned: false,
         }
     }
 }
@@ -116,6 +121,10 @@ impl Pass {
             .is_some_and(|max| chrono::Duration::from_std(max).is_ok_and(|max| at < now - max))
     }
 }
+
+/// The chain the badge processor reads Polygon on: its indexes and the
+/// catalogue's verdict are bound to it.
+const POLYGON_CHAIN: i64 = 137;
 
 /// Batches one tick drains at most per source before yielding.
 const MAX_BATCHES_PER_TICK: usize = 50;
@@ -630,7 +639,7 @@ pub fn spawn(state: &SharedState, jobs: &crate::jobs::Jobs) {
         pass.clone(),
         |p| Box::pin(async move { deployments::run(&p).await }),
     );
-    if pass.settings.items_mirror_enabled {
+    if pass.settings.items_mirror_enabled || pass.settings.polygon_owned {
         spawn_one(
             jobs,
             "badges-sales",
@@ -640,7 +649,7 @@ pub fn spawn(state: &SharedState, jobs: &crate::jobs::Jobs) {
         );
     } else {
         tracing::warn!(
-            "MARKETPLACE_MIRRORS_ENABLED=false: no badges-sales job (a sale waits for its item in the items mirror)"
+            "MARKETPLACE_MIRRORS_ENABLED=false and MARKETPLACE_COLLECTIONS_INDEX_OWNS without matic: no badges-sales job (a sale waits for its item in the items mirror or the collections index's publication)"
         );
     }
     spawn_one(

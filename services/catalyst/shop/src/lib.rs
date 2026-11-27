@@ -25,7 +25,13 @@
 
 // Production routes go through `shared::routing` (shop/clippy.toml); test routers may use axum's.
 #![cfg_attr(not(test), deny(clippy::disallowed_methods))]
-#![cfg_attr(test, allow(clippy::disallowed_methods))]
+#![cfg_attr(
+    test,
+    allow(
+        clippy::disallowed_methods,
+        reason = "test routers may use axum's routing"
+    )
+)]
 
 // The crates this one builds on, under their module names (AGENTS.md).
 pub(crate) use catalyst_chain_index as chain_index;
@@ -156,9 +162,8 @@ fn pending(source: &'static str) -> MethodRouter {
 /// The canonical paths the Shop UI codes against whose handlers are still
 /// to be written, one source label per feature: pack order
 /// resume/cancel, batch authorization and submission reporting, the NAME
-/// credit route, IAP and the card
-/// on-ramps. Mounted after the served routes, so a path a handler owns is
-/// never shadowed.
+/// credit route and IAP. Mounted after the served routes, so a path a
+/// handler owns is never shadowed.
 pub fn pending_router() -> Router {
     Router::new()
         .route(
@@ -172,9 +177,6 @@ pub fn pending_router() -> Router {
         .route("/v1/iap/quote", pending("shop-credits-iap"))
         .route("/v1/iap/register", pending("shop-credits-iap"))
         .route("/v1/iap/verify", pending("shop-credits-iap"))
-        .route("/v1/transak/widget-url", pending("shop-onramp"))
-        .route("/v1/transak/orders/{id}", pending("shop-onramp"))
-        .route("/v1/wert/sign", pending("shop-onramp"))
 }
 
 #[cfg(test)]

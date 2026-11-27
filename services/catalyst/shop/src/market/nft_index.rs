@@ -14,7 +14,8 @@
 //! the chain's position, appended with its cursor advance
 //! (`chain_walk::run_pass`), and folded into `shop.nft` (owner = the
 //! latest transfer's `to`, the mint the first), `nft_order` (the latest
-//! legacy order event per token) and `land_data` (the latest parcel Update or latest
+//! legacy order event per token), `legacy_order` (every legacy order,
+//! `legacy_orders`) and `land_data` (the latest parcel Update or latest
 //! valid estate document). The LAND fold reads the window.
 //! The other folds read each touched key's whole history. `since = None` rebuilds.
 //!
@@ -160,11 +161,13 @@ pub struct DecodeError {
     pub why: String,
 }
 
-/// A legacy order's `expiresAt`: the 2018 Ethereum contract took seconds
+pub(super) const LEGACY_EXPIRY_UNIT_THRESHOLD: i64 = 100_000_000_000;
+
+/// A legacy order's `expiresAt`: the Ethereum Marketplace took seconds
 /// from some clients and milliseconds from others; below 10^11 is seconds.
 pub fn expires_ms(raw: u128) -> i64 {
     let v = raw.min(i64::MAX as u128) as i64;
-    if v < 100_000_000_000 {
+    if v < LEGACY_EXPIRY_UNIT_THRESHOLD {
         v.saturating_mul(1000)
     } else {
         v
@@ -561,14 +564,21 @@ ON CONFLICT (network, contract_address, token_id) DO UPDATE SET
     created_at = EXCLUDED.created_at, updated_at = EXCLUDED.updated_at,
     updated_block = EXCLUDED.updated_block, updated_log = EXCLUDED.updated_log";
 
-/// The contracts of a network (`$1`) whose backfill is not finished.
-const BACKFILLS_OWED_SQL: &str = "SELECT count(*) FROM shop.nft_contract WHERE network = $1 AND backfill_from_block IS NOT NULL \
-     AND COALESCE(backfilled_to_block, backfill_from_block - 1) < walked_from_block - 1";
+/// Predicate on one `shop.nft_contract` row with a backfill still outstanding.
+pub(super) const BACKFILL_PENDING_SQL: &str = "backfill_from_block IS NOT NULL AND COALESCE(backfilled_to_block, backfill_from_block - 1) < walked_from_block - 1";
+
+fn backfills_owed_sql() -> sqlx::AssertSqlSafe<String> {
+    sqlx::AssertSqlSafe(format!(
+        "SELECT count(*) FROM shop.nft_contract WHERE network = $1 AND {BACKFILL_PENDING_SQL}"
+    ))
+}
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct FoldCounts {
     pub nfts: u64,
     pub orders: u64,
+    /// The rows of `shop.legacy_order` written (`legacy_orders`).
+    pub legacy_orders: u64,
     pub land_data: u64,
     /// The contracts whose backfill the lane still owes, counted in the
     /// fold's transaction.
@@ -598,6 +608,7 @@ pub async fn fold(
         .execute(&mut *tx)
         .await?;
     super::chain_walk::analyze_if_stale(&mut tx, "shop", "nft_event", since < 0).await?;
+    owner.check(&mut tx).await?;
     let contracts: Vec<String> = sqlx::query_scalar("SELECT contract_address FROM shop.nft_contract WHERE network = $1 AND refold_owed FOR UPDATE")
         .bind(net.db_name())
         .fetch_all(&mut *tx)
@@ -634,6 +645,7 @@ pub async fn fold(
         .execute(&mut *tx)
         .await?
         .rows_affected();
+    let legacy_orders = super::legacy_orders::fold(&mut tx, net, since).await?;
     let land_data = if net == ChainNet::Ethereum {
         fold_land_data(&mut tx, since).await?
     } else {
@@ -646,24 +658,22 @@ pub async fn fold(
             .execute(&mut *tx)
             .await?;
     }
-    let backfills_owed: i64 = sqlx::query_scalar(BACKFILLS_OWED_SQL)
+    let backfills_owed: i64 = sqlx::query_scalar(backfills_owed_sql())
         .bind(net.db_name())
         .fetch_one(&mut *tx)
         .await?;
     if backfills_owed > 0 {
-        // At the end, beside the fence that locks the same row, so the
-        // cursor's row lock lasts only until the commit.
         sqlx::query("UPDATE shop.chain_cursor SET folded_block = NULL, folded_at = NULL WHERE indexer = $1 AND network = $2")
             .bind(INDEXER_NFT)
             .bind(net.db_name())
             .execute(&mut *tx)
             .await?;
     }
-    owner.check(&mut tx).await?;
     tx.commit().await?;
     Ok(FoldCounts {
         nfts,
         orders,
+        legacy_orders,
         land_data,
         backfills_owed,
     })
@@ -759,7 +769,7 @@ async fn fold_registry_data(
     Ok(written)
 }
 
-/// A mirrored collection the walk may take in.
+/// A catalogue collection the walk may take in.
 #[derive(Clone, Debug)]
 struct Collection {
     address: String,
@@ -776,6 +786,14 @@ pub struct WalkedContract {
 }
 
 impl WalkedContract {
+    fn overlaps(&self, from: u64, to: u64) -> bool {
+        self.walked_from_block <= to as i64
+            || self
+                .backfill_from_block
+                .zip(self.backfilled_to_block)
+                .is_some_and(|(first, last)| first <= to as i64 && last >= from as i64)
+    }
+
     /// The range the backfill lane still owes, if any.
     pub fn owed(&self) -> Option<(i64, i64)> {
         let from = self.backfill_from_block?;
@@ -790,9 +808,10 @@ impl WalkedContract {
 pub struct NftIndex {
     pub net: ChainNet,
     deployments: Deployments,
+    check_catalogue: bool,
     pending: Mutex<Vec<(String, i64, Option<i64>)>>,
     collections: Mutex<Option<Vec<Collection>>>,
-    walked: Mutex<Option<HashMap<String, i64>>>,
+    walked: Mutex<Option<HashMap<String, WalkedContract>>>,
     /// The cursor's start: nothing before it is the walk's (a bounded
     /// window's history, or none at all for a full one).
     walk_start: Mutex<Option<u64>>,
@@ -814,6 +833,7 @@ impl NftIndex {
         Self {
             net,
             deployments,
+            check_catalogue: false,
             pending: Mutex::new(Vec::new()),
             collections: Mutex::new(None),
             walked: Mutex::new(None),
@@ -821,17 +841,28 @@ impl NftIndex {
         }
     }
 
-    /// The mirrored collections of this network with their creation time,
-    /// read once per pass (the address set's source).
-    async fn load(&self, pool: &PgPool) -> anyhow::Result<(Vec<Collection>, HashMap<String, i64>)> {
+    /// A scheduled pass checks the catalogue again when it loads its set.
+    pub(super) fn with_catalogue_gate(mut self) -> Self {
+        self.check_catalogue = true;
+        self
+    }
+
+    /// The catalogue rows and previously walked contracts of this network
+    /// on one checked snapshot, read once per pass.
+    async fn load(
+        &self,
+        pool: &PgPool,
+    ) -> anyhow::Result<(Vec<Collection>, HashMap<String, WalkedContract>)> {
         if let (Some(c), Some(w)) = (self.collections.lock().clone(), self.walked.lock().clone()) {
             return Ok((c, w));
         }
+        let mut tx =
+            catalogue_snapshot(pool, self.net, self.chain_id(), self.check_catalogue).await?;
         let rows = sqlx::query("SELECT contract_address, created_at FROM shop.collections WHERE network = $1 AND chain_id = $2 AND ($3 OR testnet_verified) ORDER BY created_at, contract_address")
             .bind(self.net.db_name())
             .bind(self.deployments.chain_id as i32)
             .bind(self.deployments.chain_id == self.net.chain_id())
-            .fetch_all(pool)
+            .fetch_all(&mut *tx)
             .await?;
         let collections: Vec<Collection> = rows
             .iter()
@@ -840,24 +871,27 @@ impl NftIndex {
                 created_at: r.get("created_at"),
             })
             .collect();
-        let walked: HashMap<String, i64> = sqlx::query_as::<_, (String, i64)>(
-            "SELECT contract_address, walked_from_block FROM shop.nft_contract WHERE network = $1",
+        let walked = sqlx::query_as::<_, WalkedContract>(
+            "SELECT contract_address, walked_from_block, backfill_from_block, backfilled_to_block
+             FROM shop.nft_contract WHERE network = $1",
         )
         .bind(self.net.db_name())
-        .fetch_all(pool)
+        .fetch_all(&mut *tx)
         .await?
         .into_iter()
-        .collect();
-        let start = chain_walk::cursor(pool, INDEXER_NFT, self.net)
+        .map(|row| (row.contract_address.clone(), row))
+        .collect::<HashMap<_, _>>();
+        let start = chain_walk::cursor(&mut *tx, INDEXER_NFT, self.net)
             .await?
             .map_or(self.deployments.start, |c| c.start_block.max(0) as u64);
+        tx.commit().await?;
         *self.walk_start.lock() = Some(start);
         *self.collections.lock() = Some(collections.clone());
         *self.walked.lock() = Some(walked.clone());
         Ok((collections, walked))
     }
 
-    /// Forget the per-pass caches (a new pass rereads the mirror).
+    /// Forget the per-pass caches (a new pass rereads the catalogue).
     pub fn reset(&self) {
         *self.collections.lock() = None;
         *self.walked.lock() = None;
@@ -866,19 +900,56 @@ impl NftIndex {
     }
 }
 
-/// Whether the collections mirror has completed a pass for `net`: the
-/// address set is only as complete as it. Legacy mainnet writers used the
-/// mainnet row tags even for custom URLs, before they recorded a chain here.
-pub async fn mirror_complete(pool: &PgPool, net: ChainNet, chain_id: i64) -> bool {
-    sqlx::query_scalar::<_, bool>("SELECT last_complete_pass_at IS NOT NULL FROM shop.mirror_state WHERE mirror = 'collections' AND network = $1 AND (chain_id = $2 OR ($3 AND chain_id IS NULL AND pass_block_hash IS NULL))")
-        .bind(net.db_name())
-        .bind(chain_id)
-        .bind(chain_id == net.chain_id())
-        .fetch_optional(pool)
+/// Why an NFT or sales walk cannot read this network's catalogue. A
+/// projection that stands survives a catch-up close that clears the
+/// cursor's fold marker. A rewind clears its projection height.
+pub(super) async fn catalogue_wait<'e>(
+    executor: impl sqlx::PgExecutor<'e>,
+    net: ChainNet,
+    chain_id: i64,
+) -> Result<Option<String>, sqlx::Error> {
+    sqlx::query_scalar(
+        "SELECT CASE
+           WHEN p.owned_at IS NOT NULL THEN CASE
+             WHEN p.projected_through <= c.last_block AND c.chain_id = $2 AND c.full_history
+               AND c.quarantined_at IS NULL AND c.diverged_at IS NULL
+             THEN NULL ELSE 'waiting for the collections projection to stand' END
+           WHEN m.last_complete_pass_at IS NOT NULL
+             AND (m.chain_id = $2 OR ($3 AND m.chain_id IS NULL AND m.pass_block_hash IS NULL))
+           THEN NULL ELSE 'waiting for the collections mirror''s first complete pass' END
+         FROM (SELECT $1::text AS network) AS n
+         LEFT JOIN shop.collection_projection p USING (network)
+         LEFT JOIN shop.chain_cursor c ON c.network = n.network AND c.indexer = 'collections'
+         LEFT JOIN shop.mirror_state m ON m.network = n.network AND m.mirror = 'collections'",
+    )
+    .bind(net.db_name())
+    .bind(chain_id)
+    .bind(chain_id == net.chain_id())
+    .fetch_one(executor)
+    .await
+}
+
+/// A scheduled walk reads its gate and address rows in the same snapshot.
+/// A hand-back between the preliminary job gate and this read must wait for
+/// the mirror even when the old gate admitted the pass.
+pub(super) async fn catalogue_snapshot(
+    pool: &PgPool,
+    net: ChainNet,
+    chain_id: i64,
+    check_catalogue: bool,
+) -> anyhow::Result<sqlx::Transaction<'static, sqlx::Postgres>> {
+    let mut tx = crate::chain_index::catalogue::read_snapshot(pool).await?;
+    if check_catalogue && let Some(why) = catalogue_wait(&mut *tx, net, chain_id).await? {
+        anyhow::bail!("{} walk catalogue: {why}", net.db_name());
+    }
+    Ok(tx)
+}
+
+#[cfg(test)]
+pub(super) async fn mirror_complete(pool: &PgPool, net: ChainNet, chain_id: i64) -> bool {
+    catalogue_wait(pool, net, chain_id)
         .await
-        .ok()
-        .flatten()
-        .unwrap_or(false)
+        .is_ok_and(|why| why.is_none())
 }
 
 #[async_trait::async_trait]
@@ -897,11 +968,9 @@ impl ChainIndex for NftIndex {
 
     /// A walk that owes a backfill runs its lanes, alone.
     async fn walks_alone(&self, pool: &PgPool) -> anyhow::Result<bool> {
-        Ok(sqlx::query_scalar(
-            "SELECT EXISTS (SELECT 1 FROM shop.nft_contract \
-             WHERE network = $1 AND backfill_from_block IS NOT NULL \
-               AND COALESCE(backfilled_to_block, backfill_from_block - 1) < walked_from_block - 1)",
-        )
+        Ok(sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
+            "SELECT EXISTS (SELECT 1 FROM shop.nft_contract WHERE network = $1 AND {BACKFILL_PENDING_SQL})"
+        )))
         .bind(self.net.db_name())
         .fetch_one(pool)
         .await?)
@@ -937,6 +1006,16 @@ impl ChainIndex for NftIndex {
             .filter(|(_, deployed)| *deployed <= to)
             .map(|(a, _)| a.to_string())
             .collect();
+        // The catalogue may shrink during a rebuild or hand-back. Once
+        // the walk records a contract, keep reading it until the NFT walk
+        // itself rewinds past its admission. Historical source comparisons
+        // also need the backfill prefix that the walk read before admission.
+        addresses.extend(
+            walked
+                .values()
+                .filter(|row| row.overlaps(from, to))
+                .map(|row| row.contract_address.clone()),
+        );
         let mut pending = Vec::new();
         for c in &collections {
             if walked.contains_key(&c.address) {
@@ -1018,8 +1097,14 @@ impl ChainIndex for NftIndex {
             .execute(&mut *conn)
             .await?;
             if let Some(w) = self.walked.lock().as_mut() {
-                for (a, f, _) in pending {
-                    w.entry(a).or_insert(f);
+                for (address, walked_from_block, backfill_from_block) in pending {
+                    let key = address.clone();
+                    w.entry(key).or_insert(WalkedContract {
+                        contract_address: address,
+                        walked_from_block,
+                        backfill_from_block,
+                        backfilled_to_block: None,
+                    });
                 }
             }
         }
@@ -1067,6 +1152,7 @@ impl ChainIndex for NftIndex {
         .bind(&tokens)
         .execute(&mut *conn)
         .await?;
+        super::legacy_orders::rewind(&mut *conn, self.net, to, &contracts, &tokens).await?;
         // LAND data is keyed by (token_address, token_id) and folded only for
         // keys with a remaining document: a key whose documents were all reorged
         // out would otherwise keep a row past the cursor. The rebuild below
@@ -1115,6 +1201,7 @@ impl ChainIndex for NftIndex {
             network = self.net.db_name(),
             nfts = counts.nfts,
             orders = counts.orders,
+            legacy_orders = counts.legacy_orders,
             land_data = counts.land_data,
             "nft index: folded"
         );
@@ -1147,12 +1234,10 @@ impl ChainIndex for NftIndex {
         cursor: Option<(u64, &str)>,
     ) -> anyhow::Result<chain_walk::Spent> {
         self.reset();
-        let owed: Vec<WalkedContract> = sqlx::query_as(
+        let owed: Vec<WalkedContract> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
             "SELECT contract_address, walked_from_block, backfill_from_block, backfilled_to_block FROM shop.nft_contract \
-             WHERE network = $1 AND backfill_from_block IS NOT NULL \
-               AND COALESCE(backfilled_to_block, backfill_from_block - 1) < walked_from_block - 1 \
-             ORDER BY walked_from_block, contract_address",
-        )
+             WHERE network = $1 AND {BACKFILL_PENDING_SQL} ORDER BY walked_from_block, contract_address"
+        )))
         .bind(self.net.db_name())
         .fetch_all(pool)
         .await?;
@@ -1227,13 +1312,14 @@ impl ChainIndex for NftIndex {
                     }
                 }
                 let mut tx = pool.begin().await?;
-                insert_events(&mut tx, self.net, &rows).await?;
                 // Late rows near the head below the producers' cursors are read again.
                 let blocks = rows.iter().map(|r| r.block_number);
                 if let (Some(first), Some(last)) = (blocks.clone().min(), blocks.max()) {
                     super::notice_cursor::replay(&mut tx, INDEXER_NFT, self.net, first - 1, last)
                         .await?;
                 }
+                owner.check(&mut tx).await?;
+                insert_events(&mut tx, self.net, &rows).await?;
                 sqlx::query(
                     "UPDATE shop.nft_contract SET backfilled_to_block = $3, refold_owed = ($3 >= walked_from_block - 1) \
                      WHERE network = $1 AND contract_address = $2",
@@ -1243,7 +1329,6 @@ impl ChainIndex for NftIndex {
                 .bind(w.reached as i64)
                 .execute(&mut *tx)
                 .await?;
-                owner.check(&mut tx).await?;
                 tx.commit().await?;
                 next = w.reached as i64 + 1;
             }
@@ -1261,14 +1346,11 @@ pub async fn status(pool: &PgPool, settings: &chain_walk::IndexSettings) -> serd
             .await
             .ok()
             .flatten();
-        let owed: i64 = sqlx::query_scalar(
-            "SELECT count(*) FROM shop.nft_contract WHERE network = $1 AND backfill_from_block IS NOT NULL \
-               AND COALESCE(backfilled_to_block, backfill_from_block - 1) < walked_from_block - 1",
-        )
-        .bind(net.db_name())
-        .fetch_one(pool)
-        .await
-        .unwrap_or(0);
+        let owed: i64 = sqlx::query_scalar(backfills_owed_sql())
+            .bind(net.db_name())
+            .fetch_one(pool)
+            .await
+            .unwrap_or(0);
         out.insert(net.db_name().to_string(), json!(c.map(|c| json!({
             "lastBlock": c.last_block, "foldedBlock": c.folded_block, "fullHistory": c.full_history,
             "ready": chain_walk::fresh_fold_on(&c, settings.chain_id(net), chrono::Utc::now()).is_some(), "reorgRewinds": c.reorg_rewinds, "divergedAt": c.diverged_at, "backfillsOwed": owed,

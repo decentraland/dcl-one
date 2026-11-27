@@ -19,3 +19,17 @@ describe("when legal pages share a prefix with the node credits API", () => {
     },
   );
 });
+describe("when the web Explorer signs in to a world's room", () => {
+  it.each(["/worlds/name.dcl.eth/comms", "/worlds/name.dcl.eth/scenes/bafkreiscene/comms"])(
+    "should send %s to the node",
+    (pathname) => {
+      expect(matched(pathname)).toEqual(["^/worlds/[^/]+/(?:scenes/[^/]+/)?comms(?:[/?]|$)"]);
+    },
+  );
+  it.each(["/worlds", "/worlds/name.dcl.eth", "/worlds/name.dcl.eth/commsx"])(
+    "should keep %s off the node proxy",
+    (pathname) => {
+      expect(matched(pathname)).toEqual([]);
+    },
+  );
+});

@@ -100,6 +100,10 @@ jobs:
         run: |
           nix develop .#ci --command \
             cargo clippy --manifest-path services/catalyst/Cargo.toml --locked -p dcl-scene-cli --all-targets -- -D warnings
+      - name: Unused dependencies in the scene CLI
+        run: |
+          nix build --inputs-from . nixpkgs#cargo-machete -o .cache/cargo-machete
+          .cache/cargo-machete/bin/cargo-machete apps/dcl-scene-cli
   build-test:
     name: Build, test, pack
     runs-on: ${{ vars.RUNNER_LINUX_X86 || 'ubuntu-26.04' }}

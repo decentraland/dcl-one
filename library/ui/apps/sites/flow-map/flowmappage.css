@@ -707,26 +707,7 @@ a.fm-node--jump:hover .fm-label {
   position: absolute;
   top: 12px;
   right: 14px;
-  font: 500 11px/1 var(--fm-mono);
-  color: var(--fm-ink-6);
-  background: rgba(255, 255, 255, 0.05);
-  border: 1px solid var(--fm-line);
-  border-radius: 7px;
-  padding: 6px 11px;
-  cursor: pointer;
-  transition:
-    color 0.15s,
-    border-color 0.15s;
 }
-.fm-copybtn:hover {
-  color: #fff;
-  border-color: rgba(255, 45, 85, 0.55);
-}
-.fm-copybtn:focus-visible {
-  outline: 2px solid var(--fm-click);
-  outline-offset: 2px;
-}
-
 .fm-honesty {
   margin: 22px 0 0;
   font-size: 11.5px;
