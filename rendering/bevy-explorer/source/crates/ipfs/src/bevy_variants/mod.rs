@@ -1127,9 +1127,10 @@ impl IpfsIo {
     /// LOD, under the variants base; `None` when variants are off or the base is pending
     /// ([`IpfsIo::bevy_variants_pending`]).
     pub fn bevy_lod_descriptor(&self, scene: &str) -> Option<String> {
-        let base = self.content_file_variants_config.base_url()?;
+        let base_url = self.content_file_variants_config.base_url()?;
         Some(format!(
-            "{base}/LOD/lods-unity/manifests/{}_InitialSceneState.json",
+            "{}/LOD/lods-unity/manifests/{}_InitialSceneState.json",
+            base_url.view(),
             scene.to_lowercase()
         ))
     }
