@@ -802,15 +802,10 @@ fn create_ui_roots(
             && (maybe_link.is_none()
                 || config.is_changed()
                 || interactable_area.is_changed()
-                || mobile.is_changed())
+                || mobile.is_changed()
+                || hidden_uis.is_changed())
         {
-            let display = if maybe_super.is_some()
-                || hidden_uis
-                    .scenes
-                    .get(&*context.hash)
-                    .copied()
-                    .unwrap_or(hidden_uis.show_all)
-            {
+            let display = if hidden_uis.shows(&context.hash, maybe_super.is_some()) {
                 Display::Flex
             } else {
                 Display::None
@@ -833,7 +828,9 @@ fn create_ui_roots(
             };
 
             // A root already up is restyled in place: a new root relinks, and so rebuilds, every
-            // node beneath it.
+            // node beneath it. This system is the one writer of a window root's `display`. What
+            // hides a UI may change after this system read it, in the frame it made a root; the
+            // change is still new on the next run, which finds that root linked and restyles it.
             if let Some(mut existing) = maybe_link
                 .as_ref()
                 .and_then(|link| commands.get_entity(link.ui_entity).ok())
@@ -1547,6 +1544,9 @@ struct ToggleSceneUiCommand {
 pub struct HiddenSceneUis {
     pub scenes: HashMap<String, bool>,
     pub show_all: bool,
+    /// While set, no scene's window UI shows, a system scene's included: a `--world-only` capture
+    /// is running. `scenes` and `show_all` keep what `/show_ui` chose for when it clears.
+    pub suspended: bool,
 }
 
 impl Default for HiddenSceneUis {
@@ -1554,72 +1554,46 @@ impl Default for HiddenSceneUis {
         Self {
             scenes: Default::default(),
             show_all: true,
+            suspended: false,
         }
     }
 }
 
+impl HiddenSceneUis {
+    /// Whether the window UI of the scene with this hash shows.
+    pub(crate) fn shows(&self, hash: &str, system_scene: bool) -> bool {
+        !self.suspended && (system_scene || self.scenes.get(hash).copied().unwrap_or(self.show_all))
+    }
+
+    /// What `/show_ui <hash> [enable]` chooses: `all` sets every scene and forgets the scenes
+    /// chosen one by one, a hash sets that scene. With no `enable` the choice flips. Returns it.
+    fn choose(&mut self, hash: &str, enable: Option<bool>) -> bool {
+        let enable =
+            enable.unwrap_or_else(|| !self.scenes.get(hash).copied().unwrap_or(self.show_all));
+        if hash == "all" {
+            self.show_all = enable;
+            self.scenes.clear();
+        } else {
+            self.scenes.insert(hash.to_owned(), enable);
+        }
+        enable
+    }
+}
+
+/// `/show_ui` only records the choice; `create_ui_roots` applies it on its next run, so a choice
+/// made while a `--world-only` capture has the UI suspended shows once the capture ends, not in
+/// its frames.
 fn toggle_scene_ui_command(
     mut input: ConsoleCommand<ToggleSceneUiCommand>,
     live_scenes: Res<LiveScenes>,
-    ui_links: Query<(Entity, &UiLink), (With<SceneUiData>, Without<SuperUserScene>)>,
-    mut styles: Query<&mut Node>,
     mut hidden_uis: ResMut<HiddenSceneUis>,
 ) {
     if let Some(Ok(ToggleSceneUiCommand { hash, enable })) = input.take() {
-        let all = hash == "all";
-
-        // get final state
-        let enable = enable
-            .unwrap_or_else(|| !(hidden_uis.scenes.get(&hash).unwrap_or(&hidden_uis.show_all)));
-
-        // if hash is all, toggle everything
-        if all {
-            hidden_uis.show_all = enable;
-            hidden_uis.scenes.clear();
+        if hash != "all" && !live_scenes.scenes.contains_key(&hash) {
+            input.reply_failed(format!("{hash} not found in live scenes"));
+            return;
         }
-
-        // get target entity if required
-        let target_entity = if hash != "all" {
-            let Some(entity) = live_scenes.scenes.get(&hash) else {
-                input.reply_failed(format!("{hash} not found in live scenes"));
-                return;
-            };
-
-            Some(entity)
-        } else {
-            None
-        };
-
-        for (scene_ent, link) in ui_links.iter() {
-            // skip non-matching entities
-            if target_entity.is_some_and(|e| e != &scene_ent) {
-                continue;
-            }
-
-            // get the ui root
-            let Ok(mut style) = styles.get_mut(link.ui_entity) else {
-                if !all {
-                    input.reply_failed("failed to obtain ui root entity");
-                    return;
-                } else {
-                    continue;
-                }
-            };
-
-            // set the target state
-            if enable {
-                style.display = Display::Flex;
-            } else {
-                style.display = Display::None;
-            };
-
-            // store the scene specific state
-            if !all {
-                hidden_uis.scenes.insert(hash.clone(), enable);
-                input.reply_ok(format!("{hash}: {enable}"));
-            }
-        }
-
+        let enable = hidden_uis.choose(&hash, enable);
         input.reply_ok(format!("{hash}: {enable}"));
     }
 }
@@ -1739,10 +1713,184 @@ mod tests {
         ctx
     }
 
+    #[test]
+    fn a_suspended_ui_shows_no_scene_whatever_show_ui_chose() {
+        let mut hidden = HiddenSceneUis::default();
+        assert!(hidden.shows("scene", false));
+        hidden.choose("scene", Some(false));
+        assert!(!hidden.shows("scene", false));
+        assert!(hidden.shows("other", false));
+        assert!(hidden.shows("scene", true));
+
+        hidden.suspended = true;
+        assert!(!hidden.shows("other", false));
+        assert!(!hidden.shows("scene", true));
+
+        hidden.suspended = false;
+        assert!(!hidden.shows("scene", false));
+        assert!(hidden.shows("other", false));
+    }
+
+    #[test]
+    fn show_ui_flips_a_choice_and_all_forgets_the_scenes_chosen() {
+        let mut hidden = HiddenSceneUis::default();
+        assert!(!hidden.choose("scene", None));
+        assert!(hidden.choose("scene", None));
+        assert!(!hidden.choose("scene", Some(false)));
+        assert!(!hidden.choose("all", None));
+        assert!(!hidden.shows("other", false));
+        assert!(hidden.choose("all", Some(true)));
+        assert!(hidden.shows("scene", false));
+    }
+
+    /// What the test's own system, run after `create_ui_roots`, does to the rule in the next frame.
+    #[derive(Resource, Default)]
+    struct AfterRoots(Option<fn(&mut HiddenSceneUis)>);
+
+    fn change_after_roots(mut after: ResMut<AfterRoots>, mut hidden: ResMut<HiddenSceneUis>) {
+        if let Some(change) = after.0.take() {
+            change(&mut hidden);
+        }
+    }
+
+    /// An app that runs `create_ui_roots` each frame over the four scenes of `populate`, none of
+    /// them with a UI yet, and then `change_after_roots`.
+    fn ui_app() -> (App, [Entity; 4]) {
+        let mut app = App::new();
+        let scenes = populate(app.world_mut(), PortableExperiencesToggle::Enabled);
+        app.init_resource::<AppConfig>()
+            .init_resource::<Assets<Image>>()
+            .init_resource::<HiddenSceneUis>()
+            .init_resource::<InteractableArea>()
+            .init_resource::<MobileUiEmulation>()
+            .init_resource::<SceneCanvasAtlases>()
+            .init_resource::<AfterRoots>()
+            .add_systems(Update, (create_ui_roots, change_after_roots).chain());
+        (app, scenes)
+    }
+
+    /// Gives the scene a UI, so `create_ui_roots` makes its root on the next frame.
+    fn give_ui(app: &mut App, scene: Entity) {
+        app.world_mut()
+            .entity_mut(scene)
+            .insert(SceneUiData::default());
+    }
+
+    fn display(app: &App, scene: Entity) -> Display {
+        let link = app.world().get::<UiLink>(scene).unwrap();
+        app.world().get::<Node>(link.ui_entity).unwrap().display
+    }
+
+    fn after_roots(app: &mut App, change: fn(&mut HiddenSceneUis)) {
+        app.world_mut().resource_mut::<AfterRoots>().0 = Some(change);
+    }
+
+    #[test]
+    fn a_root_made_in_the_frame_a_capture_starts_or_ends_follows_the_rule() {
+        let (mut app, [parcel, portable, ..]) = ui_app();
+
+        // the capture suspends the UI after this frame's roots were made showing
+        give_ui(&mut app, parcel);
+        after_roots(&mut app, |hidden: &mut HiddenSceneUis| {
+            hidden.suspended = true
+        });
+        app.update();
+        assert_eq!(display(&app, parcel), Display::Flex);
+        app.update();
+        assert_eq!(display(&app, parcel), Display::None);
+
+        // the capture ends after this frame's root was made hidden
+        give_ui(&mut app, portable);
+        after_roots(&mut app, |hidden: &mut HiddenSceneUis| {
+            hidden.suspended = false
+        });
+        app.update();
+        assert_eq!(display(&app, portable), Display::None);
+        app.update();
+        assert_eq!(display(&app, portable), Display::Flex);
+        assert_eq!(display(&app, parcel), Display::Flex);
+
+        // a rule left alone is not applied again: a root keeps what it has
+        let root = app.world().get::<UiLink>(parcel).unwrap().ui_entity;
+        app.world_mut().get_mut::<Node>(root).unwrap().display = Display::None;
+        app.update();
+        assert_eq!(display(&app, parcel), Display::None);
+    }
+
+    #[test]
+    fn show_ui_sent_in_the_frame_a_root_is_made_is_kept() {
+        let (mut app, [parcel, ..]) = ui_app();
+        give_ui(&mut app, parcel);
+        after_roots(&mut app, |hidden: &mut HiddenSceneUis| {
+            hidden.choose("parcel", Some(false));
+        });
+        app.update();
+        app.update();
+        assert_eq!(display(&app, parcel), Display::None);
+    }
+
+    #[test]
+    fn show_ui_during_a_world_only_capture_shows_only_once_it_ends() {
+        let (mut app, [parcel, ..]) = ui_app();
+        give_ui(&mut app, parcel);
+        app.update();
+        assert_eq!(display(&app, parcel), Display::Flex);
+
+        let steps: [(fn(&mut HiddenSceneUis), Display); 4] = [
+            (
+                |hidden: &mut HiddenSceneUis| hidden.suspended = true,
+                Display::None,
+            ),
+            (
+                |hidden: &mut HiddenSceneUis| {
+                    hidden.choose("parcel", Some(true));
+                },
+                Display::None,
+            ),
+            (
+                |hidden: &mut HiddenSceneUis| hidden.suspended = false,
+                Display::Flex,
+            ),
+            (
+                |hidden: &mut HiddenSceneUis| {
+                    hidden.choose("parcel", Some(false));
+                },
+                Display::None,
+            ),
+        ];
+        for (change, shown) in steps {
+            change(&mut app.world_mut().resource_mut::<HiddenSceneUis>());
+            app.update();
+            assert_eq!(display(&app, parcel), shown);
+        }
+    }
+
     /// The scenes showing UI with the player standing in a parcel scene with `toggle`, beside
     /// a scene-spawned portable, a super-user portable and a startup portable.
     fn shown(toggle: PortableExperiencesToggle) -> (HashSet<Entity>, [Entity; 4]) {
         let mut world = World::new();
+        let entities = populate(&mut world, toggle);
+        let scenes = world
+            .run_system_once(
+                |player: Query<Entity, With<PrimaryUser>>,
+                 containing_scene: ContainingScene,
+                 contexts: Query<(&RendererSceneContext, Has<SuperUserScene>)>,
+                 portables: Res<PortableScenes>| {
+                    ui_scenes(
+                        player.single().ok(),
+                        &containing_scene,
+                        &contexts,
+                        &portables,
+                    )
+                },
+            )
+            .unwrap();
+        (scenes, entities)
+    }
+
+    /// A parcel scene with `toggle` under the player, a scene-spawned portable, a super-user
+    /// portable and a startup portable, in that order.
+    fn populate(world: &mut World, toggle: PortableExperiencesToggle) -> [Entity; 4] {
         world.init_resource::<LiveScenes>();
         world.init_resource::<PortableScenes>();
         let mut pointers = ScenePointers::default();
@@ -1801,22 +1949,7 @@ mod tests {
             GlobalTransform::from_translation(Vec3::new(8.0, 0.0, -8.0)),
         ));
 
-        let scenes = world
-            .run_system_once(
-                |player: Query<Entity, With<PrimaryUser>>,
-                 containing_scene: ContainingScene,
-                 contexts: Query<(&RendererSceneContext, Has<SuperUserScene>)>,
-                 portables: Res<PortableScenes>| {
-                    ui_scenes(
-                        player.single().ok(),
-                        &containing_scene,
-                        &contexts,
-                        &portables,
-                    )
-                },
-            )
-            .unwrap();
-        (scenes, [parcel, portable, system, startup])
+        [parcel, portable, system, startup]
     }
 
     #[test]

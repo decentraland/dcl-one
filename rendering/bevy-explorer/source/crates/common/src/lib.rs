@@ -6,6 +6,7 @@ pub mod base_domain;
 pub mod bounds_calc;
 pub mod dynamics;
 pub mod feature_flags;
+pub mod frame;
 pub mod gateway;
 pub mod gpu_time;
 pub mod inputs;
