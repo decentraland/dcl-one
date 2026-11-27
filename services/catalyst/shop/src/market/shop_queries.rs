@@ -436,15 +436,21 @@ fn outer_page_clauses(
 /// trades from its floor, over the trades of `contracts` only when given
 /// ([`named_contracts`]). Answers the instant's parameter, which the coupon
 /// window binds too.
-fn with_trades(b: &mut Builder, clock: FeedClock, contracts: Option<Vec<String>>) -> String {
+fn with_trades(
+    b: &mut Builder,
+    clock: FeedClock,
+    contracts: Option<Vec<String>>,
+    listing_type: Option<ShopListingType>,
+) -> String {
     let now_p = b.bind_time(clock.now);
     let since_p = b.bind_opt_time(clock.since);
     let contracts_p = contracts.map(|c| b.bind_strings(&c));
     b.push("WITH ");
-    b.push(&unified_trades_cte_of(
+    b.push(&unified_trades_cte_for_listing(
         &now_p,
         &since_p,
         contracts_p.as_deref(),
+        listing_type,
     ));
     b.push(" ");
     now_p
@@ -495,7 +501,7 @@ pub fn build_shop_listings_sql(f: &ShopCatalogFilters, clock: FeedClock) -> Buil
         item_ids: None,
         include_legacy_secondary: false,
     };
-    let now_p = with_trades(&mut b, clock, named_contracts(&unified));
+    let now_p = with_trades(&mut b, clock, named_contracts(&unified), None);
     let inner = unified_branch(
         &mut b,
         UnifiedSource::Native,
@@ -526,7 +532,7 @@ pub fn build_shop_listings_sql(f: &ShopCatalogFilters, clock: FeedClock) -> Buil
 
 pub fn build_legacy_listings_sql(f: &LegacyCatalogFilters, clock: FeedClock) -> Builder {
     let mut b = Builder::new();
-    let now_p = with_trades(&mut b, clock, None);
+    let now_p = with_trades(&mut b, clock, None, None);
     let unified = UnifiedCatalogFilters {
         base: ShopCatalogFilters {
             category: f.category.clone(),
@@ -563,7 +569,7 @@ pub fn build_legacy_listings_sql(f: &LegacyCatalogFilters, clock: FeedClock) -> 
 
 pub fn build_importable_listings_sql(seller: &str, clock: FeedClock) -> Builder {
     let mut b = Builder::new();
-    let now_p = with_trades(&mut b, clock, None);
+    let now_p = with_trades(&mut b, clock, None, None);
     let unified = UnifiedCatalogFilters {
         source: Some(UnifiedSource::Legacy),
         include_legacy_secondary: true,
@@ -589,7 +595,7 @@ pub fn build_unified_listings_sql(
     clock: FeedClock,
 ) -> Builder {
     let mut b = Builder::new();
-    let now_p = with_trades(&mut b, clock, named_contracts(f));
+    let now_p = with_trades(&mut b, clock, named_contracts(f), None);
     let inner = unified_inner(&mut b, f, rate, &now_p);
     let (where_clause, order, limit_p, offset_p) = outer_page_clauses(
         &mut b,
@@ -636,7 +642,7 @@ pub fn build_unified_items_sql(
     clock: FeedClock,
 ) -> Builder {
     let mut b = Builder::new();
-    let now_p = with_trades(&mut b, clock, named_contracts(f));
+    let now_p = with_trades(&mut b, clock, named_contracts(f), None);
     let core = item_unified_core(&mut b, f, rate, &now_p);
     let (where_clause, order, limit_p, offset_p) =
         outer_page_clauses(&mut b, "d", &f.base, vec!["d.usd_wei > 0".to_string()]);
@@ -653,7 +659,7 @@ pub fn build_items_by_ids_sql(
     clock: FeedClock,
 ) -> Builder {
     let mut b = Builder::new();
-    let now_p = with_trades(&mut b, clock, Some(id_contracts(ids)));
+    let now_p = with_trades(&mut b, clock, Some(id_contracts(ids)), None);
     let core = item_unified_core(&mut b, f, rate, &now_p);
     let ids_p = b.bind_strings(ids);
     b.push(&format!("SELECT d.* FROM ({core}) d WHERE d.usd_wei > 0 AND (d.contract_address || '-' || d.item_id) = ANY({ids_p})"));
@@ -711,7 +717,7 @@ pub fn build_related_items_sql(
     clock: FeedClock,
 ) -> Builder {
     let mut b = Builder::new();
-    let now_p = with_trades(&mut b, clock, None);
+    let now_p = with_trades(&mut b, clock, None, rail.listing_type);
     let f = UnifiedCatalogFilters {
         base: ShopCatalogFilters {
             category: Some(reference_category.to_string()),
@@ -753,7 +759,7 @@ mod tests {
             .unwrap()
             .naive_utc();
         let mut b = Builder::new();
-        let now_p = with_trades(&mut b, FeedClock { now, since: None }, None);
+        let now_p = with_trades(&mut b, FeedClock { now, since: None }, None, None);
         assert_eq!(now_p, "$1");
         assert!(coupon_join(&now_p).contains("c.expires_at > $1"));
         assert!(!coupon_join(&now_p).contains("now()"));
