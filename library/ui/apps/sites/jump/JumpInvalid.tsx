@@ -1,6 +1,6 @@
 import { useId } from 'react'
 import { JumpInIcon } from '../../../components/JumpInCTA/JumpInCTA'
-import { Button } from '../shared/Button/Button'
+import { Button } from '../../../components/Button/Button'
 import { HomeIcon } from './JumpIcons'
 import styles from './JumpInvalid.module.css'
 
@@ -30,19 +30,17 @@ function JumpInvalid({ kind, jumpInHref, eventsHref, homeHref }: JumpInvalidProp
         </span>
       </p>
       <div className={`${styles.jumpInto} ${styles.desktopOnly}`}>
-        <Button href={jumpInHref} className={styles.jumpIn}>
+        <Button href={jumpInHref} size="md" trailingIcon={<JumpInIcon />} className={styles.action}>
           Jump into Decentraland
-          <JumpInIcon />
         </Button>
       </div>
       {kind === 'event' ? (
-        <Button href={eventsHref} variant="secondary" className={styles.explore}>
+        <Button href={eventsHref} variant="secondary" size="md" className={styles.action}>
           Explore events
         </Button>
       ) : null}
       <div className={styles.mobileBar}>
-        <Button href={homeHref} className={styles.home}>
-          <HomeIcon size={22} />
+        <Button href={homeHref} size="md" leadingIcon={<HomeIcon />} className={styles.action}>
           Go to Homepage
         </Button>
       </div>

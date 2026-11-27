@@ -46,7 +46,7 @@ pub fn rarity_rank(rarity: &str) -> i64 {
     SORTED_RARITIES
         .iter()
         .position(|r| *r == rarity)
-        .map(|p| p as i64)
+        .map(crate::market::casts::len_i64)
         .unwrap_or(-1)
 }
 

@@ -6,9 +6,8 @@
 import { QueryClient, QueryClientContext, QueryClientProvider } from "@tanstack/react-query";
 import { useContext, useMemo, useState, type ReactNode } from "react";
 
-import { Button, Spinner } from "@dcl/one-ui";
+import { Button, Spinner, EmptyState } from "@dcl/one-ui";
 import ManaMark from "../../../atoms/ManaMark";
-import EmptyState from "../../../components/EmptyState";
 import type { Eip1193Provider } from "../../../data/auth/wallet";
 import { chainLabel, isPolygon } from "@shop/model/chain";
 import { formatMana, type ManaWei } from "@shop/model/money";
@@ -52,10 +51,12 @@ export function SignInGate({ title, body }: { title: string; body: string }) {
   const { host } = useShopWallet();
   return (
     <EmptyState
+      appearance="shop"
+      titleAs="h2"
       variant="screen"
       title={title}
       subtitle={body}
-      actions={host?.onSignIn ? [{ label: "Sign in", onClick: () => host.onSignIn?.() }] : []}
+      actions={host?.onSignIn && <Button size="md" onClick={() => host.onSignIn?.()}>Sign in</Button>}
       data-testid="shop-signin-gate"
     />
   );

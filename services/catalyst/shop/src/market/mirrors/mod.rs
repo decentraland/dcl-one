@@ -543,6 +543,7 @@ where
     let net = super::chain_walk::ChainNet::from(network);
     let indexes = &state.settings.market.indexes;
     let configured = indexes.chain_id(net);
+    let configured_i32 = crate::market::casts::to_i32(configured)?;
     let pin = catalogue_proof_rpc(state, net).is_some();
     let mainnet = indexes.serves_mainnet(net);
     let binding = (mainnet || pin).then_some(configured);
@@ -638,9 +639,9 @@ where
                 );
             }
         };
-        let fetched = page.rows.len() as i64;
+        let fetched = crate::market::casts::len_i64(page.rows.len());
         let short = fetched < PAGE_SIZE;
-        let upserted = match upsert(page.rows, configured as i32, pin && !mainnet).await {
+        let upserted = match upsert(page.rows, configured_i32, pin && !mainnet).await {
             Ok(n) => n,
             Err(e) => {
                 c.last_error = Some(format!("{unpinned_retry}upsert failed: {e}"));
@@ -863,7 +864,7 @@ pub fn price_verdict(
     budget: Duration,
 ) -> Result<(), String> {
     let age = (now.naive_utc() - oldest).num_seconds();
-    if age > budget.as_secs() as i64 {
+    if i64::try_from(budget.as_secs()).is_ok_and(|budget| age > budget) {
         return Err(format!(
             "the items mirror's last complete pass is {age} s old, past the {} s freshness budget of the prices it carries (the items-mirror job is off or failing)",
             budget.as_secs()

@@ -1,5 +1,7 @@
 import { useEffect, useState, type CSSProperties } from "react";
 
+import { Button } from "@dcl/one-ui";
+
 import ConnectButton from "@/features/components/auth/ConnectButton";
 import { catalystBase } from "@/data/lib/catalyst/client";
 import { useAuth } from "@/data/lib/auth/context";
@@ -124,9 +126,9 @@ export default function ConnectRoute() {
               </code>{" "}
               &#x2014; signed locally with the ephemeral key (no wallet prompt).
             </p>
-            <button type="button" style={btn} onClick={onSignTest}>
+            <Button variant="secondary" size="md" onClick={onSignTest}>
               Sign test request
-            </button>
+            </Button>
             {signError && (
               <p style={{ color: "#ff6b6b" }}>{signError}</p>
             )}
@@ -145,13 +147,9 @@ export default function ConnectRoute() {
                     .join("\n")}
                 </pre>
 
-                <button
-                  type="button"
-                  style={{ ...btn, marginTop: 16 }}
-                  onClick={onSendLive}
-                >
+                <Button variant="secondary" size="md" style={{ marginTop: 16 }} onClick={onSendLive}>
                   Send it live (optional)
-                </button>
+                </Button>
                 <p style={{ fontSize: 13, color: "rgba(232,232,240,0.5)" }}>
                   Fires a real signed request to{" "}
                   <code>{catalystBase()}{TEST_PATH}</code>. A valid signature
@@ -168,16 +166,6 @@ export default function ConnectRoute() {
     </main>
   );
 }
-
-const btn: CSSProperties = {
-  padding: "10px 16px",
-  borderRadius: 8,
-  border: "1px solid rgba(255,255,255,0.18)",
-  background: "rgba(255,255,255,0.08)",
-  color: "#fff",
-  font: "600 14px/1 system-ui, sans-serif",
-  cursor: "pointer",
-};
 
 function Row({ label, value }: { label: string; value: string }) {
   return (

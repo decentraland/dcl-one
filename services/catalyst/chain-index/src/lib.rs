@@ -14,7 +14,8 @@
 #![deny(
     clippy::cast_possible_truncation,
     clippy::cast_sign_loss,
-    clippy::cast_possible_wrap
+    clippy::cast_possible_wrap,
+    clippy::cast_precision_loss
 )]
 
 // The crates this one builds on, under their module names (AGENTS.md).

@@ -139,7 +139,6 @@ function richProfile(address: string, name: string, isGuest: boolean): Profile {
       { title: 'Twitter', url: 'https://twitter.com' },
       { title: 'Discord', url: 'https://discord.com' }
     ],
-    mutuals: 30,
     badges: mockBadges(),
     equippedWearables: equippedNow(),
     equippedEmotes: mockEquippedEmotes().filter((e) => e.slot != null),
@@ -318,6 +317,8 @@ const mockWearables: Wearable[] = BASE.map((b, i) => {
   return {
     urn,
     name: b.label,
+    // Every other item has one, so the detail panel shows both a description and its fallback.
+    description: i % 2 === 0 ? `A mock ${b.label.toLowerCase()} for trying the backpack without an engine.` : undefined,
     rarity: RARITIES[i % RARITIES.length],
     category: b.category,
     thumbnail: thumb(urn),
@@ -436,7 +437,7 @@ const mockSettings: Setting[] = [
   level('Avatar & Emotes SFX', 'audio', 100),
   { ...level('Streaming Volume', 'audio', 100), description: 'The volume of videos, audio streams and livestreams played by scenes in the world.' },
   { ...level('Voice Volume', 'audio', 100), description: "The volume of nearby players' voices." },
-  choice('Microphone', 'audio', ['Default', 'Headset Microphone', 'Webcam Microphone'], 0),
+  choice('Microphone', 'audio', ['System Default', 'Headset Microphone', 'Webcam Microphone'], 0),
   choice('Mute Mic in Background', 'audio', ON_OFF, 1),
   level('Vertical sensitivity', 'controls', 1, 2, 0.1, 0.01),
   level('Horizontal sensitivity', 'controls', 1, 2, 0.1, 0.01),
@@ -489,6 +490,8 @@ const defaultBindings = (): BindingEntry[] => [
   [{ System: 'CameraRight' }, ['ArrowRight']],
   [{ System: 'CameraZoomIn' }, ['MouseWheel Up', 'Gamepad LeftTrigger']],
   [{ System: 'CameraZoomOut' }, ['MouseWheel Down', 'Gamepad RightTrigger']],
+  [{ System: 'CameraSwitchLevel' }, ['KeyV']],
+  [{ System: 'CameraSwapShoulder' }, ['Period']],
   [{ System: 'ScrollUp' }, ['MouseWheel Up', 'GamepadLeft Up']],
   [{ System: 'ScrollDown' }, ['MouseWheel Down', 'GamepadLeft Down']],
   [{ System: 'ScrollLeft' }, ['MouseWheel Left', 'GamepadLeft Left']],
@@ -738,8 +741,9 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
     ch.postMessage({ to: 'page', msg } satisfies Envelope)
   }
 
+  let mockBeforePreview: Set<string> | null = null
   // A saved outfit's work takes a moment, as the scene's does, so the slot's busy state shows.
-  const outfitWork = (slot: number, action: 'save' | 'delete' | 'equip', work: () => void): void => {
+  const outfitWork = (slot: number, action: 'save' | 'delete' | 'preview' | 'equip', work: () => void): void => {
     reply({ kind: 'outfitBusy', slot, action, busy: true })
     setTimeout(() => {
       work()
@@ -1420,8 +1424,19 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
       })
       return
     }
-    if (msg.kind === 'equipOutfit') {
-      outfitWork(msg.slot, 'equip', () => {
+    if (msg.kind === 'restoreOutfitPreview') {
+      if (mockBeforePreview != null) {
+        const set = mockBeforePreview
+        mockBeforePreview = null
+        for (const w of wardrobe()) w.equipped = set.has(w.urn)
+        reply({ kind: 'wearables', equipped: equippedNow(), bodyShape: BASE_MALE, colors: mockColors })
+      }
+      return
+    }
+    if (msg.kind === 'equipOutfit' || msg.kind === 'previewOutfit') {
+      if (msg.kind === 'equipOutfit') mockBeforePreview = null
+      else mockBeforePreview ??= new Set(equippedNow().map((w) => w.urn))
+      outfitWork(msg.slot, msg.kind === 'equipOutfit' ? 'equip' : 'preview', () => {
         // Reflect the outfit's wearables as equipped so the Wearables tab updates too.
         const found = mockOutfits.outfits.find((o) => o.slot === msg.slot)
         if (found) {

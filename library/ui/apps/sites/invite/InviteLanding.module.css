@@ -1,0 +1,562 @@
+/* Colours, spacing, radii and font sizes are @dcl/one-ui tokens where decentraland.org's value equals one;
+   the others keep the reference value and say so. */
+.root {
+  --sti-bg: var(--dcl-bg-page);
+  --sti-soft-black2: #242129;
+  --sti-text: rgba(240, 240, 240, 1);
+  --sti-text-2: rgba(240, 240, 240, 0.7);
+  /* reference #ffbc5b, no token; the stops and angle are the reference's, not --dcl-gradient-flare */
+  --sti-flare: linear-gradient(261.51deg, var(--dcl-primary-primary) 6.92%, #ffbc5b 83.3%);
+  --sti-overlay: linear-gradient(180deg, #410461 0%, #5d0089 100%);
+  --sti-faq-hover: linear-gradient(
+    90deg,
+    var(--dcl-neutrals-pale-black) 0%,
+    var(--dcl-brand-purple) 100%
+  );
+
+  background: var(--sti-bg);
+  color: var(--sti-text);
+}
+
+/* The invite hero as decentraland.org draws it. Breakpoints are decentraland-ui2's
+   down(): lg 1280, md 1024, sm 991, xs 768, and 390, each 0.05px under. */
+.hero {
+  position: relative;
+  z-index: 1099;
+  width: 100%;
+  min-height: 100vh;
+}
+.heroInner {
+  position: relative;
+  width: 100%;
+  min-height: 100vh;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: flex-start;
+  padding: var(--dcl-space-96) 0;
+}
+
+.media {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  overflow: hidden;
+}
+.video {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: 50%;
+  z-index: 2;
+  object-fit: cover;
+  object-position: center;
+  width: 100%;
+  height: 100%;
+}
+.overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  bottom: 0;
+  width: 60vw;
+  background: var(--sti-overlay);
+  z-index: 3;
+  clip-path: polygon(0 0, 100% 0, 85% 100%, 0 100%);
+}
+
+.avatar {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: 50%;
+  height: 100%;
+  z-index: 2;
+}
+.avatarSlot {
+  height: 100%;
+}
+
+.rail {
+  z-index: 2;
+  max-width: 40vw;
+  margin-left: 200px;
+  margin-right: 0;
+  text-align: left;
+}
+.railText {
+  margin-bottom: 120px;
+}
+
+.mobileOnly {
+  display: none;
+}
+.envelope {
+  position: relative;
+  width: 120px;
+  height: 120px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: var(--dcl-space-32);
+  z-index: 11;
+}
+.envelopeGlow {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 100px;
+  height: 100px;
+  border-radius: 50%;
+  z-index: 0;
+  background: radial-gradient(
+    circle,
+    rgba(255, 180, 216, 1) 0%,
+    rgba(255, 0, 200, 1) 50%,
+    rgba(145, 0, 255, 1) 80%,
+    transparent 100%
+  );
+  filter: blur(40px);
+}
+.envelopeImage {
+  position: relative;
+  z-index: 1;
+  width: 115px;
+  height: 115px;
+  object-fit: contain;
+}
+
+.title {
+  margin: 0 0 var(--dcl-space-48);
+  font-weight: 600;
+  font-size: var(--dcl-font-size-heading-xl);
+  line-height: 120%;
+  letter-spacing: -0.5px;
+  color: var(--sti-text);
+}
+.gradient {
+  background: var(--sti-flare);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  color: transparent;
+}
+.subtitle {
+  margin: 0;
+  font-weight: 500;
+  font-size: var(--dcl-font-size-heading-1);
+  line-height: 124%;
+  letter-spacing: 0;
+  color: var(--sti-text);
+}
+
+.actions {
+  display: flex;
+}
+/* The hero CTA is @dcl/one-ui Button lg (primary, button/lg 15px uppercase). decentraland.org renders a ui2
+   BannerButton: its padding, radius, weight, line height, tracking and white label are set here, it draws no
+   border (the shared Button's 1px transparent border would add 2px to each side), and its hover keeps the
+   primary fill. */
+.cta {
+  height: auto;
+  padding: 18.5px 61px;
+  border: 0; /* reference: the contained MUI button draws none */
+  border-radius: var(--dcl-radius-sm);
+  color: var(--dcl-neutrals-white);
+  font-weight: 600;
+  line-height: 24px;
+  letter-spacing: 0.4px;
+  transition:
+    background 0.12s ease,
+    transform 0.12s ease;
+}
+.cta:hover {
+  background-color: var(--dcl-primary-primary);
+}
+
+.faqs {
+  position: relative;
+  width: 100%;
+  box-sizing: border-box;
+  margin: auto;
+  color: var(--sti-text);
+  padding: 200px 160px;
+}
+.faqsBorder {
+  background:
+    linear-gradient(to right, var(--sti-text) 4px, transparent 4px) 0 0,
+    linear-gradient(to right, var(--sti-text) 4px, transparent 4px) 0 100%,
+    linear-gradient(to left, var(--sti-text) 4px, transparent 4px) 100% 0,
+    linear-gradient(to left, var(--sti-text) 4px, transparent 4px) 100% 100%,
+    linear-gradient(to bottom, var(--sti-text) 4px, transparent 4px) 0 0,
+    linear-gradient(to bottom, var(--sti-text) 4px, transparent 4px) 100% 0,
+    linear-gradient(to top, var(--sti-text) 4px, transparent 4px) 0 100%,
+    linear-gradient(to top, var(--sti-text) 4px, transparent 4px) 100% 100%;
+  background-repeat: no-repeat;
+  background-size: 20px 20px;
+}
+.faqsInner {
+  margin: auto;
+  width: 100%;
+  max-width: 1000px;
+  padding: 72px 0 200px;
+  display: flex;
+  flex-direction: column;
+}
+.faqsEyebrow {
+  margin: 0;
+  text-align: center;
+  font-size: var(--dcl-font-size-body-sm);
+  line-height: 19px;
+  font-weight: 600;
+  letter-spacing: 0.00938em;
+  color: var(--sti-text-2);
+  text-transform: uppercase;
+}
+.faqsTitle {
+  margin: 0;
+  text-align: center;
+  font-size: clamp(2.25rem, 15.789vw - 6.632rem, 6rem); /* reference 36px to 96px, no token */
+  line-height: clamp(2.7rem, 21.474vw - 9.379rem, 7.8rem);
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  padding-bottom: 0.5em;
+  white-space: pre-line;
+}
+
+.faq {
+  position: relative;
+  z-index: 1;
+  width: 100%;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  border-radius: 56px;
+  padding: 28px 40px 28px 112px;
+  overflow: hidden;
+  background: var(--sti-bg);
+  margin-bottom: 40px;
+  cursor: pointer;
+  outline: none;
+}
+.faq::after {
+  content: ' ';
+  position: absolute;
+  inset: 0;
+  background: var(--sti-faq-hover), var(--sti-soft-black2);
+  z-index: -1;
+  opacity: 0;
+  transition: opacity 1200ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+.faq:hover::after,
+.faq:active::after,
+.faq[data-open]::after {
+  opacity: 1;
+}
+.faq:focus-visible {
+  outline: 2px solid var(--dcl-primary-primary);
+  outline-offset: 2px;
+}
+.faqRow {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.faqQuestion {
+  font-weight: 300;
+  font-size: 28px;
+  line-height: 28px;
+  letter-spacing: -0.011em;
+  color: var(--sti-text-2);
+}
+.arrow {
+  width: 57px;
+  height: 57px;
+  min-width: 57px;
+  min-height: 57px;
+  transition: transform 350ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+.arrow[data-open] {
+  transform: rotate(180deg);
+}
+.arrowCircle {
+  fill: none;
+  stroke: var(--dcl-neutrals-white);
+  opacity: 0.2;
+}
+.arrow[data-open] .arrowCircle {
+  fill: var(--dcl-neutrals-white);
+  opacity: 1;
+}
+.arrowPath {
+  fill: var(--dcl-neutrals-white);
+}
+.arrow[data-open] .arrowPath {
+  fill: var(--sti-soft-black2);
+}
+
+.faqAnswer {
+  display: grid;
+  grid-template-rows: 0fr;
+  opacity: 0;
+  pointer-events: none;
+  transition:
+    grid-template-rows 350ms cubic-bezier(0.16, 1, 0.3, 1),
+    opacity 350ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+.faqAnswer[data-open] {
+  grid-template-rows: 1fr;
+  opacity: 1;
+  pointer-events: auto;
+}
+.faqAnswerText {
+  overflow: hidden;
+  margin: 0;
+  padding: 1em 0 2em;
+  font-weight: 400;
+  font-size: var(--dcl-font-size-body-md);
+  line-height: 165%;
+  white-space: pre-line;
+  color: var(--sti-text);
+}
+
+.faqsMore {
+  margin-top: 40px;
+  width: fit-content;
+  align-self: center;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--dcl-space-24) var(--dcl-space-64);
+  box-sizing: border-box;
+  border-radius: var(--dcl-radius-xs);
+  border: 1px solid var(--sti-text);
+  color: var(--sti-text);
+  text-decoration: none;
+  font-size: var(--dcl-font-size-button-lg);
+  font-weight: 600;
+  cursor: pointer;
+  transition: background-color 200ms ease;
+}
+.faqsMore:hover {
+  background-color: rgba(255, 255, 255, 0.08);
+}
+.faqsMore:active {
+  background-color: rgba(255, 255, 255, 0.12);
+}
+.faqsMore:focus-visible {
+  outline: 2px solid var(--dcl-primary-primary);
+  outline-offset: 2px;
+}
+
+@media (max-width: 1279.95px) {
+  .title {
+    font-size: var(--dcl-font-size-heading-lg);
+  }
+}
+@media (max-width: 1023.95px) {
+  .rail {
+    margin-left: 192px;
+    margin-right: 192px;
+  }
+}
+@media (max-width: 990.95px) {
+  .primary,
+  .primary .heroInner {
+    min-height: 100svh;
+  }
+
+  .primary .heroInner {
+    display: grid;
+    /* The artwork gives up space to the copy when the viewport is short. */
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(min(25svh, 12rem), 1fr) auto;
+    align-items: stretch;
+    padding: 0;
+  }
+
+  /* The background spans both rows, behind the copy as on decentraland.org; the artwork keeps the first row. */
+  .primary .media {
+    position: relative;
+    grid-row: 1 / -1;
+    grid-column: 1;
+    display: grid;
+    grid-template-rows: subgrid;
+  }
+
+  .primary .avatar {
+    position: relative;
+    grid-row: 1;
+    inset: auto;
+    height: auto;
+  }
+
+  .primary .rail {
+    grid-row: 2;
+    grid-column: 1;
+    position: relative;
+    inset: auto;
+    width: auto;
+    height: auto;
+    min-height: 50svh;
+    box-sizing: border-box;
+    margin: 0;
+    padding: var(--dcl-space-24) clamp(var(--dcl-space-16), 8vw, var(--dcl-space-96))
+      var(--dcl-space-32);
+  }
+
+  .primary .railText {
+    margin-bottom: var(--dcl-space-24);
+  }
+
+  .primary .title {
+    margin-bottom: clamp(var(--dcl-space-16), 4svh, var(--dcl-space-48));
+  }
+
+  .primary .actions {
+    justify-content: center;
+  }
+
+  .rail {
+    position: absolute;
+    top: 50%;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    height: 50%;
+    max-width: none;
+    width: calc(100% - 296px);
+    margin-left: 148px;
+    margin-right: 148px;
+    text-align: center;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+  }
+  .desktopOnly {
+    display: none;
+  }
+  .mobileOnly {
+    display: block;
+  }
+  .envelope {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-100%, -50%);
+    margin-bottom: 0;
+  }
+  .envelopeGlow {
+    width: 150px;
+    height: 150px;
+  }
+  .envelopeImage {
+    width: 160px;
+    height: 160px;
+  }
+  .subtitle {
+    font-size: var(--dcl-font-size-heading-2);
+  }
+  .overlay {
+    width: 100vw;
+    top: 50%;
+    clip-path: polygon(0 0, 100% 0, 100% 100%, 0 100%);
+  }
+  .video {
+    left: 0;
+    bottom: 50%;
+  }
+  .avatar {
+    height: 50%;
+    top: 0;
+    left: 0;
+    bottom: 50%;
+    width: 100%;
+  }
+  .avatarSlot {
+    margin-left: 140px;
+  }
+  .faqs {
+    padding: var(--dcl-space-48) var(--dcl-space-32) 320px;
+  }
+  .faqsBorder {
+    background:
+      linear-gradient(to right, var(--sti-text) 2px, transparent 2px) 0 0,
+      linear-gradient(to right, var(--sti-text) 2px, transparent 2px) 0 100%,
+      linear-gradient(to left, var(--sti-text) 2px, transparent 2px) 100% 0,
+      linear-gradient(to left, var(--sti-text) 2px, transparent 2px) 100% 100%,
+      linear-gradient(to bottom, var(--sti-text) 2px, transparent 2px) 0 0,
+      linear-gradient(to bottom, var(--sti-text) 2px, transparent 2px) 100% 0,
+      linear-gradient(to top, var(--sti-text) 2px, transparent 2px) 0 100%,
+      linear-gradient(to top, var(--sti-text) 2px, transparent 2px) 100% 100%;
+    background-repeat: no-repeat;
+    background-size: 10px 10px;
+  }
+  .faqsInner {
+    padding: 128px 0 144px;
+  }
+  .faqsTitle {
+    font-size: 36px;
+    line-height: 36px;
+  }
+  .faqQuestion {
+    font-size: var(--dcl-font-size-body-md);
+    letter-spacing: -0.01em;
+  }
+}
+@media (max-width: 767.95px) {
+  .heroInner {
+    padding-left: var(--dcl-space-16);
+    padding-right: var(--dcl-space-16);
+  }
+  .rail {
+    margin-left: var(--dcl-space-48);
+    margin-right: var(--dcl-space-48);
+    width: calc(100% - 2 * var(--dcl-space-48));
+  }
+  .subtitle {
+    font-size: var(--dcl-font-size-heading-4);
+  }
+  .cta {
+    width: 100%;
+  }
+  .faq {
+    padding: 40px 40px 40px 72px;
+    margin-bottom: 20px;
+    border-radius: 50px;
+  }
+  .faqAnswerText {
+    line-height: 24px;
+  }
+  .arrow {
+    width: 48px;
+    height: 48px;
+    min-width: 48px;
+    min-height: 48px;
+  }
+  .faqsMore {
+    width: 100%;
+  }
+}
+@media (max-width: 389.95px) {
+  .rail {
+    height: 70%;
+    top: 30%;
+  }
+  .avatar {
+    height: 30%;
+  }
+  .envelopeGlow {
+    width: 100px;
+    height: 100px;
+  }
+  .envelopeImage {
+    width: 80px;
+    height: 80px;
+  }
+}
