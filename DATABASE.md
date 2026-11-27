@@ -2704,7 +2704,7 @@ See the [synthetic fixture measurements](METRICS.md#wallet-activity-transfers) f
 
 `sale_publication.last_sale_through` records the block through which the table holds every published sale. `last_sale_generation` records the publication generation the table was kept for. Each pass applies the ledger past `last_sale_through`, at most 5,000,000 blocks at a time. Once the table is current, that is the new window itself. After step `0078_shop_nft_last_sale` adds the columns, or after a rebuild, it is the earlier history. A receipt can be retried after its block is covered and set the token ID of a trade's mint. The pass then recomputes those tokens' latest sale from the ledger and keeps a later sale. Every writer rotates the generation when it replaces the history or corrects a published sale. A writer from before step 0078 does so without touching the table or these columns, so they no longer match. The table is then not read, and the next pass of a current writer deletes the network's rows and refills them from the start. It does the same when the coverage is cleared. The schema object pass creates the table.
 
-A `/v1/nfts` read checks the publication of each network its page can return, on the read's own snapshot (`sale_fold::last_sale_networks`). The publication must be valid and fresh, as the sales reads require, its table must be kept for its generation, and `last_sale_through` must reach its block. For such a network, `sold_at` is the later of the token's latest legacy `OrderSuccessful` (`shop.nft.sold_at`, or the LAND source's subquery) and its row in `shop.nft_last_sale`, joined on the primary key. Elsewhere, including on a testnet node, `sold_at` keeps the legacy order alone. On a walker, a shallow NAME page of any sort reads the index instead of the marketplace graph when the Ethereum latest sales are admitted on the snapshot that supplies its rows, because the graph's `soldAt` counts other sales. Such a page follows the index path's rules: the `first + skip` window, and the trades mirror's readiness on the same snapshot when it filters or sorts on orders. Admission is checked once, at the request's clock, and the page's values and order use that answer. The page reads the graph when the names index or those latest sales are not ready, and answers the error when the check cannot run. The recently sold sort still reads and sorts every held token, and the join adds one primary-key lookup or hash probe per token. See the [synthetic fixture measurements](METRICS.md#latest-sale-per-token).
+A `/v1/nfts` read checks the publication of each network its page can return, on the read's own snapshot (`sale_fold::last_sale_networks`). The publication must be valid and fresh, as the sales reads require, its table must be kept for its generation, and `last_sale_through` must reach its block. For such a network, `sold_at` is the later of the token's latest legacy `OrderSuccessful` (`shop.nft.sold_at`, or the LAND source's subquery) and its row in `shop.nft_last_sale`, joined on the primary key. Elsewhere, including on a testnet node, `sold_at` keeps the legacy order alone. On a walker, a shallow NAME page of any sort reads the index instead of the marketplace graph when the Ethereum latest sales are admitted on the snapshot that supplies its rows, because the graph's `soldAt` counts other sales. Such a page follows the index path's rules: the `first + skip` window, and the trades mirror's readiness on the same snapshot when it filters or sorts on orders. Admission is checked at the request's clock, and the page's values and order use that answer. An ordinary shallow page can read the graph when the names index or the latest sales are not ready. A page filtered or sorted by orders uses the native page even when the latest-sale display is unavailable, and returns the named readiness response if its required listing sources cannot answer. The recently sold sort still reads and sorts every held token, and the join adds one primary-key lookup or hash probe per token. See the [synthetic fixture measurements](METRICS.md#latest-sale-per-token).
 
 ### Badge processor
 
@@ -5236,6 +5236,8 @@ commits in between is never half-seen:
   orders"). The v3 proof uses the published land-authz fold for LAND and
   Estates and the published NFT fold for other tokens. Nodes using the
   configured graph for legacy orders use that same proof for v3 listings.
+  The Graph legacy leg tests raw seconds and milliseconds in disjoint
+  ranges in the same filter for pages and counts, using one request clock.
   Both routes emit `x-listings-owner-check: checked`.
 
 Queries, all bounded by one owner or one batch:
@@ -5273,8 +5275,21 @@ skewed popularity, 300,000 owners of whom 20 hold about 30,000 tokens each,
   131 ms for the 30,000-token owner, under 1 ms for a typical owner (with the
   names leg when no category is named).
 
-On a configured NFT walker, a LAND or estate `/v1/nfts` page reads the LAND
-publication and the required NFT publications in one repeatable-read snapshot.
+A LAND or estate `/v1/nfts` page on a configured NFT walker reads the LAND
+publication and any required NFT publications in one repeatable-read snapshot.
+An order-dependent LAND or estate page also uses this snapshot on a node
+that reads publications without running the walkers. The sale filter joins
+backed v3 listings and open legacy orders before counting and paging. An
+order-dependent NAME page uses the published NFT and trade sources on its
+page snapshot. These pages require every order projection they read to be
+acknowledged by its NFT publication, plus the NFT ownership rows for
+collections and NAMEs. The schema object pass adds the `nft_order` write
+and cursor triggers. After an upgrade, the next NFT publication establishes
+the order proof, including on an empty network. Until then, order-dependent
+reads that need that projection return `nft-index`.
+A mixed non-walking page checks its optional LAND and NAME publications
+on that same snapshot. Polygon-only filters leave out Ethereum registries
+and keep the requested Polygon collections.
 Both owner searches and ownerless catalogue pages read the collections, NAME
 and LAND sources that their filters can include. This includes unfiltered
 browsing, search, sale filters and sorting. A missing required publication returns its source's 503
@@ -5339,7 +5354,11 @@ listings of that token through `trade_assets_erc721_token_idx` on
 every row. The index is 432 kB on 4,900 listing assets (the table 528 kB);
 each ERC-721 asset that the trades mirror or a local signed trade inserts
 adds one entry, and the migrate object pass builds it. Planning such a
-statement takes about 9 ms.
+statement takes about 9 ms. The lateral orders by `shop.trades.created_at`,
+a `timestamp(3)`, so the tie-break matches the wire's millisecond value
+without applying an epoch expression to the indexed sort column. A
+32,000-token owner's listed page took 211–221 ms on the
+[focused fixture](METRICS.md#nft-listing-publication-and-page-reads).
 
 Measured on a second seeded database (2,999,100 Polygon tokens over 100,000
 items of 5,000 collections, item popularity cubic-skewed so one collection
@@ -5680,8 +5699,8 @@ at whatever height. Reads refused that way are counted by
 between a fold's commit and its publication. The denominator is
 `catalyst_shop_order_book_fold_read_checks_total`, incremented once for each
 attempted network's publication check. Both counters use `network` and
-`route` labels. The route is `orders`, `open_by_items`, `activity` or `catalog`.
-Each activity page takes its own book snapshot and counts its checks.
+`route` labels. The route is `orders`, `open_by_items`, `activity`, `catalog`
+or `nfts`. Each activity page takes its own book snapshot and counts its checks.
 For the catalog label this also counts a withheld book leg on an
 ordinary page that can still serve item metadata.
 
@@ -5691,17 +5710,30 @@ ordinary page that can still serve item metadata.
 projection table, whether the projection holds a write no publication has
 acknowledged (`pending`), and the cursor's last block at the latest write.
 Statement-level triggers with transition tables on `shop.nft` and
-`shop.legacy_order` (the `nft` cursor) and `shop.nft_bid` (the `sales`
+`shop.nft_order` and `shop.legacy_order` (the `nft` cursor) and `shop.nft_bid` (the `sales`
 cursor) set `pending` for the networks a statement wrote; a no-op upsert or
 an empty statement sets nothing. A trigger on `shop.chain_cursor` clears it
 when a publication commits (`folded_block` and `folded_at` set by any
 binary's `mark_folded`, at the same height too). The table is created by the
-object pass and seeded pending for every existing cursor, so an upgraded
-node serves again from its next publication. Workload: one row per
-(cursor, projection), rewritten by each fold statement that writes and each
-publication; the triggers add one transition table per write statement,
-sized by the rows it changed. A reader calls
-`chain_walk::rows_published_on` on its snapshot.
+object pass. Initially existing cursors seed their ownership, legacy book and
+bid projections pending until the next publication. The `nft_order` proof
+starts at the first NFT publication after the object pass adds its triggers.
+Its cursor trigger also handles an empty projection and a publication from
+an older writer after upgrade. Each cursor and projection use one row. A
+write statement builds a transition table sized by the rows it changed.
+A reader checks the writes on the response snapshot. An order-dependent
+NFT page requires an explicit acknowledged `nft_order` row and checks the
+ownership projection for the collections or NAMEs it reads.
+
+The NFT fold commits before the head RPCs and a separate publication
+transaction. A read that sees one of its required projections pending
+returns `503 nft-index` until the publication acknowledges those rows. A
+failed head RPC can extend this gap to the next successful publication.
+In a local PostgreSQL test with two simulated Polygon RPCs at 25, 100 or
+250 ms each, the p95 gap was 57, 207 or 508 ms. With a row-changing fold
+every five seconds and uniform arrivals, those windows cover about
+1.1%, 4.1% or 10.2% of single-network checks. The `nfts` counters above
+measure the rate by network. See the [NFT listing measurements](METRICS.md#nft-listing-publication-and-page-reads).
 
 The NFT and sales folds, rewinds and rebuild clears lock the chain cursor
 before writing these projections. Rewind and clear take any notification
@@ -5736,9 +5768,11 @@ CREATE INDEX CONCURRENTLY IF NOT EXISTS legacy_order_issued_idx
   ON shop.legacy_order (token_id);
 CREATE INDEX CONCURRENTLY IF NOT EXISTS legacy_order_price_idx
   ON shop.legacy_order (price, order_id);
+CREATE INDEX CONCURRENTLY IF NOT EXISTS legacy_order_open_expiry_idx
+  ON shop.legacy_order (network, expires_at) WHERE status = 'open';
 ```
 
-Schema status checks index names. Before migrating, verify that both indexes
+Schema status checks index names. Before migrating, verify that these indexes
 have `pg_index.indisvalid` set and that `pg_get_indexdef(indexrelid)` matches
 the canonical definitions. Drop and rebuild any invalid or mismatched index
 before relying on its name.

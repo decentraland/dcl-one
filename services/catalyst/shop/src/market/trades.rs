@@ -467,7 +467,7 @@ pub async fn ready_on(
         .await
         .map_err(|error| match error {
             CheckError::Database(_, error) if super::nft_reads::cancelled(&error) => {
-                super::nft_reads::read_error(error)
+                super::readers::index_read_error(error)
             }
             error => match error.refusal() {
                 Some((source, why)) => unavailable(source, &why),

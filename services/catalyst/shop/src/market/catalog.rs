@@ -1549,7 +1549,7 @@ async fn fetch_page(
             sqlx::query_with(sqlx::AssertSqlSafe(sql), args)
                 .fetch_one(&mut *read.tx)
                 .await
-                .map_err(super::nft_reads::read_error)?
+                .map_err(super::readers::index_read_error)?
                 .get("total")
         }
         None => 0,
@@ -1573,7 +1573,7 @@ async fn catalog_scope(
     }
     super::nft_reads::set_read_timeout(&mut read.tx)
         .await
-        .map_err(super::nft_reads::read_error)?;
+        .map_err(super::readers::index_read_error)?;
     let catalogue = state.settings.catalogue();
     let mut nets: Vec<_> = ChainNet::ALL
         .into_iter()
@@ -1613,7 +1613,7 @@ async fn catalog_scope(
         let matched: Vec<String> = sqlx::query_scalar_with(sqlx::AssertSqlSafe(b.sql), b.args)
             .fetch_all(&mut *read.tx)
             .await
-            .map_err(super::nft_reads::read_error)?;
+            .map_err(super::readers::index_read_error)?;
         nets.retain(|net| matched.iter().any(|network| network == net.db_name()));
     }
     let mut scope = CatalogScope::new(catalogue, nets);

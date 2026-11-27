@@ -116,7 +116,7 @@ pub struct Keyed {
 }
 
 pub fn from_seconds_to_milliseconds(time: f64) -> i64 {
-    if time < 1e11_f64 {
+    if time < super::nft_index::LEGACY_EXPIRY_UNIT_THRESHOLD as f64 {
         (time * 1000.0).round() as i64
     } else {
         time.round() as i64
@@ -275,7 +275,13 @@ pub async fn open_trade_orders(
     let (mut tx, now) = trade_snapshot(state, &ChainNet::ALL).await?;
     open_trade_orders_on(state, &mut *tx, wanted, now.naive_utc())
         .await
-        .map_err(super::nft_reads::read_error)
+        .map_err(super::readers::index_read_error)
+}
+
+/// Newest listing and a stable choice when timestamps tie. The caller
+/// supplies the same millisecond and numeric projections used on the wire.
+pub(super) fn latest_trade_order_sql(time: &str, id: &str, price: &str, payee: &str) -> String {
+    format!("{time} DESC, {id} ASC, {price}, {payee}")
 }
 
 pub(super) async fn open_trade_orders_on<'e>(
@@ -292,9 +298,10 @@ pub(super) async fn open_trade_orders_on<'e>(
         "WITH {} SELECT DISTINCT ON (x.network, x.nft_address, x.token_id) x.* FROM (SELECT {} {TRADE_ORDER_FROM} \
            AND (lower(u.network), u.contract_address_sent, u.token_id, u.signer) IN \
                (SELECT * FROM unnest($3::text[], $4::text[], $5::text[], $6::text[]))) x \
-         ORDER BY x.network, x.nft_address, x.token_id, x.created_at DESC, x.id ASC",
+         ORDER BY x.network, x.nft_address, x.token_id, {}",
         unified_trades_cte("$1", "$2"),
-        TRADE_ORDER_COLUMNS.replace("SHIFT", ITEM_ID_SHIFT)
+        TRADE_ORDER_COLUMNS.replace("SHIFT", ITEM_ID_SHIFT),
+        latest_trade_order_sql("x.created_at", "x.id", "x.price::numeric", "x.payee")
     );
     let column = |i: usize| {
         wanted
@@ -371,7 +378,7 @@ async fn order_snapshot(
         .map_err(|e| ApiError::from(e).into_response())?;
     super::nft_reads::set_read_timeout(&mut tx)
         .await
-        .map_err(super::nft_reads::read_error)?;
+        .map_err(super::readers::index_read_error)?;
     // set_read_timeout establishes the snapshot before this instant.
     Ok((tx, Utc::now()))
 }
@@ -413,6 +420,7 @@ pub(super) enum BookRoute {
     OpenByItems,
     Activity,
     Catalog,
+    Nfts,
 }
 
 impl BookRoute {
@@ -422,6 +430,7 @@ impl BookRoute {
             Self::OpenByItems => "open_by_items",
             Self::Activity => "activity",
             Self::Catalog => "catalog",
+            Self::Nfts => "nfts",
         }
     }
 }
@@ -592,17 +601,7 @@ pub(super) async fn require_published_book(
     // but not published yet, whichever binary wrote it, is not read.
     let projections: &[&str] = &["nft", "legacy_order"];
     for &net in nets {
-        let labels = [net.db_name(), route.label()];
-        FOLD_READ_CHECKS.handle(labels).increment(1);
-        if !super::chain_walk::rows_published_on(
-            conn,
-            super::chain_walk::INDEXER_NFT,
-            net,
-            projections,
-        )
-        .await?
-        {
-            UNPUBLISHED_FOLD_READS.handle(labels).increment(1);
+        if !listing_rows_published_on(conn, net, route, projections, None).await? {
             return Err(owned_items::ReadError::NotReady(
                 super::Source::NftIndex,
                 format!(
@@ -624,6 +623,30 @@ pub(super) async fn require_published_book(
         }
     }
     Ok(())
+}
+
+/// Count one check of the NFT fold and any refusal on the reader's snapshot.
+pub(super) async fn listing_rows_published_on(
+    conn: &mut PgConnection,
+    net: ChainNet,
+    route: BookRoute,
+    projections: &[&str],
+    required_projection: Option<&str>,
+) -> Result<bool, sqlx::Error> {
+    let labels = [net.db_name(), route.label()];
+    FOLD_READ_CHECKS.handle(labels).increment(1);
+    let published = super::chain_walk::rows_published_on(
+        conn,
+        super::chain_walk::INDEXER_NFT,
+        net,
+        projections,
+        required_projection,
+    )
+    .await?;
+    if !published {
+        UNPUBLISHED_FOLD_READS.handle(labels).increment(1);
+    }
+    Ok(published)
 }
 
 fn reads_trades(f: &OrderFilters) -> bool {
@@ -1033,6 +1056,18 @@ async fn book_total(
 
 const ORDER_FIELDS: &str = "id marketplaceAddress nftAddress tokenId owner buyer price status expiresAt createdAt updatedAt nft { issuedId }";
 
+/// Compare the two raw expiry encodings on the Graph before paging.
+/// Nest OR under AND so it can share a query with column filters and the
+/// count cursor. The boundary is the NFT walk's `expires_ms` conversion.
+fn graph_unexpired(field: &str, now_ms: i64) -> Value {
+    let threshold = super::nft_index::LEGACY_EXPIRY_UNIT_THRESHOLD.to_string();
+    let gt = format!("{field}_gt");
+    json!([{ "or": [
+        { (&gt): now_ms.div_euclid(1_000).to_string(), (format!("{field}_lt")): threshold },
+        { (&gt): now_ms.to_string(), (format!("{field}_gte")): threshold },
+    ] }])
+}
+
 fn legacy_where(f: &OrderFilters, now_ms: i64) -> Value {
     let mut w = json!({});
     if let Some(v) = &f.marketplace_address {
@@ -1053,10 +1088,10 @@ fn legacy_where(f: &OrderFilters, now_ms: i64) -> Value {
     match f.status.as_deref() {
         Some("open") => {
             w["status"] = json!("open");
-            w["expiresAt_gt"] = json!(now_ms.to_string());
+            w["and"] = graph_unexpired("expiresAt", now_ms);
         }
         Some(s) => w["status"] = json!(s),
-        None => w["expiresAt_gt"] = json!(now_ms.to_string()),
+        None => w["and"] = graph_unexpired("expiresAt", now_ms),
     }
     if let Some(v) = &f.item_id {
         let composite = if v.contains('-') {
@@ -1087,7 +1122,7 @@ fn legacy_order_by(sort_by: Option<OrderSortBy>) -> (&'static str, &'static str)
 pub fn order_from_graph(o: &Value, network: Network) -> Order {
     let ms = |key: &str| {
         let raw = readers::int_of(o, key);
-        if raw != 0 && raw < 100_000_000_000 {
+        if raw != 0 && raw < super::nft_index::LEGACY_EXPIRY_UNIT_THRESHOLD {
             seconds_to_ms(raw)
         } else {
             raw
@@ -1599,7 +1634,13 @@ mod tests {
         let w = legacy_where(&f, 1_000);
         assert_eq!(w["nftAddress"], "0xabc");
         assert_eq!(w["item"], "0xabc-12");
-        assert_eq!(w["expiresAt_gt"], "1000");
+        assert_eq!(
+            w["and"][0]["or"],
+            json!([
+                {"expiresAt_gt":"1","expiresAt_lt":"100000000000"},
+                {"expiresAt_gt":"1000","expiresAt_gte":"100000000000"}
+            ])
+        );
         assert_eq!(legacy_order_by(f.sort_by), ("price", "asc"));
         let sql = trades_leg_sql(" AND u.signer = $3");
         assert!(

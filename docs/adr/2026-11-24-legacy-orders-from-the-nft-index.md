@@ -10,6 +10,12 @@ the activity feed's orders leg come from the shop's own order book,
 `shop.legacy_order`, on a node that walks the nft index. No order read asks
 the collections subgraphs there.
 
+The resale legs of `/v1/catalog` and `/v2/catalog` read the same published
+book and ownership as the catalogue page and count. Listing-dependent
+catalogue reads return `503 nft-index` while the required book is unavailable.
+An ordinary catalogue request can serve the item page with the legacy
+resale leg omitted.
+
 The nft walk already keeps every `OrderCreated`, `OrderSuccessful` and
 `OrderCancelled` log of the Marketplace contracts in `shop.nft_event`
 (Ethereum's, and Polygon's two), whatever asset the order names, so LAND,

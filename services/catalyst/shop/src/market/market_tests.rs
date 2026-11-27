@@ -4,6 +4,8 @@
 //! it; the favorites, admin and signed-trade flows run over the local tables.
 //! Without `CATALYST_TEST_DATABASE_URL` the database tests skip.
 
+mod nft_listings;
+
 use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -244,9 +246,28 @@ impl FakeGraph {
             }
             _ => {
                 let where_ = vars.get("where").cloned().unwrap_or(json!({}));
+                fn valid_filter(filter: &Value) -> bool {
+                    filter.as_object().is_none_or(|fields| {
+                        (!fields.contains_key("or")
+                            || fields
+                                .keys()
+                                .all(|key| matches!(key.as_str(), "or" | "and" | "_change_block")))
+                            && fields
+                                .iter()
+                                .filter(|(key, _)| matches!(key.as_str(), "and" | "or"))
+                                .all(|(_, branches)| {
+                                    branches
+                                        .as_array()
+                                        .is_some_and(|branches| branches.iter().all(valid_filter))
+                                })
+                    })
+                }
+                if !valid_filter(&where_) {
+                    return Err(());
+                }
                 let id_gt = s(&where_, "id_gt");
                 let skip = vars.get("skip").and_then(Value::as_i64).unwrap_or(0) as usize;
-                let matches = |r: &Value| {
+                fn matches(r: &Value, where_: &Value) -> bool {
                     where_.as_object().into_iter().flatten().all(|(key, want)| {
                         let field = |name: &str| match r.get(name) {
                             Some(Value::Object(o)) => {
@@ -271,7 +292,15 @@ impl FakeGraph {
                         let bound = ["_lte", "_gte", "_lt", "_gt"]
                             .iter()
                             .find_map(|op| key.strip_suffix(op).map(|name| (name, *op)));
-                        if let Some(name) = key.strip_suffix("_in") {
+                        if key == "or" {
+                            want.as_array().is_some_and(|branches| {
+                                branches.iter().any(|branch| matches(r, branch))
+                            })
+                        } else if key == "and" {
+                            want.as_array().is_some_and(|branches| {
+                                branches.iter().all(|branch| matches(r, branch))
+                            })
+                        } else if let Some(name) = key.strip_suffix("_in") {
                             want.as_array()
                                 .is_some_and(|list| list.iter().any(|w| same(&field(name), w)))
                         } else if let Some((name, op)) = bound.filter(|(name, _)| *name != "id") {
@@ -290,10 +319,10 @@ impl FakeGraph {
                             same(&field(key), want)
                         }
                     })
-                };
+                }
                 let mut rows: Vec<Value> = all
                     .into_iter()
-                    .filter(|r| (id_gt.is_empty() || s(r, "id") > id_gt) && matches(r))
+                    .filter(|r| (id_gt.is_empty() || s(r, "id") > id_gt) && matches(r, &where_))
                     .collect();
                 let ident = |after: &str| {
                     query.find(after).map(|i| {
@@ -8465,6 +8494,8 @@ async fn land_pages_read_the_published_catalogue_and_enrich_the_same_snapshot() 
          INSERT INTO shop.nft_order(network,contract_address,token_id,order_id,marketplace_address,status,seller,price,expires_at,created_at,updated_at,updated_block,updated_log)
          VALUES('ethereum','{estate}',42,'order-42','{CREATOR}','open','{WALLET_A}',25,4102444800000,1,2,13,0)"
     ))).execute(&db.pool).await.unwrap();
+    sqlx::query("UPDATE shop.chain_cursor SET folded_at=timezone('UTC',now()) WHERE indexer='nft' AND network='ethereum'")
+        .execute(&db.pool).await.unwrap();
     let rental = crate::rentals::index::tests::seed_listing(
         &db.pool, estate, "42", ["0"; 3], "0x42", WALLET_A, CREATOR,
     )
@@ -11344,6 +11375,8 @@ async fn a_names_page_by_latest_sale_reads_the_admitted_index() {
     .execute(pool)
     .await
     .unwrap();
+    sqlx::query("UPDATE shop.chain_cursor SET folded_at=timezone('UTC',now()) WHERE indexer='nft' AND network='ethereum'")
+        .execute(pool).await.unwrap();
     let app = market_router(state.clone());
     let sold_at = |body: &Value, token: &str| {
         body["data"]
@@ -11859,6 +11892,22 @@ async fn catalog_resales_read_the_published_legacy_book_and_v3_listings() {
         fold.and_utc().timestamp_millis(),
         "{page}"
     );
+    let set_fold_at = |at: chrono::NaiveDateTime| {
+        sqlx::query(
+            "UPDATE shop.chain_cursor SET folded_at=$1 WHERE indexer='nft' AND network='matic'",
+        )
+        .bind(at)
+        .execute(pool)
+    };
+    let stale = chrono::Utc::now() - super::chain_walk::READY_WINDOW - chrono::Duration::minutes(1);
+    set_fold_at(stale.naive_utc()).await.unwrap();
+    let (code, page) = get(app(), &v2_exact("2")).await;
+    assert_eq!(code, StatusCode::OK, "{page}");
+    assert_eq!(page["data"][0]["listings"], 0, "{page}");
+    let (code, page) = get(app(), &format!("{}&onlyListing=true", v2_exact("2"))).await;
+    assert_eq!(code, StatusCode::SERVICE_UNAVAILABLE, "{page}");
+    assert_eq!(page["source"], "nft-index");
+    set_fold_at(fold).await.unwrap();
     sqlx::query("UPDATE shop.mirror_state SET last_complete_pass_at=timezone('UTC',now()) WHERE mirror='collections' AND network='matic'")
         .execute(pool).await.unwrap();
     let (code, page) = get(app(), &mint_path).await;

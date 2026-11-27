@@ -193,7 +193,7 @@ impl CatalogueRead {
     pub async fn trades_ready(&mut self, state: &MarketplaceState) -> Result<(), Response> {
         super::nft_reads::set_read_timeout(&mut self.tx)
             .await
-            .map_err(super::nft_reads::read_error)?;
+            .map_err(super::readers::index_read_error)?;
         super::trades::ready_on(state, &mut self.tx, self.now)
             .await
             .map(|_| ())
