@@ -22,19 +22,16 @@ use common::{
     structs::{scaled_bloom, CameraLook, CameraOverride, PrimaryCamera},
 };
 use console::{AddDebugSection, DebugSection, DoAddConsoleCommand};
-use dcl_component::SceneEntityId;
+use dcl_component::{
+    proto_components::sdk::components::Tonemapping as ProtoTonemapping, SceneEntityId,
+};
 use scene_runner::{
     renderer_context::RendererSceneContext,
-    update_world::{
-        camera_mode_area::VirtualCamera,
-        post_processing::{PostProcessing, TonemapCurve},
-    },
+    update_world::{camera_mode_area::VirtualCamera, post_processing::PostProcessing},
 };
 
-use crate::day_night::SceneSource;
+use crate::{day_night::SceneSource, TRANSITION_TIME};
 
-/// seconds to blend between scenes' settings, as the global light does
-const SCENE_TRANSITION_TIME: f32 = 1.0;
 /// CIE 1931 x of the D65 white point
 const D65_X: f32 = 0.31271;
 
@@ -148,14 +145,14 @@ struct Lens {
 }
 
 /// The output of `settings` over a camera whose own values are `base`. `texture_camera` turns
-/// bloom off by default under `TonemapCurve::None`.
+/// bloom off by default under `TONEMAP_NONE`.
 fn compose(
     settings: &PostProcessing,
     base: &CameraLook,
     lens: &Lens,
     texture_camera: bool,
 ) -> Output {
-    let no_curve = settings.tonemapping == Some(TonemapCurve::None);
+    let no_curve = settings.tonemapping == Some(ProtoTonemapping::TonemapNone);
 
     let mut grading = if no_curve {
         ColorGrading::default()
@@ -178,9 +175,11 @@ fn compose(
     }
 
     let curve = match settings.tonemapping {
-        Some(TonemapCurve::Aces) => Tonemapping::AcesFitted,
+        Some(ProtoTonemapping::TonemapAces) => Tonemapping::AcesFitted,
         // with no curve the camera's curve stays selected, faded out by the mix
-        Some(TonemapCurve::Default | TonemapCurve::None) | None => base.tonemapping,
+        Some(ProtoTonemapping::TonemapDefault | ProtoTonemapping::TonemapNone) | None => {
+            base.tonemapping
+        }
     };
 
     let bloom_scale = settings
@@ -441,7 +440,6 @@ fn show_primary(
     mut commands: Commands,
     time: Res<Time>,
     mut source: SceneSource,
-    mut picked: Local<Option<Entity>>,
     changed_settings: Query<(), Changed<PostProcessing>>,
     mut removed_settings: RemovedComponents<PostProcessing>,
     contexts: Query<&RendererSceneContext>,
@@ -467,16 +465,18 @@ fn show_primary(
     };
     let changed = !changed_settings.is_empty() || removed_settings.read().next().is_some();
     removed_settings.clear();
-    if let Some(pick) = source.changed_pick(changed, |scene| on_camera(scene).is_some()) {
-        *picked = pick;
-    }
     let Ok((entity, primary, mut state, look, camera, projection, components)) =
         camera.single_mut()
     else {
         return;
     };
 
-    let scene = *picked;
+    // a new camera picks at once
+    let scene = source
+        .changed_pick(changed || state.is_added(), |scene| {
+            on_camera(scene).is_some()
+        })
+        .unwrap_or(state.scene);
     let base_settings = scene.and_then(on_camera).unwrap_or_default();
 
     // a virtual camera's own settings, while the camera's last move went to it
@@ -504,7 +504,8 @@ fn show_primary(
     let now = time.elapsed_secs_f64();
     if scene != state.scene || virtual_camera != state.virtual_camera {
         state.duration = if scene != state.scene {
-            SCENE_TRANSITION_TIME
+            // between scenes' settings, as the global light does
+            TRANSITION_TIME
         } else {
             // over the camera's move to or from the virtual camera; other changes apply at once
             new_move.map_or(0.0, |camera_move| camera_move.time)
@@ -554,7 +555,7 @@ fn show_other_cameras(
         (
             Entity,
             Ref<CameraLook>,
-            &Camera,
+            Ref<Camera>,
             &Projection,
             Option<&ChildOf>,
             Has<ShowsSceneSettings>,
@@ -568,7 +569,9 @@ fn show_other_cameras(
             continue;
         }
         let found = parent.and_then(|parent| settings.get(parent.parent()).ok());
-        let changed = look.is_changed() || found.as_ref().is_some_and(Ref::is_changed);
+        // turning the camera on counts: changes while it was off were not shown
+        let changed =
+            camera.is_changed() || look.is_changed() || found.as_ref().is_some_and(Ref::is_changed);
         // depth of field follows the target's size, so it is worked out each frame
         let follows_lens = found.as_ref().is_some_and(|found| focus_set(found));
         if !(changed || follows_lens || was_shown != found.is_some()) {
@@ -576,7 +579,7 @@ fn show_other_cameras(
         }
 
         let scene_settings = found.as_deref().copied().unwrap_or_default();
-        let camera_lens = lens(camera, projection);
+        let camera_lens = lens(&camera, projection);
         let output = compose(&scene_settings, &look, &camera_lens, true);
         show(
             &mut commands,
@@ -624,7 +627,7 @@ fn post_processing_command(
         "scene": state.scene.map(|e| e.to_bits().to_string()),
         "virtualCamera": state.virtual_camera.map(|e| e.to_bits().to_string()),
         "blend": state.progress,
-        "tonemapping": s.tonemapping.map(|curve| format!("{curve:?}")),
+        "tonemapping": s.tonemapping.map(|curve| curve.as_str_name()),
         "exposure": s.exposure,
         "saturation": s.saturation,
         "contrast": s.contrast,
@@ -686,7 +689,7 @@ mod tests {
         let mut base = look();
         base.grading.shadows.gain = 1.4;
         let settings = PostProcessing {
-            tonemapping: Some(TonemapCurve::None),
+            tonemapping: Some(ProtoTonemapping::TonemapNone),
             exposure: Some(1.0),
             ..default()
         };
@@ -838,7 +841,7 @@ mod tests {
         let from = compose(&PostProcessing::default(), &base, &lens, false);
         let to = compose(
             &PostProcessing {
-                tonemapping: Some(TonemapCurve::None),
+                tonemapping: Some(ProtoTonemapping::TonemapNone),
                 ..default()
             },
             &base,

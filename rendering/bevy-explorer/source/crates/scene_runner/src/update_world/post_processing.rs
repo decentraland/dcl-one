@@ -23,21 +23,11 @@ impl Plugin for PostProcessingPlugin {
     }
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum TonemapCurve {
-    /// the camera's own curve
-    #[default]
-    Default,
-    /// no curve and none of the explorer's grading
-    None,
-    Aces,
-}
-
 /// A scene's `PBPostProcessing`, with non-finite values dropped and the rest clamped to the
 /// documented ranges. `None` keeps the explorer's default.
 #[derive(Component, Clone, Copy, Debug, Default, PartialEq)]
 pub struct PostProcessing {
-    pub tonemapping: Option<TonemapCurve>,
+    pub tonemapping: Option<Tonemapping>,
     /// stops
     pub exposure: Option<f32>,
     pub saturation: Option<f32>,
@@ -83,11 +73,7 @@ fn clamped(value: Option<f32>, min: f32, max: f32) -> Option<f32> {
 impl From<PbPostProcessing> for PostProcessing {
     fn from(value: PbPostProcessing) -> Self {
         // the accessor reads an unknown curve as the default
-        let tonemapping = value.tonemapping.map(|_| match value.tonemapping() {
-            Tonemapping::TonemapDefault => TonemapCurve::Default,
-            Tonemapping::TonemapNone => TonemapCurve::None,
-            Tonemapping::TonemapAces => TonemapCurve::Aces,
-        });
+        let tonemapping = value.tonemapping.map(|_| value.tonemapping());
         let grading = value.color_grading.unwrap_or_default();
         let dof = value.depth_of_field.unwrap_or_default();
         Self {
@@ -131,7 +117,7 @@ mod tests {
                 focus_end: None,
             }),
         });
-        assert_eq!(pp.tonemapping, Some(TonemapCurve::None));
+        assert_eq!(pp.tonemapping, Some(Tonemapping::TonemapNone));
         assert_eq!(pp.exposure, Some(5.0));
         assert_eq!(pp.saturation, None);
         assert_eq!(pp.contrast, Some(0.0));
@@ -150,7 +136,7 @@ mod tests {
             tonemapping: Some(99),
             ..Default::default()
         });
-        assert_eq!(pp.tonemapping, Some(TonemapCurve::Default));
+        assert_eq!(pp.tonemapping, Some(Tonemapping::TonemapDefault));
     }
 
     #[test]

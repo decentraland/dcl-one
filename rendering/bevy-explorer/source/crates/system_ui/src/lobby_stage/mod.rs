@@ -343,7 +343,14 @@ fn processed(
     commands
         .entity(camera)
         .try_remove::<StageCamera>()
-        .try_insert(platform::default_camera_components());
+        .queue_silenced(|mut camera: EntityWorldMut| {
+            // the stage leaves depth of field alone, and its setting comes back a frame later
+            let dof = camera.get::<CameraLook>().and_then(|look| look.dof);
+            camera.insert(platform::default_camera_components());
+            if let Some(mut look) = camera.get_mut::<CameraLook>() {
+                look.dof = dof;
+            }
+        });
     new_cameras.write(NewCameraEvent(camera));
 }
 
@@ -917,6 +924,31 @@ mod tests {
                 .unwrap();
             assert!(world.entity(camera).contains::<Bloom>());
         }
+    }
+
+    /// The stage leaves the camera's depth of field alone, through the stage and the release.
+    #[test]
+    fn the_stage_camera_keeps_its_depth_of_field_when_released() {
+        use bevy::{core_pipeline::dof::DepthOfField, ecs::system::RunSystemOnce};
+
+        let mut world = World::new();
+        world.init_resource::<Events<NewCameraEvent>>();
+        let look = CameraLook {
+            dof: Some(DepthOfField::default()),
+            ..Default::default()
+        };
+        let camera = world.spawn((Camera3d::default(), look)).id();
+        world
+            .run_system_once(
+                move |mut commands: Commands, mut new_cameras: EventWriter<NewCameraEvent>| {
+                    unprocessed(&mut commands, camera);
+                    processed(&mut commands, &mut new_cameras, camera);
+                },
+            )
+            .unwrap();
+        let look = world.entity(camera).get::<CameraLook>().unwrap();
+        assert!(look.dof.is_some());
+        assert!(look.bloom.is_some());
     }
 
     #[test]

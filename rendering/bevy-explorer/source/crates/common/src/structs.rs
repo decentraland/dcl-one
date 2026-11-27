@@ -504,7 +504,8 @@ pub struct PrimaryCamera {
     pub scene_override: Option<CameraOverride>,
     /// The scene whose camera mode area or virtual camera set `scene_override`.
     pub scene_override_owner: Option<Entity>,
-    /// The last move to a new view the camera started; set by `user_input`'s `update_camera`.
+    /// The last move to a new view the camera started; set by `user_input`'s
+    /// `update_camera_position`.
     pub last_move: Option<CameraMove>,
 }
 

@@ -7,7 +7,7 @@ use bevy::{
     core_pipeline::{
         dof::{DepthOfField, DepthOfFieldMode},
         prepass::DepthPrepass,
-        tonemapping::Tonemapping,
+        tonemapping::{DebandDither, Tonemapping},
     },
     prelude::*,
     render::{
@@ -17,12 +17,13 @@ use bevy::{
         RenderApp,
     },
 };
+use common::structs::default_color_grading;
 use pipeline_test::{compile_pipelines, gpu_errors, headless_app, render_target};
 
-/// Three HDR cameras draw a lit cube without a device error: one with no curve and an exposure,
-/// whose grading pass runs without a curve; one with a curve faded halfway out, a hue rotation
-/// and a white balance; and one with a scene's linear depth of field ramp. Needs a GPU, so
-/// `#[ignore]`d:
+/// Four HDR cameras draw a lit cube without a device error: one with no curve and an exposure,
+/// whose grading pass runs without a curve; one with the explorer's own grading and dither, its
+/// curve faded halfway out, a hue rotation and a white balance; and two with a scene's linear
+/// depth of field ramp, Gaussian and bokeh. Needs a GPU, so `#[ignore]`d:
 ///
 /// ```text
 /// cargo test -p visuals post_processing_variants_compile_and_draw -- --ignored --nocapture
@@ -35,41 +36,54 @@ fn post_processing_variants_compile_and_draw() {
     app.cleanup();
     let errors = gpu_errors(&app);
 
-    let graded = |global: ColorGradingGlobal| ColorGrading {
-        global,
-        ..default()
+    let mut shipped = default_color_grading();
+    shipped.global = ColorGradingGlobal {
+        untonemapped_mix: 0.5,
+        hue: 1.0,
+        temperature: 0.1,
+        tint: 0.05,
+        ..shipped.global
+    };
+    let linear_dof = |mode| {
+        Some(DepthOfField {
+            mode,
+            linear_ramp: 1.0,
+            ..default()
+        })
     };
     let cameras = [
         (
             Tonemapping::None,
-            graded(ColorGradingGlobal {
-                exposure: 1.0,
+            ColorGrading {
+                global: ColorGradingGlobal {
+                    exposure: 1.0,
+                    ..default()
+                },
                 ..default()
-            }),
+            },
+            DebandDither::Disabled,
             None,
         ),
         (
             Tonemapping::AcesFitted,
-            graded(ColorGradingGlobal {
-                untonemapped_mix: 0.5,
-                hue: 1.0,
-                temperature: 0.1,
-                tint: 0.05,
-                ..default()
-            }),
+            shipped,
+            DebandDither::Enabled,
             None,
         ),
         (
             Tonemapping::AcesFitted,
             ColorGrading::default(),
-            Some(DepthOfField {
-                mode: DepthOfFieldMode::Gaussian,
-                linear_ramp: 1.0,
-                ..default()
-            }),
+            DebandDither::Disabled,
+            linear_dof(DepthOfFieldMode::Gaussian),
+        ),
+        (
+            Tonemapping::AcesFitted,
+            ColorGrading::default(),
+            DebandDither::Disabled,
+            linear_dof(DepthOfFieldMode::Bokeh),
         ),
     ];
-    for (order, (tonemapping, grading, dof)) in cameras.into_iter().enumerate() {
+    for (order, (tonemapping, grading, dither, dof)) in cameras.into_iter().enumerate() {
         let target = render_target(&mut app);
         let mut camera = app.world_mut().spawn((
             Camera3d::default(),
@@ -81,6 +95,7 @@ fn post_processing_variants_compile_and_draw() {
             },
             tonemapping,
             grading,
+            dither,
             Msaa::Off,
             DepthPrepass,
             Transform::from_xyz(0.0, 0.0, 4.0).looking_at(Vec3::ZERO, Vec3::Y),
@@ -131,9 +146,11 @@ fn post_processing_variants_compile_and_draw() {
         &["TONEMAP_METHOD_NONE"][..],
         &[
             "TONEMAP_METHOD_ACES_FITTED",
+            "SECTIONAL_COLOR_GRADING",
             "UNTONEMAPPED_MIX",
             "HUE_ROTATE",
             "WHITE_BALANCE",
+            "DEBAND_DITHER",
         ],
     ] {
         assert!(
@@ -144,5 +161,10 @@ fn post_processing_variants_compile_and_draw() {
     assert!(
         compiled("depth of field pipeline", &[]),
         "the depth of field pipeline did not compile"
+    );
+    // bokeh's second pass reads both of the first pass's outputs
+    assert!(
+        compiled("depth of field pipeline", &["DUAL_INPUT"]),
+        "the bokeh depth of field pipeline did not compile"
     );
 }

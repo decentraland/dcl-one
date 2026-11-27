@@ -26,7 +26,9 @@ use common::{
 use comms::global_crdt::ForeignPlayer;
 use dcl_component::{
     proto_components::{
-        sdk::components::{PbCameraLayer, PbCameraLayers, PbTextureCamera},
+        sdk::components::{
+            PbCameraLayer, PbCameraLayers, PbTextureCamera, Tonemapping as ProtoTonemapping,
+        },
         Color3DclToBevy, Color4DclToBevy,
     },
     SceneComponentId,
@@ -35,10 +37,8 @@ use platform::default_camera_components;
 use scene_runner::{
     renderer_context::RendererSceneContext,
     update_world::{
-        lights::update_directional_light,
-        material::VideoTextureOutput,
-        post_processing::{PostProcessing, TonemapCurve},
-        AddCrdtInterfaceExt,
+        lights::update_directional_light, material::VideoTextureOutput,
+        post_processing::PostProcessing, AddCrdtInterfaceExt,
     },
     ContainerEntity, ContainingScene,
 };
@@ -245,7 +245,7 @@ fn update_texture_cameras(
         // that views it to tonemap once
         let format = if post_processing
             .get(ent)
-            .is_ok_and(|settings| settings.tonemapping == Some(TonemapCurve::None))
+            .is_ok_and(|settings| settings.tonemapping == Some(ProtoTonemapping::TonemapNone))
         {
             TextureFormat::Rgba16Float
         } else {

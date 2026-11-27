@@ -627,7 +627,7 @@ fn update_dof(
     let (Ok((cam, mydof, mut look)), Ok(player)) = (cam.single_mut(), player.single()) else {
         return;
     };
-    let Some(dof) = look.dof.as_mut() else {
+    let Some(dof) = look.dof.as_ref() else {
         return;
     };
 
@@ -637,11 +637,18 @@ fn update_dof(
         + constant_distance)
         .min(100.0);
 
-    dof.sensor_height = mydof.default_sensor_height;
+    let sensor_height = mydof.default_sensor_height;
     // * ((current_distance * (current_distance + constant_distance))
     //     / (base_distance * (base_distance + constant_distance)))
     //     .sqrt();
-    dof.focal_distance = current_distance;
+    // written only when it moves, so the look reads as changed only then
+    if dof.sensor_height == sensor_height && dof.focal_distance == current_distance {
+        return;
+    }
+    if let Some(dof) = look.dof.as_mut() {
+        dof.sensor_height = sensor_height;
+        dof.focal_distance = current_distance;
+    }
 }
 
 /// `/cloud <cover> [speed]`: the strips' cover and the sky's speed. `--speed` sets the speed

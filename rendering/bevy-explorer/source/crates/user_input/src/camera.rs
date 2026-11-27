@@ -11,7 +11,8 @@ use common::{
     structs::{
         AppConfig, AvatarDynamicState, CameraMove, CameraOverride, CameraShoulder, CameraView,
         CameraZoomLevel, ClientWindowFocus, CursorLocks, HeadSync, MoveKind, PhotoMode,
-        PrimaryCamera, PrimaryUser, RequestClientWindowFocus, CAMERA_CURSOR_LOCK, PLAYER_CAMERA_FOV,
+        PrimaryCamera, PrimaryUser, RequestClientWindowFocus, CAMERA_CURSOR_LOCK,
+        PLAYER_CAMERA_FOV,
     },
     util::ModifyComponentExt,
 };
