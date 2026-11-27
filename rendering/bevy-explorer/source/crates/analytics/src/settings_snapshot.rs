@@ -23,7 +23,8 @@ use crate::{
 
 type Changed = serde_json::Map<String, serde_json::Value>;
 
-/// How long the changed settings stay the same before they are sent again.
+/// How long the changed settings stay the same before they are sent again, on the real clock so
+/// slow or throttled frames do not stretch it.
 const SETTLE: Duration = Duration::from_secs(5);
 
 /// The settings the snapshot leaves out, by type so a renamed title still matches. Every other
@@ -139,7 +140,7 @@ impl Reporter {
 fn report_snapshot(
     settings: Res<Settings>,
     config: Res<SegmentConfig>,
-    time: Res<Time>,
+    time: Res<Time<Real>>,
     mut metrics: ResMut<SegmentMetricsEvents>,
     mut reporter: Local<Reporter>,
 ) {
@@ -289,7 +290,7 @@ mod tests {
                 None,
                 false,
             ))
-            .insert_resource(Time::<()>::default())
+            .insert_resource(Time::<Real>::default())
             .add_systems(Update, report_snapshot);
         (app, receiver)
     }
@@ -312,7 +313,7 @@ mod tests {
         assert!(receiver.try_recv().is_err());
 
         app.world_mut()
-            .resource_mut::<Time>()
+            .resource_mut::<Time<Real>>()
             .advance_by(SETTLE + Duration::from_secs(1));
         app.update();
         let got = receiver.try_recv().unwrap();
