@@ -257,9 +257,16 @@ export function ShopCardPrice(props: ShopCardPriceProps) {
 }
 
 /** A ShopCard's place while the grid loads: the thumbnail and two bars under the purple sweep. */
-export function ShopCardSkeleton() {
+export function ShopCardSkeleton({
+  variant = 'shop',
+  'data-testid': testId
+}: Pick<ShopCardProps, 'variant'> & { 'data-testid'?: string } = {}) {
   return (
-    <span className={styles.skeleton} aria-hidden="true">
+    <span
+      className={variant === 'catalogue' ? `${styles.skeleton} ${styles.skeletonCatalogue}` : styles.skeleton}
+      aria-hidden="true"
+      data-testid={testId}
+    >
       <span className={`${styles.sheen} ${styles.skeletonTile}`} />
       <span className={styles.skeletonInfo}>
         <span className={`${styles.sheen} ${styles.skeletonBar}`} />

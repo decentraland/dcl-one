@@ -1,6 +1,6 @@
 // from: shop@2d3bf62:app/src/components/Price/Price.tsx, app/src/components/CurrencyIcon/CurrencyIcon.tsx, app/src/lib/currency.ts (formatCredits)
 
-import ManaMark from "../../../atoms/ManaMark";
+import { ShopManaMark } from "@dcl/one-ui";
 import { formatMana, type ManaWei } from "@shop/model/money";
 import type { CardPrice } from "@shop/discovery/cardPrice";
 import { t } from "@shop/discovery/intl";
@@ -36,7 +36,7 @@ export function ManaAmount({ wei, network = "polygon", testId }: { wei: ManaWei;
   const amount = formatMana(wei, { group: true });
   return (
     <span className="shop-price__mana" data-testid={testId || undefined} title={`${amount} MANA`}>
-      <ManaMark size={14} network={network} className="shop-price__mark" />
+      <ShopManaMark size={14} network={network} className="shop-price__mark" />
       <span>{amount}</span>
       <span className="shop-sr"> MANA</span>
     </span>
@@ -73,7 +73,7 @@ export default function PriceTag({ price, network, compactView = false }: { pric
     case "manaAtCheckout":
       return (
         <span className="shop-price" data-kind="mana-at-checkout" data-testid="card-price" title={t("assetCard.manaPriceOnPage")}>
-          <ManaMark size={14} network={network} className="shop-price__mark" />
+          <ShopManaMark size={14} network={network} className="shop-price__mark" />
           <span>{t("assetCard.manaOnly")}</span>
         </span>
       );

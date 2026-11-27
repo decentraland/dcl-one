@@ -18,6 +18,7 @@ The browser logic the web apps share, with no UI ([ADR](../../docs/adr/2026-11-1
 | `docs.ts` | The base and URLs of the documentation site |
 | `newsletter.ts` | The site newsletter subscription request |
 | `shop-chain-env.ts` | The Shop's chain selection from the build environment, with page overrides in development builds only |
+| `connection-speed.ts` | The link speed from one uncached probe download, which the creators item editor and the Shop's previews choose their renderer by |
 | `place-view.ts` | Whether a place has a thumbnail of its own, and the viewer's relation to a place |
 | `freshness/` | How old a cached copy is: its stamp, the older of two copies, a coarse duration, the per-section freshness model and the page's store of the newest stamp per domain |
 | `flow-map/` | The node, edge and section model of the flow map and its statistics, and the Explorer's (`/play`) map built on it |

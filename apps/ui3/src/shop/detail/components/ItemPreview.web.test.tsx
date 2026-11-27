@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import type { CatalogItem } from "@shop/discovery/lib/catalogItem";
 import { invalidateShopQueries, primeShopQuery } from "../../discovery/query";
 import { primeRemoteFlags } from "../../discovery/lib/remoteFlags";
+import { resetMeasuredLinkForTests } from "../lib/previewDevice";
 import ItemPreview from "./ItemPreview";
 
 const PREVIEW = "https://wearable-preview.decentraland.org";
@@ -19,11 +20,23 @@ const env = vi.hoisted(() => ({
   account: null as string | null,
   device: "full" as "full" | "lite",
   profile: null as null | ((profile: unknown) => void),
+  // Only the link left to decide: the device reads optimistic until the probe answers, which it never does here.
+  linkUndecided: false,
+  probes: 0,
 }));
 
 vi.mock("../../wallet/context", () => ({ useShopWallet: () => ({ account: env.account }) }));
 vi.mock("../lib/pickRenderer", () => ({
-  pickRenderer: () => ({ renderer: env.device, reason: env.device === "full" ? "connection-ok" : "mobile" }),
+  pickRenderer: (measuredMbps: number | null = null) =>
+    env.linkUndecided && measuredMbps === null
+      ? { renderer: "full", reason: "optimistic-default" }
+      : { renderer: env.device, reason: env.device === "full" ? "connection-ok" : "mobile" },
+}));
+vi.mock("@web-core/connection-speed", () => ({
+  measureDownlinkMbps: () => {
+    env.probes += 1;
+    return new Promise(() => {});
+  },
 }));
 vi.mock("../../../data/catalyst/profile", () => ({
   fetchProfile: () => new Promise((resolve) => (env.profile = resolve)),
@@ -55,6 +68,9 @@ beforeEach(() => {
   env.account = null;
   env.device = "full";
   env.profile = null;
+  env.linkUndecided = false;
+  env.probes = 0;
+  resetMeasuredLinkForTests();
   invalidateShopQueries();
   flag(true);
 });
@@ -141,6 +157,22 @@ describe("what the iframe mounts with", () => {
     render(<ItemPreview item={item()} />);
     expect(frame()).not.toBeNull();
     expect(params().has("unity")).toBe(false);
+  });
+
+  test("while the link probe runs, only the thumbnail shows: no frame, and no Show 3D button it could not act on", () => {
+    env.linkUndecided = true;
+    render(<ItemPreview item={item()} />);
+    expect(env.probes).toBe(1);
+    expect(thumb()).not.toBeNull();
+    expect(frame()).toBeNull();
+    expect(screen.queryByTestId("show-3d")).toBeNull();
+  });
+
+  test("a NAME, which has no preview, never pays for the link probe", () => {
+    env.linkUndecided = true;
+    render(<ItemPreview item={item({ category: "ens" } as Partial<CatalogItem>)} />);
+    expect(env.probes).toBe(0);
+    expect(frame()).toBeNull();
   });
 
   test("an emote plays on the avatar, with no view type and a closer wheel zoom", () => {

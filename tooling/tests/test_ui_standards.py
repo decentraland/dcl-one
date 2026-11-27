@@ -112,7 +112,7 @@ class UiStandardsTest(unittest.TestCase):
                                  '../../../library/ui'])
 
     def test_relative_shared_imports_allow_stylesheets_tooling_fixtures_and_other_paths(self):
-        self.assertEqual(ui_standards.relative_shared_imports('apps/ui3/src/web/pages/StInvite.browser.test.ts', (
+        self.assertEqual(ui_standards.relative_shared_imports('apps/ui3/src/web/pages/Example.browser.test.ts', (
             'import styles from "../../../../../library/ui/components/Button/Button.module.css"\n'
             'import css from "../../../../../library/ui/components/Button/Button.module.css?inline"\n'
             'import { openSession } from "../../../../../library/ui/figma/review/scripts/capture-browser.mjs"\n'

@@ -1,0 +1,18 @@
+.badge {
+  display: flex;
+  align-items: center;
+  gap: var(--dcl-space-12);
+}
+
+.avatar {
+  flex: none;
+  width: var(--dcl-space-48);
+  height: var(--dcl-space-48);
+  border-radius: var(--dcl-radius-full);
+}
+
+.name {
+  width: var(--dcl-space-96);
+  height: var(--dcl-space-16);
+  border-radius: var(--dcl-radius-xs);
+}
