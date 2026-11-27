@@ -31,7 +31,7 @@ impl Plugin for IpfsDebugPlugin {
                 update_text_from_atomics,
                 (
                     receive_debug,
-                    scroll_bottom.run_if(in_state(IpfsFileGridState::Tail)),
+                    scroll_bottom.run_if(in_state(IpfsFileGridState::Tail).and(overlay_shown)),
                 )
                     .chain()
                     .run_if(resource_exists::<IpfsDebugReceiver>),
@@ -189,11 +189,12 @@ fn toggle_display(
 
 fn update_text_from_atomics(atomic_sources: Query<(&mut Text, &AtomicSource)>) {
     for (mut text, atomic_source) in atomic_sources {
-        let value = atomic_source.load(Ordering::Relaxed).to_string();
-        if text.0 != value {
-            text.0 = value;
-        }
+        text.set_if_neq(Text(atomic_source.load(Ordering::Relaxed).to_string()));
     }
+}
+
+fn overlay_shown(ui_root: Single<&Node, With<UiRoot>>) -> bool {
+    ui_root.display != Display::None
 }
 
 fn receive_debug(
@@ -203,9 +204,8 @@ fn receive_debug(
     mut ipfs_debug_receiver: ResMut<IpfsDebugReceiver>,
     mut log: ResMut<FileLog>,
 ) {
-    let shown = ui_root.display != Display::None;
     let (file_grid, children) = file_grid.into_inner();
-    let mut cells = children.map_or(0, |children| children.len());
+    let mut new_rows = 0;
 
     loop {
         let debug = match ipfs_debug_receiver.try_recv() {
@@ -223,20 +223,28 @@ fn receive_debug(
             format!("{:?}", debug.duration),
             format!("{}b", debug.length),
         ];
-        if shown {
-            spawn_row(&mut commands, file_grid, &row);
-            cells += CELL_PER_ROW;
-        }
         log.0.push_back(row);
         if log.0.len() > FILE_GRID_ROWS {
             log.0.pop_front();
         }
+        new_rows += 1;
     }
 
-    // cells are placed in spawn order, so trimming the oldest rows needs no renumbering
+    if ui_root.display == Display::None {
+        return;
+    }
+
+    // the log holds at most FILE_GRID_ROWS rows, so a larger burst spawns only the rows it kept
+    let new_rows = new_rows.min(log.0.len());
+    for row in log.0.iter().skip(log.0.len() - new_rows) {
+        spawn_row(&mut commands, file_grid, row);
+    }
+
+    // grid cells auto-place in `Children` order, so the oldest rows are the first children
     let Some(children) = children else {
         return;
     };
+    let cells = children.len() + new_rows * CELL_PER_ROW;
     let excess = cells.saturating_sub(FILE_GRID_ROWS * CELL_PER_ROW);
     if excess > 0 {
         trace!("Trimming {} excess cells", excess);
@@ -260,13 +268,7 @@ fn spawn_row(commands: &mut Commands, file_grid: Entity, row: &[String; CELL_PER
     }
 }
 
-fn scroll_bottom(
-    ui_root: Single<&Node, With<UiRoot>>,
-    file_grid: Single<&mut ScrollPosition, With<FileGrid>>,
-) {
-    if ui_root.display == Display::None {
-        return;
-    }
+fn scroll_bottom(file_grid: Single<&mut ScrollPosition, With<FileGrid>>) {
     // layout clamps the offset to the content, so this pins the grid to its last row
     file_grid.into_inner().offset_y = f32::MAX;
 }
