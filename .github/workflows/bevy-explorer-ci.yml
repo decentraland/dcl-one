@@ -437,6 +437,8 @@ jobs:
           WGPU_BACKEND: vulkan
         run: |
           set -o pipefail
+          cargo test -p imposters --lib --profile ci-test --locked --no-run --message-format=json-render-diagnostics \
+            > target/cargo-messages/imposters.jsonl
           cargo test -p imposters --lib --profile ci-test --locked \
             debug_imposters::tests::debug_imposter_colors_render -- --ignored --exact --test-threads=1 \
             | tee "$RUNNER_TEMP/explorer-imposter-shader-test.log"

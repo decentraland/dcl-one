@@ -151,7 +151,6 @@ fn tile_debug_color(tile: &SceneImposter) -> u32 {
 #[cfg(test)]
 mod tests {
     use std::{
-        path::PathBuf,
         sync::mpsc,
         time::{Duration, Instant},
     };
@@ -304,34 +303,55 @@ mod tests {
             original_shader,
             "debug off uses the original fragment shader"
         );
-        let original = read_colors(&mut app, &target, "disabled");
-        assert_eq!(original[0], original[1], "both proxies sample one material");
-        assert_ne!(original[0], original[2], "an imposter drew on the target");
-        assert_ne!(original[3], original[2], "the masked imposter was drawn");
+        let original = read_target(&mut app, &target);
+        let original_colors = sample_colors(&original);
+        assert_eq!(
+            original_colors[0], original_colors[1],
+            "both proxies sample one material"
+        );
+        assert_ne!(
+            original_colors[0], original_colors[2],
+            "an imposter drew on the target"
+        );
+        assert_ne!(
+            original_colors[3], original_colors[2],
+            "the masked imposter was drawn"
+        );
         assert!(
-            (1..255).contains(&original[0][3]),
+            (1..255).contains(&original_colors[0][3]),
             "the proxy is translucent"
         );
 
         for _ in 0..2 {
             app.world_mut().resource_mut::<DebugImpostersEnabled>().0 = true;
             compile_pipelines(&mut app);
-            let debug = read_colors(&mut app, &target, "enabled");
+            let tinted = read_target(&mut app, &target);
+            let debug = sample_colors(&tinted);
             assert_ne!(
                 debug[0], debug[1],
                 "neighboring requests have distinct tints"
             );
-            assert_eq!(debug[2], original[2], "the background retains its color");
             assert_eq!(
-                debug[3], original[3],
+                debug[2], original_colors[2],
+                "the background retains its color"
+            );
+            assert_eq!(
+                debug[3], original_colors[3],
                 "the untagged imposter stays uncolored"
             );
-            assert_eq!(debug[0][3], original[0][3], "tint does not change alpha");
-            assert_eq!(debug[1][3], original[1][3], "tint does not change alpha");
+            assert!(
+                tinted
+                    .as_chunks::<4>()
+                    .0
+                    .iter()
+                    .zip(original.as_chunks::<4>().0)
+                    .all(|(debug, original)| debug[3] == original[3]),
+                "tint preserves the entire alpha channel"
+            );
 
             app.world_mut().resource_mut::<DebugImpostersEnabled>().0 = false;
             compile_pipelines(&mut app);
-            assert_eq!(read_colors(&mut app, &target, "restored"), original);
+            assert_eq!(read_target(&mut app, &target), original);
             assert_eq!(
                 app.world()
                     .resource::<Assets<Shader>>()
@@ -344,7 +364,7 @@ mod tests {
         }
     }
 
-    fn read_colors(app: &mut App, target: &Handle<Image>, frame: &str) -> [[u8; 4]; 4] {
+    fn read_target(app: &mut App, target: &Handle<Image>) -> Vec<u8> {
         // Let the render schedule apply any ECS tag changes before requesting the next read.
         app.update();
         app.update();
@@ -368,21 +388,10 @@ mod tests {
             );
         };
         app.world_mut().despawn(readback);
-        if let Some(dir) = std::env::var_os("DCL_IMPOSTER_TEST_CAPTURE_DIR") {
-            let mut ppm = b"P6\n64 64\n255\n".to_vec();
-            ppm.extend(
-                pixels
-                    .as_chunks::<4>()
-                    .0
-                    .iter()
-                    .flat_map(|bgra| [bgra[2], bgra[1], bgra[0]]),
-            );
-            std::fs::write(
-                PathBuf::from(dir).join(format!("imposter-debug-{frame}.ppm")),
-                ppm,
-            )
-            .unwrap();
-        }
+        pixels
+    }
+
+    fn sample_colors(pixels: &[u8]) -> [[u8; 4]; 4] {
         [(16, 32), (48, 32), (32, 54), (32, 8)].map(|(x, y)| {
             let offset = (y * 64 + x) * 4;
             pixels[offset..offset + 4].try_into().unwrap()
