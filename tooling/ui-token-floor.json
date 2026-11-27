@@ -517,7 +517,7 @@
   },
   "library/ui/apps/sites/invite/InviteLanding.module.css": {
     "primitives": 0,
-    "tokens": 37
+    "tokens": 41
   },
   "library/ui/apps/sites/profile/EmptyMessage.module.css": {
     "primitives": 0,

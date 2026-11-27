@@ -103,18 +103,10 @@ function CircleAndArrow({ open }: { open: boolean }) {
       fill="none"
       aria-hidden="true"
     >
-      <circle
-        opacity={open ? 1 : 0.2}
-        cx="36"
-        cy="36"
-        r="35"
-        stroke="white"
-        fill={open ? 'white' : 'none'}
-        strokeWidth="2"
-      />
+      <circle className={styles.arrowCircle} cx="36" cy="36" r="35" strokeWidth="2" />
       <path
+        className={styles.arrowPath}
         d="M45 33.0022L42.885 30.8872L36 37.7572L29.115 30.8872L27 33.0022L36 42.0022L45 33.0022Z"
-        fill={open ? '#242129' : 'white'}
       />
     </svg>
   )

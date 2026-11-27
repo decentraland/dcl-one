@@ -284,6 +284,21 @@
 .arrow[data-open] {
   transform: rotate(180deg);
 }
+.arrowCircle {
+  fill: none;
+  stroke: var(--dcl-neutrals-white);
+  opacity: 0.2;
+}
+.arrow[data-open] .arrowCircle {
+  fill: var(--dcl-neutrals-white);
+  opacity: 1;
+}
+.arrowPath {
+  fill: var(--dcl-neutrals-white);
+}
+.arrow[data-open] .arrowPath {
+  fill: var(--sti-soft-black2);
+}
 
 .faqAnswer {
   display: grid;
@@ -365,17 +380,25 @@
     padding: 0;
   }
 
+  /* The background spans both rows, behind the copy as on decentraland.org; the artwork keeps the first row. */
   .primary .media {
     position: relative;
-    grid-row: 1;
+    grid-row: 1 / -1;
+    grid-column: 1;
+    display: grid;
+    grid-template-rows: subgrid;
   }
 
   .primary .avatar {
-    inset: 0;
-    height: 100%;
+    position: relative;
+    grid-row: 1;
+    inset: auto;
+    height: auto;
   }
 
   .primary .rail {
+    grid-row: 2;
+    grid-column: 1;
     position: relative;
     inset: auto;
     width: auto;
@@ -494,7 +517,7 @@
   .rail {
     margin-left: var(--dcl-space-48);
     margin-right: var(--dcl-space-48);
-    width: calc(100% - 96px);
+    width: calc(100% - 2 * var(--dcl-space-48));
   }
   .subtitle {
     font-size: var(--dcl-font-size-heading-4);
