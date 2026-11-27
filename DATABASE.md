@@ -2758,9 +2758,9 @@ default, and social writes are), each a reader of tables other areas own, with o
   `BADGES_EVENT_MAX_AGE_SECS` gets no badge and never waits, and one that
   grows older than it while it waits passes without a badge, as under the
   mirrors. The page,
-  its goods' item types and the wait come from one snapshot. Without
-  `MARKETPLACE_MIRRORS_ENABLED` no pass ever completes, so the sales job is
-  not started (logged at startup);
+  its goods' item types and the wait come from one snapshot. The sales job
+  starts when `MARKETPLACE_MIRRORS_ENABLED` enables the items mirror or
+  `MARKETPLACE_COLLECTIONS_INDEX_OWNS` includes Polygon;
 - recounts of `shop.items` and `shop.collections` on Polygon (once
   `shop.mirror_state` records a complete pass, or, once the collections
   index owns Polygon, while its descriptive verdict holds; the verdict, the
@@ -4126,6 +4126,21 @@ alone would not move when a newer network's pass does), and each owned
 network's publication and projection generation. The creator directory is a
 display aggregate that keeps its stated staleness (15 minutes, kept up to an hour), so it is filed
 under which source serves each network: an ownership change files it anew.
+
+The NFT and Polygon sales walks take their collection addresses from the
+chain-bound rows in `shop.collections`. On a network the index owns, the
+walks require an existing projection height, a cursor bound to the expected
+chain with full history and no quarantine or branch recovery. The projection
+can stand at any age and through catch-up closes that clear the fold marker.
+A rewind invalidates the projection. On other networks the walks wait for
+the collections mirror's first complete pass, with testnet verification.
+Each load checks the gate on the snapshot that supplies its addresses, so
+a hand-back between the job gate and that load waits for the mirror. The
+NFT walk keeps contracts recorded in `shop.nft_contract` if a replacement
+catalogue omits them. Historical source comparisons also include a
+registered address when the requested window overlaps its recorded backfill.
+Newly discovered contracts enter through the existing backfill lane when
+they predate the live window.
 
 **Switching a network from the mirror.** Run this only once two things
 hold:

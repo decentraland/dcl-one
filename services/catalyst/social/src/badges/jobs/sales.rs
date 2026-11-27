@@ -28,7 +28,9 @@
 //! minutes, so an item still missing then is not a collection item the
 //! mirror will ever hold (a bid on a foreign ERC721), and the sale is passed
 //! without effect. A mirror that stops completing passes holds the sales,
-//! so the job runs only with `MARKETPLACE_MIRRORS_ENABLED`.
+//! so the job runs only with `MARKETPLACE_MIRRORS_ENABLED`, or once the
+//! collections index owns Polygon (`MARKETPLACE_COLLECTIONS_INDEX_OWNS`
+//! lists `matic`).
 //!
 //! Once the collections index owns Polygon, every sale with a good waits
 //! instead for the index's publication over its block, whether its item
