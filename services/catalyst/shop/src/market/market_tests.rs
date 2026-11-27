@@ -12694,13 +12694,37 @@ async fn catalog_serves_the_verified_amoy_rows_with_their_chain_id() {
     .execute(pool)
     .await
     .unwrap();
-    for route in ["v1", "v2"] {
-        let path =
-            format!("/{route}/catalog?network=MATIC&contractAddress={contract}&onlyListing=true");
-        let (code, page) = get(testnet.clone(), &path).await;
-        assert_eq!(code, StatusCode::OK, "{page}");
-        assert_eq!(page["total"], 0, "{page}");
-        assert_eq!(page["data"], json!([]), "{page}");
+    for fill_tail in [false, true] {
+        if fill_tail {
+            // Push the token's transfer outside the bounded event probe.
+            // The fallback must still reject it in both the page and total.
+            sqlx::query(
+                "INSERT INTO shop.nft_event (network, block_number, log_index, block_time, kind,
+                                            emitter, contract_address, token_id)
+                 SELECT 'matic', 102, log, 102, 'order_cancelled', $1, $1, 0
+                 FROM generate_series(0, 2047) log",
+            )
+            .bind(&contract)
+            .execute(pool)
+            .await
+            .unwrap();
+            sqlx::query(
+                "UPDATE shop.chain_cursor SET last_block = 102
+                 WHERE indexer = 'nft' AND network = 'matic'",
+            )
+            .execute(pool)
+            .await
+            .unwrap();
+        }
+        for route in ["v1", "v2"] {
+            let path = format!(
+                "/{route}/catalog?network=MATIC&contractAddress={contract}&onlyListing=true"
+            );
+            let (code, page) = get(testnet.clone(), &path).await;
+            assert_eq!(code, StatusCode::OK, "{page}");
+            assert_eq!(page["total"], 0, "{page}");
+            assert_eq!(page["data"], json!([]), "{page}");
+        }
     }
     own.drop().await;
 }
