@@ -261,7 +261,9 @@ fn reach_follows_distance() {
     pointers(&mut app).set_all_scenes_known();
     app.update();
     let far = grass_parcels_of(&mut app);
-    assert_eq!(far.len(), 256);
+    // every parcel within the draw distance: the realm's two scenes lie beyond it
+    let in_reach = grass_parcels(Vec2::splat(8.0), MAX_REACH, |_| true).len();
+    assert_eq!(far.len(), in_reach);
 
     app.insert_resource(LandscapeDistance(40.0));
     app.update();
@@ -297,14 +299,14 @@ fn grass_spawns_in_the_frame_the_pointer_resolves() {
     app.update();
     assert!(grass_parcels_of(&mut app).is_empty());
 
-    // one parcel beside the player's, and 42 beyond the distance built at once
+    // one parcel beside the player's, and 21 beyond the distance built at once but in reach
     let near = IVec2::new(1, 0);
     let far: Vec<IVec2> = (-3..=3)
-        .flat_map(|y| (4..=9).map(move |x| IVec2::new(x, y)))
+        .flat_map(|y| (4..=6).map(move |x| IVec2::new(x, y)))
         .collect();
     app.world_mut().resource_mut::<Resolving>().0 = [vec![near], far.clone()].concat();
     app.update();
-    assert_eq!(grass_parcels_of(&mut app).len(), 43);
+    assert_eq!(grass_parcels_of(&mut app).len(), 22);
     let blade_vertices = 256 * blade_mesh().positions.len();
     assert_eq!(
         meshes_of(&mut app, near),
