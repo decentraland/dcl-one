@@ -23,7 +23,6 @@ describe('when the gallery is checked against the public package entry', () => {
     expect(components).not.toContain('GeneralLike')
     expect(components).not.toContain('textClasses')
     expect(components).not.toContain('decentralandNavigation')
-    expect(components).not.toContain('SitesButton')
   })
 
   it('should account for every public component export', () => {

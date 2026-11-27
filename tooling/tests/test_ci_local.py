@@ -129,7 +129,7 @@ class CiLocalTest(unittest.TestCase):
         for path in ('library/ui/apps/shop/ShopChrome.tsx', 'library/ui/apps/hud/Panel.tsx',
                      'library/ui/components/AppChrome/SiteLayout.tsx', 'library/ui/apps/sites/chrome/SitesFooter.tsx',
                      'library/ui/components/NavBar/NavMenuItem.tsx', 'library/ui/components/Button/Button.tsx',
-                     'library/ui/apps/sites/shared/Button/Button.tsx', 'library/ui/apps/sites/events/MyEvents.tsx',
+                     'library/ui/apps/sites/shared/Carousel.tsx', 'library/ui/apps/sites/events/MyEvents.tsx',
                      'library/ui/foundations/icons/index.ts', 'library/ui/index.ts'):
             with self.subTest(path=path):
                 self.assertIn('ui3 unit tests', names({path}))
