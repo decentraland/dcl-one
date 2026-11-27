@@ -110,7 +110,7 @@ describe('backpack page clicks', () => {
     expect(document.querySelectorAll('[class*="outfitEquipped"]')).toHaveLength(1)
   })
 
-  it('outfits: a single click neither equips nor previews', async () => {
+  it('outfits: a click shows the outfit on the avatar without equipping it', async () => {
     const backpack = renderBackpack({
       list: [],
       equipped: [],
@@ -118,15 +118,33 @@ describe('backpack page clicks', () => {
     })
     await userEvent.click(screen.getByRole('tab', { name: /saved outfits/i }))
     await userEvent.click(screen.getByRole('button', { name: 'Outfit 1' }))
+    expect(vi.mocked(backpack.previewOutfit)).toHaveBeenCalledWith(0)
     expect(vi.mocked(backpack.equipOutfit)).not.toHaveBeenCalled()
-    expect(vi.mocked(backpack.preview)).not.toHaveBeenCalled()
   })
 
-  it('outfits: double-clicking an outfit equips it', async () => {
+  it('outfits: double-clicking an outfit does not equip it', async () => {
     const backpack = renderBackpack({ list: [], equipped: [], outfits: [outfitSlot(0, ['urn:hat'])] })
     await userEvent.click(screen.getByRole('tab', { name: /saved outfits/i }))
     await userEvent.dblClick(screen.getByRole('button', { name: 'Outfit 1' }))
-    expect(vi.mocked(backpack.equipOutfit)).toHaveBeenCalledWith(0)
+    expect(vi.mocked(backpack.previewOutfit)).toHaveBeenCalledWith(0)
+    expect(vi.mocked(backpack.equipOutfit)).not.toHaveBeenCalled()
+  })
+
+  it('outfits: EQUIP equips the outfit', async () => {
+    const backpack = renderBackpack({ list: [], equipped: [], outfits: [outfitSlot(1, ['urn:hat'])] })
+    await userEvent.click(screen.getByRole('tab', { name: /saved outfits/i }))
+    await userEvent.click(screen.getByRole('button', { name: 'EQUIP' }))
+    expect(vi.mocked(backpack.equipOutfit)).toHaveBeenCalledWith(1)
+    expect(vi.mocked(backpack.previewOutfit)).not.toHaveBeenCalled()
+  })
+
+  it('outfits: leaving the Saved Outfits puts back the look from before a preview', async () => {
+    const backpack = renderBackpack({ list: [], equipped: [], outfits: [outfitSlot(0, ['urn:hat'])] })
+    expect(vi.mocked(backpack.restoreOutfitPreview)).not.toHaveBeenCalled()
+    await userEvent.click(screen.getByRole('tab', { name: /saved outfits/i }))
+    expect(vi.mocked(backpack.restoreOutfitPreview)).not.toHaveBeenCalled()
+    await userEvent.click(screen.getByRole('tab', { name: 'Emotes' }))
+    expect(vi.mocked(backpack.restoreOutfitPreview)).toHaveBeenCalledTimes(1)
   })
 
   it('switching to the Emotes tab shows the equipped emotes', async () => {
