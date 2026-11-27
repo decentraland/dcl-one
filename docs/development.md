@@ -276,6 +276,8 @@ need Linux or `CI_LOCAL_IMAGES=1`).
 `python3 tooling/ci-local.py install` makes ci-local's pre-commit and pre-push checks the
 git hooks of every worktree. Each run uses the `tooling/ci-local.py` its worktree has checked
 out, so a commit or push on another branch, a fork's included, runs that branch's version.
+pre-push also builds and runs the code of each commit it pushes, refs you never checked out
+included, so review a fork's commits before you push them, or push with `CI_LOCAL_SKIP=1`.
 `CI_LOCAL_SKIP=1` skips the checks; a push then still uploads its Git LFS objects, which
 `--no-verify` skips too. Afterwards `git lfs install` stops at the existing pre-push, so the
 README's `git lfs install --local && git lfs pull` never pulls: run `git lfs pull` on its
