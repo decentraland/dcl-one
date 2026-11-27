@@ -230,6 +230,8 @@ fn the_first_ring_is_ready_for_the_arrival_that_reaches_the_world() {
         .single(&world)
         .unwrap();
     world.entity_mut(player).insert(OutOfWorld::default());
+    // the arrival before this teleport is counted, and has no first ring recorded
+    world.insert_resource(Arrivals(1));
     let home = scene(&mut world, "home", &[IVec2::ZERO], 2);
     let neighbour = scene(&mut world, "east", &[IVec2::X], 2);
 
@@ -240,12 +242,12 @@ fn the_first_ring_is_ready_for_the_arrival_that_reaches_the_world() {
     world.run_system_once(report_scene_load_times).unwrap();
     assert!(world.resource::<FirstRingTiming>().ready.is_none());
 
-    // the player is let in: arrival 1, its first ring already loaded
+    // the player is let in: arrival 2, its first ring already loaded
     world.entity_mut(player).remove::<OutOfWorld>();
-    world.resource_mut::<Arrivals>().0 = 1;
+    world.resource_mut::<Arrivals>().0 = 2;
     world.run_system_once(report_scene_load_times).unwrap();
     let ready = world.resource::<FirstRingTiming>().ready.unwrap();
-    assert_eq!(ready.arrival, 1);
+    assert_eq!(ready.arrival, 2);
 
     // a later frame of the same arrival keeps the first instant
     world.run_system_once(report_scene_load_times).unwrap();
@@ -364,9 +366,16 @@ fn an_arrival_waits_for_a_neighbour_not_spawned_yet() {
 #[test]
 fn an_arrival_waits_for_an_unresolved_neighbour() {
     let mut world = world();
-    // a realm whose pointers are still being fetched: no parcel around the player is known
-    world.insert_resource(ScenePointers::default());
+    // a realm known from (0,0) to (2,0) whose pointer for (1,0) is still being fetched
+    world.resource_mut::<ScenePointers>().insert(
+        IVec2::new(2, 0),
+        PointerResult::Exists {
+            hash: "far".to_owned(),
+            urn: None,
+        },
+    );
     world.insert_resource(Arrivals(1));
+    scene(&mut world, "home", &[IVec2::ZERO], 7);
 
     world.run_system_once(report_scene_load_times).unwrap();
 
@@ -412,4 +421,46 @@ fn the_lifecycle_set_of_another_parcel_holds_the_first_ring() {
     world.resource_mut::<LiveScenes>().required.around = Some(IVec2::ZERO);
     world.run_system_once(report_scene_load_times).unwrap();
     assert!(world.resource::<FirstRingTiming>().ready.is_some());
+}
+
+#[test]
+fn a_new_arrival_keeps_the_last_ready_one_until_its_own_ring_is_ready() {
+    let mut world = world();
+    world.insert_resource(Arrivals(1));
+    scene(&mut world, "home", &[IVec2::ZERO], 7);
+    world.run_system_once(report_scene_load_times).unwrap();
+    let first = world.resource::<FirstRingTiming>().ready.unwrap();
+    assert_eq!(first.arrival, 1);
+
+    // a teleport to (10,0), where the scene is still loading; every other parcel there is empty
+    let away = IVec2::new(10, 0);
+    let mut pointers = world.resource_mut::<ScenePointers>();
+    pointers.insert(
+        away,
+        PointerResult::Exists {
+            hash: "away".to_owned(),
+            urn: None,
+        },
+    );
+    pointers.set_all_scenes_known();
+    let scene_away = scene(&mut world, "away", &[away], 2);
+    let mut player = world.query_filtered::<&mut GlobalTransform, With<PrimaryUser>>();
+    *player.single_mut(&mut world).unwrap() =
+        GlobalTransform::from_translation(Vec3::new(168.0, 0.0, -8.0));
+    world.resource_mut::<LiveScenes>().required.around = Some(away);
+    world.insert_resource(Arrivals(2));
+
+    world.run_system_once(report_scene_load_times).unwrap();
+    let ready = world.resource::<FirstRingTiming>().ready.unwrap();
+    assert_eq!((ready.arrival, ready.at), (1, first.at));
+
+    set_tick(&mut world, scene_away, 5);
+    world.run_system_once(report_scene_load_times).unwrap();
+    assert_eq!(
+        world
+            .resource::<FirstRingTiming>()
+            .ready
+            .map(|ready| ready.arrival),
+        Some(2)
+    );
 }

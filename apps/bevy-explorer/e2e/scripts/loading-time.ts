@@ -63,6 +63,16 @@ async function replaceFile(file: string, text: string): Promise<void> {
   await rename(`${file}.tmp`, file)
 }
 
+/** The readings so far, kept after each one: a failed write (a file held open on the runner) is
+ *  logged, and the next reading's write or the final one tries again. */
+async function persistSoFar(): Promise<void> {
+  try {
+    await persist()
+  } catch (error) {
+    log(`could not write the readings so far: ${error instanceof Error ? error.message : String(error)}`)
+  }
+}
+
 /** The readings so far, so a run cut short still leaves them. */
 async function persist(): Promise<string> {
   const summary = summaryMarkdown(results, runUrl)
@@ -94,7 +104,7 @@ try {
     // the last client stays open for the teleport tour; the others would share the GPU with it
     if (index === locations.length - 1 && explorer && !unsupported) tourClient = explorer
     else await closeSession(options, target)
-    await persist()
+    await persistSoFar()
   }
   // after a teleport whose arrival was never seen the player is not where the next leg starts
   let lost: string | undefined
@@ -109,7 +119,7 @@ try {
     }
     results.teleports.push(leg)
     log(JSON.stringify(leg))
-    await persist()
+    await persistSoFar()
   }
 } finally {
   ending.release()

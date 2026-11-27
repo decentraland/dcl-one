@@ -256,7 +256,7 @@ mod tests {
     };
 
     use super::*;
-    use crate::world_state::ArrivalsPlugin;
+    use scene_runner::load_timing::ArrivalsPlugin;
 
     /// A minimal app on a manual clock: every `update` advances `Time<Real>` by `step`.
     fn app(measure: bool, step: Duration) -> App {

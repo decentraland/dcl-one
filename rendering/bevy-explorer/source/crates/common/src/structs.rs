@@ -2146,7 +2146,7 @@ pub struct OutOfWorld {
 /// change and parcel teleport takes it out of world first, so a driver reads this before one and
 /// waits for it to grow: `inWorld` alone is still true for a frame or two after the request. It
 /// also catches a period out of world that began and ended between two samples, which leaves no
-/// trace in a query. Counted in `PreUpdate` by the client's `ArrivalsPlugin`.
+/// trace in a query. Counted in `PreUpdate` by `scene_runner`'s `ArrivalsPlugin`.
 #[derive(Resource, Default, Debug)]
 pub struct Arrivals(pub u64);
 

@@ -20,6 +20,29 @@ pub const LOG_TARGET: &str = "scene_timing";
 /// How the arrival line starts, before its milliseconds.
 pub const FIRST_RING_READY: &str = "player's scene and first ring ready";
 
+/// Counts the player's [`Arrivals`]: one each time the player's `OutOfWorld` is removed, in
+/// `PreUpdate`, before `Update` reads the count. [`crate::SceneRunnerPlugin`] adds it, as does the
+/// client's `/world_state` for an app without scenes; whichever comes first.
+pub struct ArrivalsPlugin;
+
+impl Plugin for ArrivalsPlugin {
+    fn build(&self, app: &mut App) {
+        app.init_resource::<Arrivals>()
+            .add_systems(PreUpdate, count_arrivals);
+    }
+}
+
+fn count_arrivals(
+    mut arrivals: ResMut<Arrivals>,
+    mut released: RemovedComponents<OutOfWorld>,
+    player: Query<(), With<PrimaryUser>>,
+) {
+    arrivals.0 += released
+        .read()
+        .filter(|entity| player.contains(*entity))
+        .count() as u64;
+}
+
 /// When the lifecycle spawned the scene.
 #[derive(Component, Clone, Copy, Debug)]
 pub struct SpawnedAt(pub Instant);

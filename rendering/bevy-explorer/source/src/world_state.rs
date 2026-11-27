@@ -10,11 +10,12 @@ use common::structs::{
 use console::{AddDebugSection, DebugInput, DebugInputKind, DebugSection, DoAddConsoleCommand};
 use input_manager::InputPriorities;
 use ipfs::IpfsResource;
+use scene_runner::load_timing::ArrivalsPlugin;
 use wallet::Wallet;
 
 /// `/world_state` and the [`Arrivals`] counter it and the autopilot read. It needs no window, HUD
 /// or input, so the client and the headless client add it alike (the autopilot expects it in the
-/// client). It adds [`ArrivalsPlugin`] itself.
+/// client). It adds [`ArrivalsPlugin`] unless the scene runner already has.
 pub struct WorldStatePlugin;
 
 impl Plugin for WorldStatePlugin {
@@ -40,8 +41,10 @@ impl Plugin for WorldStatePlugin {
                 kind: DebugInputKind::Text,
             });
         }
-        app.add_plugins(ArrivalsPlugin)
-            .add_console_command::<WorldStateCommand, _>(world_state_cmd)
+        if !app.is_plugin_added::<ArrivalsPlugin>() {
+            app.add_plugins(ArrivalsPlugin);
+        }
+        app.add_console_command::<WorldStateCommand, _>(world_state_cmd)
             .add_debug_section(DebugSection {
                 title: "World",
                 inputs: &inputs,
@@ -59,28 +62,6 @@ impl Plugin for WorldStatePlugin {
                 actions: &[],
             });
     }
-}
-
-/// The [`Arrivals`] counter alone, for an app without the console (a test of the autopilot).
-pub struct ArrivalsPlugin;
-
-impl Plugin for ArrivalsPlugin {
-    fn build(&self, app: &mut App) {
-        app.init_resource::<Arrivals>()
-            // before `Update`, where `/world_state` and the autopilot read the count
-            .add_systems(PreUpdate, count_arrivals);
-    }
-}
-
-fn count_arrivals(
-    mut arrivals: ResMut<Arrivals>,
-    mut released: RemovedComponents<OutOfWorld>,
-    player: Query<(), With<PrimaryUser>>,
-) {
-    arrivals.0 += released
-        .read()
-        .filter(|entity| player.contains(*entity))
-        .count() as u64;
 }
 
 /// What the player's being in the world is judged from.
