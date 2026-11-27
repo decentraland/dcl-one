@@ -378,7 +378,7 @@ export const Minimap = memo(function Minimap({
             (bevy-ui-scene's widget said "empty scene" for the same case). */}
         <span className={styles.title}>{sceneTitle || 'Empty parcel'}</span>
         <div className={styles.actions}>
-          {minimap.restrictions.length > 0 && <SceneRestrictions restrictions={minimap.restrictions} />}
+          {(minimap.restrictions.length > 0 || minimap.sceneBan != null) && <SceneRestrictions restrictions={minimap.restrictions} ban={minimap.sceneBan} />}
           {linkRealm != null && (
             <button
               type="button"
