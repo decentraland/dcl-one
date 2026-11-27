@@ -11,6 +11,7 @@ import { catalystBase, getJson, serviceBase } from '../http'
 import { resolveEquippedSet, resolveWearables } from './wearables'
 import { resolveEquippedEmotes } from './emotes'
 import { equippedSlots } from './emoteSlots'
+import { officialWallets } from './gallery'
 import type { Badge, Profile, ProfileInfo, SaveProfileRequest } from '@explorer-core/engine/protocol'
 import type { SetAvatarData } from '@explorer-core/engine/generated'
 // Not via the generated barrel: it only re-exports the top-level files, not serde_json/.
@@ -485,9 +486,10 @@ export function registerProfile(ctx: Ctx): void {
     }
     const me = getPlayer()
     const isSelf = me != null && me.userId.toLowerCase() === msg.address.toLowerCase()
-    const [av, badges] = await Promise.all([
+    const [av, badges, official] = await Promise.all([
       fetchProfile(msg.address),
-      fetchBadges(msg.address, isSelf).catch(() => undefined)
+      fetchBadges(msg.address, isSelf).catch(() => undefined),
+      officialWallets()
     ])
     if (av == null && badges == null) {
       reply(null)
@@ -508,6 +510,7 @@ export function registerProfile(ctx: Ctx): void {
     ])
     const profile: Profile = {
       ...toProfile(av, msg.address, false, av?.name ?? msg.address),
+      official: official.has(msg.address.toLowerCase()),
       badges: badges?.badges,
       equippedWearables,
       equippedEmotes
