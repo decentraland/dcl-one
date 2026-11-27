@@ -54,8 +54,12 @@ impl Plugin for LivekitPlugin {
 
         #[cfg(target_arch = "wasm32")]
         {
+            // the page dispatch fills these; the microphone routes and the Microphone setting
+            // read them
             app.insert_resource(crate::livekit::web::take_event_receiver())
                 .init_resource::<crate::livekit::web::MicrophoneStatus>()
+                .init_resource::<common::structs::MicrophoneDevices>()
+                .init_resource::<crate::livekit::web::MicrophoneTrackInputs>()
                 .add_systems(PreUpdate, crate::livekit::web::dispatch_page_events);
         }
 

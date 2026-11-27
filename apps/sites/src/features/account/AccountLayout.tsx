@@ -3,7 +3,7 @@ import { Link, useLocation, useNavigate } from "react-router";
 
 import SitesLayout from "../components/chrome/SitesLayout";
 
-import { GeneralClose, GeneralLeftArrow, Button, Spinner } from "@dcl/one-ui";
+import { CloseButton, GeneralLeftArrow, Button, Spinner } from "@dcl/one-ui";
 
 import type { AuthIdentity } from "@/data/lib/auth/types";
 import { openSignIn } from "../components/auth/signin-store";
@@ -90,9 +90,7 @@ export function AccountLayout({ active, children }: AccountLayoutProps) {
                       {ACCOUNT_COPY.sections[active]}
                     </Link>
                   </h1>
-                  <button type="button" className={styles.close} aria-label={ACCOUNT_COPY.close} onClick={close}>
-                    <GeneralClose size={20} aria-hidden="true" />
-                  </button>
+                  <CloseButton variant="plain" aria-label={ACCOUNT_COPY.close} onClick={close} />
                 </div>
               ) : null}
               <div key={account.identity.signer.toLowerCase()}>{children(account.identity)}</div>

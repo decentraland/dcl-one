@@ -1,5 +1,5 @@
 // Rarity background textures for item tiles (cards, slots), keyed by rarity; base is the fallback.
-import type { Rarity } from './WearableCard'
+import type { WearableCardRarity as Rarity } from '@dcl/one-ui'
 import base from '../assets/backpack/rarity-base.webp'
 import common from '../assets/backpack/rarity-common.webp'
 import uncommon from '../assets/backpack/rarity-uncommon.webp'

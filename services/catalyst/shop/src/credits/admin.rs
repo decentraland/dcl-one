@@ -325,7 +325,9 @@ pub fn validated_reason(reason: &Option<String>) -> Result<Option<String>, ApiEr
 /// studio is refused rather than granted without one.
 pub fn refuse_studio_name(value: Option<&Value>) -> Result<(), ApiError> {
     match value {
+        // Blank is none, as every other optional field of these routes reads it.
         None | Some(Value::Null) => Ok(()),
+        Some(Value::String(name)) if name.trim().is_empty() => Ok(()),
         Some(_) => Err(ApiError::bad_request(
             "\"studioName\" is not accepted: a studio's gift is granted by one of its operators, \
              with POST /operator/studios/{studioId}/grants",
@@ -413,7 +415,9 @@ mod tests {
     fn an_admin_grant_names_no_studio() {
         assert!(refuse_studio_name(None).is_ok());
         assert!(refuse_studio_name(Some(&json!(null))).is_ok());
-        for named in [json!("Acme"), json!(""), json!(3)] {
+        assert!(refuse_studio_name(Some(&json!(""))).is_ok());
+        assert!(refuse_studio_name(Some(&json!("   "))).is_ok());
+        for named in [json!("Acme"), json!(" Acme "), json!(3)] {
             let refused = refuse_studio_name(Some(&named)).unwrap_err();
             assert!(
                 refused.to_string().contains("/operator/studios/"),

@@ -359,7 +359,8 @@ State, in every build:
   Retry through that bridge; the console commands remain available for diagnostics.
   The [modal reference](connection-lost-modal.md) records Unity assets, dimensions and platform differences.
 - `/bevy_variants`: the abgen Bevy variants client as JSON: `base` (the variants origin, `null`
-  when off), `state` (on, off and why, or waiting for the GPU's texture formats), `formats` (the
+  when off or waiting for the endpoint flag), `baseSource` (what set it), `state` (on, off and
+  why, waiting for the endpoint flag, or waiting for the GPU's texture formats), `formats` (the
   variant formats this build takes and those it does not), `manifestCounts` (manifests loaded,
   none, failed, not eligible and pending), `manifests` (each entity's manifest state: scene,
   wearable or emote), `served` (variants downloaded and read from the cache), `servedByFormat`
