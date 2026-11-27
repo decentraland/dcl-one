@@ -497,12 +497,12 @@ impl ItemsComponent {
     /// go to the blob store first, holding no lock, then one transaction
     /// with the item locked decides again and records the upload under the
     /// store lock's shared side, once the bytes are still stored (503
-    /// otherwise).
+    /// otherwise). Answers whether the record is new to the signer.
     pub async fn save_item_video(
         &self,
         change: &ItemChange,
         video: Spooled,
-    ) -> Result<(), ApiError> {
+    ) -> Result<bool, ApiError> {
         let id = change.id();
         {
             let mut conn = self.pool.acquire().await?;
@@ -525,17 +525,17 @@ impl ItemsComponent {
         if !self.held(&video.hash).await? {
             return Err(store_collected());
         }
-        sqlx::query(
+        let added: bool = sqlx::query_scalar(
             "INSERT INTO builder.uploaded_contents (hash, size, uploaded_by, video) VALUES ($1, $2, $3, true) \
-             ON CONFLICT (hash, uploaded_by) DO UPDATE SET video = true",
+             ON CONFLICT (hash, uploaded_by) DO UPDATE SET video = true RETURNING xmax = 0",
         )
         .bind(&video.hash)
         .bind(i64::try_from(video.size).map_err(|_| ApiError::internal("a video size past i64"))?)
         .bind(change.signer())
-        .execute(&mut *tx)
+        .fetch_one(&mut *tx)
         .await?;
         tx.commit().await?;
-        Ok(())
+        Ok(added)
     }
 
     async fn held(&self, hash: &str) -> Result<bool, ApiError> {

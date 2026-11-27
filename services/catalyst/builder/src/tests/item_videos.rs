@@ -2477,6 +2477,79 @@ async fn the_node_holds_at_most_its_bound_of_unpublished_files_and_bytes() {
     }
 }
 
+/// A new draft of `key`'s naming `files`: its collection and item.
+async fn draft_naming(node: &Node, key: &str, files: &[&[u8]]) -> (Uuid, Uuid) {
+    let (collection, item) = bounded_wearable(node, key, &mp4("unused")).await;
+    let contents: serde_json::Map<String, Value> = files
+        .iter()
+        .enumerate()
+        .map(|(i, f)| (format!("f{i}.bin"), json!(hash(f))))
+        .collect();
+    saved_item(
+        &node.state.items,
+        &address(key),
+        &json!({ "id": item, "name": "Tiny hat", "collection_id": collection, "rarity": "common",
+                 "contents": contents }),
+    )
+    .await;
+    (collection, item)
+}
+
+/// `key`'s upload of `files` to `item` from `ip`, each its own part: the
+/// status and body.
+async fn send_files(node: &Node, key: &str, ip: &str, item: Uuid, files: &[&[u8]]) -> (u16, Value) {
+    let hashes: Vec<String> = files.iter().map(|f| hash(f)).collect();
+    let parts: Vec<(&str, Option<&str>, &[u8])> = hashes
+        .iter()
+        .zip(files)
+        .map(|(h, f)| (h.as_str(), Some("blob"), *f))
+        .collect();
+    let (status, body, _) = send_from(
+        &node.app,
+        Some(key),
+        &format!("/v1/items/{item}/files"),
+        Some(ip),
+        Body::from(form(&parts)),
+    )
+    .await;
+    (status, body)
+}
+
+/// Files sent again, by their uploader or twice in one form, add no record,
+/// so they take none of the node's room: another wallet uploads on. A file
+/// twice in one form costs its address's day one file.
+#[tokio::test]
+async fn files_sent_again_take_none_of_the_nodes_room() {
+    let Some(node) = writable_node(|state| state.limits.node_files = 4).await else {
+        return;
+    };
+    let files: [&[u8]; 3] = [b"sent again one", b"sent again two", b"sent again three"];
+    let (_, item) = draft_naming(&node, WALLET_KEYS[0], &files).await;
+    let ip = "198.51.100.64";
+    let twice = [files[0], files[0], files[1], files[2]];
+    assert_eq!(
+        send_files(&node, WALLET_KEYS[0], ip, item, &twice).await.0,
+        200
+    );
+    let mut headers = axum::http::HeaderMap::new();
+    headers.insert("x-real-ip", ip.parse().unwrap());
+    let site = crate::limits::upload_source(&headers).unwrap();
+    let spent = node
+        .state
+        .limits
+        .source_upload_files
+        .spent_at(&site, std::time::Instant::now());
+    assert!(spent < 3.5, "the address paid {spent} files for 3");
+    assert_eq!(
+        send_files(&node, WALLET_KEYS[0], ip, item, &files).await.0,
+        200
+    );
+    let other: [&[u8]; 1] = [b"another wallet's file"];
+    let (_, item) = draft_naming(&node, WALLET_KEYS[1], &other).await;
+    let (status, body) = send_files(&node, WALLET_KEYS[1], "198.51.100.65", item, &other).await;
+    assert_eq!(status, 200, "{body}");
+}
+
 const DAY_KEYS: [&str; 4] = [
     "0x8811111111111111111111111111111111111111111111111111111111111111",
     "0x8822222222222222222222222222222222222222222222222222222222222222",
