@@ -137,9 +137,9 @@ import type {
 } from '@explorer-core/engine/protocol'
 
 // Set by the wasm via boot.js __setEngineTextFocus (web) / the CEF relay (native): true while
-// a text field holds the keyboard, an engine-rendered one (e.g. a scene textinput) or the HUD's
-// own declared `text` focus (the engine reports every claim). Engine fields live on the canvas,
-// so document.activeElement can't see them.
+// anything claims the keyboard: an engine-rendered text field (e.g. a scene textinput),
+// press-a-key capture, or the HUD's own declared `text` focus. Engine fields live on the
+// canvas, so document.activeElement can't see them.
 type EngineFocusWindow = Window & { __engineTextFocus?: boolean }
 
 // Unity's wording (CommunityCardController *_ERROR_MESSAGE); the raw HTTP error only goes to the log.
@@ -5248,23 +5248,15 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
     const onFocusOut = (): void => void setTimeout(update, 0) // activeElement settles next tick
     // The cancel key blurs a focused text field (fields are otherwise sticky: while one
     // holds focus no actions resolve, so cancel could never escape it). Bubble phase, so a
-    // widget that owns the key — chat's layered Escape — can stopPropagation first. A slider
-    // has nothing to leave first: its cancel key also closes the top layer, as the engine's
-    // Cancel would from a button (bindingLabels states the rule, review.md §7 the exception).
-    // Only once the engine reports the keyboard claimed: before the slider's claim lands, a
-    // native engine still hears the key and resolves Cancel itself, so acting here too would
-    // close two layers; on the web the page withholds the key either way, so a press in that
-    // window only leaves the slider. A chord with Ctrl, Alt or Meta closes nothing, as from a
-    // button (the engine drops it), and a widget that took the key (preventDefault) keeps it.
+    // widget that owns the key — chat's layered Escape — can stopPropagation first. A focused
+    // slider's cancel key also closes the top layer, once per press and only while the engine
+    // reports the claim (the exception bindingLabels states).
     const onKey = (e: KeyboardEvent): void => {
       if (!isCancelKey(e) || !isEditableTarget(e.target)) return
       const field = e.target as HTMLElement
-      const slider = isSliderTarget(field)
-      if (slider && e.defaultPrevented) return
       field.blur()
       const engineHoldsKeys = (window as EngineFocusWindow).__engineTextFocus === true
-      const chord = e.ctrlKey || e.altKey || e.metaKey
-      if (slider && engineHoldsKeys && !chord) systemActionRef.current('Cancel', true, true)
+      if (isSliderTarget(field) && engineHoldsKeys && !e.repeat) systemActionRef.current('Cancel', true, true)
     }
     document.addEventListener('focusin', update, true)
     document.addEventListener('focusout', onFocusOut, true)
@@ -5417,10 +5409,9 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
       return
     }
     if (!pressed || (phase !== 'world' && phase !== 'lobby') || isInputLocked()) return
-    // A key the HUD held from the engine itself never reached it, and the text focus these
-    // guards see is the field's own declaration, still being released (the engine reports
-    // the HUD's text focus in __engineTextFocus too).
-    if (!heldByHud && isEditableTarget(document.activeElement)) return
+    if (isEditableTarget(document.activeElement)) return
+    // A key the HUD held from the engine itself never reached it: the claim this guard sees is
+    // the slider's own, still being released (the engine reports every keyboard claim).
     if (!heldByHud && (window as EngineFocusWindow).__engineTextFocus) return
     if (EDITOR_BUILD && !hudActsOn(editorMode, action)) return
     // 'Cancel' is the one action handled even with a popup open: the engine resolved the

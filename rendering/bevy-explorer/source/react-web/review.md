@@ -327,14 +327,11 @@ from HUD-side key matching. The rules:
   for leaf UI (a lightbox, an open dropdown) = register on the **cancel-layer stack**
   (`library/explorer-core/lib/cancelLayers.ts`) while open — the dispatcher peels popup → layer → panels, one
   per press, keyboard and gamepad alike. One exception, owned by the session: the cancel key on
-  a focused slider (below). Do not add another.
+  a focused slider (stated in `library/ui/apps/hud/lib/bindingLabels.ts`). Do not add another.
 - **The only DOM key handling allowed is inside a focused text field** (chat, map search),
   where the engine deliberately resolves nothing (`UiText`). There: match with
   `isCancelKey`, and `stopPropagation()` anything you consumed so the blur rule doesn't
-  also fire on the same press. The session's blur rule is the one handler that acts on a
-  key: the cancel key on a focused slider, which the engine never hears there, dispatches
-  `Cancel` while `__engineTextFocus` reports the claim, without Ctrl, Alt or Meta held, and
-  not after a widget took it with `preventDefault()`.
+  also fire on the same press. The blur rule's one addition is the slider exception above.
 - **What counts as a text field is one rule in two places**: `isEditableTarget` (the HUD's
   `text` focus, stated in `library/ui/apps/hud/lib/bindingLabels.ts`) and the engine page's key
   forwarding (`isTextField` in `../deploy/web/engine/boot.js`). A slider (a range input) keeps

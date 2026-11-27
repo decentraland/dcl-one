@@ -153,6 +153,33 @@ describe('a focused slider keeps its keys', () => {
   })
 })
 
+describe('the rest of a press a field kept stays off the engine after the field loses the focus', () => {
+  /** One key event on `target`, and what the engine heard of it. */
+  const send = (target: HTMLElement, type: string, code: string, repeat = false): string[] => {
+    heard.length = 0
+    target.dispatchEvent(new KeyboardEvent(type, { code, key: code, repeat, bubbles: true, cancelable: true, composed: true }))
+    return [...heard]
+  }
+
+  it.each(Object.entries({ ...SLIDERS, 'a text input': '<input type="text">' }))(
+    'a held Escape that left %s: its repeats and keyup never reach the engine, the next press does',
+    (_, html) => {
+      const field = control(html)
+      expect(send(field, 'keydown', 'Escape')).toEqual([])
+      // the HUD left the field: the held key repeats where the focus went
+      for (let i = 0; i < 3; i++) expect(send(document.body, 'keydown', 'Escape', true)).toEqual([])
+      expect(send(document.body, 'keyup', 'Escape')).toEqual([])
+      expect(press(document.body, 'Escape')).toEqual(both('Escape'))
+    }
+  )
+
+  it('a fresh press after a lost keyup reaches the engine', () => {
+    const field = control('<input type="text">')
+    expect(send(field, 'keydown', 'KeyW')).toEqual([])
+    expect(send(document.body, 'keydown', 'KeyW')).toEqual(['keydown KeyW'])
+  })
+})
+
 describe('a focused button (unchanged)', () => {
   it('leaves Escape to the engine and keeps Space for itself', () => {
     const target = control('<button type="button">Skybox</button>')

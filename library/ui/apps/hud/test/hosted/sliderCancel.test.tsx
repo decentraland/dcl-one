@@ -164,33 +164,28 @@ describe('the cancel key on a focused slider', () => {
     expect(h.session().backpack.open).toBe(true)
   })
 
-  it('leaves a press a widget took (preventDefault) with that widget: nothing closes and the bar keeps the focus', async () => {
+  it('closes one layer for a held key: its repeats close nothing more', async () => {
     const { h, bar } = await draggedHueBar()
-    bar.addEventListener('keydown', (e) => e.preventDefault())
     act(() => {
       fireEvent.keyDown(bar, { key: 'Escape', code: 'Escape' })
     })
-    expect(popup()).not.toBeNull()
-    expect(document.activeElement).toBe(bar)
+    expect(popup()).toBeNull()
+    // the repeats land where the focus went; the page keeps them off the engine (bootKeyForwarding)
+    for (let i = 0; i < 3; i++) {
+      act(() => {
+        fireEvent.keyDown(document.activeElement ?? document.body, { key: 'Escape', code: 'Escape', repeat: true })
+      })
+    }
     expect(h.session().backpack.open).toBe(true)
   })
 
-  it.each(['ctrlKey', 'altKey', 'metaKey'])('closes nothing on a chord with %s, as from a button', async (modifier) => {
+  it('dispatches nothing for a repeat that lands on a bar', async () => {
     const { h, bar } = await draggedHueBar()
     act(() => {
-      fireEvent.keyDown(bar, { key: 'Escape', code: 'Escape', [modifier]: true })
+      fireEvent.keyDown(bar, { key: 'Escape', code: 'Escape', repeat: true })
     })
     expect(popup()).not.toBeNull()
     expect(h.session().backpack.open).toBe(true)
-  })
-
-  it('closes nothing on Ctrl and a rebound printable cancel key', async () => {
-    const { bar } = await draggedHueBar()
-    act(() => setBindingsSnapshot([[{ System: 'Cancel' }, ['KeyR']]]))
-    act(() => {
-      fireEvent.keyDown(bar, { key: 'r', code: 'KeyR', ctrlKey: true })
-    })
-    expect(popup()).not.toBeNull()
   })
 })
 
@@ -198,6 +193,7 @@ describe('the cancel key elsewhere (unchanged)', () => {
   it('in a text field leaves the field first; the popup closes on the engine Cancel after it', async () => {
     const h = await world()
     const field = popupWith(<input type="text" />)
+    engineKeyboard.__engineTextFocus = true // the field's claim, as the engine reports it
     act(() => {
       fireEvent.keyDown(field, { key: 'w', code: 'KeyW' })
     })
@@ -207,6 +203,7 @@ describe('the cancel key elsewhere (unchanged)', () => {
     })
     expect(document.activeElement).not.toBe(field)
     expect(screen.getByTestId('popup')).toBeTruthy()
+    engineKeyboard.__engineTextFocus = false // released after the blur
     act(() => h.driver.emit(cancel))
     expect(screen.queryByTestId('popup')).toBeNull()
   })
@@ -215,6 +212,7 @@ describe('the cancel key elsewhere (unchanged)', () => {
     await world()
     act(() => setBindingsSnapshot([[{ System: 'Cancel' }, ['KeyR']]]))
     const field = popupWith(<textarea />)
+    engineKeyboard.__engineTextFocus = true
     act(() => {
       fireEvent.keyDown(field, { key: 'r', code: 'KeyR' })
     })

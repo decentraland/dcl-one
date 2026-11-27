@@ -142,10 +142,11 @@ export function cancelKeyCodes(): string[] {
 //   are typing. The cancel key blurs it, and a printable cancel key is typed.
 // - A slider (a range input) keeps every key too: its arrows, Home, End, PageUp and PageDown adjust it and must
 //   not move the avatar or the camera. It types nothing, so its cancel key, printable or not, closes the top layer
-//   on the first press, as the engine's Cancel does from a button: useEngineSession leaves the slider and
-//   dispatches Cancel itself while the engine reports the keyboard claimed, so never hears that key (before the
-//   claim lands a native engine still resolves the key, and its Cancel is the one close). A Ctrl, Alt or Meta chord
-//   closes nothing, as from a button.
+//   on the first press, as the engine's Cancel does from a button. The engine never hears that key once it reports
+//   the slider's keyboard claim (`__engineTextFocus`), so useEngineSession leaves the slider and dispatches Cancel
+//   itself then: the one DOM key handler that closes a layer (react-web review.md §7). Before the claim lands a
+//   native engine still resolves the key, and its Cancel is the one close; on the web the press only leaves the
+//   slider. The rest of a press the slider kept (its repeats, its keyup) stays off the engine on the web too.
 // - Any other element (a button, a switch, a checkbox, a radio) leaves the keys to the engine.
 
 /** Inputs that take no text: the HUD's switches are native checkboxes, the permission prompt's choices radios. */
