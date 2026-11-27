@@ -1,6 +1,6 @@
 import { data } from "react-router";
 
-/** `/social/*` beyond a community page: the source's section catch-all, a 404. */
+/** `/social` and `/social/*` beyond a community page: decentraland.org answers them 404, and so does this site. */
 export function loader() {
   throw data(null, { status: 404, statusText: "Not Found" });
 }

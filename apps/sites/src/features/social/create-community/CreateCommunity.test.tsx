@@ -30,7 +30,7 @@ function setup(
   const router = createMemoryRouter(
     [
       { path: "/communities/new", element: <CreateCommunity trackCtx={trackCtx} create={create ?? undefined} signedOut={!create} track={vi.fn()} /> },
-      { path: "/social", element: <p>social home</p> },
+      { path: "/places", element: <p>places home</p> },
       { path: "/social/communities/:id", element: <p>community page</p> },
     ],
     { initialEntries: ["/communities/new"] },
@@ -62,11 +62,11 @@ describe("CreateCommunity", () => {
   });
 
   describe("when the visitor cancels", () => {
-    it("should go to the social page without creating", async () => {
+    it("should go to the places page without creating", async () => {
       const { router, create } = setup();
       await userEvent.click(screen.getByRole("button", { name: "Cancel" }));
-      expect(await screen.findByText("social home")).toBeInTheDocument();
-      expect(router.state.location.pathname).toBe("/social");
+      expect(await screen.findByText("places home")).toBeInTheDocument();
+      expect(router.state.location.pathname).toBe("/places");
       expect(create).not.toHaveBeenCalled();
     });
   });

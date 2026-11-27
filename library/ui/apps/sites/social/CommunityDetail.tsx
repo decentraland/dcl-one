@@ -152,8 +152,6 @@ export type CommunityMembershipActionProps = {
   onJoin: () => void
   onRequest: () => void
   onCancel: () => void
-  /** Where a member may leave from here: Joined becomes the way out, and `pending` its progress. */
-  onLeave?: () => void
 }
 
 /** What the visitor can do here: sign in, join, ask to join, withdraw the request, or nothing. */
@@ -164,8 +162,7 @@ export function CommunityMembershipAction({
   onRetry,
   onJoin,
   onRequest,
-  onCancel,
-  onLeave
+  onCancel
 }: CommunityMembershipActionProps) {
   switch (state) {
     case 'joined':
@@ -174,10 +171,8 @@ export function CommunityMembershipAction({
           className={styles.cta}
           variant="outline"
           size="md"
-          disabled={!onLeave || pending}
-          loading={!!onLeave && pending}
+          disabled
           startIcon={<GeneralCheck size={16} aria-hidden="true" />}
-          onClick={onLeave}
         >
           Joined
         </Button>

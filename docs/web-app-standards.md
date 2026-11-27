@@ -89,7 +89,7 @@ Current practice: Sites chrome uses `chromeKeys` and `chromeNotificationsQuery` 
 
 ### Mutations and invalidation
 
-- Use `useMutation` where the interface needs the pending or error state of the call (current example: `apps/sites/src/features/social/hub/useHub.ts`). A call made from an event handler may instead await the request and then invalidate.
+- Use `useMutation` where the interface needs the pending or error state of the call (current example: `apps/sites/src/features/social/community/useCommunityMembership.ts`). A call made from an event handler may instead await the request and then invalidate.
 - After a write, invalidate or update every query the write changes, through the key factory. Group the invalidations of one domain event in one helper (current: `invalidateAfterPurchase` in `apps/ui3/src/shop/checkout/lib/after-purchase.ts`). A mutation that leaves the cache stale is a defect.
 - Update the cache by hand (`setQueryData`) only when the response of the write carries the new data. If an update is applied before the response (an optimistic update), roll it back on error with the previous value returned from `onMutate`. No code under `apps/` or `rendering/bevy-explorer/source/react-web` uses `onMutate` on `origin/main`, so this describes a rule for new code, not a current practice.
 

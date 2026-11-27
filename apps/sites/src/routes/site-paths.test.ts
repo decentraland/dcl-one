@@ -55,6 +55,13 @@ describe("Sites paths", () => {
     it("should serve the community page at /social/communities/:id", () => {
       expect(served("/social/communities/c-1")).toBe("routes/social_.communities.$id.tsx");
     });
+
+    it.each(["/social", "/social/", "/social/anything"])(
+      "should answer %s with the social 404, as decentraland.org does",
+      (path) => {
+        expect(served(path)).toBe("routes/social_.$.tsx");
+      },
+    );
   });
 
   describe("when a visitor opens a canonical path", () => {

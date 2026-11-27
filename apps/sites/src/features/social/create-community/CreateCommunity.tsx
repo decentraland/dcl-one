@@ -32,7 +32,7 @@ export default function CreateCommunity({ trackCtx, create, signedOut, track }: 
         initial={initial}
         create={submitWith(create, { signedOut, trackCtx, track })}
         onDone={(created, result) =>
-          navigate(created && result ? `/social/communities/${encodeURIComponent(result.id)}` : "/social")
+          navigate(created && result ? `/social/communities/${encodeURIComponent(result.id)}` : "/places")
         }
         contentPolicyUrl={siteUrl("/content")}
         nameClaimUrl="/shop/names"

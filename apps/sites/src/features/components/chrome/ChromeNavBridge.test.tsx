@@ -25,18 +25,11 @@ describe("chromeHrefTarget", () => {
     expect(chromeHrefTarget("/docs/creator/sdk7/", ORIGIN)).toEqual({ kind: "document" });
     expect(chromeHrefTarget("/play/", ORIGIN)).toEqual({ kind: "document" });
     expect(chromeHrefTarget("/play/?position=0,0", ORIGIN)).toEqual({ kind: "document" });
+    expect(chromeHrefTarget("/social", ORIGIN)).toEqual({ kind: "document" });
+    expect(chromeHrefTarget("/social/#/communities", ORIGIN)).toEqual({ kind: "document" });
     expect(chromeHrefTarget("https://dcl.gg/discord", ORIGIN)).toEqual({ kind: "document" });
     expect(chromeHrefTarget("//evil.example/shop", ORIGIN)).toEqual({ kind: "document" });
     expect(chromeHrefTarget("/discover", ORIGIN).kind).toBe("app");
-  });
-
-  it("keeps the communities hub and its deep links in the app", () => {
-    expect(chromeHrefTarget("/social", ORIGIN)).toEqual({ kind: "app", to: "/social" });
-    expect(chromeHrefTarget("/social?community=c-1&post=p-1", ORIGIN)).toEqual({
-      kind: "app",
-      to: "/social?community=c-1&post=p-1",
-    });
-    expect(chromeHrefTarget("/social/communities/c-1", ORIGIN)).toEqual({ kind: "app", to: "/social/communities/c-1" });
   });
 });
 
@@ -77,6 +70,7 @@ describe("ChromeNavBridge", () => {
       <ChromeLink href="/create/preview">Scenes</ChromeLink>
       <ChromeLink href="/play/">Play</ChromeLink>
       <ChromeLink href="/docs/">Docs</ChromeLink>
+      <ChromeLink href="/social/">Community</ChromeLink>
       <ChromeLink href="/create/preview" download>Download</ChromeLink>
       <ChromeLink href="#main">Skip</ChromeLink>
     </ChromeNavBridge></MemoryRouter>);
