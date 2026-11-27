@@ -342,7 +342,9 @@ export function CommunityDirectory({
                       <GeneralVerified size={14} aria-label="verified" />
                     ) : null}
                   </strong>
-                  <Tag variant="role">{capitalized(member.role)}</Tag>
+                  <span className={styles.role}>
+                    <Tag variant="role">{capitalized(member.role)}</Tag>
+                  </span>
                 </span>
                 {self ? <span className={styles.you}>You</span> : actions?.(member)}
               </li>

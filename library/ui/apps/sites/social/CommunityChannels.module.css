@@ -260,6 +260,10 @@
   font-size: var(--dcl-font-size-caption);
   text-overflow: ellipsis;
 }
+/* The role tag keeps its own width inside the stretched text column. */
+.role {
+  display: flex;
+}
 .truncate {
   overflow: hidden;
   text-overflow: ellipsis;

@@ -16734,11 +16734,11 @@
     },
     {
       "path": "library/ui/apps/sites/social/CommunityChannels.module.css",
-      "sha256": "72af4d28484ade70b2786aed75870d75296c3393c9e81ec685a21896de969e2b"
+      "sha256": "9c8e43d0d7196b2f2d9efd6e7acd5d6f43c8fb368f14c224d9d38cf3d002fe81"
     },
     {
       "path": "library/ui/apps/sites/social/CommunityChannels.tsx",
-      "sha256": "d47b005b245b0441efc8f9071ecce516d8f4395dedbef3e4c3f1ce9ff4e42c89"
+      "sha256": "0d8d7fd9889329d749951e4b10c46516e3590ad3e55a628426b14a8a865bac72"
     },
     {
       "path": "library/ui/apps/sites/social/CommunityCreate.module.css",
