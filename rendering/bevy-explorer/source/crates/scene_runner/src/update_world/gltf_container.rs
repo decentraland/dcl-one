@@ -521,6 +521,7 @@ fn update_gltf(
             &GltfHandle,
             Ref<GltfDefinition>,
             Option<&GltfPart>,
+            Option<&GltfSource>,
         ),
         (With<GltfDefinition>, Without<GltfLoaded>),
     >,
@@ -622,7 +623,8 @@ fn update_gltf(
             RenderAssetTransferPriority::Priority(0)
         };
         // the shared asset for this file's url, when one is loaded; never for a colliders part
-        let shared = (part != Some(&GltfPart::Colliders))
+        // the url costs a blocking context read, so it is taken only while a model is shared
+        let shared = (part != Some(&GltfPart::Colliders) && !shared_gltfs.0.is_empty())
             .then(|| ipfas.content_file_source_url(&gltf.0.src, content_hash))
             .flatten()
             .and_then(|url| shared_gltfs.0.get(&url).copied())
@@ -664,9 +666,11 @@ fn update_gltf(
             .remove::<GltfLoaded>();
     }
 
-    for (ent, scene_ent, h_gltf, def, part) in unprocessed_gltfs.iter() {
-        // a changed definition has its new model queued above; this handle is the old one
-        if def.is_changed() {
+    for (ent, scene_ent, h_gltf, def, part, source) in unprocessed_gltfs.iter() {
+        // a definition that differs from the source acted on has its new model queued above, so
+        // this handle is the old one. The source is written by deferred commands, so it still
+        // holds the previous value this frame. An equal value put again keeps its handle
+        if def.is_changed() && source.is_none_or(|source| source.0 != def.0) {
             continue;
         }
         match ipfas.load_state(h_gltf.0.id()) {

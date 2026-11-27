@@ -802,6 +802,105 @@ fn without_a_salt_a_scene_takes_only_its_own_cached_mesh() {
     assert_eq!(drawn_mesh(&mut app, "a_later"), a_later.id());
 }
 
+/// [`app`] that also runs `update_gltf`, with an ipfs client that has nothing to read.
+fn update_app() -> App {
+    use bevy::asset::io::memory::{Dir, MemoryAssetReader};
+
+    let mut app = app();
+    let ipfs = ipfs::IpfsResource {
+        inner: std::sync::Arc::new(ipfs::IpfsIo::new(
+            false,
+            Box::new(MemoryAssetReader {
+                root: Dir::default(),
+            }),
+            None,
+            Default::default(),
+            1,
+            tokio::sync::mpsc::unbounded_channel().0,
+        )),
+    };
+    app.init_asset::<ipfs::EntityDefinition>()
+        .init_asset::<Image>()
+        .init_resource::<SharedGltfs>()
+        .init_resource::<crate::ScenePointers>()
+        .init_resource::<crate::LiveScenes>()
+        .init_resource::<crate::PortableScenes>()
+        .insert_resource(ipfs)
+        .add_systems(Update, update_gltf);
+    app
+}
+
+/// A container in `root` whose model, a node named `name`, the asset server reports loaded, and
+/// whose definition is the source already acted on.
+fn spawn_loaded_container(app: &mut App, root: Entity, name: &str) -> Entity {
+    let mut model = World::new();
+    model.spawn((
+        Transform::default(),
+        Visibility::Inherited,
+        Name::new(name.to_owned()),
+    ));
+    let world = app.world_mut();
+    let h_scene = world.resource_mut::<Assets<Scene>>().add(Scene::new(model));
+    let h_gltf = world.resource::<AssetServer>().add(Gltf {
+        scenes: vec![h_scene.clone()],
+        named_scenes: HashMap::default(),
+        meshes: Vec::new(),
+        named_meshes: HashMap::default(),
+        materials: Vec::new(),
+        named_materials: HashMap::default(),
+        nodes: Vec::new(),
+        named_nodes: HashMap::default(),
+        skins: Vec::new(),
+        named_skins: HashMap::default(),
+        default_scene: Some(h_scene),
+        animations: Vec::new(),
+        named_animations: HashMap::default(),
+        source: None,
+    });
+    let definition = PbGltfContainer {
+        src: "model.glb".to_owned(),
+        ..Default::default()
+    };
+    world
+        .spawn((
+            SceneEntity {
+                root,
+                scene_id: SceneId(root),
+                id: SceneEntityId {
+                    id: 512,
+                    generation: 0,
+                },
+            },
+            GltfDefinition(definition.clone()),
+            GltfSource(definition),
+            GltfHandle(h_gltf),
+        ))
+        .id()
+}
+
+#[test]
+fn a_container_whose_definition_is_put_again_every_frame_is_spawned() {
+    let mut app = update_app();
+    let root = scene_root(&mut app);
+    give_context(&mut app, root);
+    let container = spawn_loaded_container(&mut app, root, "model_node");
+
+    // a scene that puts the same value every tick marks the definition changed each frame
+    for _ in 0..3 {
+        let definition = app
+            .world()
+            .get::<GltfDefinition>(container)
+            .unwrap()
+            .0
+            .clone();
+        app.world_mut()
+            .entity_mut(container)
+            .insert(GltfDefinition(definition));
+        app.update();
+    }
+    assert!(app.world().get::<GltfLoaded>(container).is_some());
+}
+
 const URL: &str = "https://content.example/contents/bafkreimodel";
 
 /// An app that keeps the shared caches as the explorer does.
