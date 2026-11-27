@@ -35,6 +35,27 @@ use crate::{
 /// Radians a scene's cinematic camera may pitch when the scene sets no range of its own.
 const CINEMATIC_PITCH_LIMIT: f32 = std::f32::consts::PI / 2.1;
 
+/// The longest move to or from a scene's virtual camera, in seconds, so the camera and its
+/// post-processing blend always arrive.
+const MAX_SCENE_TRANSITION_TIME: f32 = 60.0;
+
+/// Seconds a scene's `transition` takes to move the camera `distance` metres: 0, a snap, for a
+/// time or speed that is not a positive number; at most `MAX_SCENE_TRANSITION_TIME`.
+fn transition_time(transition: &TransitionMode, distance: f32) -> f32 {
+    let time = match *transition {
+        TransitionMode::Time(time) => time,
+        TransitionMode::Speed(speed) if speed > 0.0 => {
+            (distance / speed).min(MAX_SCENE_TRANSITION_TIME)
+        }
+        TransitionMode::Speed(_) => 0.0,
+    };
+    if time.is_finite() {
+        time.clamp(0.0, MAX_SCENE_TRANSITION_TIME)
+    } else {
+        0.0
+    }
+}
+
 /// The yaw and pitch, in degrees, that `HeadSync` carries for a camera looking along `rotation`.
 ///
 /// DCL world is left-handed (Z+ forward) while bevy is right-handed (-Z forward). The Y-up
@@ -420,14 +441,10 @@ pub(crate) fn update_camera_position(
         *prev_override = scene_camera.cloned();
         *prev_oow = is_oow;
         let started = time.elapsed_secs_f64();
-        let time = match target_transition {
-            TransitionMode::Time(t) => t,
-            TransitionMode::Speed(s) => {
-                let distance =
-                    (target_transform.translation - camera_transform.translation).length();
-                distance / s.max(0.001)
-            }
-        };
+        let time = transition_time(
+            &target_transition,
+            (target_transform.translation - camera_transform.translation).length(),
+        );
         debug!(
             "tween {:?} to {:?} over {time} seconds",
             camera_transform, target_transform
@@ -540,5 +557,31 @@ mod tests {
 
         let (_, pitch) = head_angles_at(CameraZoomLevel::ThirdPerson, 0.0, 0.0);
         assert!((pitch - 9.22).abs() < 0.05, "{pitch}");
+    }
+
+    /// A scene's transition time is a snap when it is not a number, and arrives within the cap.
+    #[test]
+    fn a_scene_transition_time_snaps_when_not_finite_and_is_capped() {
+        let time = |t| transition_time(&TransitionMode::Time(t), 10.0);
+        assert_eq!(time(2.0), 2.0);
+        assert_eq!(time(-1.0), 0.0);
+        assert_eq!(time(f32::NAN), 0.0);
+        assert_eq!(time(f32::INFINITY), 0.0);
+        assert_eq!(time(f32::NEG_INFINITY), 0.0);
+        assert_eq!(time(1e30), MAX_SCENE_TRANSITION_TIME);
+    }
+
+    /// A scene's transition speed is a snap when it is not a positive number, and a slow one
+    /// arrives within the cap.
+    #[test]
+    fn a_scene_transition_speed_snaps_when_not_positive_and_is_capped() {
+        let time = |s| transition_time(&TransitionMode::Speed(s), 10.0);
+        assert_eq!(time(5.0), 2.0);
+        assert_eq!(time(0.0), 0.0);
+        assert_eq!(time(-1.0), 0.0);
+        assert_eq!(time(f32::NAN), 0.0);
+        assert_eq!(time(f32::INFINITY), 0.0);
+        assert_eq!(time(1e-3), MAX_SCENE_TRANSITION_TIME);
+        assert_eq!(time(f32::MIN_POSITIVE), MAX_SCENE_TRANSITION_TIME);
     }
 }
