@@ -2,6 +2,7 @@
 """Drop superseded Rust build artifacts before saving the CI smoke build snapshot."""
 import filecmp
 import json
+import os
 from pathlib import Path
 import re
 import subprocess
@@ -57,11 +58,20 @@ def prune(deps, messages):
     return removed
 
 
+def build_env(environ):
+    """The build environment, linking the nix shell's V8 (flake.nix) when it is there."""
+    env = dict(environ)
+    if env.get("CATALYST_RUSTY_V8_ARCHIVE"):
+        env["RUSTY_V8_ARCHIVE"] = env["CATALYST_RUSTY_V8_ARCHIVE"]
+    return env
+
+
 if __name__ == "__main__":
     workspace = Path(__file__).resolve().parents[1] / "services/catalyst"
     target = workspace / "target"
     result = subprocess.check_output(
         ["cargo", "build", "--locked", "--bin", "catalyst", "--target-dir", str(target),
-         "--message-format=json-render-diagnostics"], cwd=workspace, text=True)
+         "--message-format=json-render-diagnostics"], cwd=workspace, env=build_env(os.environ),
+        text=True)
     removed = prune(target / "debug/deps", result)
     print(f"Removed {removed:,} bytes of superseded Rust build artifacts from the smoke snapshot.")

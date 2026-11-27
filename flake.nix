@@ -69,9 +69,10 @@
           } // pkgs.lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
             # The prebuilt V8 the image build links (infra/packages/catalyst.nix), so a dev
             # build neither downloads it nor trusts a restored target cache to still hold it.
-            # Catalyst's entry points (Makefile, tooling/dev-test.sh, tooling/ci-local.py,
-            # tooling/dev-regressions.py, foundation-dev) pass it on as RUSTY_V8_ARCHIVE;
-            # exported shell-wide it would link into any V8 build.
+            # Catalyst's entry points (Makefile, tooling/dev-test.sh, tooling/dev.py,
+            # tooling/ci-local.py, tooling/dev-regressions.py, tooling/catalyst-smoke-cache.py,
+            # tooling/capture-social-schema-v2.cjs) pass it on as RUSTY_V8_ARCHIVE; exported
+            # shell-wide it would link into any V8 build.
             CATALYST_RUSTY_V8_ARCHIVE = "${pkgs.callPackage ./infra/packages/librusty-v8.nix { }}";
           };
           default = pkgs.mkShell (environment // {
