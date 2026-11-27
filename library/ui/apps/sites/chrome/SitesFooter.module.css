@@ -354,22 +354,29 @@
     align-items: flex-start;
     gap: var(--dcl-space-16);
   }
-  .footbarleft {
-    width: 100%;
-  }
   .legal {
     display: grid;
     grid-auto-flow: column;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
     grid-template-rows: repeat(2, auto);
+    justify-content: start;
+    gap: var(--dcl-space-16) 142px;
+  }
+  .footbarright {
+    display: none;
+  }
+}
+
+@media (max-width: 599px) {
+  .footbarleft,
+  .legal {
     width: 100%;
+  }
+  .legal {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: var(--dcl-space-16);
   }
   .legallink {
     white-space: normal;
-  }
-  .footbarright {
-    display: none;
   }
 }
 
