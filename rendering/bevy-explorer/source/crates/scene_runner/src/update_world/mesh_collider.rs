@@ -399,7 +399,7 @@ const PENDING_REMOVALS_BEFORE_FLUSH: usize = 1024;
 const COLLIDER_RESCALE_SIZE: f32 = 0.01;
 // disable colliders whose largest scaled extent falls below this (metres)
 const COLLIDER_DISABLE_SIZE: f32 = 0.01;
-const RAYCAST_EPSILON: f64 = 0.0001;
+pub(crate) const RAYCAST_EPSILON: f64 = 0.0001;
 
 pub trait ScaleShapeExt {
     fn scale_ext(&self, req_scale: Vec3) -> SharedShape;
@@ -772,6 +772,30 @@ impl SceneColliderData {
             },
             position: origin + direction * intersection.time_of_impact as f32,
         })
+    }
+
+    /// How far along the ray from `origin` the collider `id` is first hit, within `distance`.
+    /// `None` when the ray misses it or starts inside it, as [`Self::cast_ray_nearest`] with
+    /// `skip_inside` treats a collider the ray starts in.
+    pub(crate) fn ray_entry_distance(
+        &self,
+        id: &ColliderId,
+        origin: Vec3,
+        direction: Vec3,
+        distance: f32,
+    ) -> Option<f32> {
+        let collider = self.get_collider(id)?;
+        let ray = Ray {
+            origin: origin.as_dvec3().into(),
+            dir: direction.as_dvec3().into(),
+        };
+        let shape = collider.shape();
+        if shape.contains_point(collider.position(), &ray.origin) {
+            return None;
+        }
+        shape
+            .cast_ray(collider.position(), &ray, distance as f64, true)
+            .map(|toi| toi as f32)
     }
 
     /// The height of the feet at `origin` above the first collider that a ball of the avatar's
