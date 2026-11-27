@@ -389,11 +389,14 @@
     grid-template-rows: subgrid;
   }
 
+  /* Size containment: the row gives the avatar its height, and nothing it draws (a 3D canvas sized from its box)
+     can grow the row back. */
   .primary .avatar {
     position: relative;
     grid-row: 1;
     inset: auto;
     height: auto;
+    contain: size;
   }
 
   .primary .rail {
