@@ -34,16 +34,9 @@
   width: 100%;
 }
 
-.jumpIn {
-  composes: jumpIn from './JumpButtons.module.css';
-}
-
-.explore {
-  composes: explore from './JumpButtons.module.css';
-}
-
-.home {
-  composes: home from './JumpButtons.module.css';
+/* Each action is the shared Button (md) across the notice's width. */
+.action {
+  width: 100%;
 }
 
 .mobileOnly,

@@ -123,6 +123,29 @@ lookup from `trade_assets_erc721_token_idx` and sorted at most one matching
 trade per token in this fixture. The timestamp sort also leaves the
 `(signer, created_at DESC)` index order available to the planner.
 
+### Newest Ethereum NFT browse (2026-11-27)
+
+On PostgreSQL 17.6 on Apple Silicon, a synthetic fixture held 3.5M NFTs,
+102,000 items, 5,100 collections, 92,000 LAND and estate rights and 368,000
+LAND authorization events. The page and capped count for `first=24`
+were executed together from exact prepared SQL with forced generic plans
+over 20 warmed repetitions.
+
+| `/v1/nfts` | First before / after | p50 before / after | p95 before / after | Max before / after |
+| --- | ---: | ---: | ---: | ---: |
+| Ethereum | 698 / 346 ms | 685 / 261 ms | 1,157 / 302 ms | 1,198 / 304 ms |
+| Polygon | 189 / 125 ms | 168 / 117 ms | 211 / 155 ms | 297 / 182 ms |
+
+`EXPLAIN (ANALYZE, BUFFERS, SETTINGS)` showed the Ethereum LAND page doing
+92,000 first-transfer lookups and joining token details before limiting.
+Newest unfiltered pages still rank by those first transfers and attach
+details only to the top LAND window. The unfiltered capped count reads
+NAMEs first and can reach the cap before visiting the collection and
+LAND legs. The paired pages and totals returned identical rows. Separate
+v3 order enrichment of the 24 Ethereum tokens took 0.2–0.8 ms. The
+eight Ethereum runs in a mixed four-client probe had a median of 362 ms
+and a maximum of 399 ms. These are local SQL timings.
+
 ## Ethereum collections-v1 first walk
 
 On 2026-11-26 the Ethereum `collections` walk (`shop::market::collections_v1`) ran its first history over `rpc.decentraland.org/mainnet`, which takes at most 10,000 blocks per `eth_getLogs`, with the default settings (10,000-block windows, a budget of 100 `eth_getLogs` per pass) and an empty scratch database. It walked from block 8,828,687 to the head, 17,671,095 blocks, in 18 passes run back to back, with 7,108 HTTP requests in all: `eth_getLogs` plus the headers of each window's bracket and of the blocks holding logs. That run recorded only the total. A two-pass rerun over the same start counted the requests by kind. Each pass spent its 100-request budget on `eth_getLogs`, about one per 10,000-block window: 989,704 and 1,000,000 blocks. Each pass also sent about 300 other requests, for the chain, the head, each window's bracket and the blocks holding logs: 299 and 302. So the full walk's `eth_getLogs` came to about 1,770, one per window, and the rest were headers. It took 2,198 s, plus the pause between passes a job adds (`MARKETPLACE_INDEX_INTERVAL_SECS`, 5 s, or 30 s under the mirror posture). It kept 438 `add_item`, 73,506 `issue` and 52 `ownership_transferred` rows. The 438 items and the 73,506 mints equal the collections subgraph's v1 items and their total supply at block 26,499,473. After the catch-up, each pass reads the same 42-address filter over the new blocks only. The command is in the `measure_the_first_walk` test, which prints each pass's `eth_getLogs` and other requests (`COLLECTIONS_V1_MEASURE_PASSES` stops it early).
@@ -224,6 +247,37 @@ compilation and initial schema application. The completed job pass took
 The published cursor hash matched the Sepolia header at 12,217,105
 (`0x3b4a18568ecdfb3989f148294617774906ae5db307118e560094b173b9f45e53`).
 Separate measurements depend on RPC range limits and latency.
+
+## Default Marketplace catalog reads (2026-11-27)
+
+The baseline is `de3fb2cd3`. A disposable PostgreSQL 17.6 database on
+Apple Silicon used 128 MiB shared buffers and 4 MiB work memory. The
+synthetic fixture held 3.5M NFTs, 102,000 items, 5,100 collections, and 1M
+legacy orders. Of 130,435 stored open orders, 10,032 were unexpired at the
+query clock.
+
+The table gives milliseconds for the prepared SQL, before and after,
+over 20 warmed repetitions with one client and forced generic plans.
+Every request has `first=24`. The first execution follows statement
+preparation, with buffers carried over from setup and earlier reads.
+
+| Read | First before / after | p50 before / after | p95 before / after | Max before / after |
+| --- | ---: | ---: | ---: | ---: |
+| Catalog, default | 4,594 / 1,442 | 1,994 / 718 | 2,393 / 1,211 | 2,433 / 1,457 |
+| Catalog, Polygon | 1,766 / 370 | 2,344 / 313 | 3,511 / 443 | 3,633 / 456 |
+| Catalog, Polygon wearables on sale | 2,038 / 216 | 1,533 / 201 | 1,956 / 245 | 2,346 / 254 |
+| Catalog, newest | 1,489 / 170 | 2,361 / 142 | 4,022 / 190 | 4,375 / 190 |
+
+`EXPLAIN (ANALYZE, BUFFERS, SETTINGS)` of custom and generic plans
+showed that the combined legacy aggregation could scan the NFT table and
+evaluate Ethereum wearable joins for Polygon orders. Each network now
+resolves its own item key and probes the NFT primary key. Ethereum
+resolves the wearable by URN once it knows the token. All four paired
+prepared statements returned identical rows and counts. The queries use
+existing indexes and add no storage or write work.
+
+These measurements cover SQL on the local fixture. End-to-end latency
+after deployment has yet to be measured.
 
 ## Latest sale per token
 

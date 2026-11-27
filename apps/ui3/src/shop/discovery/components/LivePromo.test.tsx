@@ -11,8 +11,18 @@ const PREVIEW = "https://wearable-preview.decentraland.org";
 const EMOTE = "urn:decentraland:matic:collections-v2:0x0c956c74518ed34afb7b137d9ddfdaea7ca13751:0";
 const HOODIE = "urn:decentraland:matic:collections-v2:0xe9f388ae27c726c4772c85a194e9791b1a0a913c:0";
 
-const env = vi.hoisted(() => ({ device: "full" as "full" | "lite" }));
-vi.mock("../../detail/lib/pickRenderer", () => ({ pickRenderer: () => ({ renderer: env.device, reason: "connection-ok" }) }));
+const env = vi.hoisted(() => ({ device: "full" as "full" | "lite", linkUndecided: false, probes: 0 }));
+vi.mock("../../detail/lib/pickRenderer", () => ({
+  pickRenderer: (measuredMbps: number | null = null) =>
+    env.linkUndecided && measuredMbps === null ? { renderer: "full", reason: "optimistic-default" } : { renderer: env.device, reason: "connection-ok" },
+}));
+// A probe that never answers: the tile can only be told the link is undecided.
+vi.mock("@web-core/connection-speed", () => ({
+  measureDownlinkMbps: () => {
+    env.probes += 1;
+    return new Promise(() => {});
+  },
+}));
 vi.mock("../../../wearable-preview/WearablePreview", () => ({
   default: () => {
     throw new Error("the promo must not draw the three.js scene");
@@ -22,6 +32,7 @@ vi.mock("@dcl/one-ui/components/AnimatedBackground/AnimatedBackground", () => ({
   AnimatedBackground: (props: { patternTiling?: number }) => <div data-testid="backdrop" data-tiling={props.patternTiling} />,
 }));
 
+import { resetMeasuredLinkForTests } from "../../detail/lib/previewDevice";
 import LivePromo from "./LivePromo";
 
 type Observed = { cb: IntersectionObserverCallback; el?: Element; init?: IntersectionObserverInit };
@@ -64,6 +75,9 @@ function fromPreview(data: unknown) {
 beforeEach(() => {
   observers = [];
   env.device = "full";
+  env.linkUndecided = false;
+  env.probes = 0;
+  resetMeasuredLinkForTests();
   vi.stubGlobal("IntersectionObserver", FakeIO);
   vi.stubGlobal("matchMedia", () => ({ matches: false }));
   // The tile draws with Babylon as upstream's does, whatever this flag says.
@@ -84,6 +98,18 @@ function tile() {
 }
 
 describe("LivePromo", () => {
+  it("runs the link probe only once the tile first nears the screen, and mounts nothing while it runs", () => {
+    env.linkUndecided = true;
+    tile();
+    expect(env.probes).toBe(0);
+    intersect(true);
+    expect(env.probes).toBe(1);
+    expect(frame()).toBeNull();
+    intersect(false);
+    intersect(true);
+    expect(env.probes).toBe(1);
+  });
+
   it("mounts upstream's Babylon avatar in the iframe once the tile nears the screen, with nothing of three.js", () => {
     tile();
     expect(frame()).toBeNull();

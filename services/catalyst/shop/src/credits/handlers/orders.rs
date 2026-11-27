@@ -1,9 +1,3 @@
-// Money and chain values: a silently truncated or sign-flipped cast is a bug.
-#![deny(
-    clippy::cast_possible_truncation,
-    clippy::cast_sign_loss,
-    clippy::cast_possible_wrap
-)]
 // from: catalyrst/crates/catalyrst-credits/src/handlers/orders.rs, credits-server src/controllers/handlers/create-checkout-session.ts, credits-server src/logic/checkout-return-url.ts
 //! The explorer's order flow: `POST /credits/checkout` opens a Stripe
 //! Checkout Session for `quantity` (1..=5, default 1) of one pack (the

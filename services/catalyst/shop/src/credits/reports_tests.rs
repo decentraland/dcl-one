@@ -1,6 +1,14 @@
 //! The credits reports against PostgreSQL: who may read them, and that each
 //! row source lands in the old server's shape (`reports.rs`).
 
+#![allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    clippy::cast_possible_wrap,
+    clippy::cast_precision_loss,
+    reason = "test fixtures use small literal values"
+)]
+
 use std::sync::Arc;
 
 use axum::http::{HeaderMap, StatusCode, header};

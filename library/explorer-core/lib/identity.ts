@@ -67,6 +67,11 @@ export function shortAddr(s: string): string {
   return ADDRESS_RE.test(s) ? `${s.slice(0, 6)}…${s.slice(-4)}` : s
 }
 
+/** "0x10e...a7a92" */
+export function shortWallet(address: string): string {
+  return address.length > 10 ? `${address.slice(0, 5)}...${address.slice(-5)}` : address
+}
+
 /** Split "Name#a1b2" into the colored base and a dimmer #tag. */
 export function splitName(label: string): { base: string; tag: string } {
   const i = label.indexOf('#')

@@ -358,6 +358,10 @@ pub async fn read_snapshot(pool: &PgPool) -> sqlx::Result<Transaction<'static, P
 /// the readers that follow it.
 #[cfg(any(test, feature = "test-support"))]
 #[allow(clippy::unwrap_used, reason = "test support")]
+#[allow(
+    clippy::cast_precision_loss,
+    reason = "test fixtures use small literal values"
+)]
 pub mod owning {
     use sqlx::PgPool;
 

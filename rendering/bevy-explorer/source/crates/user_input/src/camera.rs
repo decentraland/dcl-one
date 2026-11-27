@@ -1,5 +1,3 @@
-use std::f32::consts::PI;
-
 use bevy::{
     platform::collections::HashSet,
     prelude::*,
@@ -11,11 +9,10 @@ use avatar::animate::{is_emoting, ActiveEmote, MaskedEmote};
 use common::{
     inputs::{Action, SystemAction, CAMERA_SET, CAMERA_ZOOM, POINTER_SET},
     structs::{
-        AppConfig, AvatarDynamicState, CameraOverride, ClientWindowFocus, CursorLocks, HeadSync,
-        MoveKind, PhotoMode, PrimaryCamera, PrimaryUser, RequestClientWindowFocus,
-        PLAYER_CAMERA_FOV,
+        AppConfig, AvatarDynamicState, CameraOverride, CameraShoulder, CameraView, CameraZoomLevel,
+        ClientWindowFocus, CursorLocks, HeadSync, MoveKind, PhotoMode, PrimaryCamera, PrimaryUser,
+        RequestClientWindowFocus, CAMERA_CURSOR_LOCK, PLAYER_CAMERA_FOV,
     },
-    terrain::PlayerTerrainHeight,
     util::ModifyComponentExt,
 };
 use dcl_component::proto_components::sdk::components::common::camera_transition::TransitionMode;
@@ -30,8 +27,47 @@ use crate::{
     camera_collision::{
         self, CameraCollision, CameraCollisionState, CameraObstacles, CAMERA_RADIUS,
     },
+    camera_zoom::{pitch_limit, step_level, CameraZoom, ZoomDirection, FOCUS_HEIGHT},
     TRANSITION_TIME,
 };
+
+/// Radians a scene's cinematic camera may pitch when the scene sets no range of its own.
+const CINEMATIC_PITCH_LIMIT: f32 = std::f32::consts::PI / 2.1;
+
+/// The yaw and pitch, in degrees, that `HeadSync` carries for a camera looking along `rotation`.
+///
+/// DCL world is left-handed (Z+ forward) while bevy is right-handed (-Z forward). The Y-up
+/// rotation handedness flips going across, so a yaw of θ in bevy maps to -θ on the wire. With
+/// this, looking N is 0°, E is 90°, S is 180°, W is 270° — matching unity senders. Pitch is also
+/// handedness-flipped on the wire (looking up positive in DCL = negative bevy pitch). HeadSync
+/// holds the wire value, and the IK reader applies the same negation to render back in bevy.
+fn head_angles(rotation: Quat) -> (f32, f32) {
+    let (yaw, pitch, _) = rotation.to_euler(EulerRot::YXZ);
+    (-yaw.to_degrees(), -pitch.to_degrees())
+}
+
+/// Which way the player asked to zoom this frame. The wheel asks on every frame it turns, a key or
+/// button once per press; out wins over in.
+fn zoom_request(input_manager: &InputManager) -> Option<ZoomDirection> {
+    let zoom_in = Action::System(SystemAction::CameraZoomIn);
+    let zoom_out = Action::System(SystemAction::CameraZoomOut);
+    let held = input_manager.is_button_down(zoom_in, InputPriority::Scene)
+        || input_manager.is_button_down(zoom_out, InputPriority::Scene);
+    let wheel = if held {
+        0.0
+    } else {
+        input_manager
+            .get_analog(CAMERA_ZOOM, InputPriority::Scene)
+            .y
+    };
+    if wheel < 0.0 || input_manager.just_down(zoom_out, InputPriority::Scene) {
+        Some(ZoomDirection::Out)
+    } else if wheel > 0.0 || input_manager.just_down(zoom_in, InputPriority::Scene) {
+        Some(ZoomDirection::In)
+    } else {
+        None
+    }
+}
 
 pub struct CinematicInitialData {
     base_yaw: f32,
@@ -41,7 +77,7 @@ pub struct CinematicInitialData {
 
 pub fn update_camera(
     time: Res<Time>,
-    mut camera: Query<(&Transform, &mut PrimaryCamera), Without<PhotoMode>>,
+    mut camera: Query<(&Transform, &mut PrimaryCamera, &mut CameraZoom), Without<PhotoMode>>,
     locks: Res<CursorLocks>,
     mut cinematic_data: Local<Option<CinematicInitialData>>,
     input_manager: InputManager,
@@ -50,7 +86,7 @@ pub fn update_camera(
 ) {
     let dt = time.delta_secs();
 
-    let Ok((camera_transform, mut options)) = camera.single_mut() else {
+    let Ok((camera_transform, mut options, mut zoom)) = camera.single_mut() else {
         return;
     };
 
@@ -90,10 +126,9 @@ pub fn update_camera(
         (options.yaw, options.pitch, options.roll) =
             (initial.base_yaw, initial.base_pitch, initial.base_roll);
     }
-    let in_cinematic = cinematic_data.is_some();
 
     let mut mouse_delta = input_manager.get_analog(CAMERA_SET, InputPriority::Scene) * 10.0;
-    if locks.0.contains("camera") {
+    if locks.0.contains(CAMERA_CURSOR_LOCK) {
         mouse_delta += input_manager.get_analog(POINTER_SET, InputPriority::Scroll);
     }
     let mouse_delta = config
@@ -116,22 +151,39 @@ pub fn update_camera(
             }
         }
 
-        options.pitch = (options.pitch - mouse_delta.y * options.sensitivity / 1000.0)
-            .clamp(-PI / 2.1, PI / 2.1);
+        options.pitch -= mouse_delta.y * options.sensitivity / 1000.0;
         options.yaw -= mouse_delta.x * options.sensitivity / 1000.0;
     }
 
-    // `distance` is the third-person follow distance; a cinematic camera has its own fov
-    if !in_cinematic {
-        let zoom = input_manager
-            .get_analog(CAMERA_ZOOM, InputPriority::Scene)
-            .y;
-        if zoom != 0.0 {
-            let zoom = zoom.clamp(-1000.0, 1000.0);
-            options.distance =
-                (((options.distance + 0.5) * 1.0005f32.powf(-zoom)) - 0.5).clamp(0.0, 100.0);
+    if options.scene_override.is_none() {
+        if let Some(direction) = zoom_request(&input_manager) {
+            options.level = step_level(options.level, direction, false).0;
+        }
+        if input_manager.just_down(SystemAction::CameraSwitchLevel, InputPriority::Scene) {
+            let direction = zoom.switch_direction.unwrap_or(ZoomDirection::Out);
+            let (level, stepped) = step_level(options.level, direction, true);
+            options.level = level;
+            if !stepped {
+                zoom.switch_direction = Some(direction.reversed());
+            }
+        }
+        if options.level != CameraZoomLevel::FirstPerson
+            && input_manager.just_down(SystemAction::CameraSwapShoulder, InputPriority::Scene)
+        {
+            options.shoulder = match options.shoulder {
+                CameraShoulder::Right => CameraShoulder::Left,
+                CameraShoulder::Left => CameraShoulder::Right,
+            };
         }
     }
+
+    let level = options.level_in_effect();
+    if let Some((yaw, pitch)) = zoom.set_level(level, options.yaw, options.pitch) {
+        options.yaw = yaw;
+        options.pitch = pitch;
+    }
+    let limit = level.map_or(CINEMATIC_PITCH_LIMIT, pitch_limit);
+    options.pitch = options.pitch.clamp(-limit, limit);
 
     if let Some(roll_range) = roll_range {
         options.roll = options.roll.clamp(roll_range.start, roll_range.end);
@@ -151,6 +203,7 @@ pub(crate) fn update_camera_position(
             Entity,
             &Transform,
             &PrimaryCamera,
+            &mut CameraZoom,
             &mut Projection,
             Option<&mut SystemTween>,
             &mut CameraCollisionState,
@@ -170,8 +223,8 @@ pub(crate) fn update_camera_position(
     mut prev_override: Local<Option<CameraOverride>>,
     mut prev_oow: Local<bool>,
     gt_helper: TransformHelper,
-    terrain_height: Option<Res<PlayerTerrainHeight>>,
     time: Res<Time>,
+    locks: Res<CursorLocks>,
     containing_scene: ContainingScene,
     mut scene_colliders: Query<&mut SceneColliderData, Without<GlobalGroundCollider>>,
     mut ground_colliders: Query<&mut SceneColliderData, With<GlobalGroundCollider>>,
@@ -183,6 +236,7 @@ pub(crate) fn update_camera_position(
             camera_ent,
             camera_transform,
             options,
+            mut zoom,
             mut projection,
             maybe_tween,
             mut collision_state,
@@ -203,28 +257,15 @@ pub(crate) fn update_camera_position(
     let idle = dynamic_state.move_kind == MoveKind::Idle
         && !emotes.is_some_and(|(active, masked)| is_emoting(active, masked));
     let head_active = real_camera && idle;
-    let follow_distance = match options.scene_override {
-        Some(CameraOverride::Distance(d)) => d,
-        _ => options.distance,
-    };
-    let first_person = follow_distance < 0.05;
+    let first_person = options.view() == CameraView::FirstPerson;
     head_sync.yaw_enabled = head_active && !first_person;
     head_sync.pitch_enabled = head_active;
-    if head_active {
-        // DCL world is left-handed (Z+ forward) while bevy is right-handed
-        // (-Z forward). The Y-up rotation handedness flips going across, so
-        // a yaw of θ in bevy maps to -θ on the wire. With this, looking N is
-        // 0°, E is 90°, S is 180°, W is 270° — matching unity senders.
-        // Pitch is also handedness-flipped on the wire (looking up positive
-        // in DCL = negative bevy pitch). HeadSync holds the wire value, and
-        // the IK reader applies the same negation to render back in bevy.
-        head_sync.yaw_deg = -options.yaw.to_degrees();
-        head_sync.pitch_deg = -options.pitch.to_degrees();
-    }
 
     let mut target_transform = *camera_transform;
     let mut target_fov = PLAYER_CAMERA_FOV;
     let mut target_transition = TransitionMode::Time(TRANSITION_TIME);
+    // the camera-to-player fade aims at the focus; with none, nothing fades
+    let mut fade_target = Vec4::ZERO;
 
     if is_oow {
         target_transform = Transform::from_translation(
@@ -270,93 +311,88 @@ pub(crate) fn update_camera_position(
         {
             target_transition = transition.clone();
         }
-
-        commands.entity(camera_ent).try_insert(ViewUserValue(0.0));
     } else {
-        let mut distance = follow_distance * 5.0;
+        zoom.tick(
+            time.delta_secs(),
+            options.pitch,
+            options.shoulder,
+            locks.0.contains(CAMERA_CURSOR_LOCK),
+        );
+        let focus = player_transform.translation + Vec3::Y * FOCUS_HEIGHT;
+        if let Some(pose) = zoom.pose(focus, options.yaw, options.pitch, options.roll) {
+            target_transform = pose.transform();
+            target_fov = pose.fov;
 
-        target_transform.rotation =
-            Quat::from_euler(EulerRot::YXZ, options.yaw, options.pitch, options.roll);
-
-        let player_head = player_transform.translation + Vec3::Y * 1.81;
-        let head_offset = (target_transform.rotation.mul_vec3(Vec3::X) * Vec3::new(1.0, 0.0, 1.0))
-            .normalize_or_zero()
-            * 0.25
-            + Vec3::Y * -0.08;
-
-        let target_direction = target_transform.rotation.mul_vec3(Vec3::Z);
-        let target_translation =
-            player_head + head_offset * distance.clamp(0.0, 3.0) + target_direction * distance;
-
-        // keep above the ground: the empty-parcel terrain under the player, else zero
-        let ground = terrain_height.map_or(0.0, |height| height.0);
-        if target_translation.y - ground < distance * 0.25 {
-            distance = (player_head.y - ground) / (0.25 - target_direction.y);
-        }
-
-        let orbit = player_head + target_direction * distance;
-        // the camera sits in the player's head in first person, so there is nothing to collide
-        if collision.enabled && !first_person {
-            let shoulder = head_offset * distance.clamp(0.0, 3.0);
-            let margin = CAMERA_RADIUS + head_offset.length() * 3.0;
-            // the sweep runs from the shoulder, up to the whole offset beside the head
-            let mut scenes: HashSet<Entity> = [player_head, player_head + shoulder]
-                .into_iter()
-                .flat_map(|pivot| containing_scene.get_ray(pivot, orbit - player_head))
-                .map(|(scene, _)| scene)
-                .collect();
-            scenes.extend(containing_scene.get_area_at(player_head, margin));
-            scenes.extend(containing_scene.get_area_at(orbit, margin));
-            for scene in &scenes {
-                if let Ok(mut colliders) = scene_colliders.get_mut(*scene) {
+            // the camera orbits the focus moved by the shoulder offset; a pose with no such
+            // point, in or blending through first person, leaves the focus itself
+            let shoulder = pose.look_at().map_or(Vec3::ZERO, |look_at| look_at - focus);
+            let arm = pose.position - (focus + shoulder);
+            let distance = arm.length();
+            // nearer than the camera's own radius it is in the player's head: nothing to collide
+            if collision.enabled && distance > CAMERA_RADIUS * 1.1 {
+                let margin = CAMERA_RADIUS + shoulder.length();
+                // the sweep runs from the shoulder, up to the whole offset beside the focus
+                let mut scenes: HashSet<Entity> = [focus, focus + shoulder]
+                    .into_iter()
+                    .flat_map(|pivot| containing_scene.get_ray(pivot, arm))
+                    .map(|(scene, _)| scene)
+                    .collect();
+                scenes.extend(containing_scene.get_area_at(focus, margin));
+                scenes.extend(containing_scene.get_area_at(focus + arm, margin));
+                for scene in &scenes {
+                    if let Ok(mut colliders) = scene_colliders.get_mut(*scene) {
+                        colliders.update_bvh();
+                    }
+                }
+                for mut colliders in &mut ground_colliders {
                     colliders.update_bvh();
                 }
-            }
-            for mut colliders in &mut ground_colliders {
-                colliders.update_bvh();
-            }
-            let obstacles = CameraObstacles(
-                scenes
-                    .iter()
-                    .filter_map(|scene| scene_colliders.get(*scene).ok())
-                    .chain(ground_colliders.iter())
-                    .collect(),
-            );
+                let obstacles = CameraObstacles(
+                    scenes
+                        .iter()
+                        .filter_map(|scene| scene_colliders.get(*scene).ok())
+                        .chain(ground_colliders.iter())
+                        .collect(),
+                );
 
-            let offset = camera_collision::shoulder_offset(
-                &obstacles,
-                &mut collision_state,
-                player_head,
-                shoulder,
-                time.delta_secs(),
-            );
-            let pivot = player_head + offset;
-            let resolved = camera_collision::resolve(
-                &obstacles,
-                &mut collision_state,
-                pivot,
-                pivot + target_direction * distance,
-                time.elapsed_secs(),
-                time.delta_secs(),
-            );
-            let collided_distance = resolved.position.distance(pivot);
-            target_transform.translation = resolved.position;
-            collision_state.desired_distance = distance;
-            collision_state.collided_distance = collided_distance;
-            collision_state.occluded = resolved.occluded;
-            distance = collided_distance;
-        } else {
-            collision_state.invalidate();
-            target_transform.translation = orbit + head_offset * distance.clamp(0.0, 3.0);
-            collision_state.desired_distance = distance;
-            collision_state.collided_distance = distance;
-            collision_state.occluded = false;
-            collision_state.damp_time = 0.0;
+                let offset = camera_collision::shoulder_offset(
+                    &obstacles,
+                    &mut collision_state,
+                    focus,
+                    shoulder,
+                    time.delta_secs(),
+                );
+                let pivot = focus + offset;
+                let resolved = camera_collision::resolve(
+                    &obstacles,
+                    &mut collision_state,
+                    pivot,
+                    pivot + arm,
+                    time.elapsed_secs(),
+                    time.delta_secs(),
+                );
+                target_transform.translation = resolved.position;
+                collision_state.desired_distance = distance;
+                collision_state.collided_distance = resolved.position.distance(pivot);
+                collision_state.occluded = resolved.occluded;
+            } else {
+                collision_state.invalidate();
+                collision_state.desired_distance = distance;
+                collision_state.collided_distance = distance;
+                collision_state.occluded = false;
+                collision_state.damp_time = 0.0;
+            }
+
+            fade_target = focus.extend(1.0);
         }
+    }
 
-        commands
-            .entity(camera_ent)
-            .try_insert(ViewUserValue(distance));
+    commands
+        .entity(camera_ent)
+        .try_insert(ViewUserValue(fade_target));
+
+    if head_active {
+        (head_sync.yaw_deg, head_sync.pitch_deg) = head_angles(target_transform.rotation);
     }
 
     if !real_camera {
@@ -366,15 +402,21 @@ pub(crate) fn update_camera_position(
     // the camera never carries scale; scenes may set arbitrary scale on virtual camera entities
     target_transform.scale = Vec3::ONE;
 
-    let changed = (prev_override.is_some() != options.scene_override.is_some())
-        || prev_override
-            .as_ref()
-            .is_some_and(|prev| !prev.effectively_equals(options.scene_override.as_ref().unwrap()))
-        || *prev_oow != is_oow;
+    // a change of level blends in `CameraZoom`; only a scene camera taking or returning the view,
+    // or the player leaving the world, tweens here
+    let scene_camera = options
+        .scene_override
+        .as_ref()
+        .filter(|scene_override| matches!(scene_override, CameraOverride::Cinematic(_)));
+    let changed = match (prev_override.as_ref(), scene_camera) {
+        (Some(prev), Some(now)) => !prev.effectively_equals(now),
+        (None, None) => false,
+        _ => true,
+    } || *prev_oow != is_oow;
 
     if changed {
         debug!("changed cam to {:?}", options.scene_override);
-        prev_override.clone_from(&options.scene_override);
+        *prev_override = scene_camera.cloned();
         *prev_oow = is_oow;
         let time = match target_transition {
             TransitionMode::Time(t) => t,
@@ -461,4 +503,35 @@ pub fn update_cursor_lock(
     }
 
     *prev = lock;
+}
+
+#[cfg(test)]
+mod tests {
+    use std::f32::consts::FRAC_PI_2;
+
+    use super::*;
+
+    fn head_angles_at(level: CameraZoomLevel, yaw: f32, pitch: f32) -> (f32, f32) {
+        let mut zoom = CameraZoom::default();
+        zoom.set_level(Some(level), yaw, pitch);
+        let pose = zoom.pose(Vec3::ZERO, yaw, pitch, 0.0).unwrap();
+        head_angles(pose.rotation)
+    }
+
+    #[test]
+    fn the_head_follows_the_first_person_aim() {
+        let (yaw, pitch) = head_angles_at(CameraZoomLevel::FirstPerson, 0.4, -0.3);
+        assert!((yaw - -0.4f32.to_degrees()).abs() < 0.01, "{yaw}");
+        assert!((pitch - 0.3f32.to_degrees()).abs() < 0.01, "{pitch}");
+    }
+
+    #[test]
+    fn the_head_follows_the_orbit_cameras_view_not_its_pitch_input() {
+        let (yaw, pitch) = head_angles_at(CameraZoomLevel::Drone, 0.4, FRAC_PI_2);
+        assert!((yaw - -0.4f32.to_degrees()).abs() < 0.01, "{yaw}");
+        assert!((pitch - -3.89).abs() < 0.05, "{pitch}");
+
+        let (_, pitch) = head_angles_at(CameraZoomLevel::ThirdPerson, 0.0, 0.0);
+        assert!((pitch - 9.22).abs() < 0.05, "{pitch}");
+    }
 }
