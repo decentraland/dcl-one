@@ -377,6 +377,7 @@ def check(base='HEAD', staged=False):
 
 SHARED_IMPORT_ROOTS = ('apps/', 'library/', 'tooling/')
 SHARED_IMPORT_EXTENSIONS = SCRIPT_EXTENSIONS + ('.mts', '.cts')
+SHOP_PREVIEW_ENTRY = '@dcl/one-ui/apps/shop/preview'
 SHARED_UI_DEEP = re.compile(r'^@dcl/one-ui/(?!apps/(?:shop|hud)/)(?!\S*\.css(?:\?\S*)?$)[\w.-]\S*$')
 # Preserve the isolated lazy chunk and mock the exact module that LivePromo loads.
 LAZY_ANIMATED_BACKGROUND = '@dcl/one-ui/components/AnimatedBackground/AnimatedBackground'
@@ -384,6 +385,10 @@ SHARED_IMPORT_KEPT = frozenset(
     (f'apps/ui3/src/shop/discovery/components/{name}', LAZY_ANIMATED_BACKGROUND)
     for name in ('LivePromo.tsx', 'LivePromo.test.tsx')
 ) | {
+    ('apps/ui3/src/shop/detail/components/ItemPreview.tsx', SHOP_PREVIEW_ENTRY),
+    ('apps/ui3/src/shop/detail/components/AvatarStage.tsx', SHOP_PREVIEW_ENTRY),
+    ('apps/ui3/src/shop/detail/components/AvatarStage.test.tsx', SHOP_PREVIEW_ENTRY),
+    ('apps/ui3/src/shop/discovery/components/LivePromo.tsx', SHOP_PREVIEW_ENTRY),
     ('apps/creator-hub/packages/inspector/src/components/ui/Tooltip.ts',
      '@dcl/one-ui/components/Tooltip/Tooltip'),
 }
@@ -430,7 +435,8 @@ def relative_shared_imports(name, text):
 
 def deep_shared_imports(text):
     """The @dcl/one-ui/<path> specifiers in source text that name shared code, comments excluded."""
-    return [value for kind, value in tokens(text) if kind == 'string' and SHARED_UI_DEEP.match(value)]
+    return [value for kind, value in tokens(text) if kind == 'string' and
+            (value == SHOP_PREVIEW_ENTRY or value.startswith(SHOP_PREVIEW_ENTRY + '/') or SHARED_UI_DEEP.match(value))]
 
 
 def shared_import_issues(paths, read):

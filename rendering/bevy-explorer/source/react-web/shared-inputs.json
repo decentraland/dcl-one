@@ -5840,6 +5840,14 @@
           "kind": "regular"
         },
         {
+          "name": "preview",
+          "kind": "directory"
+        },
+        {
+          "name": "preview.ts",
+          "kind": "regular"
+        },
+        {
           "name": "purchaseQuery.ts",
           "kind": "regular"
         },
@@ -9933,7 +9941,7 @@
     },
     {
       "path": "library/ui/package.json",
-      "sha256": "3aee31cb53bda68828bc5f4ed966a564c72893dec9e24b006ff26af84b261705"
+      "sha256": "45c1a0cbca92d4fe121ebc2ac1a6a68efcede6a626c8e4fb97bee4503be0689b"
     },
     {
       "path": "library/ui/tsconfig.json",

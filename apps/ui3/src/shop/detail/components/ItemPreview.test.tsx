@@ -87,7 +87,7 @@ test("the scene mounts after the profile, during the outfit's entity read, with 
   await vi.waitFor(() => expect(screen.getByTestId("scene")).toBeTruthy());
   expect(last().outfitPending).toBe(true);
   expect(last().outfit).toBeUndefined();
-  expect(thumb()?.className).toContain("shop-preview__thumb--cover");
+  expect(thumb()?.hasAttribute("data-cover")).toBe(true);
   expect(screen.queryByText("Loading preview")).toBeNull();
 
   await act(async () => {
@@ -113,7 +113,7 @@ test("a failed or empty scene leaves the thumbnail in place with the note over i
     await vi.waitFor(() => expect(screen.getByTestId("scene")).toBeTruthy());
     act(() => last().onStatus!(failure));
     expect(screen.queryByTestId("scene")).toBeNull();
-    expect(thumb()?.className).toBe("shop-preview__thumb");
+    expect(thumb()?.hasAttribute("data-cover")).toBe(false);
     expect(screen.getByText("Preview unavailable for this item")).toBeTruthy();
     view.unmount();
     invalidateShopQueries();

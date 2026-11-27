@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 
 import { primeRemoteFlags } from "../../discovery/lib/remoteFlags";
 import AvatarStage from "./AvatarStage";
-import type { PreviewFrameOptions } from "./PreviewFrame";
+import type { PreviewFrameOptions } from "@dcl/one-ui/apps/shop/preview";
 
 const PREVIEW = "https://wearable-preview.decentraland.org";
 const HOODIE = "urn:decentraland:matic:collections-v2:0x0768847951fddd4e73e670800da26d953a77059b:0";
