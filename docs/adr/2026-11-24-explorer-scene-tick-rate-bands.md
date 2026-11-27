@@ -63,8 +63,8 @@ and main-thread time each frame there is spare time, whether or not the player c
   only at a tick, and drop new messages when full. `SceneMessagesDelivered`, on the scene root,
   counts the peer messages handed to the scene's queues; each dispatch records it
   (`scene_messages_read`), and a capped scene with `SCENE_MESSAGE_BACKLOG_DUE` (157, a quarter of
-  the topic inbox) or more since is due whatever its band. The count is summed over the three queues, so the release comes no
-  later than any one queue's quarter.
+  the topic inbox) or more since is due whatever its band. The count is summed over the three
+  queues, so the release comes no later than any one queue's quarter.
 - **A rate is a minimum interval.** `update_scene_priority` leaves a capped scene out of the
   frame's queue until `1 / rate` seconds have passed since it was last sent. A scene that is due
   is ordered by the existing key, with its age taken from when its interval passed, at least a
@@ -100,10 +100,11 @@ and main-thread time each frame there is spare time, whether or not the player c
 - Scenes from 80 m on change at most every two seconds; their SDK systems and tweens driven
   from script step in large intervals until the player comes nearer.
 - A scene 16 m or more behind the camera delivers up to a second of changes in one reply.
-  Whether that hitches when the camera turns is still open: Genesis Plaza, measured below,
-  caps no scene, so it needs a spot where the neighbouring scenes run.
+  Turning the camera over capped scenes, measured below at 100,100, left frame p99 unchanged.
+  On native one run with the caps had a single 358 ms frame and the other none above 53 ms,
+  which two runs cannot attribute to the catch-up; on web no frame passed 80 ms.
 - Walking through a busy area, the global-update release can take back part of the saving. At
-  Genesis Plaza it released no tick.
+  Genesis Plaza and at 100,100 it released no tick.
 - **Measured at Genesis Plaza** (2026-11-27): release builds of `main` and this change, native
   and web, two runs each, a guest with fetch and websocket permissions preset. Three scenes run
   there, the player's scene and two exempt scenes 18 to 22 m away, all at the full rate (the
@@ -118,6 +119,22 @@ and main-thread time each frame there is spare time, whether or not the player c
     542 ms single frames on `main`, too few runs to attribute;
   - walking 17 to 52 m through the plaza, `released` stayed 0 and `skipped` reached 224
     scene-frames, from one scene that started on the way.
+- **Measured at 100,100** (2026-11-27): one release build of this change, the caps on and
+  turned off (`/scene_tick_rate_caps false`), native and web, two runs each and a third with
+  the caps on web, as above. Eleven scenes run: four under 16 m, five from 16 to 32 m, and two
+  exempt scenes 80 m or more away; eight start capped. With the caps on:
+  - ticks per scene per second standing: under 16 m 37.5 against 60 native and 34 to 37 against
+    53 to 55 web; 16 to 32 m 30 against 60 native and 25 to 29 against 53 to 55 web; turning at
+    90°/s, 16 to 32 m 20 against 53 native and 19 against 49 web;
+  - scene-thread CPU 117 against 161 ms a second native; the scene loop's mean frame time 1.1
+    against 1.4 ms native and 1.7 to 1.9 against 2.6 ms web; the main world's 15.7 ms native
+    on both, 8.1 to 8.5 against 9.2 ms web;
+  - frame p99 standing 18.7 to 19.1 against 18.7 ms native, 25 to 36 against 27 to 32 ms web;
+  - turning, frame p99 29 to 30 ms native on both and 31 to 39 against 32 to 37 ms web; the
+    worst frame 358 and 53 ms native against 36 and 36, 37 to 80 ms web against 49 to 97;
+  - `released` stayed 0 and `skipped` reached 30 000 to 38 000 scene-frames over a run; the walk
+    there moved the player less than 5 m, so it measures standing, with one 658 ms frame native
+    in the run that also had the 358 ms one.
 - On the client every scene shares one crdt context, so the global-update release follows the
   island's update rate: at about 500 updates a second every capped scene is due about every
   half second, and the 1/s and 0.5/s caps act as about 2/s where the island is busiest. A scene
