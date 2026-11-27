@@ -1,17 +1,43 @@
-//! Which of the [`REPORTED`] settings differ from their defaults: one `Settings Snapshot` event
-//! per session, queued once the settings registry and the analytics config exist, and
-//! `/settings_snapshot` with its debug panel section. It reads the saved settings, not the host
-//! page's session overrides.
+//! The `Settings Snapshot` event: the settings whose value differs from their default. It is
+//! queued at startup (`reason: startup`) and again once a change has settled (`reason: changed`),
+//! so the latest event is the session's state. Every registered setting is reported except the
+//! ones in [`EXCLUDED`]. It reads the saved settings, not the host page's session overrides.
+//! `/settings_snapshot` and its debug panel section show the same result live.
+
+use std::time::Duration;
 
 use bevy::prelude::*;
 use bevy_console::ConsoleCommand;
+use common::structs::{DmPrivacy, WindowSetting};
 use console::{AddDebugSection, DebugSection, DoAddConsoleCommand};
-use system_bridge::settings::{SettingInfo, Settings};
+use system_bridge::settings::{
+    cache_size::CacheSizeSetting, max_downloads::MaxDownloadsSetting,
+    scene_threads::SceneThreadsSetting, step_number, video_threads::VideoThreadsSetting,
+    AppSetting, SettingInfo, Settings,
+};
 
 use crate::{
     data_definition::{SegmentEvent, SegmentEventSettingsSnapshot},
     segment_system::{SegmentConfig, SegmentMetricsEvents},
 };
+
+type Changed = serde_json::Map<String, serde_json::Value>;
+
+/// How long the changed settings stay the same before they are sent again.
+const SETTLE: Duration = Duration::from_secs(5);
+
+/// The settings the snapshot leaves out, by type so a renamed title still matches. Every other
+/// registered setting is reported, a new one included. DM privacy is the server's value, unset
+/// until social reads it after sign-in. Cache size, the thread counts and max downloads tune the
+/// machine, not the player's preferences. The window mode is window state.
+const EXCLUDED: &[fn() -> String] = &[
+    <DmPrivacy as AppSetting>::title,
+    <CacheSizeSetting as AppSetting>::title,
+    <SceneThreadsSetting as AppSetting>::title,
+    <VideoThreadsSetting as AppSetting>::title,
+    <MaxDownloadsSetting as AppSetting>::title,
+    <WindowSetting as AppSetting>::title,
+];
 
 pub(crate) struct SettingsSnapshotPlugin;
 
@@ -21,11 +47,7 @@ impl Plugin for SettingsSnapshotPlugin {
             .add_debug_section(DebugSection {
                 title: "Settings snapshot",
                 query: "/settings_snapshot",
-                fields: &[
-                    ("Changed", "changed_count"),
-                    ("Settings", "changed"),
-                    ("Not on this platform", "missing"),
-                ],
+                fields: &[("Changed", "changed_count"), ("Settings", "changed")],
                 actions: &[],
                 inputs: &[],
             })
@@ -33,92 +55,14 @@ impl Plugin for SettingsSnapshotPlugin {
     }
 }
 
-/// The settings the snapshot reports, by their name in the settings registry (`title()` in
-/// `system_bridge/src/settings/`). Every other setting is left out, even when changed: they are
-/// tuning knobs few players touch (cache size, threads, downloads, LOD rings) or window and
-/// rendering details that say little about the player. A new setting is reported only once it is
-/// added here, in the same change that adds the setting; a name that matches no registered setting
-/// is shown as `missing` by `/settings_snapshot` (some settings exist on one platform only).
-const REPORTED: &[&str] = &[
-    // Gameplay
-    "Walk Speed",
-    "Jog Speed",
-    "Run Speed",
-    "Jump Height",
-    "Running Jump Height",
-    "Chat bubbles",
-    "Point at marker visibility",
-    "Constrain Scene Uis",
-    // Controls
-    "Camera smoothing",
-    "Pointer and Locked Camera sensitivity",
-    "Camera Sensitivity",
-    "Camera Zoom",
-    "Movement sensitivity",
-    "Scroll sensitivity",
-    // Audio
-    "Master Volume",
-    "Scene Volume",
-    "Voice Volume",
-    "Voice Chat Volume",
-    "System Volume",
-    "Avatar Volume",
-    "Mute Mic in Background",
-    // Chat. "Receive direct messages from" is left out: it is the server's value, unset until
-    // social reads it after sign-in, so a snapshot taken at startup would always skip it.
-    "Language",
-    // Graphics: the settings the HUD's Graphics Preset sets
-    // (`react-web/bridge-scene/src/domains/graphicsPresets.ts`), so the preset can be told apart
-    "Target Frame Rate",
-    "VSync",
-    "Render Resolution",
-    "Anti-aliasing",
-    "Bloom",
-    "Avatar Outline",
-    "Jiggle Bones",
-    "Shadow settings",
-    "Shadow Distance",
-    "Light Count",
-    "Shadow Caster Count",
-    "Lens Flare",
-    "Depth of Field",
-    "SSAO",
-    "Fog",
-    "Sky Reflections",
-    // Performance
-    "Max Avatars",
-    "Scene Load Distance",
-];
-
-/// The [`REPORTED`] names that match no registered setting.
-fn missing(settings: &[SettingInfo]) -> Vec<&'static str> {
-    REPORTED
-        .iter()
-        .copied()
-        .filter(|name| !settings.iter().any(|s| s.name == *name))
-        .collect()
-}
-
-// Settings use whole steps (including tens, tenths and twentieths). Convert the step count to
-// a JSON number without widening a binary f32 approximation of e.g. 0.05 or 1/10.
-fn number(value: f32, step: f32) -> f64 {
-    if step <= 0.0 || !step.is_finite() {
-        return f64::from(value);
-    }
-    let steps = f64::from((value / step).round());
-    if step >= 1.0 {
-        steps * f64::from(step)
-    } else {
-        steps / f64::from(step.recip())
-    }
-}
-
-/// The [`REPORTED`] settings whose value differs from their default, by name: the variant's name
-/// when the setting has named variants, else the number. Unset (negative) values are skipped.
-fn changed_settings(settings: &[SettingInfo]) -> serde_json::Map<String, serde_json::Value> {
+/// The settings that are not [`EXCLUDED`] and whose value differs from their default, by name:
+/// the variant's name when the setting has named variants, else the number. Unset (negative)
+/// values are skipped.
+pub(crate) fn changed_settings<'a>(settings: impl IntoIterator<Item = &'a SettingInfo>) -> Changed {
+    let excluded: Vec<String> = EXCLUDED.iter().map(|title| title()).collect();
     let mut changed = std::collections::BTreeMap::new();
     for setting in settings {
-        if !REPORTED.contains(&setting.name.as_str())
+        if excluded.contains(&setting.name)
             || setting.value < 0.0
             || setting.value == setting.default
         {
@@ -129,30 +73,68 @@ fn changed_settings(settings: &[SettingInfo]) -> serde_json::Map<String, serde_j
             .flatten();
         let value = match variant {
             Some(variant) => serde_json::Value::from(variant.name.clone()),
-            None => serde_json::Value::from(number(setting.value, setting.step_size)),
+            None => serde_json::Value::from(step_number(setting.value, setting.step_size)),
         };
         changed.insert(setting.name.clone(), value);
     }
     changed.into_iter().collect()
 }
 
-/// Queues the event once, when the settings and the analytics config both exist.
-fn report_snapshot(
-    settings: Option<Res<Settings>>,
-    config: Option<Res<SegmentConfig>>,
-    mut metrics: ResMut<SegmentMetricsEvents>,
-    mut reported: Local<bool>,
-) {
-    if *reported {
-        return;
+/// Decides when a snapshot is sent: at once the first time, then once the changed settings have
+/// stayed the same for [`SETTLE`] and differ from the last map sent.
+#[derive(Default)]
+struct Reporter {
+    sent: Option<Changed>,
+    /// The map waiting to settle and the time it was first seen.
+    pending: Option<(Changed, Duration)>,
+}
+
+impl Reporter {
+    /// `current` is the map on frames it was recomputed, `now` the elapsed time. Returns the
+    /// event's reason and map when one is due.
+    fn observe(
+        &mut self,
+        current: Option<Changed>,
+        now: Duration,
+    ) -> Option<(&'static str, Changed)> {
+        let Some(sent) = &self.sent else {
+            let map = current?;
+            self.sent = Some(map.clone());
+            return Some(("startup", map));
+        };
+        if let Some(map) = current {
+            if &map == sent {
+                self.pending = None;
+            } else if self.pending.as_ref().map(|(pending, _)| pending) != Some(&map) {
+                self.pending = Some((map, now));
+            }
+        }
+        let (_, since) = self.pending.as_ref()?;
+        if now.saturating_sub(*since) < SETTLE {
+            return None;
+        }
+        let (map, _) = self.pending.take()?;
+        self.sent = Some(map.clone());
+        Some(("changed", map))
     }
-    let (Some(settings), Some(config)) = (settings, config) else {
+}
+
+/// Queues the snapshot at startup, and again once a change to the settings has settled.
+fn report_snapshot(
+    settings: Res<Settings>,
+    config: Res<SegmentConfig>,
+    time: Res<Time>,
+    mut metrics: ResMut<SegmentMetricsEvents>,
+    mut reporter: Local<Reporter>,
+) {
+    let current = (reporter.sent.is_none() || settings.is_changed())
+        .then(|| changed_settings(settings.settings.iter().map(|s| &s.info)));
+    let Some((reason, changed)) = reporter.observe(current, time.elapsed()) else {
         return;
     };
-    *reported = true;
-    let changed = changed_settings(&settings.get());
     metrics.add_event(
         SegmentEvent::SettingsSnapshot(SegmentEventSettingsSnapshot {
+            reason,
             changed_count: changed.len() as u32,
             changed,
         }),
@@ -172,13 +154,11 @@ fn settings_snapshot_command(
     if cmd.take().is_none() {
         return;
     }
-    let settings = settings.get();
-    let changed = changed_settings(&settings);
+    let changed = changed_settings(settings.settings.iter().map(|s| &s.info));
     cmd.reply_ok(
         serde_json::json!({
             "changed_count": changed.len(),
             "changed": changed,
-            "missing": missing(&settings),
         })
         .to_string(),
     );
@@ -187,8 +167,8 @@ fn settings_snapshot_command(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use common::rpc::RpcStreamSender;
-    use system_bridge::settings::NamedVariant;
+    use common::{rpc::RpcStreamSender, structs::AppConfig};
+    use system_bridge::settings::{player_settings::WalkSpeedSetting, NamedVariant};
 
     fn setting(name: &str, value: f32, default: f32, variants: &[&str]) -> SettingInfo {
         SettingInfo {
@@ -213,17 +193,17 @@ mod tests {
 
     #[test]
     fn only_changed_set_values_are_named_or_numbered() {
-        assert!(changed_settings(&[setting("Fog", 1.0, 1.0, &[])]).is_empty());
-
         let mut tenths = setting("Camera Zoom", 0.3, 1.0, &[]);
         tenths.step_size = 0.1;
-        let changed = changed_settings(&[
-            setting("Shadow settings", 2.0, 2.0, &["Off", "Low", "High"]),
+        let settings = [
+            setting("Fog", 1.0, 1.0, &[]),
             setting("VSync", 1.0, 0.0, &["Off", "On"]),
             setting("Render Resolution", 80.0, 100.0, &[]),
             setting("Chat bubbles", -1.0, 0.0, &["All", "Nearby only", "None"]),
             tenths,
-        ]);
+            setting(&CacheSizeSetting::title(), 3.0, 1.0, &[]),
+        ];
+        let changed = changed_settings(&settings);
         assert_eq!(
             serde_json::Value::Object(changed.clone()),
             serde_json::json!({
@@ -245,20 +225,37 @@ mod tests {
         assert_eq!(changed["Anti-aliasing"], serde_json::json!(9.0));
     }
 
-    // Only the listed settings are reported, even when another one changed.
-    #[test]
-    fn a_setting_outside_the_list_is_not_reported() {
-        assert!(!REPORTED.contains(&"Disk Cache Size"));
-        let changed = changed_settings(&[setting("Disk Cache Size", 3.0, 1.0, &[])]);
-        assert!(changed.is_empty());
-        let registry = [setting("Fog", 1.0, 1.0, &["Off", "On"])];
-        let absent = missing(&registry);
-        assert!(!absent.contains(&"Fog") && absent.contains(&"Walk Speed"));
+    fn map(value: i32) -> Changed {
+        let mut map = Changed::new();
+        map.insert("Fog".to_owned(), value.into());
+        map
     }
 
-    fn app(
-        with_settings: bool,
-    ) -> (
+    #[test]
+    fn a_change_is_sent_once_it_has_settled() {
+        let secs = Duration::from_secs;
+        let mut reporter = Reporter::default();
+        assert_eq!(
+            reporter.observe(Some(Changed::new()), secs(0)).unwrap().0,
+            "startup"
+        );
+        assert!(reporter.observe(None, secs(60)).is_none());
+
+        // a second change during the wait restarts it
+        assert!(reporter.observe(Some(map(1)), secs(100)).is_none());
+        assert!(reporter.observe(Some(map(2)), secs(103)).is_none());
+        assert!(reporter.observe(None, secs(105)).is_none());
+        let (reason, changed) = reporter.observe(None, secs(108)).unwrap();
+        assert_eq!((reason, changed), ("changed", map(2)));
+        assert!(reporter.observe(None, secs(200)).is_none());
+
+        // changing back to the sent map cancels the wait
+        assert!(reporter.observe(Some(map(3)), secs(300)).is_none());
+        assert!(reporter.observe(Some(map(2)), secs(302)).is_none());
+        assert!(reporter.observe(None, secs(400)).is_none());
+    }
+
+    fn app() -> (
         App,
         common::rpc::RpcStreamReceiver<system_bridge::AnalyticsEvent>,
     ) {
@@ -266,37 +263,46 @@ mod tests {
         let (sender, receiver) = RpcStreamSender::channel();
         let mut metrics = SegmentMetricsEvents::default();
         metrics.add_listener(sender);
+        let mut settings = Settings { settings: vec![] };
+        settings.add_int_setting::<WalkSpeedSetting>(&AppConfig::default());
         app.insert_resource(metrics)
+            .insert_resource(settings)
+            .insert_resource(SegmentConfig::new(
+                "user".into(),
+                "s".into(),
+                "1.0".into(),
+                None,
+                false,
+            ))
+            .insert_resource(Time::<()>::default())
             .add_systems(Update, report_snapshot);
-        if with_settings {
-            app.insert_resource(Settings { settings: vec![] })
-                .insert_resource(SegmentConfig::new(
-                    "user".into(),
-                    "s".into(),
-                    "1.0".into(),
-                    None,
-                    false,
-                ));
-        }
         (app, receiver)
     }
 
-    // The count of nothing changed is still sent, once: it is the denominator.
+    // Time is advanced by hand: no time plugin runs in the test app.
     #[test]
-    fn the_snapshot_is_sent_once_even_when_nothing_changed() {
-        let (mut app, mut receiver) = app(true);
-        app.update();
+    fn the_system_sends_at_startup_and_again_after_a_change_settles() {
+        let (mut app, mut receiver) = app();
         app.update();
         let got = receiver.try_recv().unwrap();
         assert_eq!(got.event, "Settings Snapshot");
+        assert_eq!(got.properties["reason"], "startup");
         assert_eq!(got.properties["changed_count"], 0);
-        assert!(got.properties["changed"].as_object().unwrap().is_empty());
         assert!(receiver.try_recv().is_err());
-    }
 
-    #[test]
-    fn nothing_is_sent_before_the_settings_exist() {
-        let (mut app, mut receiver) = app(false);
+        let mut config = AppConfig::default();
+        config.player_settings.walk_speed = 1.3;
+        app.world_mut().resource_mut::<Settings>().refresh(&config);
+        app.update();
+        assert!(receiver.try_recv().is_err());
+
+        app.world_mut()
+            .resource_mut::<Time>()
+            .advance_by(SETTLE + Duration::from_secs(1));
+        app.update();
+        let got = receiver.try_recv().unwrap();
+        assert_eq!(got.properties["reason"], "changed");
+        assert_eq!(got.properties["changed"]["Walk Speed"], 1.3);
         app.update();
         assert!(receiver.try_recv().is_err());
     }

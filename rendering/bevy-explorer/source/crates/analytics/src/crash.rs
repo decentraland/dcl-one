@@ -14,12 +14,15 @@ use common::{
     structs::AppConfig,
 };
 
+use system_bridge::settings::Settings;
+
 use crate::{
     data_definition::{
         build_segment_event_batch_item, SegmentEvent, SegmentEventCommonExplorerFields,
         SegmentEventExplorerError,
     },
     segment_system::{batch_body, SegmentConfig, SEGMENT_BATCH_URL},
+    settings_snapshot::changed_settings,
 };
 
 struct Snapshot {
@@ -31,6 +34,8 @@ struct Snapshot {
     /// The session's flags and the launch option's overrides (`common::feature_flags`), so the
     /// session can be run again with them; None until the read settles
     feature_flags: Option<(String, String)>,
+    /// The settings that differ from their defaults, as `Settings Snapshot` reports them
+    settings: serde_json::Map<String, serde_json::Value>,
 }
 
 static SNAPSHOT: Mutex<Option<Snapshot>> = Mutex::new(None);
@@ -39,8 +44,13 @@ pub fn refresh_crash_snapshot(
     config: Res<SegmentConfig>,
     app_config: Res<AppConfig>,
     flags: Res<FeatureFlags>,
+    settings: Res<Settings>,
 ) {
-    if !config.is_changed() && !app_config.is_changed() && !flags.is_changed() {
+    if !config.is_changed()
+        && !app_config.is_changed()
+        && !flags.is_changed()
+        && !settings.is_changed()
+    {
         return;
     }
     *SNAPSHOT.lock_ignore_poison() = Some(Snapshot {
@@ -50,6 +60,7 @@ pub fn refresh_crash_snapshot(
         common: config.common().clone(),
         feature_flags: (flags.source() != FlagsSource::Pending)
             .then(|| (flags.report(), flags.overrides_report())),
+        settings: changed_settings(settings.settings.iter().map(|s| &s.info)),
     });
 }
 
@@ -71,15 +82,20 @@ pub fn crash_batch(message: &str, source: &str) -> Option<(String, String)> {
     )
     .ok()?;
     let mut item = serde_json::to_value(&item).ok()?;
-    if let (Some((flags, overridden)), Some(properties)) = (
-        &snapshot.feature_flags,
-        item.get_mut("properties")
-            .and_then(serde_json::Value::as_object_mut),
-    ) {
-        properties.insert("feature_flags".to_owned(), flags.clone().into());
+    if let Some(properties) = item
+        .get_mut("properties")
+        .and_then(serde_json::Value::as_object_mut)
+    {
+        if let Some((flags, overridden)) = &snapshot.feature_flags {
+            properties.insert("feature_flags".to_owned(), flags.clone().into());
+            properties.insert(
+                "feature_flags_override".to_owned(),
+                overridden.clone().into(),
+            );
+        }
         properties.insert(
-            "feature_flags_override".to_owned(),
-            overridden.clone().into(),
+            "settings_changed".to_owned(),
+            snapshot.settings.clone().into(),
         );
     }
     let item = item.to_string();
@@ -97,19 +113,20 @@ mod tests {
     #[test]
     fn crash_batch_needs_consent_and_carries_the_snapshot() {
         let common = SegmentEventCommonExplorerFields::new("s".into(), "1.0".into(), None);
-        let set = |consent, feature_flags| {
+        let set = |consent, feature_flags, settings| {
             *SNAPSHOT.lock_ignore_poison() = Some(Snapshot {
                 user_id: "u".into(),
                 write_key: "k".into(),
                 consent,
                 common: common.clone(),
                 feature_flags,
+                settings,
             })
         };
         assert!(crash_batch("panicked at x", "panic").is_none());
-        set(false, None);
+        set(false, None, Default::default());
         assert!(crash_batch("panicked at x", "panic").is_none());
-        set(true, None);
+        set(true, None, Default::default());
         let (url, body) = crash_batch("panicked at x", "panic").unwrap();
         assert_eq!(url, SEGMENT_BATCH_URL);
         let body: serde_json::Value = serde_json::from_str(&body).unwrap();
@@ -122,13 +139,29 @@ mod tests {
         assert_eq!(item["properties"]["error_message"], "[panic] panicked at x");
         assert!(item["timestamp"].is_string());
         assert!(item["properties"].get("feature_flags").is_none());
+        assert_eq!(
+            item["properties"]["settings_changed"],
+            serde_json::json!({})
+        );
 
-        set(true, Some(("-*,bevy-test".into(), "bevy-test".into())));
+        let settings = serde_json::json!({ "Fog": "Off" })
+            .as_object()
+            .unwrap()
+            .clone();
+        set(
+            true,
+            Some(("-*,bevy-test".into(), "bevy-test".into())),
+            settings,
+        );
         let (_, body) = crash_batch("panicked at x", "panic").unwrap();
         let body: serde_json::Value = serde_json::from_str(&body).unwrap();
         let properties = &body["batch"][0]["properties"];
         assert_eq!(properties["feature_flags"], "-*,bevy-test");
         assert_eq!(properties["feature_flags_override"], "bevy-test");
+        assert_eq!(
+            properties["settings_changed"],
+            serde_json::json!({ "Fog": "Off" })
+        );
         assert_eq!(properties["session_id"], "s");
     }
 }

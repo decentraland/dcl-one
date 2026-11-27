@@ -69,21 +69,23 @@ flags; `feature_flags_override`, the launch option's own; `feature_flags_source`
 other backend (`--feature-flags`, `--gateway`, a node's mirror, else `feature-flags.<base domain>`);
 the anonymous machine id and, natively, the `Referer` go only to a Decentraland host. Other events
 join to it on `session_id`. The
-web crash report carries `feature_flags` and `feature_flags_override` itself (`crash.rs`).
+web crash report carries `feature_flags`, `feature_flags_override` and `settings_changed` (the
+`Settings Snapshot` map) itself (`crash.rs`).
 `/feature_flags` and the debug panel's "Feature flags" section show the session's flags.
 
-Once per session, when the settings registry and the analytics config exist, the engine sends
-`Settings Snapshot` (`settings_snapshot.rs`): `changed`, the settings whose value differs from
-their default, keyed by the setting's name, and `changed_count`, the number of entries in it
-(0 and an empty `changed` when nothing differs, so adoption has a denominator). Only the
-settings named in `REPORTED` in that file are reported: Gameplay, Controls, Audio, Language, the
-graphics settings the HUD's Graphics Preset sets, Max Avatars and Scene Load Distance. The DM
-privacy setting is not: it is the server's value, unknown until after sign-in. A new
-setting is reported once its name is added there. A setting with named variants reports the
-variant's name, any other the number; a setting still unset (negative) is left out. It reads the
-player's saved settings, not the host page's session overrides. `/settings_snapshot` and the
-debug panel's "Settings snapshot" section show the same result live, plus `missing`: the listed
-names no setting on this platform matches.
+The engine sends `Settings Snapshot` (`settings_snapshot.rs`) at startup (`reason: startup`) and
+again 5 s after the settings stop changing, when they differ from the last one sent
+(`reason: changed`). Adoption counts use the one `startup` event per session; the latest event is
+the session's state. `changed` holds the settings whose value differs from their default, keyed by the
+setting's name, and `changed_count` the number of entries in it (0 and an empty `changed` when
+nothing differs, so adoption has a denominator). Every registered setting is reported except the
+ones in `EXCLUDED` in that file: DM privacy (the server's value, unknown until after sign-in), disk
+cache size, scene threads, max videos, max downloads and window mode. A new setting is reported
+without a change there. A setting with named variants reports the variant's name, any other the
+number; a setting still unset (negative) is left out. It reads the player's saved settings, not
+the host page's session overrides. The startup event is queued before sign-in, so it carries no
+wallet; analysis joins on `session_id`. `/settings_snapshot` and the debug panel's "Settings
+snapshot" section show the same result live.
 
 The loading screen is reported as mobile's funnel names it (`loading.rs`): `Screen Viewed`
 LOADING_START {position, realm, when: on_explorer_ready | on_changerealm | on_moveto} when it

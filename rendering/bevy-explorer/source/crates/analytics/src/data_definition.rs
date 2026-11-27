@@ -284,9 +284,12 @@ pub struct SegmentEventFeatureFlagsResolved {
     pub feature_flags_source: String,
 }
 
-/// The player settings that differ from their defaults, once per session.
+/// The player settings that differ from their defaults.
 #[derive(Serialize)]
 pub struct SegmentEventSettingsSnapshot {
+    /// `startup` for the session's first snapshot, `changed` for one sent after the settings
+    /// changed.
+    pub reason: &'static str,
     /// The number of entries in `changed`; 0 when every setting is at its default.
     pub changed_count: u32,
     /// Each changed setting by its registry name: the variant's name for a named setting, else
