@@ -76,6 +76,35 @@ describe('ContextMenu', () => {
     expect(onClick).toHaveBeenCalledTimes(1)
   })
 
+  it("draws the mark where a row's icon sits, before the label, and keeps that place empty when unchecked", () => {
+    render(
+      <ContextMenu
+        items={[
+          { kind: 'option', label: 'All Messages', checked: true },
+          { kind: 'option', label: 'None', checked: false }
+        ]}
+      />
+    )
+    const all = screen.getByRole('menuitemradio', { name: 'All Messages' })
+    const none = screen.getByRole('menuitemradio', { name: 'None' })
+    const [allMark, allLabel] = Array.from(all.children)
+    expect(allMark).toHaveAttribute('aria-hidden', 'true')
+    expect(allMark?.querySelector('svg')).not.toBeNull()
+    expect(allLabel).toHaveTextContent('All Messages')
+    const [noneMark, noneLabel] = Array.from(none.children)
+    expect(noneMark).toBeEmptyDOMElement()
+    expect(noneMark?.className).toBe(allMark?.className)
+    expect(noneLabel).toHaveTextContent('None')
+  })
+
+  it("keeps an option's own icon after the mark", () => {
+    render(<ContextMenu items={[{ kind: 'option', label: 'Grid', checked: true, icon: <i data-testid="grid" /> }]} />)
+    const row = screen.getByRole('menuitemradio', { name: 'Grid' })
+    const [mark, icon] = Array.from(row.children)
+    expect(mark?.querySelector('svg')).not.toBeNull()
+    expect(icon).toContainElement(screen.getByTestId('grid'))
+  })
+
   it('toggles a switch row from a click beside the switch and reports the new value', () => {
     const onChange = vi.fn()
     render(<ContextMenu items={[{ kind: 'toggle', label: 'Mute', checked: false, onChange }]} />)
@@ -103,11 +132,21 @@ describe('ContextMenu', () => {
     expect(screen.getByRole('menuitemcheckbox')).toHaveAttribute('aria-checked', 'false')
   })
 
-  it('shows only a chevron for a submenu row without items', () => {
-    render(<ContextMenu items={[{ kind: 'submenu', label: 'More' }]} />)
-    const row = screen.getByRole('menuitem', { name: /More/ })
+  it('shows only a chevron for a submenu row without items, hidden from its name', () => {
+    const onClick = vi.fn()
+    render(<ContextMenu items={[{ kind: 'submenu', label: 'More', onClick }]} />)
+    const row = screen.getByRole('menuitem', { name: 'More' })
     expect(row).not.toHaveAttribute('aria-haspopup')
-    expect(row).toHaveTextContent('›')
+    const chevron = row.lastElementChild
+    expect(chevron).toHaveAttribute('aria-hidden', 'true')
+    expect(chevron?.querySelector('svg')).not.toBeNull()
+    fireEvent.click(row)
+    expect(onClick).toHaveBeenCalledTimes(1)
+  })
+
+  it('gives a plain row no chevron', () => {
+    render(<ContextMenu items={[{ label: 'View profile' }]} />)
+    expect(screen.getByRole('menuitem', { name: 'View profile' }).querySelector('svg')).toBeNull()
   })
 
   it('opens the items of a submenu row beside it and hands the list to whileSubmenuOpen', () => {
@@ -128,11 +167,20 @@ describe('ContextMenu', () => {
     expect(whileSubmenuOpen).toHaveBeenCalledTimes(1)
   })
 
-  it('takes the sheet and scroll forms', () => {
+  it('takes the scroll form', () => {
     const view = render(<ContextMenu items={[]} />)
     const plain = screen.getByRole('menu').className
-    view.rerender(<ContextMenu items={[]} variant="sheet" scroll />)
+    view.rerender(<ContextMenu items={[]} scroll />)
     expect(screen.getByRole('menu').className).not.toBe(plain)
+  })
+
+  it('fits its rows unless given a width, which it takes in px', () => {
+    const view = render(<ContextMenu items={[]} />)
+    expect(screen.getByRole('menu')).not.toHaveAttribute('style')
+    view.rerender(<ContextMenu items={[]} width={260} />)
+    expect(screen.getByRole('menu').style.getPropertyValue('--menu-width')).toBe('260px')
+    view.rerender(<ContextMenu items={[]} width={0} />)
+    expect(screen.getByRole('menu').style.getPropertyValue('--menu-width')).toBe('0px')
   })
 })
 
@@ -140,6 +188,27 @@ describe('Submenu', () => {
   const list = (
     <ContextMenu items={[{ label: 'First' }, { label: 'Second' }]} aria-label="Communities" scroll />
   )
+
+  it("keeps its host row's text chevron outside a menu and takes the menu's icon chevron inside one", () => {
+    const icon = <i data-testid="people" />
+    const view = render(
+      <Submenu label="Invite" icon={icon}>
+        {list}
+      </Submenu>
+    )
+    const alone = screen.getByRole('menuitem', { name: 'Invite' })
+    expect(alone.lastElementChild).toHaveTextContent('›')
+    expect(alone.lastElementChild).toHaveAttribute('aria-hidden', 'true')
+    expect(alone.querySelector('svg')).toBeNull()
+    const aloneIcon = screen.getByTestId('people').parentElement?.className
+    view.unmount()
+    render(<ContextMenu items={[{ kind: 'submenu', label: 'Invite', icon, items: [{ label: 'First' }] }]} />)
+    const inMenu = screen.getByRole('menuitem', { name: 'Invite' })
+    expect(inMenu.lastElementChild).toHaveAttribute('aria-hidden', 'true')
+    expect(inMenu.lastElementChild?.querySelector('svg')).not.toBeNull()
+    expect(inMenu).not.toHaveTextContent('›')
+    expect(screen.getByTestId('people').parentElement?.className).not.toBe(aloneIcon)
+  })
 
   it('opens on hover and closes when the pointer leaves', () => {
     render(<Submenu label="Invite">{list}</Submenu>)

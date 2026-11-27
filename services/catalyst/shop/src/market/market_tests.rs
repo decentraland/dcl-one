@@ -5770,6 +5770,26 @@ async fn legacy_and_v3_open_orders_share_the_published_ownership_proof() {
         );
         cases.push((uri, legacy));
     }
+    // A full v3 window of newer candidates still leaves room for the
+    // older listings with published verdict and owner evidence.
+    sqlx::query(
+        "INSERT INTO shop.trades
+            (network, chain_id, signature, hashed_signature, checks, signer, type,
+             expires_at, effective_since, created_at)
+         SELECT 'MATIC', 137, 'unverified-' || n, 'unverified-hash-' || n, '{}', $1,
+                'public_nft_order', now() + interval '30 days',
+                now() - interval '1 day', now() + interval '1 day'
+         FROM generate_series(1, 1000) n",
+    )
+    .bind(WALLET_A)
+    .execute(pool)
+    .await
+    .unwrap();
+    let (status, body) = get(app.clone(), "/v1/orders?first=24").await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["total"], "4", "{body}");
+    assert_eq!(body["data"].as_array().unwrap().len(), 4, "{body}");
+
     let (nft_uri, _) = &cases[0];
     let (land_uri, _) = &cases[1];
 
@@ -6311,6 +6331,42 @@ async fn the_legacy_order_total_caps_each_network_and_sums_them() {
     assert_eq!(body["total"], "6000", "{body}");
     let (_, body) = get(app(), "/v1/orders?status=sold&first=1&network=MATIC").await;
     assert_eq!(body["total"], "3000", "{body}");
+    let land = crate::land_authz::LAND_MAINNET;
+    sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
+        "INSERT INTO land_authz.index_cursor
+            (network, land_registry, estate_registry, last_block, folded_block, folded_at, full_replay_started)
+         VALUES ('{network}', '{land_registry}', '{estate_registry}', 100, 100, timezone('UTC', now()), true);
+         UPDATE shop.legacy_order SET expires_at = 4102444800000
+         WHERE network = 'matic' OR token_id > 1;
+         INSERT INTO shop.legacy_order
+            (network, marketplace_address, order_id, contract_address, token_id, seller,
+             price, expires_at, status, created_block, created_log, created_at,
+             updated_block, updated_log, updated_at)
+         SELECT net, 'm', 'open-' || i, address, i, '{WALLET_A}',
+                1, 4102444800000, 'open', i, 0, i, i, 0, i
+         FROM (VALUES ('matic', '{c}', 3000), ('ethereum', '{land_registry}', 2000)) t(net, address, n)
+         CROSS JOIN LATERAL generate_series(1, n) i",
+        network = land.network,
+        land_registry = land.land_registry,
+        estate_registry = land.estate_registry,
+    )))
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "UPDATE shop.chain_cursor SET folded_at = timezone('UTC', now()) WHERE indexer = 'nft'",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    for (path, total) in [
+        ("/v1/orders?first=1", "9999"),
+        ("/v1/orders?first=1&network=MATIC", "5000"),
+    ] {
+        let (status, body) = get(app(), path).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["total"], total, "{body}");
+    }
     own.drop().await;
 }
 

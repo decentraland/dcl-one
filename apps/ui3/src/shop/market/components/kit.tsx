@@ -6,8 +6,7 @@
 import { QueryClient, QueryClientContext, QueryClientProvider } from "@tanstack/react-query";
 import { useContext, useMemo, useState, type ReactNode } from "react";
 
-import { Button, Spinner, EmptyState } from "@dcl/one-ui";
-import ManaMark from "../../../atoms/ManaMark";
+import { Button, EmptyState, ShopManaMark, Spinner } from "@dcl/one-ui";
 import type { Eip1193Provider } from "../../../data/auth/wallet";
 import { chainLabel, isPolygon } from "@shop/model/chain";
 import { formatMana, type ManaWei } from "@shop/model/money";
@@ -114,7 +113,7 @@ export function useWalletBlock(what: string): ReactNode | null {
 export function ManaAmount({ wei, network = "polygon", className, decimals }: { wei: bigint; network?: "polygon" | "ethereum"; className?: string; decimals?: number }) {
   return (
     <span className={`mk-mana${className ? ` ${className}` : ""}`}>
-      <ManaMark size={14} network={network} />
+      <ShopManaMark size={14} network={network} />
       <span>{formatMana(wei as ManaWei, { group: true, decimals })}</span>
       <span className="u-sr-only"> MANA</span>
     </span>
