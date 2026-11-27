@@ -1892,6 +1892,27 @@ operator must hear about (`shop/src/credits/alerts.rs`), one row per
   - `purchase_settled`, keyed by salt: a credit's first use settled (not a
     replayed debit), in the settlement's transaction, with its lines from
     `authorization_lines` (the primary key's prefix).
+- **the daily summary** (`daily_summary.rs`): `daily_summary`, keyed by the
+  closed UTC day (`YYYY-MM-DD`). The leased `credits-daily-summary` job runs
+  every five minutes where `OPS_WRITES_ENABLED` is on, and does nothing
+  before `CREDITS_DAILY_SUMMARY_HOUR_UTC` (9). From that hour:
+  - one `EXISTS` on `alerts_kind_dedupe_key` ends the pass once yesterday is
+    queued, so a tick otherwise reads nothing;
+  - otherwise it reads the day's figures on one REPEATABLE READ, READ ONLY
+    snapshot with a 10-second statement timeout. The figures come from
+    `purchases`, `usage_settlements` with `usages` and `authorization_lines`,
+    `wallets`, `goal_grants`, `authorizations` and `payment_reversals`.
+    `usage_settlements` and `purchases` are scanned for the day: one read a
+    day, of tables with a row per purchase;
+  - it then reads the CreditsManager's MANA balance and the MANA/USD round
+    over the CreditUsed index's RPC, 10 seconds each. A failed read is stored
+    as `unavailable`, and the row is queued anyway;
+  - the insert's `ON CONFLICT DO NOTHING` is the claim, so a second replica
+    or a restart adds nothing.
+
+  The row is rendered from its payload at delivery. The figures, and those
+  credits-server reported that the node doesn't, are listed in the module's
+  doc.
 
 The writer of delivery is the leased `credits-alerts` job, every 15 seconds
 where `OPS_WRITES_ENABLED` is on. It claims up to 20 due `pending` rows

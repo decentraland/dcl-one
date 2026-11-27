@@ -594,6 +594,11 @@ pub struct ShopConfig {
     )]
     pub credits_usd_pegged_feed_max_age_secs: u64,
 
+    /// The UTC hour from which the credits daily summary reports yesterday,
+    /// 0 to 23 (upstream SHOP_DAILY_SUMMARY_HOUR_UTC).
+    #[arg(long, env = "CREDITS_DAILY_SUMMARY_HOUR_UTC", default_value_t = 9)]
+    pub credits_daily_summary_hour_utc: u32,
+
     /// primary (the legacy secondary | auto run as primary: credits pay for
     /// CollectionStore mints only, SHOP.md).
     #[arg(long, env = "CHECKOUT_FULFILLMENT_MODE", default_value = "primary")]
