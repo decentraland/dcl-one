@@ -292,9 +292,9 @@ export interface BackpackState {
   dismissOutfitError: () => void
   /** Equip a saved outfit (applies its body shape, colors and wearables). */
   equipOutfit: (slot: number) => void
-  /** Shows a saved outfit on the avatar until `restoreOutfitPreview`, unless it is equipped. */
+  /** Show a saved outfit on the avatar until `restoreOutfitPreview`, unless it is equipped. */
   previewOutfit: (slot: number) => void
-  /** Puts back the look from before the first outfit preview, unless an outfit was equipped since. */
+  /** Put back the look from before the first outfit preview, unless an outfit was equipped since. */
   restoreOutfitPreview: () => void
   /** The randomize bar's state for this Backpack session. */
   outfitHistory: OutfitHistory

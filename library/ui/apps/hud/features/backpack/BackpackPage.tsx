@@ -749,7 +749,7 @@ export function BackpackPage({
                               inert={outfitWorkSlot != null && outfitWorkSlot !== i}
                               onSave={() => backpack.saveOutfit(i)}
                               onPreview={() => backpack.previewOutfit(i)}
-                    onEquip={() => backpack.equipOutfit(i)}
+                              onEquip={() => backpack.equipOutfit(i)}
                               onDelete={() => confirmDeleteOutfit(i)}
                             />
                           )

@@ -119,7 +119,6 @@ describe('the bridge outfits domain', () => {
     readOwnedNames.mockResolvedValue([])
     captureAvatarThumbnail.mockResolvedValue(PICTURE)
     lookShown.mockResolvedValue(undefined)
-    // The draft takes each change, as the Backpack's look does.
     editLook.mockImplementation((change) => {
       if (look != null) look = { ...look, ...change }
     })
