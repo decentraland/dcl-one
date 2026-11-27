@@ -1166,3 +1166,271 @@ fn a_realm_change_refused_in_a_preview_leaves_no_landing_for_the_next_one() {
     assert_eq!(landing_spawn_point(&app, player), Some(None));
     assert_eq!(landing_position(&app, player), None);
 }
+
+/// Holds a stub content server's scene list back until opened.
+#[derive(Clone, Default)]
+struct ListGate(std::sync::Arc<(std::sync::Mutex<bool>, std::sync::Condvar)>);
+
+impl ListGate {
+    fn open() -> Self {
+        let gate = Self::default();
+        gate.release();
+        gate
+    }
+
+    fn release(&self) {
+        *self.0 .0.lock().unwrap() = true;
+        self.0 .1.notify_all();
+    }
+
+    fn wait(&self) {
+        let open = self.0 .0.lock().unwrap();
+        drop(self.0 .1.wait_while(open, |open| !*open).unwrap());
+    }
+}
+
+/// The requests a stub content server has seen: the request line and the body.
+type Seen = std::sync::Arc<std::sync::Mutex<Vec<(String, String)>>>;
+
+/// A content server on loopback answering `GET <content>/entities/active/scenes` with `scenes`
+/// once `gate` opens (`Err` names the status of a refusal: a 404 from a content server without
+/// the route, a 503 from one that may miss scenes) and `POST
+/// <content>/entities/active` with `entities`, each connection on its own thread. Returns its
+/// content URL and the requests it has seen.
+fn stub_content_server(
+    scenes: Result<serde_json::Value, &'static str>,
+    entities: serde_json::Value,
+    gate: ListGate,
+) -> (String, Seen) {
+    use std::io::{BufRead, BufReader, Read, Write};
+
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let url = format!("http://{}/content", listener.local_addr().unwrap());
+    let seen = Seen::default();
+    let log = seen.clone();
+    std::thread::spawn(move || {
+        for stream in listener.incoming() {
+            let Ok(mut stream) = stream else { return };
+            let (scenes, entities, gate, log) =
+                (scenes.clone(), entities.clone(), gate.clone(), log.clone());
+            std::thread::spawn(move || {
+                let mut reader = BufReader::new(stream.try_clone().unwrap());
+                let mut request_line = String::new();
+                if reader.read_line(&mut request_line).is_err() {
+                    return;
+                }
+                let mut length = 0;
+                loop {
+                    let mut header = String::new();
+                    if reader.read_line(&mut header).is_err() || header.trim().is_empty() {
+                        break;
+                    }
+                    if let Some((name, value)) = header.split_once(':') {
+                        if name.eq_ignore_ascii_case("content-length") {
+                            length = value.trim().parse().unwrap_or(0);
+                        }
+                    }
+                }
+                let mut request_body = vec![0; length];
+                let _ = reader.read_exact(&mut request_body);
+                let request_line = request_line.trim().to_owned();
+                log.lock().unwrap().push((
+                    request_line.clone(),
+                    String::from_utf8_lossy(&request_body).into_owned(),
+                ));
+                let (status, body) =
+                    if request_line.starts_with("GET /content/entities/active/scenes ") {
+                        gate.wait();
+                        match &scenes {
+                            Ok(scenes) => ("200 OK", scenes.to_string()),
+                            Err(status) => (*status, "Refused".to_owned()),
+                        }
+                    } else if request_line.starts_with("POST /content/entities/active ") {
+                        ("200 OK", entities.to_string())
+                    } else {
+                        ("404 Not Found", "Not found".to_owned())
+                    };
+                let _ = write!(
+                    stream,
+                    "HTTP/1.1 {status}\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+            });
+        }
+    });
+    (url, seen)
+}
+
+/// The pointers of every `POST <content>/entities/active` a stub content server has seen.
+fn pointer_requests(seen: &Seen) -> Vec<serde_json::Value> {
+    seen.lock()
+        .unwrap()
+        .iter()
+        .filter(|(line, _)| line.starts_with("POST /content/entities/active "))
+        .map(|(_, body)| {
+            serde_json::from_str::<serde_json::Value>(body).unwrap()["pointers"].clone()
+        })
+        .collect()
+}
+
+fn asked_for_the_list(seen: &Seen) -> bool {
+    seen.lock()
+        .unwrap()
+        .iter()
+        .any(|(line, _)| line.starts_with("GET /content/entities/active/scenes "))
+}
+
+/// A city of 61x61 parcels whose content server is `content`.
+fn city_realm_app(content: String) -> App {
+    use ipfs::{EndpointConfig, IpfsResource, ServerAbout};
+
+    let (mut app, _) = realm_app(RealmInitialLocation::None);
+    app.world()
+        .resource::<IpfsResource>()
+        .clone()
+        .set_realm_about(ServerAbout {
+            content: Some(EndpointConfig {
+                healthy: true,
+                public_url: content,
+            }),
+            ..Default::default()
+        });
+    change_realm_to(
+        &mut app,
+        CurrentRealm {
+            about_url: "https://realm.example/about".to_owned(),
+            address: "https://realm.example".to_owned(),
+            config: ServerConfiguration {
+                map: Some(common::structs::MapData {
+                    sizes: vec![common::structs::Region {
+                        left: 0,
+                        right: 60,
+                        top: 60,
+                        bottom: 0,
+                    }],
+                    ..Default::default()
+                }),
+                ..Default::default()
+            },
+            ..Default::default()
+        },
+    );
+    app
+}
+
+fn pointer(app: &App, parcel: IVec2) -> Option<PointerResult> {
+    app.world().resource::<ScenePointers>().get(parcel).cloned()
+}
+
+fn the_scene() -> PointerResult {
+    PointerResult::Exists {
+        hash: "bafyscene".to_owned(),
+        urn: None,
+    }
+}
+
+/// The scene on parcels 0,0 and 0,1 (base 0,0) as `POST /entities/active` answers it.
+fn the_scene_entity() -> serde_json::Value {
+    serde_json::json!([{
+        "id": "bafyscene",
+        "type": "scene",
+        "pointers": ["0,0", "0,1"],
+        "content": [],
+        "metadata": { "main": "index.js", "scene": { "base": "0,0", "parcels": ["0,0", "0,1"] } },
+    }])
+}
+
+/// The realm's scene list: the scene the player stands in and one far from them.
+fn the_scene_list() -> serde_json::Value {
+    serde_json::json!([
+        { "id": "bafyscene", "pointers": ["0,0", "0,1"], "timestamp": 1, "base": "0,0" },
+        { "id": "bafyfar", "pointers": ["50,50"], "timestamp": 2, "base": null },
+    ])
+}
+
+// A realm whose content server lists its active scenes places every one of them, wherever it is,
+// with its base, and every parcel none covers is empty: none is left to resolve by range.
+#[test]
+fn a_city_listing_its_active_scenes_places_them_all_at_once() {
+    let far = IVec2::new(50, 50);
+    let (content, seen) =
+        stub_content_server(Ok(the_scene_list()), the_scene_entity(), ListGate::open());
+    let mut app = city_realm_app(content);
+
+    run_until(&mut app, |app| pointer(app, far).is_some());
+
+    assert_eq!(
+        pointer(&app, far),
+        Some(PointerResult::Exists {
+            hash: "bafyfar".to_owned(),
+            urn: None,
+        })
+    );
+    assert_eq!(pointer(&app, IVec2::new(0, 1)), Some(the_scene()));
+    assert_eq!(
+        pointer(&app, IVec2::new(40, 40)),
+        Some(PointerResult::Nothing)
+    );
+    let pointers = app.world().resource::<ScenePointers>();
+    assert_eq!(pointers.base("bafyscene"), Some(IVec2::ZERO));
+    assert_eq!(pointers.base("bafyfar"), None);
+    assert!(asked_for_the_list(&seen));
+    // at most the player's own parcel was asked for on its own
+    for pointers in pointer_requests(&seen) {
+        assert_eq!(pointers, serde_json::json!(["0,0"]));
+    }
+}
+
+// Until the list answers, the parcel the player starts or lands in resolves on its own, so their
+// scene loads without waiting for the whole realm; the rest waits for the list.
+#[test]
+fn a_city_awaiting_its_scene_list_resolves_the_players_parcel_first() {
+    let gate = ListGate::default();
+    let (content, seen) =
+        stub_content_server(Ok(the_scene_list()), the_scene_entity(), gate.clone());
+    let mut app = city_realm_app(content);
+
+    run_until(&mut app, |app| pointer(app, IVec2::ZERO).is_some());
+
+    assert_eq!(pointer(&app, IVec2::ZERO), Some(the_scene()));
+    // in load range, but not the player's parcel
+    assert_eq!(pointer(&app, IVec2::X), None);
+    assert_eq!(pointer_requests(&seen), [serde_json::json!(["0,0"])]);
+
+    gate.release();
+    run_until(&mut app, |app| pointer(app, IVec2::new(50, 50)).is_some());
+    assert_eq!(pointer(&app, IVec2::X), Some(PointerResult::Nothing));
+    assert_eq!(pointer_requests(&seen).len(), 1);
+}
+
+// A content server without the list (no route, a node that may miss scenes, or an empty list)
+// resolves parcels around the player as before, and leaves the rest unknown.
+#[test]
+fn a_city_without_the_active_scene_list_resolves_parcels_by_range() {
+    for scenes in [
+        Err("404 Not Found"),
+        Err("503 Service Unavailable"),
+        Ok(serde_json::json!([])),
+    ] {
+        let case = format!("{scenes:?}");
+        let (content, seen) = stub_content_server(scenes, the_scene_entity(), ListGate::open());
+        let mut app = city_realm_app(content);
+
+        // a parcel in load range beyond the player's own: the range resolves once the list is refused
+        run_until(&mut app, |app| pointer(app, IVec2::X).is_some());
+
+        assert_eq!(
+            pointer(&app, IVec2::X),
+            Some(PointerResult::Nothing),
+            "{case}"
+        );
+        assert_eq!(pointer(&app, IVec2::new(0, 1)), Some(the_scene()), "{case}");
+        assert_eq!(
+            app.world().resource::<ScenePointers>().base("bafyscene"),
+            Some(IVec2::ZERO),
+            "{case}"
+        );
+        assert_eq!(pointer(&app, IVec2::new(50, 50)), None, "{case}");
+        assert!(asked_for_the_list(&seen), "{case}");
+    }
+}

@@ -1636,17 +1636,7 @@ impl IpfsIo {
                         Duration::from_secs(10),
                     )
                     .await
-                    .map_err(|e| match e {
-                        platform::FetchError::Headers => {
-                            anyhow!("timed out awaiting active-entities headers")
-                        }
-                        platform::FetchError::Send(e) => anyhow!(e),
-                        platform::FetchError::Status(s, _) => anyhow!("status: {s}"),
-                        platform::FetchError::Stalled => {
-                            anyhow!("active-entities response stalled")
-                        }
-                        platform::FetchError::Body(e) => anyhow!(e),
-                    })?;
+                    .map_err(active_fetch_error)?;
                     let active_entities: ActiveEntitiesResponse =
                         serde_json::from_slice(&fetched.body).map_err(|e| anyhow!(e))?;
                     let mut res = Vec::default();
@@ -1691,6 +1681,60 @@ impl IpfsIo {
                 })
             }
         }
+    }
+
+    /// Every active scene of the realm, from the content server's `GET /entities/active/scenes`
+    /// (the content server of `endpoint`, else the realm's). An unchanged list is revalidated, not
+    /// downloaded again: natively the last one is kept with its `ETag` ([`ActiveScenesCache`]) and
+    /// asked for with `If-None-Match`, a `304` reusing it; on web the browser's HTTP cache does the
+    /// same. Older content servers do not serve it: the error then is a `status: 404 Not Found`,
+    /// and the caller resolves parcels with [`Self::active_entities`] instead.
+    pub fn active_scenes(self: &Arc<Self>, endpoint: Option<&str>) -> ActiveScenesTask {
+        let url = match endpoint {
+            Some(url) => Some(url.to_owned()),
+            None => self
+                .realm_config_receiver
+                .borrow()
+                .as_ref()
+                .and_then(|c| c.about.content.as_ref())
+                .map(|content| content.public_url.to_owned()),
+        }
+        .map(|url| format!("{url}/entities/active/scenes"));
+        let client = self.client.clone();
+        let cache = ActiveScenesCache::new(self.cache_path(), url.as_deref());
+        IoTaskPool::get().spawn_compat(async move {
+            let url = url.ok_or(anyhow!("not connected"))?;
+            let cached = cache.read().await;
+            let mut request = client.get(url);
+            if let Some((etag, _)) = &cached {
+                request = request.header(reqwest::header::IF_NONE_MATCH, etag.as_str());
+            }
+            let fetched =
+                platform::fetch(request, Duration::from_secs(30), Duration::from_secs(10)).await;
+            let (body, from_cache) = match (fetched, cached) {
+                (Ok(fetched), _) => {
+                    if let Some(etag) = fetched
+                        .headers
+                        .get(reqwest::header::ETAG)
+                        .and_then(|etag| etag.to_str().ok())
+                    {
+                        cache.write(etag, &fetched.body).await;
+                    }
+                    (fetched.body, false)
+                }
+                (Err(platform::FetchError::Status(status, _)), Some((_, body)))
+                    if status == reqwest::StatusCode::NOT_MODIFIED =>
+                {
+                    (body, true)
+                }
+                (Err(e), _) => return Err(active_fetch_error(e)),
+            };
+            let scenes = serde_json::from_slice(&body);
+            if scenes.is_err() && from_cache {
+                cache.forget().await;
+            }
+            Ok(scenes?)
+        })
     }
 
     pub fn client(&self) -> reqwest::Client {
@@ -2023,6 +2067,97 @@ impl IpfsIo {
 }
 
 pub type ActiveEntityTask = Task<Result<Vec<EntityDefinition>, anyhow::Error>>;
+pub type ActiveScenesTask = Task<Result<Vec<ActiveScene>, anyhow::Error>>;
+
+/// One scene of `GET /entities/active/scenes`: `pointers` are all its parcels, `base` its
+/// `scene.base`.
+#[derive(Deserialize, Debug)]
+pub struct ActiveScene {
+    pub id: String,
+    pub pointers: Vec<String>,
+    #[serde(default)]
+    pub base: Option<String>,
+}
+
+/// The last active scene list of a content server and its `ETag`, kept natively under the cache
+/// folder as `active-scenes/<url>` (the tag, a newline, the body), apart from the hash-named files
+/// the cache trim and heal manage. The web build keeps none: the browser's HTTP cache revalidates
+/// the list.
+#[cfg(not(target_arch = "wasm32"))]
+struct ActiveScenesCache(Option<PathBuf>);
+#[cfg(target_arch = "wasm32")]
+struct ActiveScenesCache;
+
+impl ActiveScenesCache {
+    #[cfg(not(target_arch = "wasm32"))]
+    fn new(cache_root: Option<&Path>, url: Option<&str>) -> Self {
+        Self(cache_root.zip(url).map(|(root, url)| {
+            root.join("active-scenes")
+                .join(urlencoding::encode(url).as_ref())
+        }))
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    fn new(_cache_root: Option<&Path>, _url: Option<&str>) -> Self {
+        Self
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    async fn read(&self) -> Option<(String, Vec<u8>)> {
+        let mut stored = async_fs::read(self.0.as_ref()?).await.ok()?;
+        let newline = stored.iter().position(|b| *b == b'\n')?;
+        let body = stored.split_off(newline + 1);
+        stored.pop();
+        Some((String::from_utf8(stored).ok()?, body))
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    async fn read(&self) -> Option<(String, Vec<u8>)> {
+        None
+    }
+
+    /// Replaces the entry whole (written aside, then renamed over it); a failure keeps the old one.
+    #[cfg(not(target_arch = "wasm32"))]
+    async fn write(&self, etag: &str, body: &[u8]) {
+        let Some(file) = &self.0 else { return };
+        if etag.contains('\n') {
+            return;
+        }
+        let aside = file.with_extension("part");
+        let written = async {
+            if let Some(dir) = file.parent() {
+                async_fs::create_dir_all(dir).await?;
+            }
+            async_fs::write(&aside, [etag.as_bytes(), b"\n", body].concat()).await?;
+            async_fs::rename(&aside, file).await
+        }
+        .await;
+        if let Err(e) = written {
+            warn!("could not keep the active scene list at {file:?}: {e}");
+            let _ = async_fs::remove_file(&aside).await;
+        }
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    async fn write(&self, _etag: &str, _body: &[u8]) {}
+
+    async fn forget(&self) {
+        #[cfg(not(target_arch = "wasm32"))]
+        if let Some(file) = &self.0 {
+            let _ = async_fs::remove_file(file).await;
+        }
+    }
+}
+
+fn active_fetch_error(e: platform::FetchError<reqwest::Error>) -> anyhow::Error {
+    match e {
+        platform::FetchError::Headers => anyhow!("timed out awaiting active-entities headers"),
+        platform::FetchError::Send(e) => anyhow!(e),
+        platform::FetchError::Status(s, _) => anyhow!("status: {s}"),
+        platform::FetchError::Stalled => anyhow!("active-entities response stalled"),
+        platform::FetchError::Body(e) => anyhow!(e),
+    }
+}
 
 #[derive(Debug)]
 pub struct ActiveEntity {
@@ -2545,6 +2680,70 @@ mod tests {
         assert!(BufReader::new(stream)
             .lines()
             .any(|line| line.unwrap().is_empty()));
+    }
+
+    // The active scene list is kept with its tag: asked again, the server names it unchanged
+    // (`304`, no body) and the kept list is the answer.
+    #[cfg(not(target_arch = "wasm32"))]
+    #[tokio::test]
+    async fn an_unchanged_active_scene_list_is_revalidated_from_the_kept_copy() {
+        use std::io::{BufRead, BufReader, Write};
+        use std::sync::Arc;
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = std::thread::spawn(move || {
+            let mut asked = Vec::new();
+            for _ in 0..2 {
+                let (mut stream, _) = listener.accept().unwrap();
+                let headers: Vec<String> = BufReader::new(&stream)
+                    .lines()
+                    .map(|line| line.unwrap())
+                    .take_while(|line| !line.is_empty())
+                    .collect();
+                let if_none_match = headers.iter().find_map(|h| {
+                    h.to_ascii_lowercase()
+                        .strip_prefix("if-none-match: ")
+                        .map(str::to_owned)
+                });
+                let response = if if_none_match.as_deref() == Some("\"v1\"") {
+                    "HTTP/1.1 304 Not Modified\r\nETag: \"v1\"\r\nConnection: close\r\n\r\n"
+                        .to_owned()
+                } else {
+                    let body =
+                        r#"[{"id":"bafyscene","pointers":["1,2"],"timestamp":1,"base":"1,2"}]"#;
+                    format!(
+                        "HTTP/1.1 200 OK\r\nETag: \"v1\"\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                        body.len()
+                    )
+                };
+                stream.write_all(response.as_bytes()).unwrap();
+                asked.push(if_none_match);
+            }
+            asked
+        });
+        bevy::tasks::IoTaskPool::get_or_init(bevy::tasks::TaskPool::new);
+        let cache = std::env::temp_dir().join(format!("active-scenes-{}", std::process::id()));
+        std::fs::create_dir_all(&cache).unwrap();
+        let ipfs = Arc::new(super::IpfsIo::new(
+            false,
+            Box::new(super::FileAssetReader::new("assets")),
+            Some(cache.clone()),
+            Default::default(),
+            1,
+            #[cfg(feature = "ipfs_debug")]
+            tokio::sync::mpsc::unbounded_channel().0,
+        ));
+        let content = format!("http://{address}/content");
+
+        for _ in 0..2 {
+            let scenes = ipfs.active_scenes(Some(&content)).await.unwrap();
+            assert_eq!(scenes.len(), 1);
+            assert_eq!(scenes[0].id, "bafyscene");
+            assert_eq!(scenes[0].pointers, ["1,2"]);
+            assert_eq!(scenes[0].base.as_deref(), Some("1,2"));
+        }
+        assert_eq!(server.join().unwrap(), [None, Some("\"v1\"".to_owned())]);
+        let _ = std::fs::remove_dir_all(&cache);
     }
 
     #[cfg(not(target_arch = "wasm32"))]
