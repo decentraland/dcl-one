@@ -1669,7 +1669,7 @@ mod tests {
     fn rings_are_clamped_to_their_settings() {
         assert_eq!(
             from_settings(u16::MAX, 0, u16::MAX),
-            rings_of(3, 4, 1, 2, 5, 40)
+            rings_of(5, 6, 1, 2, 7, 40)
         );
         assert_eq!(from_settings(0, u16::MAX, 0), rings_of(0, 1, 8, 9, 10, 5));
     }
