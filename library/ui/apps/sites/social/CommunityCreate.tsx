@@ -2,6 +2,7 @@ import { useId, useState } from 'react'
 
 import { Button } from '../../../components/Button/Button'
 import { Dropdown } from '../../../components/Dropdown/Dropdown'
+import { InputWebCreatorTools } from '../../../components/InputWebCreatorTools/InputWebCreatorTools'
 import { Modal } from '../../../components/Modal/Modal'
 import { Switch } from '../../../components/Switch/Switch'
 import styles from './CommunityCreate.module.css'
@@ -206,15 +207,17 @@ export default function CommunityCreate<R>({
         </div>
 
         <div className={styles.group}>
-          <label className={styles.label} htmlFor={nameId}>
+          <label className={styles.label} htmlFor={nameId} id={`${nameId}-label`}>
             Community name{' '}
             <span className={styles.required} aria-hidden="true">
               *
             </span>
           </label>
-          <input
+          <InputWebCreatorTools
             id={nameId}
-            className={styles.input}
+            label="Community name"
+            labelHidden
+            aria-labelledby={`${nameId}-label`}
             maxLength={30}
             placeholder="Write here"
             required
@@ -224,12 +227,14 @@ export default function CommunityCreate<R>({
         </div>
 
         <div className={styles.group}>
-          <label className={styles.label} htmlFor={descId}>
+          <label className={styles.label} htmlFor={descId} id={`${descId}-label`}>
             Description
           </label>
-          <input
+          <InputWebCreatorTools
             id={descId}
-            className={styles.input}
+            label="Description"
+            labelHidden
+            aria-labelledby={`${descId}-label`}
             maxLength={240}
             placeholder="What's your community about?"
             value={desc}
