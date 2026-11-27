@@ -7,8 +7,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useId, useMemo, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router";
 
-import ManaMark from "../../../atoms/ManaMark";
-import { Button, InputWebCreatorTools, Modal } from "@dcl/one-ui";
+import { Button, InputWebCreatorTools, Modal, ShopManaMark } from "@dcl/one-ui";
 import { isPolygon, type ChainId } from "@shop/model/chain";
 import { formatMana } from "@shop/model/money";
 import { shopPath } from "../../routes";
@@ -145,7 +144,7 @@ export function SellForm({ token, now = Date.now }: { token: TokenRecord; now?: 
             Price
           </label>
           <span className="seller-field__control" data-invalid={price && !amount ? "" : undefined}>
-            <ManaMark size={16} network={isPolygon(token.chainId) ? "polygon" : "ethereum"} />
+            <ShopManaMark size={16} network={isPolygon(token.chainId) ? "polygon" : "ethereum"} />
             <input
               id={`${id}-price`}
               inputMode="decimal"
@@ -206,7 +205,7 @@ export function SellForm({ token, now = Date.now }: { token: TokenRecord; now?: 
           returnFocusRef={listingButton}
           description={
             <>
-              You are about to list <b>{token.name}</b> on sale for <ManaMark size={14} network={isPolygon(token.chainId) ? "polygon" : "ethereum"} /> {formatMana(amount, { group: true })}.
+              You are about to list <b>{token.name}</b> on sale for <ShopManaMark size={14} network={isPolygon(token.chainId) ? "polygon" : "ethereum"} /> {formatMana(amount, { group: true })}.
             </>
           }
           actions={
@@ -225,7 +224,7 @@ export function SellForm({ token, now = Date.now }: { token: TokenRecord; now?: 
             label="Price"
             aria-label="Confirm the price"
             description="Please re-enter the price to confirm:"
-            leadingIcon={<ManaMark size={16} network={isPolygon(token.chainId) ? "polygon" : "ethereum"} />}
+            leadingIcon={<ShopManaMark size={16} network={isPolygon(token.chainId) ? "polygon" : "ethereum"} />}
             inputMode="decimal"
             value={confirmed}
             placeholder={formatMana(amount)}
