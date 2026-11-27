@@ -1,0 +1,42 @@
+From 0000000000000000000000000000000000000000
+Subject: feat(bevy): tonemapping keeps its last ready pipeline while a new variant compiles
+Date: 2026-11-26T21:13:06+00:00
+
+---
+diff --git a/crates/bevy_core_pipeline/src/tonemapping/mod.rs b/crates/bevy_core_pipeline/src/tonemapping/mod.rs
+index c8a2a1f6f135ba1975431b9117dec9387bc33cde..ae2aedd7f79b2e785bd3dd57888aeb93c3ce554c 100644
+--- a/crates/bevy_core_pipeline/src/tonemapping/mod.rs
++++ b/crates/bevy_core_pipeline/src/tonemapping/mod.rs
+@@ -366,11 +366,12 @@ pub fn prepare_view_tonemapping_pipelines(
+             &ExtractedView,
+             Option<&Tonemapping>,
+             Option<&DebandDither>,
++            Option<&ViewTonemappingPipeline>,
+         ),
+         With<ViewTarget>,
+     >,
+ ) {
+-    for (entity, view, tonemapping, dither) in view_targets.iter() {
++    for (entity, view, tonemapping, dither, previous) in view_targets.iter() {
+         // As an optimization, we omit parts of the shader that are unneeded.
+         let mut flags = TonemappingPipelineKeyFlags::empty();
+         flags.set(
+@@ -397,7 +398,17 @@ pub fn prepare_view_tonemapping_pipelines(
+             tonemapping: *tonemapping.unwrap_or(&Tonemapping::None),
+             flags,
+         };
+-        let pipeline = pipelines.specialize(&pipeline_cache, &upscaling_pipeline, key);
++        let mut pipeline = pipelines.specialize(&pipeline_cache, &upscaling_pipeline, key);
++
++        // A new key compiles a new shader variant, and the pass is skipped until it is ready.
++        // Keep drawing with the last ready variant meanwhile; every variant shares one layout.
++        if let Some(ViewTonemappingPipeline(previous)) = previous {
++            if pipeline_cache.get_render_pipeline(pipeline).is_none()
++                && pipeline_cache.get_render_pipeline(*previous).is_some()
++            {
++                pipeline = *previous;
++            }
++        }
+ 
+         commands
+             .entity(entity)

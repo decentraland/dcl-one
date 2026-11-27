@@ -756,6 +756,23 @@ export namespace ColorGradient {
 }
 
 // @public (undocumented)
+export interface ColorGrading {
+    contrast?: number | undefined;
+    hueShift?: number | undefined;
+    saturation?: number | undefined;
+    temperature?: number | undefined;
+    tint?: number | undefined;
+}
+
+// @public (undocumented)
+export namespace ColorGrading {
+    // (undocumented)
+    export function decode(input: _m0.Reader | Uint8Array, length?: number): ColorGrading;
+    // (undocumented)
+    export function encode(message: ColorGrading, writer?: _m0.Writer): _m0.Writer;
+}
+
+// @public (undocumented)
 export interface ColorKey {
     color: PBColor4 | undefined;
     time: number;
@@ -857,6 +874,7 @@ export const componentDefinitionByName: {
     "core::PointerEvents": LwwComponentGetter<LastWriteWinElementSetComponentDefinition<PBPointerEvents>>;
     "core::PointerEventsResult": GSetComponentGetter<GrowOnlyValueSetComponentDefinition<PBPointerEventsResult>>;
     "core::PointerLock": LwwComponentGetter<LastWriteWinElementSetComponentDefinition<PBPointerLock>>;
+    "core::PostProcessing": LwwComponentGetter<LastWriteWinElementSetComponentDefinition<PBPostProcessing>>;
     "core::PrimaryPointerInfo": LwwComponentGetter<LastWriteWinElementSetComponentDefinition<PBPrimaryPointerInfo>>;
     "core::Raycast": LwwComponentGetter<LastWriteWinElementSetComponentDefinition<PBRaycast>>;
     "core::RaycastResult": LwwComponentGetter<LastWriteWinElementSetComponentDefinition<PBRaycastResult>>;
@@ -1193,6 +1211,21 @@ export type DeleteEntityNetworkMessageBody = {
     entityId: Entity;
     networkId: number;
 };
+
+// @public (undocumented)
+export interface DepthOfField {
+    focusEnd?: number | undefined;
+    focusStart?: number | undefined;
+    intensity?: number | undefined;
+}
+
+// @public (undocumented)
+export namespace DepthOfField {
+    // (undocumented)
+    export function decode(input: _m0.Reader | Uint8Array, length?: number): DepthOfField;
+    // (undocumented)
+    export function encode(message: DepthOfField, writer?: _m0.Writer): _m0.Writer;
+}
 
 // @public (undocumented)
 export type DisplayType = 'flex' | 'none';
@@ -3913,6 +3946,25 @@ export namespace PBPosition {
 }
 
 // @public (undocumented)
+export interface PBPostProcessing {
+    bloomIntensity?: number | undefined;
+    // (undocumented)
+    colorGrading?: ColorGrading | undefined;
+    // (undocumented)
+    depthOfField?: DepthOfField | undefined;
+    exposure?: number | undefined;
+    tonemapping?: Tonemapping | undefined;
+}
+
+// @public (undocumented)
+export namespace PBPostProcessing {
+    // (undocumented)
+    export function decode(input: _m0.Reader | Uint8Array, length?: number): PBPostProcessing;
+    // (undocumented)
+    export function encode(message: PBPostProcessing, writer?: _m0.Writer): _m0.Writer;
+}
+
+// @public (undocumented)
 export interface PBPrimaryPointerInfo {
     pointerType?: PointerType | undefined;
     screenCoordinates?: PBVector2 | undefined;
@@ -4921,6 +4973,9 @@ export type PositionType = 'absolute' | 'relative';
 export type PositionUnit = `${number}px` | `${number}%` | number | `${number}` | ScaleUnit;
 
 // @public (undocumented)
+export const PostProcessing: LastWriteWinElementSetComponentDefinition<PBPostProcessing>;
+
+// @public (undocumented)
 export const PrimaryPointerInfo: LastWriteWinElementSetComponentDefinition<PBPrimaryPointerInfo>;
 
 // Warning: (ae-missing-release-tag) "ProcessMessageResultType" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
@@ -5762,6 +5817,13 @@ export const ToGammaSpace: number;
 
 // @public
 export const ToLinearSpace = 2.2;
+
+// @public (undocumented)
+export const enum Tonemapping {
+    TONEMAP_ACES = 2,
+    TONEMAP_DEFAULT = 0,
+    TONEMAP_NONE = 1
+}
 
 // @public (undocumented)
 export type ToOptional<T> = OnlyOptionalUndefinedTypes<T> & OnlyNonUndefinedTypes<T>;

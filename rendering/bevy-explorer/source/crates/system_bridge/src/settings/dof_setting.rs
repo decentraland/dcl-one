@@ -94,6 +94,7 @@ impl AppSetting for DofSetting {
                 max_depth: 250.0,
                 max_circle_of_confusion_diameter: 20.0,
                 sensor_height: 0.06,
+                linear_ramp: 0.0,
             },
             DofConfig {
                 default_sensor_height: 0.06,

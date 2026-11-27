@@ -5,6 +5,7 @@ mod day_night;
 mod debug_panel;
 mod environment;
 mod lens_flare;
+mod post_processing;
 mod props;
 pub mod shell_texturing;
 mod sky_envmap;
@@ -105,6 +106,7 @@ impl Plugin for VisualsPlugin {
         .add_plugins(AtmospherePlugin)
         .add_plugins(StylizedSkyMaterialPlugin)
         .add_plugins(environment::SceneEnvironmentPlugin)
+        .add_plugins(post_processing::PostProcessingPlugin)
         .add_plugins(SkyEnvmapPlugin)
         .add_plugins(stars::StarsPlugin)
         .add_plugins(lens_flare::LensFlarePlugin)

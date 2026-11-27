@@ -134,6 +134,7 @@ impl DclProtoComponent for sdk::components::PbTween {}
 impl DclProtoComponent for sdk::components::PbTweenState {}
 impl DclProtoComponent for sdk::components::PbLightSource {}
 impl DclProtoComponent for sdk::components::PbGlobalLight {}
+impl DclProtoComponent for sdk::components::PbPostProcessing {}
 impl DclProtoComponent for sdk::components::PbTextureCamera {}
 impl DclProtoComponent for sdk::components::PbCameraLayers {}
 impl DclProtoComponent for sdk::components::PbPrimaryPointerInfo {}

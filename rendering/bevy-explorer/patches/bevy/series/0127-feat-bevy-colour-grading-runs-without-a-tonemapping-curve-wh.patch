@@ -1,0 +1,180 @@
+From 0000000000000000000000000000000000000000
+Subject: feat(bevy): colour grading runs without a tonemapping curve, which a mix can fade out
+Date: 2026-11-25T15:30:14+00:00
+
+---
+diff --git a/crates/bevy_core_pipeline/src/tonemapping/mod.rs b/crates/bevy_core_pipeline/src/tonemapping/mod.rs
+index 1fd27b7f7c191596c8a5787ae7858eb1c8137476..c8a2a1f6f135ba1975431b9117dec9387bc33cde 100644
+--- a/crates/bevy_core_pipeline/src/tonemapping/mod.rs
++++ b/crates/bevy_core_pipeline/src/tonemapping/mod.rs
+@@ -207,6 +207,8 @@ bitflags! {
+         /// Saturation/contrast/gamma/gain/lift for one or more sections
+         /// (shadows, midtones, highlights) need to be adjusted.
+         const SECTIONAL_COLOR_GRADING   = 0x04;
++        /// The color before the curve is blended into the curve's output.
++        const UNTONEMAPPED_MIX          = 0x08;
+     }
+ }
+ 
+@@ -252,6 +254,12 @@ impl SpecializedRenderPipeline for TonemappingPipeline {
+         {
+             shader_defs.push("SECTIONAL_COLOR_GRADING".into());
+         }
++        if key
++            .flags
++            .contains(TonemappingPipelineKeyFlags::UNTONEMAPPED_MIX)
++        {
++            shader_defs.push("UNTONEMAPPED_MIX".into());
++        }
+ 
+         match key.tonemapping {
+             Tonemapping::None => shader_defs.push("TONEMAP_METHOD_NONE".into()),
+@@ -379,6 +387,10 @@ pub fn prepare_view_tonemapping_pipelines(
+                 .all_sections()
+                 .any(|section| *section != default()),
+         );
++        flags.set(
++            TonemappingPipelineKeyFlags::UNTONEMAPPED_MIX,
++            view.color_grading.global.untonemapped_mix != 0.0,
++        );
+ 
+         let key = TonemappingPipelineKey {
+             deband_dither: *dither.unwrap_or(&DebandDither::Disabled),
+diff --git a/crates/bevy_core_pipeline/src/tonemapping/node.rs b/crates/bevy_core_pipeline/src/tonemapping/node.rs
+index 0f8f6edc49eb2f825e5c6e7e35a0d49c3048d594..db3a54b37400b10b90f6a258c6c4ed540004779a 100644
+--- a/crates/bevy_core_pipeline/src/tonemapping/node.rs
++++ b/crates/bevy_core_pipeline/src/tonemapping/node.rs
+@@ -12,7 +12,7 @@ use bevy_render::{
+     },
+     renderer::RenderContext,
+     texture::{FallbackImage, GpuImage},
+-    view::{ViewTarget, ViewUniformOffset, ViewUniforms},
++    view::{ExtractedView, ViewTarget, ViewUniformOffset, ViewUniforms},
+ };
+ 
+ use super::{get_lut_bindings, Tonemapping};
+@@ -29,13 +29,14 @@ impl ViewNode for TonemappingNode {
+         &'static ViewTarget,
+         &'static ViewTonemappingPipeline,
+         &'static Tonemapping,
++        &'static ExtractedView,
+     );
+ 
+     fn run(
+         &self,
+         _graph: &mut RenderGraphContext,
+         render_context: &mut RenderContext,
+-        (view_uniform_offset, target, view_tonemapping_pipeline, tonemapping): QueryItem<
++        (view_uniform_offset, target, view_tonemapping_pipeline, tonemapping, view): QueryItem<
+             Self::ViewQuery,
+         >,
+         world: &World,
+@@ -48,7 +49,8 @@ impl ViewNode for TonemappingNode {
+         let view_uniforms = &view_uniforms_resource.uniforms;
+         let view_uniforms_id = view_uniforms.buffer().unwrap().id();
+ 
+-        if *tonemapping == Tonemapping::None {
++        // with no curve the pass is still needed to apply color grading
++        if *tonemapping == Tonemapping::None && view.color_grading.is_identity() {
+             return Ok(());
+         }
+ 
+diff --git a/crates/bevy_core_pipeline/src/tonemapping/tonemapping_shared.wgsl b/crates/bevy_core_pipeline/src/tonemapping/tonemapping_shared.wgsl
+index 2727ca91cb4223e84eb4624ecaf61ad243321f73..3c8e246fc8b3c378eaf5e260168f187895b2d606 100644
+--- a/crates/bevy_core_pipeline/src/tonemapping/tonemapping_shared.wgsl
++++ b/crates/bevy_core_pipeline/src/tonemapping/tonemapping_shared.wgsl
+@@ -370,6 +370,10 @@ fn tone_mapping(in: vec4<f32>, in_color_grading: ColorGrading) -> vec4<f32> {
+     color = color * powsafe(vec3(2.0), color_grading.exposure);
+ #endif
+ 
++#ifdef UNTONEMAPPED_MIX
++    let untonemapped = color;
++#endif
++
+     // tone_mapping
+ #ifdef TONEMAP_METHOD_NONE
+     color = color;
+@@ -390,6 +394,10 @@ fn tone_mapping(in: vec4<f32>, in_color_grading: ColorGrading) -> vec4<f32> {
+     color = sample_blender_filmic_lut(color.rgb);
+ #endif
+ 
++#ifdef UNTONEMAPPED_MIX
++    color = mix(color, untonemapped, color_grading.untonemapped_mix);
++#endif
++
+     // Perceptual post tonemapping grading
+     color = saturation(color, color_grading.post_saturation);
+ 
+diff --git a/crates/bevy_render/src/view/mod.rs b/crates/bevy_render/src/view/mod.rs
+index 475846ae21e900ec3bb5caaf644ecf405d02a028..b09134bf94e46db626a381c1f91a5eba6527c5c0 100644
+--- a/crates/bevy_render/src/view/mod.rs
++++ b/crates/bevy_render/src/view/mod.rs
+@@ -386,6 +386,11 @@ pub struct ColorGradingGlobal {
+     /// Values above 1.0 increase saturation.
+     pub post_saturation: f32,
+ 
++    /// How much of the color before the tonemapping curve is blended into the curve's output:
++    /// 0 is the curve alone, 1 is the color with no curve, as with `Tonemapping::None`.
++    /// Used to fade between a curve and no curve.
++    pub untonemapped_mix: f32,
++
+     /// The luminance (brightness) ranges that are considered part of the
+     /// "midtones" of the image.
+     ///
+@@ -411,6 +416,7 @@ pub struct ColorGradingUniform {
+     pub exposure: f32,
+     pub hue: f32,
+     pub post_saturation: f32,
++    pub untonemapped_mix: f32,
+ }
+ 
+ /// A section of color grading values that can be selectively applied to
+@@ -478,6 +484,7 @@ impl Default for ColorGradingGlobal {
+             tint: 0.0,
+             hue: 0.0,
+             post_saturation: 1.0,
++            untonemapped_mix: 0.0,
+             midtones_range: 0.2..0.7,
+         }
+     }
+@@ -496,6 +503,20 @@ impl Default for ColorGradingSection {
+ }
+ 
+ impl ColorGrading {
++    /// Whether these values leave every color unchanged.
++    pub fn is_identity(&self) -> bool {
++        let global = &self.global;
++        global.exposure == 0.0
++            && global.temperature == 0.0
++            && global.tint == 0.0
++            && global.hue == 0.0
++            && global.post_saturation == 1.0
++            && global.untonemapped_mix == 0.0
++            && self
++                .all_sections()
++                .all(|section| *section == ColorGradingSection::default())
++    }
++
+     /// Creates a new [`ColorGrading`] instance in which shadows, midtones, and
+     /// highlights all have the same set of color grading values.
+     pub fn with_identical_sections(
+@@ -703,6 +724,7 @@ impl From<ColorGrading> for ColorGradingUniform {
+             exposure: component.global.exposure,
+             hue: component.global.hue,
+             post_saturation: component.global.post_saturation,
++            untonemapped_mix: component.global.untonemapped_mix,
+         }
+     }
+ }
+diff --git a/crates/bevy_render/src/view/view.wgsl b/crates/bevy_render/src/view/view.wgsl
+index c98692660e06d4c8d8c081d05b8f8055aafbeae4..3feec5f799a7473ef4fba8a846f62e996df9fdfc 100644
+--- a/crates/bevy_render/src/view/view.wgsl
++++ b/crates/bevy_render/src/view/view.wgsl
+@@ -11,6 +11,7 @@ struct ColorGrading {
+     exposure: f32,
+     hue: f32,
+     post_saturation: f32,
++    untonemapped_mix: f32,
+ }
+ 
+ struct View {

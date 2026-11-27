@@ -35,7 +35,10 @@ use platform::default_camera_components;
 use scene_runner::{
     renderer_context::RendererSceneContext,
     update_world::{
-        lights::update_directional_light, material::VideoTextureOutput, AddCrdtInterfaceExt,
+        lights::update_directional_light,
+        material::VideoTextureOutput,
+        post_processing::{PostProcessing, PostProcessingFrom, TonemapCurve},
+        AddCrdtInterfaceExt,
     },
     ContainerEntity, ContainingScene,
 };
@@ -220,6 +223,7 @@ fn update_texture_cameras(
     layers: Res<SceneLayerProperties>,
     mut layer_cache: ResMut<TextureLayersCache>,
     scene_distance: Res<SceneLoadDistance>,
+    post_processing: Query<&PostProcessing>,
 ) {
     let active_scenes = player
         .single()
@@ -237,7 +241,23 @@ fn update_texture_cameras(
     // (re)create new/modified cams
     for (ent, texture_cam, container, maybe_existing_camera, maybe_existing_image) in q.iter() {
         let layer_ix = layer_cache.get_layer(container.root, texture_cam.0.layer.unwrap_or(0));
-        if texture_cam.is_changed() || layer_cache.changed_layers.contains(&layer_ix) {
+        // with no tonemapping curve the texture keeps brightness above white, for the camera
+        // that views it to tonemap once
+        let format = if post_processing
+            .get(ent)
+            .is_ok_and(|settings| settings.tonemapping == Some(TonemapCurve::None))
+        {
+            TextureFormat::Rgba16Float
+        } else {
+            TextureFormat::bevy_default()
+        };
+        let format_changed = maybe_existing_image
+            .and_then(|existing| images.get(existing.0.id()))
+            .is_some_and(|image| image.texture_descriptor.format != format);
+        if texture_cam.is_changed()
+            || layer_cache.changed_layers.contains(&layer_ix)
+            || format_changed
+        {
             // remove previous camera if modified
             if let Some(prev) = maybe_existing_camera {
                 if let Ok(mut commands) = commands.get_entity(prev.0) {
@@ -253,7 +273,7 @@ fn update_texture_cameras(
                 depth_or_array_layers: 1,
             };
 
-            let image = match maybe_existing_image {
+            let image = match maybe_existing_image.filter(|_| !format_changed) {
                 Some(existing) => {
                     let prev = images.get_mut(existing.0.id()).unwrap();
                     if prev.texture_descriptor.size != image_size {
@@ -270,6 +290,8 @@ fn update_texture_cameras(
                         RenderAssetUsages::all(), // RENDER_WORLD alone doesn't work..?
                     );
                     image.data = None;
+                    // no data, so the fill pixel's size doesn't constrain the format
+                    image.texture_descriptor.format = format;
                     image.transfer_priority = RenderAssetTransferPriority::Immediate;
                     image.texture_descriptor.usage |= TextureUsages::RENDER_ATTACHMENT;
                     images.add(image)
@@ -326,6 +348,7 @@ fn update_texture_cameras(
                     ..Default::default()
                 },
                 default_camera_components(),
+                PostProcessingFrom(ent),
                 projection.clone(),
                 render_layers.clone(),
                 PropagateStop::<RenderLayers>::default(),

@@ -1,0 +1,83 @@
+From 0000000000000000000000000000000000000000
+Subject: feat(bevy): depth of field can ramp linearly from the focus to max_depth
+Date: 2026-11-25T17:02:12+00:00
+
+---
+diff --git a/crates/bevy_core_pipeline/src/dof/dof.wgsl b/crates/bevy_core_pipeline/src/dof/dof.wgsl
+index 693a7ac19216b53f62e622e610d2bfcf44065aab..89ee76f4ae8c9576e1076e73af82f1cf52715e12 100644
+--- a/crates/bevy_core_pipeline/src/dof/dof.wgsl
++++ b/crates/bevy_core_pipeline/src/dof/dof.wgsl
+@@ -55,8 +55,9 @@ struct DepthOfFieldParams {
+     /// [`DepthOfField`] for more information.
+     max_depth: f32,
+ 
+-    /// Padding.
+-    pad_a: u32,
++    /// How much of the blur follows a linear ramp from `focal_distance` to
++    /// `max_depth` instead of the lens: 0 the lens alone, 1 the ramp alone.
++    linear_ramp: f32,
+     /// Padding.
+     pad_b: u32,
+     /// Padding.
+@@ -157,7 +158,13 @@ fn circle_of_confusion_at(frag_coord: vec2<i32>) -> f32 {
+     let candidate_coc = scale * abs(depth - focus) / (depth * (focus - f));
+ 
+     let framebuffer_size = vec2<f32>(textureDimensions(color_texture_a));
+-    return clamp(candidate_coc * framebuffer_size.y, 0.0, max_coc_diameter);
++    let lens_coc = clamp(candidate_coc * framebuffer_size.y, 0.0, max_coc_diameter);
++
++    // The ramp: no blur at the focus, the largest at `max_depth`, constant
++    // beyond it (`depth` is already clamped to that range).
++    let ramp = max(dof_params.max_depth - focus, 1e-4);
++    let ramp_coc = saturate((depth - focus) / ramp) * max_coc_diameter;
++    return mix(lens_coc, ramp_coc, dof_params.linear_ramp);
+ }
+ 
+ // The view depth of a pixel as the circle of confusion sees it: the opaque
+diff --git a/crates/bevy_core_pipeline/src/dof/mod.rs b/crates/bevy_core_pipeline/src/dof/mod.rs
+index b1ed472ec2ab524c25e80343a8ff91bd9da1d79b..2a7fea530b510b8fa418ada0307d8e6f9c84115b 100644
+--- a/crates/bevy_core_pipeline/src/dof/mod.rs
++++ b/crates/bevy_core_pipeline/src/dof/mod.rs
+@@ -121,6 +121,13 @@ pub struct DepthOfField {
+     /// this value can be used to essentially adjust how "far away" the skybox
+     /// or background are.
+     pub max_depth: f32,
++
++    /// How much of the blur follows a linear ramp instead of the lens: 0 is
++    /// the thin-lens circle of confusion alone; 1 is a ramp from no blur at
++    /// `focal_distance` to `max_circle_of_confusion_diameter` at `max_depth`,
++    /// constant beyond it, whatever the aperture. Values in between mix the
++    /// two, so a camera can blend from one to the other.
++    pub linear_ramp: f32,
+ }
+ 
+ /// Controls the appearance of the effect.
+@@ -178,8 +185,9 @@ pub struct DepthOfFieldUniform {
+     /// [`DepthOfField`] for more information.
+     max_depth: f32,
+ 
+-    /// Padding.
+-    pad_a: u32,
++    /// The weight of the linear ramp. See the comment in [`DepthOfField`] for
++    /// more information.
++    linear_ramp: f32,
+     /// Padding.
+     pad_b: u32,
+     /// Padding.
+@@ -510,6 +518,7 @@ impl Default for DepthOfField {
+             max_circle_of_confusion_diameter: 64.0,
+             max_depth: f32::INFINITY,
+             mode: DepthOfFieldMode::Bokeh,
++            linear_ramp: 0.0,
+         }
+     }
+ }
+@@ -944,7 +953,7 @@ fn extract_depth_of_field_settings(
+                     / (depth_of_field.sensor_height * depth_of_field.aperture_f_stops),
+                 max_circle_of_confusion_diameter: depth_of_field.max_circle_of_confusion_diameter,
+                 max_depth: depth_of_field.max_depth,
+-                pad_a: 0,
++                linear_ramp: depth_of_field.linear_ramp,
+                 pad_b: 0,
+                 pad_c: 0,
+             },

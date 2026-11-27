@@ -65,6 +65,10 @@ across workers:
 - The DoF gather weights each sample by the ratio of its circle of confusion to the gathering
   pixel's, so sharp neighbours don't smear into a blurred pixel. Earlier: distant-only blur and
   alpha blending in the DoF shader.
+- `DepthOfField::linear_ramp` mixes the thin-lens circle of confusion (0) with a linear ramp (1)
+  from no blur at `focal_distance` to `max_circle_of_confusion_diameter` at `max_depth`. The lens
+  reaches most of its blur within a few focal distances, so a far `max_depth` barely changes it;
+  scenes' `PBPostProcessing` focus end needs the ramp to mean where the blur is reached.
 - Per-asset write ticks in `RenderAssets` so entities respecialize when a prepared asset is
   swapped render-world-only (fallback material to real, deferred mesh re-upload).
 - `Transparent3d` sorts by euclidean distance from the camera rather than view-space z.
@@ -125,6 +129,17 @@ across workers:
 - `sectional_color_grading` fades the shadows section into the midtones over the level margin.
   Stock bevy gives that fade to the highlights, so the shadows section ends at a hard step, and a
   shadows gain darkens the pixels just above it: a dark rim along every shadow edge.
+- `ColorGradingGlobal::untonemapped_mix` blends the color before the curve into the curve's
+  output (0 is the curve alone, 1 no curve), so a camera can fade between a curve and
+  `Tonemapping::None`. With `Tonemapping::None` the tonemapping pass still runs while the color
+  grading is not the identity (`ColorGrading::is_identity`); stock bevy skips the pass, and with
+  it exposure and grading. The explorer uses both for scenes' `PBPostProcessing`.
+- A view keeps drawing with its last ready tonemapping pipeline while the variant for a new key
+  (curve, dither, or a grading flag such as `HUE_ROTATE`) compiles. Stock bevy skips the pass
+  until then, so the first hue shift or white balance showed a few frames with no curve and
+  no grading.
+- `rgb_to_hsv` gives a grey hue 0. Stock bevy divides by a chroma of 0, and the NaN reaches the
+  image wherever a GPU's `min`/`max` keep it.
 
 ## glTF and images
 
