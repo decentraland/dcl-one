@@ -26,9 +26,10 @@ export async function measureDownlinkMbps(): Promise<number | null> {
       await response.body?.cancel();
       return null;
     }
-    // A proxy that streams the body chunked (Cloudflare does, and compresses it when it may) drops the length. Without
-    // a size the "second half" would start at the first chunk and time the slow start it exists to leave out.
-    const total = Number(response.headers.get("content-length")) || PROBE_BYTES;
+    // Halved by the probe's fixed size, never by the response's Content-Length: a proxy that streams the body chunked
+    // (Cloudflare does) drops it, and a compressed response states its encoded length, not the bytes read here.
+    // Without the size the "second half" would start at the first chunk and time the slow start it exists to leave out.
+    const total = PROBE_BYTES;
     const reader = response.body.getReader();
     let received = 0;
     let halfAt: number | null = null;
