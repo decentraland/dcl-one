@@ -119,50 +119,18 @@
   font-size: var(--dcl-font-size-body-sm);
 }
 
+/* The rows-per-page field keeps its content's width in the pagination row. */
 .select {
-  padding: var(--dcl-space-4) var(--dcl-space-8);
-  border: 0;
-  border-radius: var(--dcl-radius-xs);
-  background: transparent;
-  color: inherit;
-  font: inherit;
-}
-
-.select option {
-  color: var(--dcl-neutrals-black);
-}
-
-.select:focus-visible,
-.pageButton:focus-visible {
-  outline: 2px solid var(--dcl-neutrals-snow);
-  outline-offset: 2px;
+  flex: none;
 }
 
 .range {
   margin-inline: var(--dcl-space-16);
 }
 
-.pageButton {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 36px;
-  height: 36px;
-  padding: 0;
-  border: 0;
-  border-radius: var(--dcl-radius-full);
-  background: transparent;
-  color: inherit;
-  cursor: pointer;
-}
-
-.pageButton:hover:not(:disabled) {
-  background: var(--dcl-bg-hover);
-}
-
-.pageButton:disabled {
-  cursor: not-allowed;
-  opacity: 0.4;
+/* A page arrow is its button's only content: as a block it sits in the middle, not on a text baseline. */
+.pageIcon {
+  display: block;
 }
 
 @media (max-width: 767px) {
