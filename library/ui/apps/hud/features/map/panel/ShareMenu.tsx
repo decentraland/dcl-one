@@ -13,7 +13,9 @@ export function ShareMenu({ links, onClose }: { links: ShareLinks; onClose: () =
   const close = useRef(onClose)
   close.current = onClose
   useEffect(() => {
-    ref.current?.querySelector('button')?.focus()
+    // the first item takes the focus only from a Share button the keyboard pressed (it shows the
+    // keyboard's focus): opened with the pointer, the menu takes none for a later key press to ring
+    if (document.activeElement?.matches(':focus-visible')) ref.current?.querySelector('button')?.focus()
     const onDown = (e: PointerEvent): void => {
       if (ref.current != null && !ref.current.contains(e.target as Node)) close.current()
     }

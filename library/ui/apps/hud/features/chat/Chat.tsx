@@ -702,7 +702,8 @@ export function Chat({
   const [hovered, setHovered] = useState(false)
   const [focused, setFocused] = useState(false)
   // Focus anywhere in the panel (a title bar button, the members list, the options menu) keeps the
-  // chat active, as the input's does: only a click outside lets go of it.
+  // chat active, as the input's does: only a click outside lets go of it. So does an open options
+  // menu, which holds no focus when the pointer opened it.
   const [within, setWithin] = useState(false)
   const listRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
@@ -740,7 +741,8 @@ export function Chat({
   const syncWithin = useCallback(() => {
     const at = document.activeElement
     const root = rootRef.current
-    setWithin(at != null && at !== document.body && ((root?.contains(at) ?? false) || at.closest(`[${MENU_LAYER}]`) != null))
+    const menuOpen = document.querySelector(`[${MENU_LAYER}]`) != null
+    setWithin(menuOpen || (at != null && at !== document.body && (root?.contains(at) ?? false)))
   }, [])
   useEffect(() => {
     let later: ReturnType<typeof setTimeout> | null = null

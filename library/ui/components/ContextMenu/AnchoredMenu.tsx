@@ -94,11 +94,13 @@ function OpenAnchoredMenu({
     }
   }, [])
 
-  // The focus returns to the opener only if the press that closed the menu did not put it somewhere else.
+  // The first entry takes the focus only from an opener that shows the keyboard's (`:focus-visible`), as Submenu
+  // focuses its list only on a keyboard click: opened with the pointer, the menu takes none for a later key press to
+  // ring. The focus returns to the opener only if the press that closed the menu did not put it somewhere else.
   useEffect(() => {
     const node = root.current
     const opener = ignored.current ?? document.activeElement
-    focusables(node)[0]?.focus()
+    if (opener instanceof HTMLElement && opener.matches(':focus-visible')) focusables(node)[0]?.focus()
     return () => {
       const active = document.activeElement
       const lost = active == null || active === document.body || node?.contains(active) === true

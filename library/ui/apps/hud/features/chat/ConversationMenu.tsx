@@ -36,19 +36,25 @@ export const MENU_LAYER = 'data-chat-menu'
 /** A menu anchored to the button that opens it, painted in its own layer (the chat panel clips
  *  what it paints). `anchor` places the menu from the button's rectangle and the HUD's scale; the
  *  open menu follows the button when the window or the HUD's scale changes. A press outside or
- *  Escape closes it; closing from inside gives the focus back to the button. */
+ *  Escape closes it. Opened from the keyboard (Enter or Space, a click with `detail` 0), the focus
+ *  moves into the menu and closing from inside gives it back to the button; opened with the
+ *  pointer, neither the button nor the menu keeps the focus, so a later key press (the game's)
+ *  rings nothing. */
 export function useAnchoredMenu(anchor: (button: DOMRect, scale: number) => { left: number; top: number }, onDismiss?: () => void): {
   open: boolean
   at: { left: number; top: number } | null
   button: React.RefObject<HTMLButtonElement | null>
   menu: React.RefObject<HTMLDivElement | null>
-  toggle: () => void
+  toggle: (event: React.MouseEvent<HTMLElement>) => void
   close: () => void
+  /** Whether the keyboard opened the menu. */
+  byKeyboard: React.RefObject<boolean>
 } {
   const [open, setOpen] = useState(false)
   const [at, setAt] = useState<{ left: number; top: number } | null>(null)
   const button = useRef<HTMLButtonElement>(null)
   const menu = useRef<HTMLDivElement>(null)
+  const byKeyboard = useRef(false)
   const anchorRef = useRef(anchor)
   anchorRef.current = anchor
   const dismissRef = useRef(onDismiss)
@@ -58,15 +64,17 @@ export function useAnchoredMenu(anchor: (button: DOMRect, scale: number) => { le
     dismissRef.current?.()
   }, [])
   const close = useCallback(() => {
-    if (menu.current?.contains(document.activeElement)) button.current?.focus()
+    if (byKeyboard.current && menu.current?.contains(document.activeElement)) button.current?.focus()
     dismiss()
   }, [dismiss])
   const place = useCallback(() => {
     const r = button.current?.getBoundingClientRect()
     setAt(r != null ? anchorRef.current(r, getHudScale()) : { left: 0, top: 0 })
   }, [])
-  const toggle = (): void => {
+  const toggle = (event: React.MouseEvent<HTMLElement>): void => {
+    if (event.detail > 0) event.currentTarget.blur()
     if (open) return close()
+    byKeyboard.current = event.detail === 0
     place()
     setOpen(true)
   }
@@ -81,7 +89,7 @@ export function useAnchoredMenu(anchor: (button: DOMRect, scale: number) => { le
   }, [open, place])
   // keyboard focus moves into the menu when it opens
   useEffect(() => {
-    if (!open) return
+    if (!open || !byKeyboard.current) return
     menu.current?.querySelector<HTMLElement>('[role^="menuitem"]')?.focus()
   }, [open])
   useEffect(() => {
@@ -99,7 +107,7 @@ export function useAnchoredMenu(anchor: (button: DOMRect, scale: number) => { le
       off()
     }
   }, [open, close, dismiss])
-  return { open, at, button, menu, toggle, close }
+  return { open, at, button, menu, toggle, close, byKeyboard }
 }
 
 // 46px left of the kebab and 13px above it, in the HUD's scaled pixels
@@ -109,12 +117,12 @@ export function ConversationMenu({ channel, entries = [] }: { channel: string; e
   const [page, setPage] = useState<'root' | 'ping'>('root')
   const prefs = usePingPrefs()
   const translating = autoTranslates(useTranslationPrefs(), channel)
-  const { open, at, button, menu, toggle, close } = useAnchoredMenu(besideKebab, () => setPage('root'))
+  const { open, at, button, menu, toggle, close, byKeyboard } = useAnchoredMenu(besideKebab, () => setPage('root'))
   // keyboard focus moves into the menu when its page changes
   useEffect(() => {
-    if (!open) return
+    if (!open || !byKeyboard.current) return
     menu.current?.querySelector<HTMLElement>('[role^="menuitem"]')?.focus()
-  }, [open, page, menu])
+  }, [open, page, menu, byKeyboard])
   // the conversation's own setting; none means the default from the Chat settings tab applies
   const override = prefs.channels[channel]
   const items: ContextMenuItem[] =

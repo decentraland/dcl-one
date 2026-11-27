@@ -347,15 +347,21 @@ describe('GalleryPage', () => {
       expect(screen.queryByRole('menu', { name: 'Photo options' })).toBeNull()
     })
 
-    it('closing the menu puts focus back on its ⋮', async () => {
+    it('opened from the keyboard, the menu takes the focus, and closing it puts the focus back on its ⋮', async () => {
       renderPage(gallery(photos))
-      await openMenu()
+      await loadThumbnails()
       const trigger = screen.getAllByRole('button', { name: 'Photo options' })[0]
-      expect(trigger).not.toHaveFocus()
+      // jsdom tracks no input modality: after Enter the ⋮ shows the keyboard's focus (`:focus-visible`)
+      const matches = trigger.matches.bind(trigger)
+      const ring = vi.spyOn(trigger, 'matches').mockImplementation((selector) => selector === ':focus-visible' || matches(selector))
+      trigger.focus()
+      await userEvent.keyboard('{Enter}')
+      expect(screen.getByRole('menu', { name: 'Photo options' })).toContainElement(document.activeElement as HTMLElement)
       act(() => {
         dispatchCancelLayer()
       })
       expect(trigger).toHaveFocus()
+      ring.mockRestore()
     })
 
     it('Cancel closes the menu', async () => {

@@ -541,6 +541,27 @@ describe('map place panel', () => {
     vi.unstubAllGlobals()
   })
 
+  it('the share menu takes the focus only from a Share button the keyboard pressed', async () => {
+    serve({ search: [CLUB] })
+    renderMap()
+    await search('club')
+    await userEvent.click(await within(panel()).findByRole('button', { name: /Sugar Club/ }))
+    const share = await within(panel()).findByRole('button', { name: 'Share' })
+    // jsdom tracks no input modality: this sets whether the button shows the keyboard's focus (`:focus-visible`)
+    const matches = share.matches.bind(share)
+    let ring = false
+    vi.spyOn(share, 'matches').mockImplementation((selector) => (selector === ':focus-visible' ? ring : matches(selector)))
+    await userEvent.click(share)
+    const menu = within(panel()).getByRole('menu')
+    expect(menu).not.toContainElement(document.activeElement as HTMLElement)
+    await userEvent.click(document.body)
+    expect(within(panel()).queryByRole('menu')).not.toBeInTheDocument()
+    ring = true
+    share.focus()
+    await userEvent.keyboard('{Enter}')
+    expect(within(within(panel()).getByRole('menu')).getByRole('menuitem', { name: 'Share on X' })).toHaveFocus()
+  })
+
   it("lists the place's photos with their count, and says so when there are none", async () => {
     serve({ search: [CLUB], photos: 2 })
     renderMap()

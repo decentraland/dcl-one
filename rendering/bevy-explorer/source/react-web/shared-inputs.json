@@ -5242,6 +5242,10 @@
           "kind": "regular"
         },
         {
+          "name": "tabs.test.tsx",
+          "kind": "regular"
+        },
+        {
           "name": "textArea.test.tsx",
           "kind": "regular"
         },
@@ -13132,7 +13136,7 @@
     },
     {
       "path": "library/ui/apps/hud/design/Tabs.tsx",
-      "sha256": "7f081c43fc63d219c7898ee08bde2a311903ed8dd42372b8a824a23c87f518c6"
+      "sha256": "73344e3db63a4b5884ca279c8b4d5493c0c60733882d2fa8031e255240f31227"
     },
     {
       "path": "library/ui/apps/hud/design/TextArea.module.css",
@@ -13200,7 +13204,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/chat/Chat.tsx",
-      "sha256": "f13e8dd576bbe03d66bcdadb4703c95c1fe3790ff91a739ce2fd1938c4f504cf"
+      "sha256": "0a14221e74b3ee833dbcbd986f57c516664f06ea31752f7202694f071020f95b"
     },
     {
       "path": "library/ui/apps/hud/features/chat/ChatIcons.tsx",
@@ -13216,7 +13220,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/chat/ConversationMenu.tsx",
-      "sha256": "cf82e04220b8465d1e403e309fe11b731f0c9bc75a68c9dfe14b33af9b999cd4"
+      "sha256": "ef86e7b9fd309553c50e338f33ab56926257b8ef56f041dee79fa4eb4d7792f7"
     },
     {
       "path": "library/ui/apps/hud/features/chat/ConversationRail.tsx",
@@ -13920,7 +13924,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/map/panel/ShareMenu.tsx",
-      "sha256": "e6c296a5b6fd5d2adfd4f21a55bf43b15d1a74d1bcd3be8f0d141fab236745bd"
+      "sha256": "061c19aee8b83fdaf0adef26ee155c755cd0189d61f33fbf93378945c047bffc"
     },
     {
       "path": "library/ui/apps/hud/features/map/panel/TextWithLinks.tsx",
@@ -14696,7 +14700,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/hosted/communityChat.render.test.tsx",
-      "sha256": "ad8afe5ae9b7453f27d9d0c49e1071754bd411d8dab663eec57183ac8205de81"
+      "sha256": "b7d475370368efe751c8a335f68108abf5c4d4efb42cccaa1782427b9a65b606"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/communityChat.test.tsx",
@@ -14768,7 +14772,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/hosted/gallery.page.test.tsx",
-      "sha256": "7d52b44b3936c46af06c3f49cd29e909aeaf17caf403652a03924fcd7623d0a2"
+      "sha256": "45180da118121a2b3c1ff932c227e250ebcf47e516b8ad47f0efd061dacb3867"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/gallery.test.tsx",
@@ -14852,7 +14856,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/hosted/map.page.test.tsx",
-      "sha256": "25101f816971b7c159bb5e5b4b0301cc3879cf628fee1ecf580b358b19443402"
+      "sha256": "ad9a49f5e5b442597d66c3f6bddbd765e4ddfe8c1343e1f95ef354335f10055c"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/mapPanel.test.tsx",
@@ -15120,7 +15124,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/reelGrid.test.tsx",
-      "sha256": "59085def5feb143211d88db400a544bd698d85e407be931366773af02be36ed4"
+      "sha256": "43080601645bee33389e759066c7befdebb583f3f15d436acbdf3a9c5fc73896"
     },
     {
       "path": "library/ui/apps/hud/test/referral.test.ts",
@@ -15157,6 +15161,10 @@
     {
       "path": "library/ui/apps/hud/test/surfaceBoundary.test.tsx",
       "sha256": "73563cfc7b7e1c0dcc210360e9377b9f699caa4aef902198e46d1e9e88245871"
+    },
+    {
+      "path": "library/ui/apps/hud/test/tabs.test.tsx",
+      "sha256": "c4eebff3cba59c4677ca6142487df5b407128fcb515ff69803b4cf5ba2e6a617"
     },
     {
       "path": "library/ui/apps/hud/test/textArea.test.tsx",
@@ -17072,7 +17080,7 @@
     },
     {
       "path": "library/ui/components/ContextMenu/AnchoredMenu.tsx",
-      "sha256": "db46b0de0941051c7f446f3dcffa0a3046cacc148056823d4e55db9ae34c6df0"
+      "sha256": "14fbd230e2877f76920c9e8d0bf30bbade75f0e5da5d6eac4b0dbd1975f7ba8b"
     },
     {
       "path": "library/ui/components/ContextMenu/ContextMenu.module.css",
@@ -17080,7 +17088,7 @@
     },
     {
       "path": "library/ui/components/ContextMenu/ContextMenu.tsx",
-      "sha256": "f77c8b02d545fe1e70ba3c31993629be015c779dcfae2b6e9ed84efedce52086"
+      "sha256": "feb41f140c778873b993c5b7d061cd9e59c149939cc8c5519e6c9baaee8077fa"
     },
     {
       "path": "library/ui/components/ContextMenu/KebabMenu.tsx",
@@ -47184,6 +47192,21 @@
     },
     {
       "from": "library/ui/apps/hud/test/hosted/communityChat.render.test.tsx",
+      "to": "library/ui/apps/hud/features/chat/ConversationMenu.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/communityChat.render.test.tsx",
+      "to": "library/ui/apps/hud/features/chat/ConversationMenu.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/communityChat.render.test.tsx",
+      "to": "library/ui/apps/hud/features/chat/ConversationMenu.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/communityChat.render.test.tsx",
       "to": "library/ui/apps/hud/features/chat/ping.ts",
       "kind": "native:runtime"
     },
@@ -52550,6 +52573,21 @@
     {
       "from": "library/ui/apps/hud/test/surfaceBoundary.test.tsx",
       "to": "library/ui/apps/hud/features/error/SurfaceBoundary.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/tabs.test.tsx",
+      "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/tabs.test.tsx",
+      "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/tabs.test.tsx",
+      "to": "library/ui/apps/hud/design/index.ts",
       "kind": "test:runtime"
     },
     {
@@ -70690,6 +70728,11 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/ui/apps/hud/test/surfaceBoundary.test.tsx",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/ui/apps/hud/test/tabs.test.tsx",
       "kind": "type"
     },
     {

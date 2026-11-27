@@ -50,8 +50,9 @@ export function Tabs<T extends string>({
           selected={it.id === value}
           disabled={it.disabled}
           onClick={(event) => {
-            // Safari does not focus a button on click, and the arrow keys start from the focused tab.
-            event.currentTarget.focus()
+            // A pointer click (`detail` 1 or more) leaves no focus on the tab: the next key press is the game's, and
+            // Chrome would ring the tab on it. Enter, Space and the arrows (`detail` 0) keep the keyboard's focus.
+            if (event.detail > 0) event.currentTarget.blur()
             onChange(it.id)
           }}
           label={

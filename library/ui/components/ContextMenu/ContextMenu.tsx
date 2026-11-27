@@ -239,7 +239,8 @@ function clipEdges(element: HTMLElement): { right: number; bottom: number } {
 
 /**
  * A menu row that opens a list beside it, on hover or click. A click from the keyboard also moves the focus to
- * the list's first item. The list opens to the right and down, and flips left or up where that side has no room.
+ * the list's first item; a pointer click leaves the focus on neither, so a later key press (in the Explorer HUD, the
+ * game's) rings nothing. The list opens to the right and down, and flips left or up where that side has no room.
  */
 export function Submenu({ label, icon, children, className, whileOpen }: SubmenuProps) {
   const inMenu = useContext(InMenu)
@@ -295,9 +296,10 @@ export function Submenu({ label, icon, children, className, whileOpen }: Submenu
         aria-haspopup="menu"
         aria-expanded={open}
         aria-controls={open ? listId : undefined}
-        // A click from the keyboard (detail 0) also focuses the list.
+        // A click from the keyboard (detail 0) also focuses the list; a pointer click drops the row's focus.
         onClick={(event) => {
           if (event.detail === 0) setFocusFirst(true)
+          else event.currentTarget.blur()
           setOpen(true)
         }}
       >
