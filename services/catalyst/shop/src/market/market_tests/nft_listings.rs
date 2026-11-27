@@ -24,8 +24,8 @@ async fn shallow_nft_sale_filters_use_published_land_and_names_before_paging() {
                 ('ethereum','{names}',10,'{WALLET_A}','beta',2,2,2,0,2),
                 ('ethereum','{names}',11,'{WALLET_A}','gamma',3,3,3,0,3);
          INSERT INTO shop.nft_order(network,contract_address,token_id,order_id,marketplace_address,status,seller,price,expires_at,created_at,updated_at,updated_block,updated_log)
-         VALUES ('ethereum','{land}',79,'legacy-parcel','{CREATOR}','open','{WALLET_A}',25,4102444800000,1,2,13,0),
-                ('ethereum','{names}',11,'legacy-name','{CREATOR}','open','{WALLET_A}',25,4102444800000,1,2,13,0)"
+         VALUES ('ethereum','{land}',79,'legacy-parcel','{CREATOR}','open','{WALLET_A}',25,4102444800000,EXTRACT(EPOCH FROM now())::bigint,2,13,0),
+                ('ethereum','{names}',11,'legacy-name','{CREATOR}','open','{WALLET_A}',25,4102444800000,EXTRACT(EPOCH FROM now())::bigint,2,13,0)"
     )))
     .execute(pool)
     .await
@@ -66,6 +66,10 @@ async fn shallow_nft_sale_filters_use_published_land_and_names_before_paging() {
         .await;
         trades.insert(token, id);
     }
+    sqlx::query("UPDATE shop.trades SET created_at=timezone('UTC',now())-interval '1 day'")
+        .execute(pool)
+        .await
+        .unwrap();
     let app = |walker: bool| {
         let mut settings = state.settings.clone();
         settings.market.indexes.nft_enabled = walker;
@@ -110,7 +114,10 @@ async fn shallow_nft_sale_filters_use_published_land_and_names_before_paging() {
             assert_eq!(code, StatusCode::OK, "{page}");
             assert_eq!(page["total"], 1);
             assert_eq!(page["data"][0]["nft"]["tokenId"], unlisted);
-            for sort in ["recently_listed", "cheapest"] {
+            for (sort, token, price) in [
+                ("recently_listed", overlap, "25"),
+                ("cheapest", listed, "10"),
+            ] {
                 let (code, page) = get(
                     app(walks),
                     &format!("{path}&isOnSale=true&sortBy={sort}&first=1"),
@@ -118,14 +125,32 @@ async fn shallow_nft_sale_filters_use_published_land_and_names_before_paging() {
                 .await;
                 assert_eq!(code, StatusCode::OK, "{page}");
                 assert_eq!(page["total"], 2);
-                assert_eq!(page["data"][0]["nft"]["tokenId"], listed);
-                assert_eq!(page["data"][0]["order"]["price"], "10");
+                assert_eq!(page["data"][0]["nft"]["tokenId"], token);
+                assert_eq!(page["data"][0]["order"]["price"], price);
             }
             let (code, page) =
                 get(app(walks), &format!("{path}&maxPrice=0.00000000000000002")).await;
             assert_eq!(code, StatusCode::OK, "{page}");
             assert_eq!(page["total"], 1);
             assert_eq!(page["data"][0]["nft"]["tokenId"], listed);
+        }
+    }
+    for walks in [true, false] {
+        for filter in [
+            "category=parcel".to_owned(),
+            "category=estate".to_owned(),
+            "category=ens".to_owned(),
+            format!("contractAddress={land}"),
+            format!("contractAddress={estate}"),
+            format!("contractAddress={names}"),
+        ] {
+            let (code, page) = get(
+                app(walks),
+                &format!("/v1/nfts?network=MATIC&{filter}&isOnSale=true"),
+            )
+            .await;
+            assert_eq!(code, StatusCode::OK, "{page}");
+            assert_eq!(page["total"], 0);
         }
     }
     for walker in [true, false] {
@@ -139,6 +164,20 @@ async fn shallow_nft_sale_filters_use_published_land_and_names_before_paging() {
             crate::http::Outbound::for_tests(),
             settings,
         )));
+        let sepolia = crate::land_authz::LAND_SEPOLIA;
+        for address in [
+            sepolia.land_registry,
+            sepolia.estate_registry,
+            super::super::nft_index::Catalogue::Testnet.registrar(),
+        ] {
+            let (code, page) = get(
+                testnet.clone(),
+                &format!("/v1/nfts?network=MATIC&contractAddress={address}&isOnSale=true"),
+            )
+            .await;
+            assert_eq!(code, StatusCode::OK, "{page}");
+            assert_eq!(page["total"], 0);
+        }
         for category in ["parcel", "estate", "ens"] {
             let (code, page) = get(
                 testnet.clone(),
@@ -180,16 +219,22 @@ async fn shallow_nft_sale_filters_use_published_land_and_names_before_paging() {
     let (code, page) = get(app(false), parcel_filter).await;
     assert_eq!(code, StatusCode::SERVICE_UNAVAILABLE, "{page}");
     assert_eq!(page["source"], "nft-index");
-    sqlx::query(
-        "UPDATE shop.nft_order SET price=25, updated_block=100 WHERE order_id='legacy-parcel'",
-    )
-    .execute(pool)
-    .await
-    .unwrap();
+    sqlx::query("UPDATE shop.nft_order SET updated_block=100 WHERE order_id='legacy-parcel'")
+        .execute(pool)
+        .await
+        .unwrap();
     publish_eth().await;
     let (code, page) = get(app(false), parcel_filter).await;
     assert_eq!(code, StatusCode::OK, "{page}");
     assert_eq!(page["total"], 2);
+    assert!(
+        page["data"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|row| { row["order"]["id"] == "legacy-parcel" && row["order"]["price"] == "76" }),
+        "{page}"
+    );
 
     sqlx::query("UPDATE shop.nft SET owner=$1 WHERE network='ethereum' AND contract_address=$2 AND token_id=9")
         .bind(CREATOR).bind(names).execute(pool).await.unwrap();
@@ -294,6 +339,109 @@ async fn shallow_nft_sale_filters_use_published_land_and_names_before_paging() {
     let (code, page) = get(app(false), "/v1/nfts?category=parcel&isOnSale=true").await;
     assert_eq!(code, StatusCode::SERVICE_UNAVAILABLE, "{page}");
     assert_eq!(page["source"], "land-authz-index");
+
+    // The same Polygon filter drops the unrelated Ethereum registrar but
+    // keeps an eligible collection in a mixed contract list.
+    let polygon = contract_of(&tag(), 1);
+    seed_item_row(pool, &polygon, "1", CREATOR).await;
+    sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
+        "INSERT INTO shop.nft (network,contract_address,token_id,owner,item_id,
+          minted_block,minted_at,transferred_block,transferred_log,transferred_at)
+         VALUES ('matic','{polygon}',1,'{WALLET_A}',1,1,1,1,0,1);
+         INSERT INTO shop.nft_order (network,contract_address,token_id,order_id,
+           marketplace_address,status,seller,price,expires_at,created_at,updated_at,updated_block,updated_log)
+         VALUES ('matic','{polygon}',1,'polygon-1','{CREATOR}','open','{WALLET_A}',30,4102444800000,1,1,1,0)"
+    ))).execute(pool).await.unwrap();
+    super::super::owned_items::test_support::publish(
+        pool,
+        &[ChainNet::Matic],
+        true,
+        Duration::ZERO,
+    )
+    .await;
+    let (code, page) = get(
+        app(false),
+        &format!(
+            "/v1/nfts?network=MATIC&contractAddress={names}&contractAddress={polygon}&isOnSale=true"
+        ),
+    )
+    .await;
+    assert_eq!(code, StatusCode::OK, "{page}");
+    assert_eq!(page["total"], 1);
+    assert_eq!(page["data"][0]["nft"]["contractAddress"], polygon);
+
+    // Commit LAND's publication and a NAME price together when the old
+    // reader would return its last probe connection before opening the page.
+    const PUBLISH: &str = "BEGIN;
+         UPDATE land_authz.index_cursor SET folded_block=20,folded_at=timezone('UTC',now());
+         UPDATE shop.nft_order SET price=26 WHERE order_id='legacy-name';
+         UPDATE shop.chain_cursor SET folded_at=timezone('UTC',now()) WHERE indexer='nft' AND network='ethereum';
+         COMMIT";
+    let released = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let armed = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let gated_pool = sqlx::postgres::PgPoolOptions::new()
+        .min_connections(1)
+        .max_connections(1)
+        .after_release({
+            let released = released.clone();
+            let armed = armed.clone();
+            let writer = pool.clone();
+            move |_, _| {
+                let (released, armed, writer) = (released.clone(), armed.clone(), writer.clone());
+                Box::pin(async move {
+                    if armed.load(Ordering::SeqCst) && released.fetch_add(1, Ordering::SeqCst) == 2
+                    {
+                        sqlx::raw_sql(PUBLISH).execute(&writer).await?;
+                    }
+                    Ok(true)
+                })
+            }
+        })
+        .connect_with(pool.connect_options().as_ref().clone())
+        .await
+        .unwrap();
+    let mut reader = state.settings.clone();
+    reader.market.indexes.nft_enabled = false;
+    let mixed = market_router(Arc::new(super::super::MarketplaceState::new(
+        gated_pool.clone(),
+        crate::http::Outbound::for_tests(),
+        reader,
+    )));
+    let endpoint = "/v1/nfts?network=ETHEREUM&isOnSale=true";
+    let name_price = |page: Value| {
+        let order = page["data"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|row| row["order"]["id"] == "legacy-name")
+            .unwrap();
+        (
+            page["total"].as_u64().unwrap(),
+            order["order"]["price"].as_str().unwrap().to_owned(),
+        )
+    };
+    let (code, before) = get(mixed.clone(), endpoint).await;
+    assert_eq!(code, StatusCode::OK, "{before}");
+    let mut idle = gated_pool.acquire().await.unwrap();
+    idle.return_to_pool().await;
+    drop(idle);
+    armed.store(true, Ordering::SeqCst);
+    let (code, during) = get(mixed.clone(), endpoint).await;
+    assert_eq!(code, StatusCode::OK, "{during}");
+    armed.store(false, Ordering::SeqCst);
+    sqlx::raw_sql(PUBLISH).execute(pool).await.unwrap();
+    let (code, after) = get(mixed, endpoint).await;
+    assert_eq!(code, StatusCode::OK, "{after}");
+    let before = name_price(before);
+    let after = name_price(after);
+    let during = name_price(during);
+    assert_eq!(before, (2, "25".into()));
+    assert_eq!(after, (4, "26".into()));
+    assert!(
+        during == before || during == after,
+        "mixed snapshot: {during:?}"
+    );
+    gated_pool.close().await;
 
     // The configured trades mirror's SQL failure keeps its diagnostics in
     // the server log and returns the generic database error to the caller.

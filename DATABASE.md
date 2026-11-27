@@ -5250,8 +5250,9 @@ collections and NAMEs. The schema object pass adds the `nft_order` write
 and cursor triggers. After an upgrade, the next NFT publication establishes
 the order proof, including on an empty network. Until then, order-dependent
 reads that need that projection return `nft-index`.
-A mixed non-walking page keeps its optional LAND and NAME sources when
-those publications are available.
+A mixed non-walking page checks its optional LAND and NAME publications
+on that same snapshot. Polygon-only filters leave out Ethereum registries
+and keep the requested Polygon collections.
 Both owner searches and ownerless catalogue pages read the collections, NAME
 and LAND sources that their filters can include. This includes unfiltered
 browsing, search, sale filters and sorting. A missing required publication returns its source's 503
@@ -5637,14 +5638,15 @@ Each activity page takes its own book snapshot and counts its checks.
 projection table, whether the projection holds a write no publication has
 acknowledged (`pending`), and the cursor's last block at the latest write.
 Statement-level triggers with transition tables on `shop.nft` and
-`shop.legacy_order` (the `nft` cursor) and `shop.nft_bid` (the `sales`
+`shop.nft_order` and `shop.legacy_order` (the `nft` cursor) and `shop.nft_bid` (the `sales`
 cursor) set `pending` for the networks a statement wrote; a no-op upsert or
 an empty statement sets nothing. A trigger on `shop.chain_cursor` clears it
 when a publication commits (`folded_block` and `folded_at` set by any
 binary's `mark_folded`, at the same height too). The table is created by the
-object pass and seeded pending for every existing cursor, so an upgraded
-node serves again from its next publication. Workload: one row per
-(cursor, projection), rewritten by each fold statement that writes and each
+object pass. Initially existing cursors seed their ownership, legacy book and
+bid projections pending until the next publication. The `nft_order` proof
+starts at the first NFT publication after the object pass adds its triggers.
+Each cursor and projection use one row, rewritten by each fold statement that writes and each
 publication; the triggers add one transition table per write statement,
 sized by the rows it changed. A reader calls
 `chain_walk::rows_published_on` on its snapshot.

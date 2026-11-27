@@ -417,7 +417,7 @@ pub(super) fn filters_collections_only(f: &NftFilters) -> bool {
 }
 
 /// The subgraph `where` for the filters; `now_ms` bounds the open order.
-pub fn graph_where(f: &NftFilters, now_ms: i64) -> Value {
+fn graph_where(f: &NftFilters) -> Value {
     let mut w = json!({});
     if let Some(o) = &f.owner {
         w["owner"] = json!(o);
@@ -472,20 +472,6 @@ pub fn graph_where(f: &NftFilters, now_ms: i64) -> Value {
     }
     if let Some(mx) = f.max_estate_size {
         w["searchEstateSize_lte"] = json!(mx as i64);
-    }
-    if let Some(mn) = &f.min_price {
-        w["searchOrderPrice_gte"] = json!(mn);
-    }
-    if let Some(mx) = &f.max_price {
-        w["searchOrderPrice_lte"] = json!(mx);
-    }
-    match f.is_on_sale {
-        Some(true) => {
-            w["searchOrderStatus"] = json!("open");
-            w["and"] = super::orders::graph_unexpired("searchOrderExpiresAt", now_ms);
-        }
-        Some(false) => w["searchOrderStatus_not"] = json!("open"),
-        None => {}
     }
     if f.emote_has_sound {
         w["searchEmoteHasSound"] = json!(true);
@@ -713,19 +699,41 @@ pub async fn list_nfts(
     validate(f)?;
     let now = chrono::Utc::now();
     let chain_id = state.settings.market.indexes.chain_id_ethereum;
-    // The pinned Decentraland contracts address book (01b40cff154a046f9ec509ac84be3643b51181c6,
-    // addresses.json) has LANDProxy, EstateProxy and DCLRegistrar on Sepolia only on this pair.
-    if (super::owned_items::walks_here(state) || super::nft_reads::needs_orders(f))
-        && state.settings.catalogue() == super::nft_index::Catalogue::Testnet
-        && f.network == Some(Network::Matic)
-        && (f.is_land
-            || matches!(
-                f.category,
-                Some(NftCategory::Parcel | NftCategory::Estate | NftCategory::Ens)
-            ))
+    let network_filters;
+    let f = if f.network == Some(Network::Matic)
+        && (super::nft_reads::needs_orders(f)
+            || (super::owned_items::walks_here(state)
+                && state.settings.catalogue() == super::nft_index::Catalogue::Testnet))
     {
-        return Ok((vec![], 0));
-    }
+        // LAND, Estate and NAME registries are on Ethereum for both served
+        // pairs. A mixed contract filter can still name Polygon collections.
+        if f.is_land
+            || super::nft_reads::sources_for(f).land
+            || f.category == Some(NftCategory::Ens)
+        {
+            return Ok((vec![], 0));
+        }
+        let registrar = state.settings.catalogue().registrar();
+        let land = state.land_network();
+        let mut contracts = f.contract_addresses.clone();
+        contracts.retain(|address| {
+            !address.eq_ignore_ascii_case(registrar)
+                && !land.is_some_and(|land| {
+                    address.eq_ignore_ascii_case(land.land_registry)
+                        || address.eq_ignore_ascii_case(land.estate_registry)
+                })
+        });
+        if contracts.is_empty() && !f.contract_addresses.is_empty() {
+            return Ok((vec![], 0));
+        }
+        network_filters = NftFilters {
+            contract_addresses: contracts,
+            ..f.clone()
+        };
+        &network_filters
+    } else {
+        f
+    };
     let mut snapshot = None;
     if (super::owned_items::walks_here(state)
         || (super::nft_reads::needs_orders(f) && !merges_land(f)))
@@ -1018,7 +1026,7 @@ async fn list_page(
     // Shallow NAME and non-walking LAND pages without order filters or
     // sorts may still use the configured graph.
     let now_ms = now.timestamp_millis();
-    let where_ = graph_where(f, now_ms);
+    let where_ = graph_where(f);
     let (order_by, direction) = graph_sort(f.sort_by);
     let url = readers::require_marketplace(state)?;
     let page = GraphPage {
@@ -1116,15 +1124,7 @@ mod tests {
         assert_eq!(f.min_price.as_deref(), Some("1000000000000000000"));
         assert_eq!(f.max_price.as_deref(), Some("25000000000000000000"));
         assert_eq!(f.sort_by, Some(NftSortBy::CheapestParcel));
-        let w = graph_where(&f, 5_000);
-        assert_eq!(
-            (&w["searchOrderPrice_gte"], &w["searchOrderPrice_lte"]),
-            (
-                &json!("1000000000000000000"),
-                &json!("25000000000000000000")
-            )
-        );
-        assert_eq!(graph_sort(f.sort_by), ("searchOrderPrice", "asc"));
+        assert!(super::super::nft_reads::needs_orders(&f));
         let blank = parse_filters(&pairs(&[("minPrice", ""), ("maxPrice", " ")])).unwrap();
         assert_eq!((blank.min_price, blank.max_price), (None, None));
         let decimal = parse_filters(&pairs(&[
@@ -1164,17 +1164,9 @@ mod tests {
             ("emotePlayMode", "loop"),
         ]))
         .unwrap();
-        let w = graph_where(&f, 5_000);
+        let w = graph_where(&f);
         assert_eq!(w["owner"], "0xabcdefabcdefabcdefabcdefabcdefabcdefabcd");
         assert_eq!(w["category"], "wearable");
-        assert_eq!(w["searchOrderStatus"], "open");
-        assert_eq!(
-            w["and"][0]["or"],
-            json!([
-                {"searchOrderExpiresAt_gt":"5","searchOrderExpiresAt_lt":"100000000000"},
-                {"searchOrderExpiresAt_gt":"5000","searchOrderExpiresAt_gte":"100000000000"}
-            ])
-        );
         assert_eq!(w["searchWearableRarity_in"], json!(["epic"]));
         assert_eq!(
             w["searchWearableBodyShapes_contains"],

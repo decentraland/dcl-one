@@ -1104,7 +1104,7 @@ fn candidate_legs(
             " LEFT JOIN LATERAL (SELECT u.amount_received, u.created_at FROM unified_trades u WHERE u.type = 'public_nft_order' \
                 AND lower(u.network) = b.network AND u.contract_address_sent = b.contract_address AND u.token_id = b.token_id::text \
                 AND u.signer = b.owner
-                ORDER BY (EXTRACT(EPOCH FROM u.created_at) * 1000)::bigint DESC, u.id ASC, u.amount_received, u.beneficiary
+                ORDER BY (EXTRACT(EPOCH FROM u.created_at) * 1000)::bigint DESC, u.id::text ASC, u.amount_received, u.beneficiary
                 LIMIT 1) v3 ON true",
             restrict,
         )
@@ -1604,34 +1604,12 @@ pub(super) async fn indexed_page(
             .iter()
             .any(|addr| !addr.eq_ignore_ascii_case(state.settings.catalogue().registrar()));
     }
-    if super::nfts::merges_land(f) {
-        // On the compatibility route, include the NAME and LAND legs when
-        // available. Walking nodes take the strict catalogue snapshot before
-        // reaching this path for a mixed page.
-        let names = Sources {
-            names: true,
-            ..Default::default()
-        };
-        sources.names = require_ready(&state.pool, state.land_network(), f, names)
-            .await
-            .is_ok();
-        sources.land = match state.land_network() {
-            Some(net) => land_ready(&state.pool, net).await,
-            None => false,
-        };
-    }
-    // The page, its total and the estates' parcels read one state.
+    // The page and optional source decisions use one publication snapshot.
     let land = state.land_network();
     let mut conn = match open_read_conn(&state.pool, land, f, sources).await {
-        Err(ReadConnError::LandUnavailable) if !sources_for(f).land => {
-            // The optional LAND leg stopped being ready after its check.
-            sources.land = false;
-            read_conn(&state.pool, land, f, sources).await?
-        }
         Ok(conn) => conn,
         Err(ReadConnError::LandUnavailable) => {
-            // When no LAND snapshot can open, preserve the NFT source's
-            // refusal first if that publication is also unavailable.
+            // Preserve the NFT refusal first when both are unavailable.
             require_ready(&state.pool, land, f, sources).await?;
             return Err(land_unavailable());
         }
@@ -1641,6 +1619,31 @@ pub(super) async fn indexed_page(
             return Err(owned_items::not_ready("the nft index state cannot be read"));
         }
     };
+    if super::nfts::merges_land(f) {
+        // A compatibility page also includes NAME and LAND when they can
+        // answer in this snapshot. Walkers admit these sources up front.
+        let names = Sources {
+            names: true,
+            ..Default::default()
+        };
+        sources.names = match check_nft(&mut conn, state.settings.catalogue(), f, names).await {
+            Ok(()) => true,
+            Err(owned_items::ReadError::NotReady(..)) => false,
+            Err(error) => return Err(super::readers::index_source_error(error)),
+        };
+        if let Some(land) = land {
+            let observation = crate::land_authz::indexer::cursor_observed(&mut *conn, land.network)
+                .await
+                .map_err(super::readers::index_read_error)?;
+            sources.land = observation.is_some_and(|publication| {
+                crate::land_authz::indexer::observation_ready(
+                    &publication,
+                    land.land_registry,
+                    land.estate_registry,
+                )
+            });
+        }
+    }
     if needs_orders(f) {
         require_listing_sources(state, &mut conn, f, sources, now).await?;
     }
