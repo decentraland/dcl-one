@@ -20,7 +20,7 @@ type WhatsOnCardData = {
   usersLabel?: string
   /** The in-world position the hover call jumps to. */
   jumpHref?: string
-  started?: { dateTime: string; minutes: number }
+  started?: { dateTime: string; label: string }
   attendees?: readonly { id: string; name: string; avatarUrl: string }[]
   share?: boolean
   /** `foundation` shows the Decentraland logo as the avatar, as source does for Genesis Plaza;
@@ -42,7 +42,6 @@ type WhatsOnProps = {
     by: string
     jumpIn: string
     activity?: {
-      started: (minutes: number) => string
       attendees: string
       copyLink: (title: string) => string
       copied: string
@@ -156,7 +155,7 @@ function Card({
           ) : null}
           {card.started && activity ? (
             <time className={styles.elapsed} dateTime={card.started.dateTime}>
-              {activity.started(card.started.minutes)}
+              {card.started.label}
             </time>
           ) : null}
         </div>

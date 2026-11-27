@@ -123,7 +123,13 @@ export default function Home({ loaderData }: Route.ComponentProps) {
           carouselLabels={labels}
           viewAll={{ label: copy.whatsOn.view_all, href: "/events", onClick: clicks.viewAll }}
           background={<AnimatedBackground />}
-          cards={cards}
+          cards={cards.map(({ started, ...card }) => {
+            const label = started?.labels[locale];
+            return {
+              ...card,
+              started: started && label ? { dateTime: started.dateTime, label } : undefined,
+            };
+          })}
           onCardClick={clicks.whatsOnCard}
           onJumpInClick={clicks.whatsOnJumpIn}
         />

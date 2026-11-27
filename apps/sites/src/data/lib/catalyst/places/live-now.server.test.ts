@@ -26,6 +26,27 @@ describe("when building the Live Now cards", () => {
     expect(cards[0]).toMatchObject({ creatorAddress: "0xAbC", userName: "Host", image: "/content/contents/evhash" });
   });
 
+  describe("and a recurring event has no current occurrence time", () => {
+    it("should omit the series' first start", () => {
+      const cards = joinLiveNow(
+        [{ ...event, recurrent: true, start_at: "2026-09-01T10:00:00.000Z" }],
+        [scene("b", "Event scene", 8, [10, 11])],
+      );
+      expect(cards[0]?.startedAt).toBeUndefined();
+    });
+  });
+
+  describe("and a one-time event has only a start", () => {
+    it("should use that occurrence's start", () => {
+      const start = "2026-11-27T10:00:00.000Z";
+      const cards = joinLiveNow(
+        [{ ...event, recurrent: false, start_at: start }],
+        [scene("b", "Event scene", 8, [10, 11])],
+      );
+      expect(cards[0]?.startedAt).toEqual(start);
+    });
+  });
+
   it("should supply a thumbnail without a hot-scene row", () => {
     expect(plazaCard([]).image).toMatch(/\.webp$/);
   });

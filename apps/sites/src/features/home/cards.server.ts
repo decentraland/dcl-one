@@ -1,4 +1,4 @@
-import type { WhatsOnCardData } from "@dcl/one-ui";
+import { SITES_LANGUAGES, type WhatsOnCardData } from "@dcl/one-ui";
 import {
   getAvatarBackgroundColor,
   getDisplayName,
@@ -8,6 +8,7 @@ import type {
   Profile,
 } from "@/data/lib/catalyst/places/live-now.server";
 import { homeEventHref } from "./links";
+import { formatHomeStarted } from "./locale";
 
 // The reference's cards: a place card
 // opens its place page and an event card its event page; the creator's profile names, faces and
@@ -15,11 +16,15 @@ import { homeEventHref } from "./links";
 
 const FOUNDATION_COLOR = "#9d76e3";
 
+type HomeLiveCard = Omit<WhatsOnCardData, "started"> & {
+  started?: { dateTime: string; labels: Record<string, string> };
+};
+
 export function whatsOnCards(
   cards: LiveNowCard[],
   profiles: Record<string, Profile>,
   now = Date.now(),
-): WhatsOnCardData[] {
+): HomeLiveCard[] {
   return cards.map((card) => {
     const address = card.creatorAddress?.toLowerCase();
     const profile = address ? profiles[address] : undefined;
@@ -31,13 +36,16 @@ export function whatsOnCards(
             getDisplayName(name, profile?.hasClaimedName, card.creatorAddress),
           );
     const startedAt = card.startedAt ? Date.parse(card.startedAt) : NaN;
-    const started =
-      Number.isFinite(startedAt) && startedAt <= now
-        ? {
-            dateTime: new Date(startedAt).toISOString(),
-            minutes: Math.floor((now - startedAt) / 60_000),
-          }
-        : undefined;
+    const minutes = Math.floor((now - startedAt) / 60_000);
+    const started = Number.isFinite(minutes) && minutes >= 0
+      ? {
+          dateTime: new Date(startedAt).toISOString(),
+          // The locale can switch without a reload. Serialize each label so hydration uses the server's ICU output.
+          labels: Object.fromEntries(
+            SITES_LANGUAGES.map(({ code }) => [code, formatHomeStarted(code, minutes)]),
+          ),
+        }
+      : undefined;
     const attendees = card.attendeeAddresses?.flatMap((address) => {
       const person = profiles[address];
       return person?.face

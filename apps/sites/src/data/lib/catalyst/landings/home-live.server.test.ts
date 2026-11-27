@@ -79,7 +79,7 @@ describe("when Home reads a live event in a busy scene", () => {
           y: 2,
           start_at: "2026-11-20T10:00:00.000Z",
           next_start_at: occurrence,
-          latest_attendees: [attendee, attendee.toLowerCase(), "invalid-address"],
+          latest_attendees: [attendee, null, attendee.toLowerCase(), "invalid-address"],
           connected_addresses: ["0x9999999999999999999999999999999999999999"],
         }] });
       }

@@ -22,7 +22,8 @@ const LiveEvent = z.object({
   user_name: z.string().nullish(),
   start_at: z.string().nullish().catch(undefined),
   next_start_at: z.string().nullish().catch(undefined),
-  latest_attendees: z.array(z.string()).nullish().catch(undefined),
+  recurrent: z.boolean().nullish().catch(undefined),
+  latest_attendees: z.array(z.unknown()).nullish().catch(undefined),
 });
 export type LiveEvent = z.infer<typeof LiveEvent>;
 const LiveEvents = z.object({ data: z.array(z.unknown()) });
@@ -49,7 +50,7 @@ const Places = z.object({
 const PLACES_LIMIT = 100;
 
 const ETH_ADDRESS = /^0x[0-9a-fA-F]{40}$/;
-const isEthAddress = (value: string | null | undefined): value is string => !!value && ETH_ADDRESS.test(value);
+const isEthAddress = (value: unknown): value is string => typeof value === "string" && ETH_ADDRESS.test(value);
 export const formatEthAddress = (address: string) => `${address.slice(0, 6)}…${address.slice(-4)}`;
 
 const ActiveEntity = z.object({ id: z.string(), pointers: z.array(z.string()) });
@@ -137,7 +138,7 @@ export function joinLiveNow(liveEvents: LiveEvent[], hotScenes: HotScene[]): Liv
         coordinates: coordsKey(event.x, event.y),
         creatorAddress: event.user ?? undefined,
         userName: event.user_name || undefined,
-        startedAt: event.next_start_at ?? event.start_at ?? undefined,
+        startedAt: event.next_start_at ?? (event.recurrent === false ? event.start_at ?? undefined : undefined),
         attendeeAddresses: event.latest_attendees
           ? [
               ...new Set(

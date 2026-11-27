@@ -32,7 +32,10 @@ describe("when building a Home live event card", () => {
 
   it("should floor elapsed minutes and use the available RSVP face", () => {
     expect(whatsOnCards([card], profiles, now)[0]).toMatchObject({
-      started: { dateTime: "2026-11-27T10:00:00.000Z", minutes: 5 },
+      started: {
+        dateTime: "2026-11-27T10:00:00.000Z",
+        labels: { en: "Started 5 min. ago", zh: "5分钟前开始" },
+      },
       attendees: [{ id: address, name: "Ada", avatarUrl: "/profile-images/entities/ada/face.png" }],
       share: true,
     });

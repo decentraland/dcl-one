@@ -290,18 +290,20 @@ export const homeCopy = {
   },
 } satisfies Record<SitesLocale, HomeCopy>;
 
-export function homeLiveActivity(locale: SitesLocale) {
-  const { started, startedNow, attendees, copyLink, copied, copyFailed } = homeCopy[locale].whatsOn;
+export function formatHomeStarted(locale: SitesLocale, minutes: number): string {
+  const { started, startedNow } = homeCopy[locale].whatsOn;
+  if (minutes === 0) return startedNow;
   const relative = new Intl.RelativeTimeFormat(locale, { style: "short" });
+  let elapsed: string;
+  if (minutes >= 1_440) elapsed = relative.format(-Math.floor(minutes / 1_440), "day");
+  else if (minutes >= 60) elapsed = relative.format(-Math.floor(minutes / 60), "hour");
+  else elapsed = relative.format(-minutes, "minute");
+  return started.replace("{elapsed}", elapsed);
+}
+
+export function homeLiveActivity(locale: SitesLocale) {
+  const { attendees, copyLink, copied, copyFailed } = homeCopy[locale].whatsOn;
   return {
-    started: (minutes: number) => {
-      if (minutes === 0) return startedNow;
-      let elapsed: string;
-      if (minutes >= 1_440) elapsed = relative.format(-Math.floor(minutes / 1_440), "day");
-      else if (minutes >= 60) elapsed = relative.format(-Math.floor(minutes / 60), "hour");
-      else elapsed = relative.format(-minutes, "minute");
-      return started.replace("{elapsed}", elapsed);
-    },
     attendees,
     copyLink: (title: string) => `${copyLink}: ${title}`,
     copied,

@@ -1,6 +1,6 @@
 import { renderToStaticMarkup } from 'react-dom/server'
-import { describe, expect, it } from 'vitest'
-import { WhatsOn } from './WhatsOn'
+import { beforeEach, describe, expect, it } from 'vitest'
+import { WhatsOn, type WhatsOnProps } from './WhatsOn'
 
 const page = (image: string) =>
   renderToStaticMarkup(
@@ -35,47 +35,62 @@ describe('WhatsOn', () => {
 })
 
 describe('when the live event has a start and public attendees', () => {
-  it('should expose the start, the real profile picture and the copy-link action', () => {
-    const html = renderToStaticMarkup(
-      <WhatsOn
-        title="What's On"
-        cards={[
-          {
-            id: 'ev',
-            title: 'Party',
-            image: null,
-            href: '/events?id=ev',
-            users: 1,
-            usersLabel: '1 online',
-            share: true,
-            started: { dateTime: '2026-11-27T10:00:00.000Z', minutes: 5 },
-            attendees: [{ id: 'ada', name: 'Ada', avatarUrl: '/profile-images/entities/face.png' }]
-          }
-        ]}
-        labels={{
-          live: 'Live',
-          by: 'by',
-          jumpIn: 'Jump In',
-          activity: {
-            started: (minutes) => `Started ${minutes} min ago`,
-            attendees: 'Event attendees',
-            copyLink: (title) => `Copy event link: ${title}`,
-            copied: 'Copied',
-            copyFailed: 'Could not copy'
-          }
-        }}
-        carouselLabels={{
-          previous: 'Previous',
-          next: 'Next',
-          goTo: (n) => `Go to ${n}`,
-          position: (n, total) => `${n} of ${total}`
-        }}
-        viewAll={{ label: 'View All', href: '/events' }}
-      />
-    )
+  let props: WhatsOnProps
 
+  beforeEach(() => {
+    props = {
+      title: "What's On",
+      cards: [
+        {
+          id: 'ev',
+          title: 'Party',
+          image: null,
+          href: '/events?id=ev',
+          users: 1,
+          usersLabel: '1 online',
+          share: true,
+          started: { dateTime: '2026-11-27T10:00:00.000Z', label: 'Started 5 min ago' },
+          attendees: [{ id: 'ada', name: 'Ada', avatarUrl: '/profile-images/entities/face.png' }]
+        }
+      ],
+      labels: {
+        live: 'Live',
+        by: 'by',
+        jumpIn: 'Jump In',
+        activity: {
+          attendees: 'Event attendees',
+          copyLink: (title) => `Copy event link: ${title}`,
+          copied: 'Copied',
+          copyFailed: 'Could not copy'
+        }
+      },
+      carouselLabels: {
+        previous: 'Previous',
+        next: 'Next',
+        goTo: (n) => `Go to ${n}`,
+        position: (n, total) => `${n} of ${total}`
+      },
+      viewAll: { label: 'View All', href: '/events' }
+    }
+  })
+
+  it('should expose the start, RSVP profile picture and copy-link action', () => {
+    const html = renderToStaticMarkup(<WhatsOn {...props} />)
     expect(html).toContain('dateTime="2026-11-27T10:00:00.000Z">Started 5 min ago')
     expect(html).toContain('src="/profile-images/entities/face.png"')
     expect(html).toContain('aria-label="Copy event link: Party"')
+  })
+
+  describe('and the consumer has not supplied activity labels', () => {
+    beforeEach(() => {
+      delete props.labels.activity
+    })
+
+    it('should omit the optional activity content', () => {
+      const html = renderToStaticMarkup(<WhatsOn {...props} />)
+      expect(html).not.toContain('Started 5 min ago')
+      expect(html).not.toContain('face.png')
+      expect(html).not.toContain('Copy event link')
+    })
   })
 })
