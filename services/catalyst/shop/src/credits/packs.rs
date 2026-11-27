@@ -4,13 +4,6 @@
 //! (bounded by the PURCHASE through `revoked_credits <= credits`, never by
 //! spend rows) and the completion-based event de-duplication.
 
-// Money and chain values: a silently truncated or sign-flipped cast is a bug.
-#![deny(
-    clippy::cast_possible_truncation,
-    clippy::cast_sign_loss,
-    clippy::cast_possible_wrap
-)]
-
 use serde_json::Value as JsonValue;
 use sqlx::Row;
 

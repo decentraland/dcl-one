@@ -32,7 +32,7 @@ use sqlx::Row;
 use super::types::{
     AssetId, ChainId, ContractRef, ContractRole, CustomEffect, EvmAddress, ExternalCall, ItemKind,
     ItemRecord, Lookup, ManaWei, SignedTrade, StoreItem, TokenRecord, TradeAsset, TradeAssetType,
-    TradeCoupon,
+    TradeCoupon, chain_id_column,
 };
 use crate::checkout::trade::{SolTrade, TradeIn};
 use crate::evm::abi::{ItemToBuy, buyCall, executeOrderCall, offchain};
@@ -273,7 +273,7 @@ pub async fn mirror_facts(
         .await?;
     let state = NetworkState::from_row(&row)?;
     let (collections_ready, items_ready, refused) =
-        match state.owned_verdict(chain_id.0 as i64, purpose, Utc::now()) {
+        match state.owned_verdict(chain_id_column::<i64>(chain_id.0)?, purpose, Utc::now()) {
             Some(Ok(_)) => (true, true, None),
             Some(Err(why)) => (false, false, Some(why)),
             None => (

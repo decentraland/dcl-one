@@ -6,6 +6,14 @@
 //! tests also own the one-row `shop.trades_mirror` marker while they
 //! run. Without the variable those tests skip.
 
+#![allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    clippy::cast_possible_wrap,
+    clippy::cast_precision_loss,
+    reason = "test fixtures use small literal values"
+)]
+
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::Arc;

@@ -150,10 +150,12 @@ pub fn parse_list_row(v: &Value) -> Result<UpstreamTradeHead, String> {
     Ok(UpstreamTradeHead {
         id: str_field(v, "id")?,
         network: str_field(v, "network")?,
-        chain_id: v
-            .get("chain_id")
-            .and_then(|x| x.as_i64())
-            .ok_or("missing chain_id")? as i32,
+        chain_id: i32::try_from(
+            v.get("chain_id")
+                .and_then(|x| x.as_i64())
+                .ok_or("missing chain_id")?,
+        )
+        .map_err(|_| "chain_id out of range")?,
         signature: str_field(v, "signature")?.to_lowercase(),
         hashed_signature: str_field(v, "hashed_signature")?.to_lowercase(),
         checks: v.get("checks").cloned().ok_or("missing checks")?,
@@ -209,7 +211,8 @@ fn parse_asset(v: &Value, direction: &'static str) -> Result<UpstreamTradeAsset,
         .map(|s| s.to_lowercase());
     Ok(UpstreamTradeAsset {
         direction,
-        asset_type: asset_type as i16,
+        asset_type: i16::try_from(asset_type)
+            .map_err(|_| format!("unsupported assetType {asset_type}"))?,
         contract_address: str_field(v, "contractAddress")?.to_lowercase(),
         beneficiary,
         extra: normalize_extra(v.get("extra").and_then(|x| x.as_str())),
@@ -365,8 +368,8 @@ pub fn pass_verdict(
     let age = now
         .naive_utc()
         .signed_duration_since(completed_at)
-        .num_seconds()
-        .max(0) as u64;
+        .num_seconds();
+    let age = u64::try_from(age).unwrap_or(0);
     if age > budget.as_secs() {
         return Err(format!(
             "the trades mirror's last complete pass is {age} s old, past the {} s freshness budget (the trades-mirror job is off or failing); /v1/trades-mirror shows the pass",
@@ -807,8 +810,8 @@ fn list_url(base: &str, skip: i64) -> String {
 
 /// The `PAGE_SIZE` rows at `skip` of a list held in memory; empty past its end.
 fn page_of<T: Clone>(all: &[T], skip: i64) -> Vec<T> {
-    let start = (skip.max(0) as usize).min(all.len());
-    let end = (start + PAGE_SIZE as usize).min(all.len());
+    let start = crate::market::casts::page(skip).min(all.len());
+    let end = (start + crate::market::casts::page(PAGE_SIZE)).min(all.len());
     all[start..end].to_vec()
 }
 
@@ -999,7 +1002,7 @@ pub async fn run_pass(
 
     let page_budget = state.settings.trades_sync_pages_per_run;
     let mut details_left: Option<usize> =
-        (page_budget > 0).then_some(page_budget * PAGE_SIZE as usize);
+        (page_budget > 0).then_some(page_budget * crate::market::casts::page(PAGE_SIZE));
     let mut page_requests = 0usize;
     // An upstream that ignores `first`/`skip` (marketplace-api.decentraland.org
     // answers the whole 58 MB list to every page request, 2026-09-24) is
@@ -1043,7 +1046,7 @@ pub async fn run_pass(
                         anyhow::bail!("upstream list at skip {}: {e}", s.next_skip);
                     }
                 };
-                s.bytes_downloaded += bytes as i64;
+                s.bytes_downloaded += crate::market::casts::len_i64(bytes);
                 s.list_downloads += 1;
                 page_requests += 1;
                 // Moved out, not cloned: the whole-list answer is 74,531 rows.
@@ -1054,7 +1057,7 @@ pub async fn run_pass(
                     .map(std::mem::take)
                     .ok_or_else(|| anyhow::anyhow!("upstream list missing data.data array"))?;
                 drop(body);
-                if rows.len() as i64 > PAGE_SIZE {
+                if crate::market::casts::len_i64(rows.len()) > PAGE_SIZE {
                     // The steady state against production: marketplace-server's
                     // getTradesHandler has no paging, so first/skip are sent for a
                     // v2 peer that honours them and the whole list arrives here.
@@ -1081,7 +1084,7 @@ pub async fn run_pass(
         let stats = mirror_page(state, upstream, &rows, details_left)
             .await
             .map_err(|e| anyhow::anyhow!(e))?;
-        s.bytes_downloaded += stats.bytes as i64;
+        s.bytes_downloaded += crate::market::casts::len_i64(stats.bytes);
         s.last_error = None;
         if let Some(left) = details_left.as_mut() {
             *left = left.saturating_sub(stats.attempted);
@@ -1089,8 +1092,8 @@ pub async fn run_pass(
         if stats.deferred > 0 {
             // The page is only partly held: the cursor stays on it and the
             // next tick fetches the rest (the held rows then cost a scan).
-            s.rows_inserted += stats.new as i64;
-            s.rows_failed += stats.failed as i64;
+            s.rows_inserted += crate::market::casts::len_i64(stats.new);
+            s.rows_failed += crate::market::casts::len_i64(stats.failed);
             save_state(pool, &s).await?;
             tracing::info!(
                 pass = s.pass,
@@ -1111,11 +1114,11 @@ pub async fn run_pass(
             return Ok(());
         }
         s.pages_fetched += 1;
-        s.rows_fetched += stats.fetched as i64;
-        s.rows_inserted += stats.new as i64;
-        s.rows_failed += stats.failed as i64;
-        s.next_skip += rows.len() as i64;
-        let short = (rows.len() as i64) < PAGE_SIZE;
+        s.rows_fetched += crate::market::casts::len_i64(stats.fetched);
+        s.rows_inserted += crate::market::casts::len_i64(stats.new);
+        s.rows_failed += crate::market::casts::len_i64(stats.failed);
+        s.next_skip += crate::market::casts::len_i64(rows.len());
+        let short = crate::market::casts::len_i64(rows.len()) < PAGE_SIZE;
         if short {
             s.completed_at = Some(Utc::now().naive_utc());
             s.next_skip = 0;
@@ -1657,6 +1660,14 @@ pub(crate) mod fixtures {
 
 #[cfg(test)]
 mod tests {
+    #![allow(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        clippy::cast_possible_wrap,
+        clippy::cast_precision_loss,
+        reason = "test fixtures use small literal values"
+    )]
+
     use super::fixtures::{detail as fixture_detail, list_row as fixture_list_row};
     use super::*;
 

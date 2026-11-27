@@ -20,13 +20,6 @@
 //! written by a `WHERE portion > 0` predicate evaluated by PostgreSQL in
 //! NUMERIC, in the same statement family that applies the balance change.
 
-// Money and chain values: a silently truncated or sign-flipped cast is a bug.
-#![deny(
-    clippy::cast_possible_truncation,
-    clippy::cast_sign_loss,
-    clippy::cast_possible_wrap
-)]
-
 use super::errors::ApiError;
 
 /// Reject `|amount| >= 10^30`. Credits are a retail currency; anything at or
