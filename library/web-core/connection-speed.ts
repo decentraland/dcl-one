@@ -4,8 +4,10 @@
 // not throughput, so a fast link reads slow. The CDN sends no Timing-Allow-Origin, so the probe's own entry has no
 // response timings cross-origin either.
 
-/** Sites serves it (routes/internal.creators-speed-probe): 512 KiB of random bytes, never cached. */
+/** Sites serves it (routes/internal.creators-speed-probe): `PROBE_BYTES` of random bytes, never cached. */
 export const PROBE_URL = "/internal/creators-speed-probe";
+/** The probe's size, which the route serves and the timing halves by. */
+export const PROBE_BYTES = 512 * 1024;
 // A probe still running after this long is on a slow link whatever the final number would have been.
 export const PROBE_TIMEOUT_MS = 2_000;
 // Below this the transfer is latency, not throughput.
@@ -24,7 +26,9 @@ export async function measureDownlinkMbps(): Promise<number | null> {
       await response.body?.cancel();
       return null;
     }
-    const total = Number(response.headers.get("content-length")) || 0;
+    // A proxy that streams the body chunked (Cloudflare does, and compresses it when it may) drops the length. Without
+    // a size the "second half" would start at the first chunk and time the slow start it exists to leave out.
+    const total = Number(response.headers.get("content-length")) || PROBE_BYTES;
     const reader = response.body.getReader();
     let received = 0;
     let halfAt: number | null = null;
