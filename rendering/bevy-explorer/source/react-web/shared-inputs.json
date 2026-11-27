@@ -7687,30 +7687,6 @@
       "path": "library/ui/apps/sites/social",
       "entries": [
         {
-          "name": "CommunityAnnouncements.module.css",
-          "kind": "regular"
-        },
-        {
-          "name": "CommunityAnnouncements.test.tsx",
-          "kind": "regular"
-        },
-        {
-          "name": "CommunityAnnouncements.tsx",
-          "kind": "regular"
-        },
-        {
-          "name": "CommunityChannels.module.css",
-          "kind": "regular"
-        },
-        {
-          "name": "CommunityChannels.test.tsx",
-          "kind": "regular"
-        },
-        {
-          "name": "CommunityChannels.tsx",
-          "kind": "regular"
-        },
-        {
           "name": "CommunityCreate.module.css",
           "kind": "regular"
         },
@@ -7759,39 +7735,11 @@
           "kind": "regular"
         },
         {
-          "name": "CommunityMemberActions.test.tsx",
-          "kind": "regular"
-        },
-        {
-          "name": "CommunityMemberActions.tsx",
-          "kind": "regular"
-        },
-        {
           "name": "LdCreateCommunityView.test.tsx",
           "kind": "regular"
         },
         {
           "name": "LdCreateCommunityView.tsx",
-          "kind": "regular"
-        },
-        {
-          "name": "SocialHub.module.css",
-          "kind": "regular"
-        },
-        {
-          "name": "SocialHub.test.tsx",
-          "kind": "regular"
-        },
-        {
-          "name": "SocialHub.tsx",
-          "kind": "regular"
-        },
-        {
-          "name": "hub-format.test.ts",
-          "kind": "regular"
-        },
-        {
-          "name": "hub-format.ts",
           "kind": "regular"
         },
         {
@@ -16438,7 +16386,7 @@
     },
     {
       "path": "library/ui/apps/sites/index.ts",
-      "sha256": "bfe29285cddf797d8910bad8e7d94f513256124624ed884b99777d2ae0913e9a"
+      "sha256": "dc7b29dfe8cc3c8ab21a75fd3709c540e6a53df862f782718e8326e579fc2580"
     },
     {
       "path": "library/ui/apps/sites/jump/JumpCard.module.css",
@@ -16741,22 +16689,6 @@
       "sha256": "787de652c40cde429c9bec8c9b0f42a936783ac2c12587a3bc2e2f193acf7719"
     },
     {
-      "path": "library/ui/apps/sites/social/CommunityAnnouncements.module.css",
-      "sha256": "2291aadec8f80a0554403306deb819135e34983af43baae1a39277fb732a1d2c"
-    },
-    {
-      "path": "library/ui/apps/sites/social/CommunityAnnouncements.tsx",
-      "sha256": "06bb63c23fb879f40beca9ccf7e79453d86e2c3a7f592d95f35c159ee5cf0460"
-    },
-    {
-      "path": "library/ui/apps/sites/social/CommunityChannels.module.css",
-      "sha256": "9c8e43d0d7196b2f2d9efd6e7acd5d6f43c8fb368f14c224d9d38cf3d002fe81"
-    },
-    {
-      "path": "library/ui/apps/sites/social/CommunityChannels.tsx",
-      "sha256": "0d8d7fd9889329d749951e4b10c46516e3590ad3e55a628426b14a8a865bac72"
-    },
-    {
       "path": "library/ui/apps/sites/social/CommunityCreate.module.css",
       "sha256": "73984b00d968403223a07fc3ac8aed303d0a291c7aa6934e285bceed1246aa8b"
     },
@@ -16770,7 +16702,7 @@
     },
     {
       "path": "library/ui/apps/sites/social/CommunityDetail.tsx",
-      "sha256": "88f98f2521cebdbde8957552c2d5a48076445a9a141d41cad1186535105e6698"
+      "sha256": "c65e1b53f00d48d06471626e08662281bdc9a45d05dc60e2b6a3a3e2c01654ac"
     },
     {
       "path": "library/ui/apps/sites/social/CommunityError.module.css",
@@ -16789,24 +16721,8 @@
       "sha256": "505d5b73e3adef281bf1ed37fcb45502b03e184ec1318b2e146f51fdb4d46159"
     },
     {
-      "path": "library/ui/apps/sites/social/CommunityMemberActions.tsx",
-      "sha256": "e74db496105c6765f3d3d59b126f761147c24213040dd4f4efdfeeb90390ea79"
-    },
-    {
       "path": "library/ui/apps/sites/social/LdCreateCommunityView.tsx",
       "sha256": "e4154a16a5c7ce3ed1690470690d574b3fca07c39880f52326f48d7e20905c17"
-    },
-    {
-      "path": "library/ui/apps/sites/social/SocialHub.module.css",
-      "sha256": "5a695c91dffb66364ed52ed313c8d55c0edb513e4d29b05609a93b10b5fa48d9"
-    },
-    {
-      "path": "library/ui/apps/sites/social/SocialHub.tsx",
-      "sha256": "d55b13adae9c370dd932cb2126a06c86df369fb8f348e9d7ea4a22b5768efd8e"
-    },
-    {
-      "path": "library/ui/apps/sites/social/hub-format.ts",
-      "sha256": "3e125dd08b76d0bd4d55d40e07160a5fc600b2ce9f7bde95138c2e759c3e9b8e"
     },
     {
       "path": "library/ui/apps/sites/social/ldcreatecommunityview.css",
@@ -59818,36 +59734,6 @@
     },
     {
       "from": "library/ui/apps/sites/index.ts",
-      "to": "library/ui/apps/sites/social/CommunityAnnouncements.tsx",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/sites/index.ts",
-      "to": "library/ui/apps/sites/social/CommunityAnnouncements.tsx",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/sites/index.ts",
-      "to": "library/ui/apps/sites/social/CommunityAnnouncements.tsx",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/sites/index.ts",
-      "to": "library/ui/apps/sites/social/CommunityChannels.tsx",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/sites/index.ts",
-      "to": "library/ui/apps/sites/social/CommunityChannels.tsx",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/sites/index.ts",
-      "to": "library/ui/apps/sites/social/CommunityChannels.tsx",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/sites/index.ts",
       "to": "library/ui/apps/sites/social/CommunityCreate.tsx",
       "kind": "native:runtime"
     },
@@ -59908,21 +59794,6 @@
     },
     {
       "from": "library/ui/apps/sites/index.ts",
-      "to": "library/ui/apps/sites/social/CommunityMemberActions.tsx",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/sites/index.ts",
-      "to": "library/ui/apps/sites/social/CommunityMemberActions.tsx",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/sites/index.ts",
-      "to": "library/ui/apps/sites/social/CommunityMemberActions.tsx",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/sites/index.ts",
       "to": "library/ui/apps/sites/social/LdCreateCommunityView.tsx",
       "kind": "native:runtime"
     },
@@ -59934,21 +59805,6 @@
     {
       "from": "library/ui/apps/sites/index.ts",
       "to": "library/ui/apps/sites/social/LdCreateCommunityView.tsx",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/sites/index.ts",
-      "to": "library/ui/apps/sites/social/SocialHub.tsx",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/sites/index.ts",
-      "to": "library/ui/apps/sites/social/SocialHub.tsx",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/sites/index.ts",
-      "to": "library/ui/apps/sites/social/SocialHub.tsx",
       "kind": "test:runtime"
     },
     {
@@ -62337,186 +62193,6 @@
       "kind": "test:runtime"
     },
     {
-      "from": "library/ui/apps/sites/social/CommunityAnnouncements.tsx",
-      "to": "library/ui/apps/sites/social/CommunityAnnouncements.module.css",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/sites/social/CommunityAnnouncements.tsx",
-      "to": "library/ui/apps/sites/social/CommunityAnnouncements.module.css",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/sites/social/CommunityAnnouncements.tsx",
-      "to": "library/ui/apps/sites/social/CommunityAnnouncements.module.css",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/sites/social/CommunityAnnouncements.tsx",
-      "to": "library/ui/apps/sites/social/SocialHub.tsx",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/sites/social/CommunityAnnouncements.tsx",
-      "to": "library/ui/apps/sites/social/SocialHub.tsx",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/sites/social/CommunityAnnouncements.tsx",
-      "to": "library/ui/apps/sites/social/SocialHub.tsx",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/sites/social/CommunityAnnouncements.tsx",
-      "to": "library/ui/apps/sites/social/hub-format.ts",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/sites/social/CommunityAnnouncements.tsx",
-      "to": "library/ui/apps/sites/social/hub-format.ts",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/sites/social/CommunityAnnouncements.tsx",
-      "to": "library/ui/apps/sites/social/hub-format.ts",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/sites/social/CommunityAnnouncements.tsx",
-      "to": "library/ui/foundations/icons/index.ts",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/sites/social/CommunityAnnouncements.tsx",
-      "to": "library/ui/foundations/icons/index.ts",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/sites/social/CommunityAnnouncements.tsx",
-      "to": "library/ui/foundations/icons/index.ts",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/sites/social/CommunityAnnouncements.tsx",
-      "to": "library/ui/index.ts",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/sites/social/CommunityAnnouncements.tsx",
-      "to": "library/ui/index.ts",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/sites/social/CommunityAnnouncements.tsx",
-      "to": "library/ui/index.ts",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/sites/social/CommunityChannels.tsx",
-      "to": "library/ui/apps/sites/social/CommunityAnnouncements.tsx",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/sites/social/CommunityChannels.tsx",
-      "to": "library/ui/apps/sites/social/CommunityAnnouncements.tsx",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/sites/social/CommunityChannels.tsx",
-      "to": "library/ui/apps/sites/social/CommunityAnnouncements.tsx",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/sites/social/CommunityChannels.tsx",
-      "to": "library/ui/apps/sites/social/CommunityChannels.module.css",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/sites/social/CommunityChannels.tsx",
-      "to": "library/ui/apps/sites/social/CommunityChannels.module.css",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/sites/social/CommunityChannels.tsx",
-      "to": "library/ui/apps/sites/social/CommunityChannels.module.css",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/sites/social/CommunityChannels.tsx",
-      "to": "library/ui/apps/sites/social/SocialHub.tsx",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/sites/social/CommunityChannels.tsx",
-      "to": "library/ui/apps/sites/social/SocialHub.tsx",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/sites/social/CommunityChannels.tsx",
-      "to": "library/ui/apps/sites/social/SocialHub.tsx",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/sites/social/CommunityChannels.tsx",
-      "to": "library/ui/apps/sites/social/hub-format.ts",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/sites/social/CommunityChannels.tsx",
-      "to": "library/ui/apps/sites/social/hub-format.ts",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/sites/social/CommunityChannels.tsx",
-      "to": "library/ui/apps/sites/social/hub-format.ts",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/sites/social/CommunityChannels.tsx",
-      "to": "library/ui/apps/sites/useBrokenImage.ts",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/sites/social/CommunityChannels.tsx",
-      "to": "library/ui/apps/sites/useBrokenImage.ts",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/sites/social/CommunityChannels.tsx",
-      "to": "library/ui/apps/sites/useBrokenImage.ts",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/sites/social/CommunityChannels.tsx",
-      "to": "library/ui/foundations/icons/index.ts",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/sites/social/CommunityChannels.tsx",
-      "to": "library/ui/foundations/icons/index.ts",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/sites/social/CommunityChannels.tsx",
-      "to": "library/ui/foundations/icons/index.ts",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/sites/social/CommunityChannels.tsx",
-      "to": "library/ui/index.ts",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/sites/social/CommunityChannels.tsx",
-      "to": "library/ui/index.ts",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/sites/social/CommunityChannels.tsx",
-      "to": "library/ui/index.ts",
-      "kind": "test:runtime"
-    },
-    {
       "from": "library/ui/apps/sites/social/CommunityCreate.tsx",
       "to": "library/ui/apps/sites/social/CommunityCreate.module.css",
       "kind": "native:runtime"
@@ -62787,36 +62463,6 @@
       "kind": "test:runtime"
     },
     {
-      "from": "library/ui/apps/sites/social/CommunityMemberActions.tsx",
-      "to": "library/ui/apps/sites/social/SocialHub.tsx",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/sites/social/CommunityMemberActions.tsx",
-      "to": "library/ui/apps/sites/social/SocialHub.tsx",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/sites/social/CommunityMemberActions.tsx",
-      "to": "library/ui/apps/sites/social/SocialHub.tsx",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/sites/social/CommunityMemberActions.tsx",
-      "to": "library/ui/index.ts",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/sites/social/CommunityMemberActions.tsx",
-      "to": "library/ui/index.ts",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/sites/social/CommunityMemberActions.tsx",
-      "to": "library/ui/index.ts",
-      "kind": "test:runtime"
-    },
-    {
       "from": "library/ui/apps/sites/social/LdCreateCommunityView.tsx",
       "to": "library/ui/apps/sites/social/ldcreatecommunityview.css",
       "kind": "native:runtime"
@@ -62829,81 +62475,6 @@
     {
       "from": "library/ui/apps/sites/social/LdCreateCommunityView.tsx",
       "to": "library/ui/apps/sites/social/ldcreatecommunityview.css",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/sites/social/SocialHub.tsx",
-      "to": "library/ui/apps/sites/social/SocialHub.module.css",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/sites/social/SocialHub.tsx",
-      "to": "library/ui/apps/sites/social/SocialHub.module.css",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/sites/social/SocialHub.tsx",
-      "to": "library/ui/apps/sites/social/SocialHub.module.css",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/sites/social/SocialHub.tsx",
-      "to": "library/ui/apps/sites/social/hub-format.ts",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/sites/social/SocialHub.tsx",
-      "to": "library/ui/apps/sites/social/hub-format.ts",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/sites/social/SocialHub.tsx",
-      "to": "library/ui/apps/sites/social/hub-format.ts",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/sites/social/SocialHub.tsx",
-      "to": "library/ui/apps/sites/useBrokenImage.ts",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/sites/social/SocialHub.tsx",
-      "to": "library/ui/apps/sites/useBrokenImage.ts",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/sites/social/SocialHub.tsx",
-      "to": "library/ui/apps/sites/useBrokenImage.ts",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/sites/social/SocialHub.tsx",
-      "to": "library/ui/foundations/icons/index.ts",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/sites/social/SocialHub.tsx",
-      "to": "library/ui/foundations/icons/index.ts",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/sites/social/SocialHub.tsx",
-      "to": "library/ui/foundations/icons/index.ts",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/sites/social/SocialHub.tsx",
-      "to": "library/ui/index.ts",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/sites/social/SocialHub.tsx",
-      "to": "library/ui/index.ts",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/sites/social/SocialHub.tsx",
-      "to": "library/ui/index.ts",
       "kind": "test:runtime"
     },
     {
@@ -71473,16 +71044,6 @@
     },
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
-      "to": "library/ui/apps/sites/social/CommunityAnnouncements.tsx",
-      "kind": "type"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
-      "to": "library/ui/apps/sites/social/CommunityChannels.tsx",
-      "kind": "type"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/ui/apps/sites/social/CommunityCreate.tsx",
       "kind": "type"
     },
@@ -71503,22 +71064,7 @@
     },
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
-      "to": "library/ui/apps/sites/social/CommunityMemberActions.tsx",
-      "kind": "type"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/ui/apps/sites/social/LdCreateCommunityView.tsx",
-      "kind": "type"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
-      "to": "library/ui/apps/sites/social/SocialHub.tsx",
-      "kind": "type"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
-      "to": "library/ui/apps/sites/social/hub-format.ts",
       "kind": "type"
     },
     {

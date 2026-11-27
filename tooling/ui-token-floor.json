@@ -579,14 +579,6 @@
     "primitives": 0,
     "tokens": 40
   },
-  "library/ui/apps/sites/social/CommunityAnnouncements.module.css": {
-    "primitives": 0,
-    "tokens": 29
-  },
-  "library/ui/apps/sites/social/CommunityChannels.module.css": {
-    "primitives": 0,
-    "tokens": 70
-  },
   "library/ui/apps/sites/social/CommunityCreate.module.css": {
     "primitives": 0,
     "tokens": 24
@@ -602,10 +594,6 @@
   "library/ui/apps/sites/social/CommunityLists.module.css": {
     "primitives": 0,
     "tokens": 41
-  },
-  "library/ui/apps/sites/social/SocialHub.module.css": {
-    "primitives": 0,
-    "tokens": 73
   },
   "library/ui/components/AppChrome/ChromeBody.module.css": {
     "primitives": 0,
