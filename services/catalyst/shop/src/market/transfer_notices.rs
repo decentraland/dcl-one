@@ -228,7 +228,7 @@ async fn pages(pool: &PgPool, chain_id: i64) -> anyhow::Result<Pass> {
         emitted += insert_notifications(&mut *txn, &batch).await?;
         notice_cursor::advance(&mut txn, PRODUCER, None, last_block, last_log).await?;
         txn.commit().await?;
-        if rows.len() < PAGE_SIZE as usize {
+        if rows.len() < crate::market::casts::page(PAGE_SIZE) {
             break;
         }
     }

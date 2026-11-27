@@ -525,7 +525,11 @@ async fn owned_items_body(
                 .max()
                 .unwrap_or("")
                 .to_string();
-            (g.urn, g.individual.len() as i64, rarity)
+            (
+                g.urn,
+                crate::market::casts::len_i64(g.individual.len()),
+                rarity,
+            )
         })
         .collect();
     sort_owned_by_rarity_then_urn(&mut rows);

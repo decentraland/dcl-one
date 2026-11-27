@@ -54,7 +54,9 @@ and own the rest. Scenes keep the behaviour they had on 0.307 wherever the new c
   (`structured_clone.rs`). `op_drain_pending_rejections` returns nothing (`rejections.rs`):
   upstream holds the rejection queue's borrow while a scene's `Array.prototype` setter can run,
   and the queue is private to deno_core, so the event loop, which takes the queue out first,
-  hands rejections to the same handler.
+  hands rejections to the same handler. `op_blob_slice_part` is replaced too (`blob_slice.rs`):
+  upstream nests one part per slice, and a long chain overflows the stack when it is read or
+  dropped, so a slice of a slice wraps the original part instead.
 - **Op results** are ordinary objects (`JsPlain<T>`): serde_v8 builds them with a null
   prototype, so `String(result)` would throw.
 - **Clock:** `performance.now()` keeps a 2 ms resolution (`clock.rs`). deno_core's timer clock

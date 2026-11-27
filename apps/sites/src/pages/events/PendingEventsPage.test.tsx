@@ -38,7 +38,8 @@ const moderation = (id: string, body: unknown) => ["/events/api/events/" + id, b
 function watchCommits(hold?: Promise<void>) {
   const frames: { dialogs: string[]; toast: string }[] = [];
   const record = () => frames.push({
-    dialogs: [...document.querySelectorAll("[role=dialog]")].map((dialog) =>
+    // The reason dialog is a native <dialog> (the shared Modal), the review the app's role="dialog" panel.
+    dialogs: [...document.querySelectorAll("[role=dialog], dialog")].map((dialog) =>
       document.getElementById(dialog.getAttribute("aria-labelledby") ?? "")?.textContent ?? ""),
     toast: document.querySelector("[data-tone=success]")?.textContent ?? "",
   });

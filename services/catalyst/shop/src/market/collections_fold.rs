@@ -689,6 +689,14 @@ pub fn tracked_minters(events: &[CollectionEvent]) -> HashSet<(String, String)> 
 
 #[cfg(test)]
 mod tests {
+    #![allow(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        clippy::cast_possible_wrap,
+        clippy::cast_precision_loss,
+        reason = "test fixtures use small literal values"
+    )]
+
     use super::*;
     use crate::chain_index::rpc::RpcLog;
 

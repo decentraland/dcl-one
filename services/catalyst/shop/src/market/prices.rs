@@ -176,7 +176,7 @@ pub async fn prices(
     let rows = sqlx::query_with(sqlx::AssertSqlSafe(sql), args)
         .fetch_all(&mut *read.tx)
         .await
-        .map_err(super::nft_reads::read_error)?;
+        .map_err(super::readers::index_read_error)?;
     read.note(state);
     Ok(consolidate(
         rows.iter()
