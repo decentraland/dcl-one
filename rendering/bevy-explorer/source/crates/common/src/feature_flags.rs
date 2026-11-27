@@ -43,8 +43,13 @@ use crate::{
 /// a flag only this client reads. To add one, create `explorer-<name>` in Unleash
 /// and add it here. Unleash cannot rename a flag, so choose its name once. `bevy-test` has no
 /// feature behind it, for checking the read end to end. `alfa-official-wallets` carries the wallets
-/// whose names show the official badge (the avatar crate's nametags).
-pub const FLAGS: &[&str] = &["bevy-test", "alfa-official-wallets"];
+/// whose names show the official badge (the avatar crate's nametags). `bevy-variants-endpoint`
+/// routes the Bevy variants (`ipfs::bevy_variants::flagged_base`).
+pub const FLAGS: &[&str] = &[
+    "bevy-test",
+    "alfa-official-wallets",
+    "bevy-variants-endpoint",
+];
 
 /// The application's prefix on every key of the file.
 const APP_PREFIX: &str = "explorer-";

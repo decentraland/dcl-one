@@ -1,0 +1,15 @@
+/* Not in Figma: the Explorer HUD's dark surface. These rules sit outside the cascade layer with the
+   specificity they had: every HUD panel passes its own class to size and restyle the surface, and keeps the
+   precedence it had. The translucent panel fills have no token. */
+.root {
+  background: rgba(22, 21, 24, 0.92);
+  border: 1px solid rgba(255, 255, 255, 0.08); /* = HUD --line */
+  border-radius: 18px; /* = HUD --r-panel */
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35); /* = HUD --shadow-panel */
+  color: var(--dcl-neutrals-snow);
+}
+
+.blur {
+  background: rgba(22, 21, 24, 0.6);
+  backdrop-filter: blur(8px);
+}

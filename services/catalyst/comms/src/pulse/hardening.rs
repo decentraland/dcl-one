@@ -446,7 +446,10 @@ impl ReplayJournalFile {
 }
 
 /// What a test gate tells the journal writer to do with its next batch.
-#[cfg_attr(not(test), allow(dead_code))]
+#[cfg_attr(
+    not(test),
+    allow(dead_code, reason = "only the test gate builds these steps")
+)]
 #[derive(Debug)]
 pub(crate) enum WriterStep {
     Write,

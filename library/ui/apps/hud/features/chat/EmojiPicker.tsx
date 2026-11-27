@@ -2,7 +2,7 @@
 // section in one scroll. Clicking an emoji inserts its glyph and keeps the panel open.
 
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { MaskIcon, SearchField } from '../../design'
+import { SearchField } from '../../design'
 import { EMOJI_BY_CODE, EMOJI_GROUPS, loadRecents, pushRecent, searchByShortcode, type Emoji } from './emojiData'
 import smileysIcon from '../../assets/chat/emoji-categories/smileyspeople.png'
 import animalsIcon from '../../assets/chat/emoji-categories/animals.png'
@@ -14,6 +14,7 @@ import symbolsIcon from '../../assets/chat/emoji-categories/symbols.png'
 import flagIcon from '../../assets/chat/emoji-categories/flag.png'
 import { isCancelKey } from '../../lib/bindingLabels'
 import styles from './EmojiPicker.module.css'
+import { MaskIcon } from '@dcl/one-ui'
 
 /** Closes an open emoji panel on a press outside it; its own emoji button (`toggle`) toggles the
  *  panel itself, and another composer's emoji button is outside like anything else. */

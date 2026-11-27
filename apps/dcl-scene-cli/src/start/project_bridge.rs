@@ -474,7 +474,7 @@ pub(super) fn list_matching(
         } else if kind.is_file() {
             let rel = path
                 .strip_prefix(root)
-                .unwrap()
+                .expect("list_matching walks below root")
                 .to_string_lossy()
                 .replace('\\', "/");
             if allowed(&rel) {

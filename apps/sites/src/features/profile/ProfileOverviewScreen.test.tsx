@@ -446,9 +446,11 @@ describe("ProfileOverviewScreen badges", () => {
       show(profile(), false, vi.fn(), true);
     });
 
-    it("should show each badge with its tier, blurb and unlock date", async () => {
-      expect(await screen.findByAltText("Explorer")).toBeTruthy();
-      const tip = screen.getByRole("tooltip", { hidden: true });
+    it("should show each badge with its tier, blurb and unlock date on hover", async () => {
+      const badge = await screen.findByAltText("Explorer");
+      expect(screen.queryByRole("tooltip")).toBeNull();
+      fireEvent.mouseEnter(badge.parentElement!);
+      const tip = screen.getByRole("tooltip");
       expect(tip.textContent).toContain("Gold");
       expect(tip.textContent).toContain("Visit 100 scenes");
       expect(tip.textContent).toContain("Unlocked on Mar 3, 2026");

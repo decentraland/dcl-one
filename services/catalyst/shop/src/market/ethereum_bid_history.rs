@@ -170,14 +170,14 @@ async fn read_window(
                     .is_some_and(|h| h.eq_ignore_ascii_case(&header.value.hash)),
                 "a bid event is missing its canonical block hash"
             );
-            match sales_index::decode_log(log, header.value.timestamp) {
-                Ok(Some(row)) => rows.push(row),
-                Ok(None) => {}
-                Err(error) => {
-                    let (block, log_index) = chain_walk::log_position(log);
-                    tracing::warn!(block, log_index, error = %error, "skipping an undecodable bid event")
-                }
-            }
+            // As the forward walk: an event it cannot decode fails the
+            // window, rather than leave its bid out of a history the repair
+            // would then call complete.
+            let row = sales_index::decode_log(log, header.value.timestamp).map_err(|error| {
+                let (block, log_index) = chain_walk::log_position(log);
+                anyhow::anyhow!("an undecodable bid event at {block}:{log_index}: {error}")
+            })?;
+            rows.extend(row);
         }
     }
     let reached = source.header(reached_block).await?;

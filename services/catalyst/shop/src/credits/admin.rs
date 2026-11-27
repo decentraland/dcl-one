@@ -13,10 +13,13 @@ use axum::http::HeaderMap;
 use axum::http::request::Parts;
 use serde::Deserialize;
 use serde_json::{Value, json};
+use sha2::{Digest, Sha256};
 
 use super::SharedState;
 use super::errors::ApiError;
-use crate::shared::signed_fetch::ORIGINAL_PATH_HEADER;
+use crate::shared::signed_fetch::{
+    AUTH_METADATA_HEADER, ORIGINAL_PATH_HEADER, PayloadPolicy, SignedPath, require_signer_at,
+};
 
 pub const ADMIN_TOKEN_ENV: &str = "CATALYRST_CREDITS_ADMIN_TOKEN";
 
@@ -62,11 +65,12 @@ pub(crate) fn establish_admin(
     }
 }
 
-/// The reports gate (the cross-wallet credits list and its grant reasons):
-/// the operator bearer, or a signed-fetch request whose signer is one of
-/// `CREDITS_READ_ADMIN_ADDRESSES`, the old server's read-only and read-write
-/// admin lists, so the ops dashboard reads them with its wallet as it did.
-/// Anything else answers the old server's 401.
+/// The reports gate (the cross-wallet credits list and its grant reasons) and
+/// the studio reads: the operator bearer, or a signed-fetch request whose
+/// signer is one of `CREDITS_READ_ADMIN_ADDRESSES`, the old server's read-only
+/// and read-write admin lists, or of `CREDITS_WRITE_ADMIN_ADDRESSES` (a write
+/// admin reads too), so the ops dashboard reads them with its wallet as it
+/// did. Anything else answers the old server's 401.
 pub(crate) async fn require_read_admin(
     state: &SharedState,
     headers: &HeaderMap,
@@ -78,14 +82,85 @@ pub(crate) async fn require_read_admin(
     if establish_admin(state.settings.admin_token.as_deref(), headers).is_ok() {
         return Ok(());
     }
-    if state.settings.read_admin_addresses.is_empty() {
-        return Err(ApiError::unauthorized(REFUSED));
+    let settings = &state.settings;
+    let admins = [
+        settings.read_admin_addresses.as_slice(),
+        settings.write_admin_addresses.as_slice(),
+    ];
+    signed_admin(
+        state, headers, "GET", route_path, original, &admins, REFUSED,
+    )
+    .await
+    .map(drop)
+}
+
+/// The signed-metadata key a wallet's write commits to its request body with:
+/// the hex SHA-256 of the body's exact bytes.
+pub const BODY_SHA256_KEY: &str = "bodySha256";
+
+/// The studio write gate: the operator bearer, or a signed-fetch request over
+/// `method` and the route whose signer is one of
+/// `CREDITS_WRITE_ADMIN_ADDRESSES` (the old server's read-write admins), so
+/// the ops dashboard changes studios with its wallet as it did. Answers the
+/// audit actor: the bearer's [`RequireAdmin::audit_actor_description`], or the
+/// signer's address, so a wallet's change names who made it. Anything else
+/// answers the old server's 401.
+///
+/// A signed request proves the method, the route and the time, not the body.
+/// So a wallet's write that signs [`BODY_SHA256_KEY`] must match `body`, or it
+/// is refused before anything is written. One that signs no hash is accepted
+/// with a warning, as credits-server accepted it, until
+/// `CREDITS_ADMIN_WRITES_REQUIRE_BOUND_BODY` refuses it.
+pub(crate) async fn require_write_admin(
+    state: &SharedState,
+    headers: &HeaderMap,
+    method: &str,
+    route_path: &str,
+    original: &axum::extract::OriginalUri,
+    body: &[u8],
+) -> Result<String, ApiError> {
+    const REFUSED: &str =
+        "Unauthorized: the admin token or a write-admin signed request is required";
+    if let Ok(admin) = establish_admin(state.settings.admin_token.as_deref(), headers) {
+        return Ok(admin.audit_actor_description());
     }
-    // The shared path rule admits a proxy `x-original-path` that merely ENDS
-    // with the route, and a bare `/credits` is also the tail of every wallet's
-    // own balance route (`/credits/users/{address}/credits`), which an admin
-    // signs routinely. A replayed signature over that path must not open the
-    // cross-wallet list, so here the header counts only when it IS the route.
+    let admins = [state.settings.write_admin_addresses.as_slice()];
+    let signer = signed_admin(
+        state, headers, method, route_path, original, &admins, REFUSED,
+    )
+    .await?;
+    if !signed_body_matches(headers, body)? {
+        if state.settings.admin_writes_require_bound_body {
+            return Err(ApiError::unauthorized(
+                "Unauthorized: a wallet-signed write must sign its body (bodySha256 in the signed metadata)",
+            ));
+        }
+        tracing::warn!(%signer, route = route_path, method, "a wallet-signed admin write signed no bodySha256; accepted while CREDITS_ADMIN_WRITES_REQUIRE_BOUND_BODY is off");
+    }
+    Ok(signer)
+}
+
+/// Whether a wallet's signed write commits to `body`: `true` when its signed
+/// metadata carries [`BODY_SHA256_KEY`] and that is the SHA-256 of the exact
+/// bytes sent, `false` when it signs no hash (the caller's policy decides),
+/// and a 401 when the signed hash is another body's or cannot be read.
+pub(crate) fn signed_body_matches(headers: &HeaderMap, body: &[u8]) -> Result<bool, ApiError> {
+    match signed_body_hash(headers) {
+        Some(Some(signed)) if signed.eq_ignore_ascii_case(&hex::encode(Sha256::digest(body))) => {
+            Ok(true)
+        }
+        Some(_) => Err(ApiError::unauthorized(
+            "Unauthorized: the signed bodySha256 does not match the request body",
+        )),
+        None => Ok(false),
+    }
+}
+
+/// `headers` with a proxy `x-original-path` kept only when it IS `route_path`
+/// (query stripped): the credits host's own spelling of the route. The shared
+/// path rule admits one that merely ends with the route, so a signature over
+/// a foreign prefix would otherwise open it.
+pub(crate) fn exact_original_path(headers: &HeaderMap, route_path: &str) -> HeaderMap {
     let mut headers = headers.clone();
     let foreign = headers.get(ORIGINAL_PATH_HEADER).is_some_and(|v| {
         v.to_str().map_or(true, |raw| {
@@ -95,18 +170,73 @@ pub(crate) async fn require_read_admin(
     if foreign {
         headers.remove(ORIGINAL_PATH_HEADER);
     }
-    let signer = super::handlers::signer_from(state, &headers, "GET", route_path, original)
-        .await
-        .map_err(|_| ApiError::unauthorized(REFUSED))?;
-    if state
-        .settings
-        .read_admin_addresses
+    headers
+}
+
+/// The body hash a request's signed metadata commits to: `None` when it signs
+/// none, `Some(None)` when it cannot be read as one. A legacy signature covers
+/// the metadata folded to lowercase, so another casing of the key would verify
+/// as the same commitment: the key is matched in any case, and more than one
+/// spelling of it is refused rather than one picked.
+fn signed_body_hash(headers: &HeaderMap) -> Option<Option<String>> {
+    let raw = headers.get(AUTH_METADATA_HEADER)?.to_str().ok()?;
+    let metadata: Value = serde_json::from_str(raw).ok()?;
+    let mut spellings = metadata
+        .as_object()?
         .iter()
-        .any(|a| a == signer.as_str())
-    {
-        Ok(())
+        .filter(|(key, _)| key.eq_ignore_ascii_case(BODY_SHA256_KEY));
+    let (_, value) = spellings.next()?;
+    if spellings.next().is_some() {
+        return Some(None);
+    }
+    Some(value.as_str().map(str::to_string))
+}
+
+/// The signer of a signed-fetch request over `method` and `route_path` when it
+/// is one of `admins`; otherwise `refused` as a 401. A write (any method but
+/// GET) checks a contract wallet's signature with the uncached validator, so
+/// a revoked delegation stops authorizing at once, not after the cache's
+/// acceptance TTL; a validator with no uncached path refuses it.
+async fn signed_admin(
+    state: &SharedState,
+    headers: &HeaderMap,
+    method: &str,
+    route_path: &str,
+    original: &axum::extract::OriginalUri,
+    admins: &[&[String]],
+    refused: &'static str,
+) -> Result<String, ApiError> {
+    if admins.iter().all(|list| list.is_empty()) {
+        return Err(ApiError::unauthorized(refused));
+    }
+    // The shared path rule admits a proxy `x-original-path` that merely ENDS
+    // with the route, and a bare `/credits` is also the tail of every wallet's
+    // own balance route (`/credits/users/{address}/credits`), which an admin
+    // signs routinely. A replayed signature over that path must not open an
+    // admin route, so here the header counts only when it IS the route.
+    let headers = exact_original_path(headers, route_path);
+    let validator = state.eip1654.as_deref();
+    let validator = if !method.eq_ignore_ascii_case("get") {
+        validator.and_then(|v| v.fresh_validator())
     } else {
-        Err(ApiError::unauthorized(REFUSED))
+        validator
+    };
+    let signer = require_signer_at(
+        &headers,
+        method,
+        &SignedPath::at(&original.0, route_path),
+        PayloadPolicy::V6ThenLegacy,
+        validator,
+    )
+    .await
+    .map_err(|_| ApiError::unauthorized(refused))?;
+    if admins
+        .iter()
+        .any(|list| list.iter().any(|a| a == signer.as_str()))
+    {
+        Ok(signer.as_str().to_string())
+    } else {
+        Err(ApiError::unauthorized(refused))
     }
 }
 
@@ -189,24 +319,20 @@ pub fn validated_reason(reason: &Option<String>) -> Result<Option<String>, ApiEr
     }
 }
 
-/// An optional grant's studio: one printable line of at most
-/// [`MAX_STUDIO_NAME_CHARS`](super::admin_store::MAX_STUDIO_NAME_CHARS); blank is none.
-pub fn validated_studio_name(name: &Option<String>) -> Result<Option<String>, ApiError> {
-    let Some(name) = name.as_deref().map(str::trim).filter(|n| !n.is_empty()) else {
-        return Ok(None);
-    };
-    if name.chars().count() > super::admin_store::MAX_STUDIO_NAME_CHARS {
-        return Err(ApiError::bad_request(format!(
-            "\"studioName\" must be at most {} characters",
-            super::admin_store::MAX_STUDIO_NAME_CHARS
-        )));
+/// An admin grant is Decentraland's: a studio's gift is granted by one of its
+/// operators out of its budget (`POST /operator/studios/{studioId}/grants`),
+/// which names the studio from its own row. A body that still names a
+/// studio is refused rather than granted without one.
+pub fn refuse_studio_name(value: Option<&Value>) -> Result<(), ApiError> {
+    match value {
+        // Blank is none, as every other optional field of these routes reads it.
+        None | Some(Value::Null) => Ok(()),
+        Some(Value::String(name)) if name.trim().is_empty() => Ok(()),
+        Some(_) => Err(ApiError::bad_request(
+            "\"studioName\" is not accepted: a studio's gift is granted by one of its operators, \
+             with POST /operator/studios/{studioId}/grants",
+        )),
     }
-    if name.chars().any(char::is_control) {
-        return Err(ApiError::bad_request(
-            "\"studioName\" must be a single line of printable characters",
-        ));
-    }
-    Ok(Some(name.to_string()))
 }
 
 pub(crate) fn validate_escrow_ref(raw: &str) -> Result<String, ApiError> {
@@ -286,17 +412,18 @@ mod tests {
     }
 
     #[test]
-    fn a_studio_name_is_one_printable_line_of_at_most_80_characters() {
-        let v = |s: &str| validated_studio_name(&Some(s.to_string()));
-        assert_eq!(validated_studio_name(&None).unwrap(), None);
-        assert_eq!(v("   ").unwrap(), None);
-        assert_eq!(v(" Acme ").unwrap().as_deref(), Some("Acme"));
-        assert_eq!(
-            v(&"é".repeat(80)).unwrap().map(|s| s.chars().count()),
-            Some(80)
-        );
-        assert!(v(&"a".repeat(81)).is_err());
-        assert!(v("Acme\nEvil").is_err());
+    fn an_admin_grant_names_no_studio() {
+        assert!(refuse_studio_name(None).is_ok());
+        assert!(refuse_studio_name(Some(&json!(null))).is_ok());
+        assert!(refuse_studio_name(Some(&json!(""))).is_ok());
+        assert!(refuse_studio_name(Some(&json!("   "))).is_ok());
+        for named in [json!("Acme"), json!(" Acme "), json!(3)] {
+            let refused = refuse_studio_name(Some(&named)).unwrap_err();
+            assert!(
+                refused.to_string().contains("/operator/studios/"),
+                "{refused}"
+            );
+        }
     }
 
     #[tokio::test]

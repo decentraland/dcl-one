@@ -1,6 +1,6 @@
 //! Holding the pointer button and moving turns the camera, when the player's Left-Drag Camera
-//! setting (`AppConfig::left_drag_camera`) is on. The drag holds the same `"camera"` cursor lock
-//! the right button does.
+//! setting (`AppConfig::left_drag_camera`) is on. The drag holds the same cursor lock
+//! (`CAMERA_CURSOR_LOCK`) the right button does.
 //!
 //! A press that the setting, the cursor position and the frame's state accept arms the pan; once
 //! the pointer motion since the press passes [`START_DISTANCE`] it holds the lock until the button

@@ -16,9 +16,7 @@ use dcl_component::{
     SceneComponentId,
 };
 use dcl_types::interface::ComponentPosition;
-use scene_material::{
-    SceneMaterial, SCENE_MATERIAL_CONE_ONLY_DITHER_MESH_TAG, SCENE_MATERIAL_NO_DITHERING_MESH_TAG,
-};
+use scene_material::{SceneMaterial, SCENE_MATERIAL_NO_DITHERING_MESH_TAG};
 use scene_runner::update_world::{
     mesh_collider::DisableCollisions,
     transform_and_parent::{AvatarAttachStage, ParentPositionSync},
@@ -204,8 +202,6 @@ fn undither_materials_on_attached_items(
 
         if attached.is_primary {
             mesh_tag.0 |= SCENE_MATERIAL_NO_DITHERING_MESH_TAG;
-        } else {
-            mesh_tag.0 |= SCENE_MATERIAL_CONE_ONLY_DITHER_MESH_TAG;
         }
     }
 

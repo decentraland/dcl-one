@@ -1,4 +1,6 @@
 /target/
+# CI jobs keep their own target dirs beside it.
+/target-*/
 /schema.sql
 /migrations.sql
 /state/

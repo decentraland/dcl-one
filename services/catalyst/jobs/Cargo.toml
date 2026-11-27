@@ -20,3 +20,6 @@ parking_lot.workspace = true
 [dev-dependencies]
 catalyst-db = { path = "../db", features = ["scratch"] }
 tokio = { workspace = true, features = ["test-util"] }
+
+[lints]
+workspace = true

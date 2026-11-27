@@ -5,6 +5,8 @@
 //! for by a server that checks the same signature and mints the same grant
 //! (`comms::gatekeeper::message_router` has its own tests).
 
+#![allow(clippy::unwrap_used, reason = "test support")]
+
 use std::net::TcpListener;
 use std::sync::Arc;
 use std::time::Duration;

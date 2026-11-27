@@ -141,7 +141,7 @@ Status values:
 | Shop CMS images `cms-images`. Active only when `VITE_SHOP_CMS_URL`, `_SPACE_ID`, `_ENVIRONMENT` and `_ADMIN_ENTRY` (or `__SHOP_CMS__`) are all set; nothing sets them. Status: inactive by default | `apps/ui3/src/shop/discovery/lib/contentful.ts` | `@decentraland/web-applications` | No target yet |
 | `/play` HUD services (realm provider, peer, places, events, map, marketplace, social, notifications and the rest). The HUD defaults to this deployment's gateway (`GATEWAY_PREFIXES`). It reaches `.org` or `.zone` only on a Decentraland origin, with the trusted `?baseDomain=`, or without `__DCL_PUBLIC__` (standalone). Status: inactive by default | `apps/ui3/src/play/lib/baseDomain.ts` | `@decentraland/web-applications` | Already served by the gateway prefixes; the exit is removing the `.org`/`.zone` fallback |
 | Scene editor host: `worlds-content-server`, comms gatekeeper, storage and multiplayer on `.org` or `.zone`, and `creators-data` (`/v2`). Offered only on loopback, or on Decentraland hosts with `editor-features=experimental`. Status: dev-only on dcl-one deployments | `apps/ui3/src/play/features/editorHost/source.ts`, `editorHost/config.ts` | `@decentraland/web-applications` | No target yet. The node has `/worlds-content-server`, `/comms-gatekeeper` and `/world-storage`, but no document moves the editor host to them |
-| `@dcl/sdk-commands`: `peer` and `peer.decentraland.zone` (`/lambdas/contracts/servers`, `/content/entities/active`, `POST /content/entities`), `quests`, `feature-flags.decentraland.zone`, `rpc/mainnet`. `DCL_CATALYST` (default `https://peer.decentraland.org`), others hardcoded. Status: production (creator CLI) | `library/js-sdk-toolchain/packages/@dcl/sdk-commands/src/` | `@decentraland/infra` | `apps/dcl-scene-cli` replaces the package; no per-endpoint target |
+| `@dcl/sdk-commands`: `peer` and `peer.decentraland.zone` (`/lambdas/contracts/servers`, `/content/entities/active`, `POST /content/entities`), `feature-flags.decentraland.zone`, `rpc/mainnet`. `DCL_CATALYST` (default `https://peer.decentraland.org`), others hardcoded. Status: production (creator CLI) | `library/js-sdk-toolchain/packages/@dcl/sdk-commands/src/` | `@decentraland/infra` | `apps/dcl-scene-cli` replaces the package; no per-endpoint target |
 | Bevy Explorer E2E against `decentraland.zone` and `peer.decentraland.zone`. `vars.DCL_E2E_BASE_DOMAIN`, `vars.DCL_E2E_REALM`. Runs on the `ci:e2e` label, nightly or by hand. Status: CI-only | `.github/workflows/bevy-explorer-e2e.yml`, `apps/bevy-explorer/e2e/driver/target.ts` | `@decentraland/client` | No target yet |
 | Shop parity and trade journey harnesses: they record live traffic to the Shop's services and use `rpc` (`/mainnet`, `/amoy`, `/sepolia`). Run by hand; CI runs only their offline tests. Status: dev-only | `tooling/shop-parity/lib/services.mts`, `lib/session.mts`, `tooling/shop-trade-journey/lib/wallet.mts` | `@decentraland/web-applications` | No target yet |
 
@@ -202,12 +202,35 @@ Rollback:
 
 ```sh
 gh auth login   # import CI artifacts, or build locally:
-make bevy-web && python3 tooling/fetch-play.py --from-build apps/bevy-explorer/dist/web
+nix develop .#wasm --command make bevy-web && python3 tooling/fetch-play.py --from-build apps/bevy-explorer/dist/web
 gh workflow run bevy-explorer-ci.yml --ref main   # no matching or expired artifact
 ```
 
 See [production rules](../infra/containers/README.md#sites-explorer-build-input).
 `/play/app.html?mock=1` runs the HUD without the WebGPU engine.
+
+### A scene as its owner
+
+Preview refuses the signed requests of the admin tools (Cast, Stream, admins and bans). To try them,
+publish the scene to the stack as the personal world of a throwaway owner and enter it in `/play`:
+
+1. Start the stack with `FOUNDATION_DEV_PROFILE=offline`, set `"personal_worlds": 5` in
+   `.cache/dev/settings.json`, then `foundation-dev down` and `up`.
+2. Import a web build of this checkout, as above, so `/play` runs the engine under test.
+3. Build the scene (`npm install`, `npx sdk-commands build`) and publish it:
+
+```sh
+pnpm --dir apps/sites drive:scene-world --scene <scene folder> [--checkout-sdk] [--drive < commands.txt]
+```
+
+`--checkout-sdk` builds a copy under `.cache/dev/scene-world/` with `library/js-sdk-toolchain`'s
+packages (`make install build` there first). The owner's key stays in `.cache/dev/scene-owner.json`
+for a week. The command waits until the gatekeeper names the owner an admin and prints the world and
+its `/play` URL. A page opened before a new deploy keeps the old scene id, which the admin check
+refuses, so open a new one. `--drive` opens that URL in Chrome through
+`local-harness/web-driver`, signs in as the owner with `/hud_login` and runs the commands on stdin:
+console commands (`/click_at`, `/media_state`), `sleep <seconds>`, `screenshot <file>` and `log`, one
+JSON line each. A scene's video host must be in its `scene.json` `allowedMediaHostnames`.
 
 ## Serving over HTTPS
 
@@ -246,6 +269,10 @@ nix develop --command bash tooling/dev-smoke.sh
 nix develop --command bash tooling/dev-test.sh [rust|e2e]   # rust: PostgreSQL only
 ```
 
+Run both in a fresh checkout. `python3 tooling/ci-local.py run [REV]` checks a commit
+(default `HEAD`) locally, with the checks its changes since `origin/main` select (images
+need Linux or `CI_LOCAL_IMAGES=1`).
+
 CI runs the Rust suites in `nix develop .#ci`: the toolchain, the services the tests
 start and the build tools, without the web and media tools.
 
@@ -262,9 +289,6 @@ every scratch database a test drops forces a checkpoint. The flag has no effect
 on a cluster created without it, so it never weakens a stack that holds data.
 Locally, set it only for a checkout whose `.cache/dev/postgres` does not exist yet.
 
-Run both in a fresh checkout. `python3 tooling/ci-local.py install` adds hooks
-that run the matching workflows' checks (images need Linux or
-`CI_LOCAL_IMAGES=1`); `ci-local.py run [REV]` runs them without pushing.
 The Rust tests run in three jobs that each compile the tests and run a third of
 the test executables; on PRs they run on Linux (`CATALYST_TEST_SHARD=i/n` for
 `tooling/catalyst-test.sh`). The provisioned Archipelago tests take a fixed

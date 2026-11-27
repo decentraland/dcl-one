@@ -1,7 +1,7 @@
 //! Where a `start --port 0` preview listens: the port it bound, read from the
 //! `Local:` line of its banner. A port the test picks and passes on can be
 //! taken by any other socket on the machine between the two binds.
-#![allow(dead_code)]
+#![allow(dead_code, reason = "each test target uses part of it")]
 
 use std::path::Path;
 use std::process::Child;

@@ -1,7 +1,6 @@
 //! One listing asset as of a published land-authz snapshot.
 
 use crate::land_authz::{LAND_MAINNET, LAND_SEPOLIA, LandNetwork};
-use crate::market::chain_walk;
 use sqlx::PgPool;
 
 /// The indexed LAND or estate row used to create or refresh a listing.
@@ -75,7 +74,12 @@ pub(super) async fn nft_by_contract_token(
     let chain = super::index::RentalsChain::from_id(chain_id)
         .filter(|chain| chain.land() == net)
         .ok_or(NftReadError::Unavailable)?;
-    let ready = chain_walk::published_sql_on("c", "timezone('UTC', now())", chain.id(), 137);
+    let ready = crate::chain_index::catalogue::published_sql_on(
+        "c",
+        "timezone('UTC', now())",
+        chain.id(),
+        137,
+    );
     let metadata_head: i64 = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
         "SELECT folded_block FROM shop.chain_cursor c WHERE indexer='nft' AND network='ethereum'
          AND chain_id=$1 AND {ready}"

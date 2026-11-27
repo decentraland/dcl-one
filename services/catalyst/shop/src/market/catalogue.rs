@@ -35,30 +35,35 @@
 //! projection (every one raises the generation, a same-height repair and a
 //! hand-back too) or an ownership change gives a new key.
 
-use std::sync::LazyLock;
-
 use axum::response::Response;
 use chrono::{DateTime, NaiveDateTime, Utc};
-use sqlx::postgres::PgRow;
-use sqlx::{PgConnection, Postgres, Row, Transaction};
+use sqlx::{PgConnection, Postgres, Transaction};
 
-use super::chain_walk::{ChainNet, INDEXER_COLLECTIONS, MAX_CLOCK_SKEW, READY_WINDOW};
+use super::chain_walk::ChainNet;
 use super::graph::Network;
 use super::mirrors::{self, Mirror};
 use super::{MarketplaceState, Source, unavailable};
-use crate::shared::collections::{ITEM_HOLD_MAX_SECS, item_awaited};
+pub use crate::chain_index::catalogue::{
+    ITEM_WAIT_COLUMNS, ItemWait, NetworkState, Publication, Purpose, STATE_COLUMNS, STATE_JOINS,
+    Waited, index_verdict, read_snapshot,
+};
 
-/// What a read of the catalogue is for.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Purpose {
-    /// What a page shows: the last publication, however old.
-    Describe,
-    /// A price or an availability a buyer acts on: the publication within
-    /// [`READY_WINDOW`].
-    Priced,
-    /// What a write is allowed by: [`Purpose::Priced`], with nothing walked
-    /// past the publication.
-    Authorize,
+/// Whether collection row `c` belongs to the served network and chain.
+pub(super) fn collection_membership_sql(net: ChainNet, chain: i64) -> String {
+    membership_sql("c", net, chain)
+}
+
+/// The served chain and any testnet row proof for a catalogue alias.
+pub(super) fn membership_sql(alias: &str, net: ChainNet, chain: i64) -> String {
+    let proof = if chain == net.chain_id() {
+        String::new()
+    } else {
+        format!(" AND {alias}.testnet_verified")
+    };
+    format!(
+        "({alias}.network = '{}' AND {alias}.chain_id = {chain}{proof})",
+        net.db_name()
+    )
 }
 
 /// Whether the read's transaction may write (a campaign whose approval
@@ -71,15 +76,6 @@ pub enum Access {
     /// (a tag's set, even an empty one) cannot both commit; one fails with
     /// 40001 and the caller starts it again.
     ReadWrite,
-}
-
-/// The index's published fold an owned network is read at, and the
-/// projection's generation.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Publication {
-    pub folded_block: i64,
-    pub folded_at: NaiveDateTime,
-    pub generation: i64,
 }
 
 /// What the read takes from the mirrors: the pass of each mirror it needs on
@@ -119,6 +115,24 @@ impl CatalogueRead {
     /// Whether the index owns `network` in this read's snapshot.
     pub fn owns(&self, network: Network) -> bool {
         self.owned.iter().any(|(n, _)| *n == network)
+    }
+
+    /// Whether this read admitted item metadata on this network.
+    pub(super) fn covers_items(&self, net: ChainNet) -> bool {
+        self.owned.iter().any(|(n, _)| n.db_name() == net.db_name())
+            || self.mirror.as_ref().is_some_and(|copy| {
+                copy.passes.iter().any(|(mirror, network, _)| {
+                    *mirror == Mirror::Items && network == net.db_name()
+                })
+            })
+    }
+
+    /// Include the collection copy the order leg uses in the answer's stamp.
+    pub(super) fn note_collection_copy(&mut self, net: ChainNet, at: NaiveDateTime) {
+        self.mirror
+            .get_or_insert_with(MirrorCopy::default)
+            .passes
+            .push((Mirror::Collections, net.db_name().to_string(), at));
     }
 
     /// The identity of what was read, for a memo key: every mirror pass on
@@ -177,6 +191,9 @@ impl CatalogueRead {
     /// snapshot at the gate's clock: a read that joins the open trades
     /// decides on the trade state its rows come from.
     pub async fn trades_ready(&mut self, state: &MarketplaceState) -> Result<(), Response> {
+        super::nft_reads::set_read_timeout(&mut self.tx)
+            .await
+            .map_err(super::readers::index_read_error)?;
         super::trades::ready_on(state, &mut self.tx, self.now)
             .await
             .map(|_| ())
@@ -219,6 +236,7 @@ impl CatalogueRead {
         super::trades::ready_checked_on(state, &mut self.tx, self.now)
             .await
             .map(|_| ())
+            .map_err(super::trades::CheckError::refusal)
     }
 }
 
@@ -230,6 +248,11 @@ pub struct Stamp {
 }
 
 impl Stamp {
+    /// Date a fold that supplied fields on this read.
+    pub(super) fn note_fold(&mut self, folded_at: NaiveDateTime) {
+        self.index.push(folded_at);
+    }
+
     /// Records the copies for the answer's `as_of` and staleness.
     pub fn note(&self, state: &MarketplaceState) {
         for (m, at) in &self.mirror {
@@ -263,119 +286,12 @@ impl Refusal {
     }
 }
 
-/// One network's state in the gate's snapshot.
-#[derive(Clone, Debug, Default, PartialEq)]
-pub struct NetworkState {
-    pub network: String,
-    pub owned: bool,
-    pub projected_through: Option<i64>,
-    pub pending: i32,
-    pub generation: i64,
-    /// The `collections` cursor: `None` when the index never walked here.
-    pub last_block: Option<i64>,
-    pub chain_id: Option<i64>,
-    pub quarantined: bool,
-    pub diverged: bool,
-    pub full_history: bool,
-    pub folded_block: Option<i64>,
-    pub folded_at: Option<NaiveDateTime>,
-    /// A collections event walked past the published fold.
-    pub walked_past: bool,
-    /// The catalogue holds rows of this network (collections or items).
-    pub has_rows: bool,
-    pub collections_pass: Option<NaiveDateTime>,
-    pub items_pass: Option<NaiveDateTime>,
-    /// The chain each mirror's pass was proven on.
-    pub collections_chain: Option<i64>,
-    pub items_chain: Option<i64>,
-}
-
-impl NetworkState {
-    /// `mirror`'s row for this network, as [`mirrors::bound`] reads it.
-    fn pass_row(&self, mirror: Mirror) -> mirrors::PassRow {
-        match mirror {
-            Mirror::Collections => (
-                self.network.clone(),
-                self.collections_pass,
-                self.collections_chain,
-            ),
-            Mirror::Items => (self.network.clone(), self.items_pass, self.items_chain),
-        }
+/// `mirror`'s row for network state `s`, as [`mirrors::bound`] reads it.
+fn pass_row(s: &NetworkState, mirror: Mirror) -> mirrors::PassRow {
+    match mirror {
+        Mirror::Collections => (s.network.clone(), s.collections_pass, s.collections_chain),
+        Mirror::Items => (s.network.clone(), s.items_pass, s.items_chain),
     }
-}
-
-/// The index's verdict on an owned network for `purpose` at `now`, the
-/// network expected on `chain` (the chain this node serves for it; `None`
-/// when it serves none the index walks): its publication, or why it cannot
-/// answer.
-pub fn index_verdict(
-    s: &NetworkState,
-    net: ChainNet,
-    chain: Option<i64>,
-    purpose: Purpose,
-    now: DateTime<Utc>,
-) -> Result<Publication, String> {
-    let name = net.db_name();
-    if s.last_block.is_none() {
-        return Err(format!(
-            "the collections index owns {name}'s catalogue and has no cursor there"
-        ));
-    }
-    if !chain.is_some_and(|c| s.chain_id == Some(c)) {
-        return Err(format!(
-            "the collections index on {name} is not bound to the chain this node serves ({})",
-            chain.map_or("none".to_string(), |c| c.to_string())
-        ));
-    }
-    if s.quarantined {
-        return Err(format!("the collections index on {name} is quarantined"));
-    }
-    if s.diverged {
-        return Err(format!(
-            "the collections index on {name} found its block on another branch and is recovering"
-        ));
-    }
-    if !s.full_history {
-        return Err(format!(
-            "the collections index on {name} has not walked its whole history"
-        ));
-    }
-    let (Some(folded_block), Some(folded_at)) = (s.folded_block, s.folded_at) else {
-        return Err(format!(
-            "the collections index on {name} has no published fold (catching up, or rewound after a reorg)"
-        ));
-    };
-    if s.projected_through != Some(folded_block) {
-        return Err(format!(
-            "{name}'s catalogue does not stand at the index's published fold yet"
-        ));
-    }
-    if s.pending > 0 {
-        return Err(format!(
-            "{} walked {name} collections wait for their creation read",
-            s.pending
-        ));
-    }
-    if purpose != Purpose::Describe {
-        let age = now.naive_utc().signed_duration_since(folded_at);
-        if age < -MAX_CLOCK_SKEW || age > READY_WINDOW {
-            return Err(format!(
-                "the collections index on {name} published {} s ago, past the {} s a price may be read from",
-                age.num_seconds(),
-                READY_WINDOW.num_seconds()
-            ));
-        }
-    }
-    if purpose == Purpose::Authorize && s.walked_past {
-        return Err(format!(
-            "the collections index on {name} has walked catalogue events it has not published yet"
-        ));
-    }
-    Ok(Publication {
-        folded_block,
-        folded_at,
-        generation: s.generation,
-    })
 }
 
 /// The networks a mirror verdict covers.
@@ -443,7 +359,7 @@ fn mirror_verdict(
     };
     let mut copy = MirrorCopy::default();
     for mirror in needs {
-        let rows: Vec<mirrors::PassRow> = unowned.iter().map(|s| s.pass_row(*mirror)).collect();
+        let rows: Vec<mirrors::PassRow> = unowned.iter().map(|s| pass_row(s, *mirror)).collect();
         if !mirrors::bound(state, &rows) {
             return Err((
                 mirror.source(),
@@ -513,171 +429,6 @@ fn mirror_verdict(
     Ok(copy)
 }
 
-/// The columns of one network's state, over a source that names the network
-/// `n.network` and the joins in [`STATE_JOINS`], which alias their tables
-/// `st_*` so a reader's own aliases never meet them. A reader outside the gate
-/// selects them in the statement that reads its rows, so one snapshot decides
-/// both, and reads them back with [`NetworkState::from_row`].
-pub(crate) const STATE_COLUMNS: &str = "n.network, st_p.owned_at IS NOT NULL AS owned, st_p.projected_through, \
-     COALESCE(st_p.pending, 0) AS pending, COALESCE(st_p.generation, 0) AS generation, \
-     st_c.last_block, st_c.chain_id, st_c.quarantined_at IS NOT NULL AS quarantined, \
-     st_c.diverged_at IS NOT NULL AS diverged, COALESCE(st_c.full_history, false) AS full_history, \
-     st_c.folded_block, st_c.folded_at, \
-     EXISTS (SELECT 1 FROM shop.collection_event e \
-             WHERE e.network = n.network AND e.block_number > st_c.folded_block \
-               AND e.block_number <= st_c.last_block) AS walked_past, \
-     (EXISTS (SELECT 1 FROM shop.collections r WHERE r.network = n.network) \
-      OR EXISTS (SELECT 1 FROM shop.items r WHERE r.network = n.network)) AS has_rows, \
-     st_mc.last_complete_pass_at AS collections_pass, st_mc.chain_id AS collections_chain, \
-     st_mi.last_complete_pass_at AS items_pass, st_mi.chain_id AS items_chain";
-
-/// The joins [`STATE_COLUMNS`] read, by primary key.
-pub(crate) static STATE_JOINS: LazyLock<String> = LazyLock::new(|| {
-    format!(
-        "LEFT JOIN shop.collection_projection st_p ON st_p.network = n.network \
-         LEFT JOIN shop.chain_cursor st_c ON st_c.indexer = '{INDEXER_COLLECTIONS}' AND st_c.network = n.network \
-         LEFT JOIN shop.mirror_state st_mc ON st_mc.mirror = 'collections' AND st_mc.network = n.network \
-         LEFT JOIN shop.mirror_state st_mi ON st_mi.mirror = 'items' AND st_mi.network = n.network"
-    )
-});
-
-impl NetworkState {
-    /// The state [`STATE_COLUMNS`] selected in `row`.
-    pub(crate) fn from_row(r: &PgRow) -> Result<Self, sqlx::Error> {
-        Ok(NetworkState {
-            network: r.try_get("network")?,
-            owned: r.try_get("owned")?,
-            projected_through: r.try_get("projected_through")?,
-            pending: r.try_get("pending")?,
-            generation: r.try_get("generation")?,
-            last_block: r.try_get("last_block")?,
-            chain_id: r.try_get("chain_id")?,
-            quarantined: r.try_get("quarantined")?,
-            diverged: r.try_get("diverged")?,
-            full_history: r.try_get("full_history")?,
-            folded_block: r.try_get("folded_block")?,
-            folded_at: r.try_get("folded_at")?,
-            walked_past: r.try_get("walked_past")?,
-            has_rows: r.try_get("has_rows")?,
-            collections_pass: r.try_get("collections_pass")?,
-            items_pass: r.try_get("items_pass")?,
-            collections_chain: r.try_get("collections_chain")?,
-            items_chain: r.try_get("items_chain")?,
-        })
-    }
-
-    /// The index's verdict for `purpose` at `now` when it owns this network,
-    /// on `chain` (the chain the reader serves the network on); `None` when
-    /// the mirrors serve it, and the reader keeps its own mirror check.
-    pub(crate) fn owned_verdict(
-        &self,
-        chain: i64,
-        purpose: Purpose,
-        now: DateTime<Utc>,
-    ) -> Option<Result<Publication, String>> {
-        if !self.owned {
-            return None;
-        }
-        let Some(net) = ChainNet::parse(&self.network) else {
-            return Some(Err(format!(
-                "the collections index owns an unknown network {}",
-                self.network
-            )));
-        };
-        Some(index_verdict(self, net, Some(chain), purpose, now))
-    }
-}
-
-/// The items mirror's last complete pass in unix seconds, as the sale
-/// producers have always read it, selected beside [`STATE_COLUMNS`] for
-/// [`ItemWait::from_row`].
-pub(crate) const ITEM_WAIT_COLUMNS: &str =
-    "extract(epoch FROM st_mi.last_complete_pass_at)::bigint AS items_pass_epoch";
-
-/// What a sale whose item the catalogue lacks waits for on its network, by
-/// the source that serves the network, read in the snapshot that read the
-/// sale's description.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ItemWait {
-    /// The mirrors: the items mirror's last complete pass, unix seconds.
-    Mirror(Option<i64>),
-    /// The collections index owns the network: the block its descriptive
-    /// publication covers, `None` while it refuses one.
-    Index(Option<i64>),
-}
-
-impl ItemWait {
-    /// The wait of the network whose state (with [`ITEM_WAIT_COLUMNS`]) `row`
-    /// holds, on `chain`.
-    pub(crate) fn from_row(row: &PgRow, chain: i64, now: DateTime<Utc>) -> sqlx::Result<Self> {
-        let state = NetworkState::from_row(row)?;
-        Ok(match state.owned_verdict(chain, Purpose::Describe, now) {
-            Some(verdict) => ItemWait::Index(verdict.ok().map(|p| p.folded_block)),
-            None => ItemWait::Mirror(row.try_get("items_pass_epoch")?),
-        })
-    }
-
-    /// The wait on `net` (served on `chain`) in `conn`'s snapshot.
-    pub async fn read(
-        conn: &mut PgConnection,
-        net: ChainNet,
-        chain: i64,
-        now: DateTime<Utc>,
-    ) -> sqlx::Result<Self> {
-        let row = sqlx::query(sqlx::AssertSqlSafe(format!(
-            "SELECT {STATE_COLUMNS}, {ITEM_WAIT_COLUMNS} FROM (SELECT $1::text AS network) AS n {}",
-            *STATE_JOINS
-        )))
-        .bind(net.db_name())
-        .fetch_one(conn)
-        .await?;
-        Self::from_row(&row, chain, now)
-    }
-
-    /// Whether a sale at `block_number` and `block_time` still waits at `now`
-    /// (unix seconds) for the catalogue to describe its item (`described`:
-    /// the catalogue holds a row of it now):
-    /// - the mirrors: only a sale whose item has no row, while the items
-    ///   mirror runs and no complete pass ran an hour after the sale
-    ///   ([`item_awaited`]);
-    /// - the index: every sale, until its publication covers the sale's
-    ///   block. Every item added by then is in the catalogue, so a missing
-    ///   one never comes; and a row read while the index refuses (a rewind
-    ///   leaves the rows in place) may be the discarded branch's, so it never
-    ///   picks a recipient.
-    ///
-    /// Either way, never past [`ITEM_HOLD_MAX_SECS`], so a stalled source
-    /// never freezes a cursor.
-    pub fn awaited(
-        self,
-        mirror_enabled: bool,
-        described: bool,
-        block_number: i64,
-        block_time: i64,
-        now: i64,
-    ) -> bool {
-        match self {
-            ItemWait::Mirror(pass) => {
-                !described && item_awaited(mirror_enabled, pass, block_time, now)
-            }
-            ItemWait::Index(covered) => {
-                now.saturating_sub(block_time) < ITEM_HOLD_MAX_SECS
-                    && !covered.is_some_and(|b| b >= block_number)
-            }
-        }
-    }
-}
-
-/// A `REPEATABLE READ, READ ONLY` transaction: the snapshot a job reads a
-/// catalogue verdict and the rows it decides in.
-pub async fn read_snapshot(pool: &sqlx::PgPool) -> sqlx::Result<Transaction<'static, Postgres>> {
-    let mut tx = pool.begin().await?;
-    sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY")
-        .execute(&mut *tx)
-        .await?;
-    Ok(tx)
-}
-
 /// The copy a network's catalogue rows come from: the index's projection,
 /// by its generation (every projection raises it, a same-height repair and a
 /// hand-back too, so it is never reused), or the mirrors' passes.
@@ -735,6 +486,54 @@ async fn read_states(conn: &mut PgConnection) -> Result<Vec<NetworkState>, sqlx:
     .fetch_all(conn)
     .await?;
     rows.iter().map(NetworkState::from_row).collect()
+}
+
+/// Require the collection membership of one network in the route's existing
+/// snapshot. The native catalogue must hold its published fold. The mirror
+/// must have published a complete pass even when its current copy is empty.
+pub(super) async fn require_collections_on(
+    tx: &mut Transaction<'static, Postgres>,
+    state: &MarketplaceState,
+    net: ChainNet,
+    now: DateTime<Utc>,
+) -> Result<Option<NaiveDateTime>, super::owned_items::ReadError> {
+    let states = read_states(tx).await?;
+    let catalogue = states
+        .iter()
+        .find(|s| s.network == net.db_name())
+        .expect("every catalogue network has a state");
+    if catalogue.owned {
+        return index_verdict(
+            catalogue,
+            state.settings.catalogue_chain(net),
+            Purpose::Describe,
+            now,
+        )
+        .map(|_| None)
+        .map_err(|why| super::owned_items::ReadError::NotReady(Source::CollectionsIndex, why));
+    }
+    let network = match net {
+        ChainNet::Ethereum => Network::Ethereum,
+        ChainNet::Matic => Network::Matic,
+    };
+    let configured = state.settings.collection_networks().contains(&network);
+    let served = if configured { &[network][..] } else { &[] };
+    mirror_verdict(
+        state,
+        &MirrorScope {
+            unowned: &[catalogue],
+            returnable: &[network],
+            served,
+            configured,
+            owned: &[],
+            asked: Some(network),
+        },
+        &[Mirror::Collections],
+        Purpose::Describe,
+        now,
+    )
+    .map(|copy| copy.oldest(Some(Mirror::Collections)))
+    .map_err(|(source, why)| super::owned_items::ReadError::NotReady(source, why))
 }
 
 /// [`begin_checked`], answering a refusal with its envelope.
@@ -825,7 +624,7 @@ async fn open(
             .iter()
             .find(|s| s.network == network.db_name())
             .expect("every network is read");
-        let publication = index_verdict(s, net, pair.map(|p| p.chain_id(net)), purpose, now)
+        let publication = index_verdict(s, pair.map(|p| p.chain_id(net)), purpose, now)
             .map_err(|why| refused(Source::CollectionsIndex, why, true))?;
         owned.push((*network, publication));
     }
@@ -892,88 +691,9 @@ pub async fn preflight(
         .map_err(Refusal::into_response)
 }
 
-/// Fixtures that hand a network to the collections index, for the tests of
-/// the readers that follow it.
+/// The fixtures that hand a network to the collections index.
 #[cfg(test)]
-pub(crate) mod owning {
-    use sqlx::PgPool;
-
-    /// Hands `network` (walked on `chain`) to the collections index,
-    /// published at `block` `age_secs` ago. The mirrors' passes stay as a
-    /// takeover leaves them: recorded, and no longer written.
-    pub async fn own(pool: &PgPool, network: &str, chain: i64, block: i64, age_secs: i64) {
-        sqlx::query(
-            "INSERT INTO shop.chain_cursor (indexer, network, start_block, last_block, last_block_hash, \
-                    full_history, chain_id, folded_block, folded_at) \
-             VALUES ('collections', $1, 1, $3, '0xabababababababababababababababababababababababababababababababab', true, $2, $3, \
-                     timezone('UTC', now()) - make_interval(secs => $4)) \
-             ON CONFLICT (indexer, network) DO UPDATE SET last_block = EXCLUDED.last_block, chain_id = EXCLUDED.chain_id, \
-                 full_history = true, folded_block = EXCLUDED.folded_block, folded_at = EXCLUDED.folded_at, \
-                 quarantined_at = NULL, diverged_at = NULL",
-        )
-        .bind(network)
-        .bind(chain)
-        .bind(block)
-        .bind(age_secs as f64)
-        .execute(pool)
-        .await
-        .unwrap();
-        sqlx::query(
-            "INSERT INTO shop.collection_projection (network, owned_at, projected_through, pending, generation) \
-             VALUES ($1, timezone('UTC', now()), $2, 0, 1) \
-             ON CONFLICT (network) DO UPDATE SET owned_at = EXCLUDED.owned_at, \
-                 projected_through = EXCLUDED.projected_through, pending = 0, \
-                 generation = shop.collection_projection.generation + 1",
-        )
-        .bind(network)
-        .bind(block)
-        .execute(pool)
-        .await
-        .unwrap();
-    }
-
-    /// A rewind withdraws `network`'s publication and clears its projection.
-    pub async fn rewind(pool: &PgPool, network: &str) {
-        sqlx::query(
-            "UPDATE shop.chain_cursor SET folded_block = NULL, folded_at = NULL \
-             WHERE indexer = 'collections' AND network = $1",
-        )
-        .bind(network)
-        .execute(pool)
-        .await
-        .unwrap();
-        sqlx::query(
-            "UPDATE shop.collection_projection SET projected_through = NULL WHERE network = $1",
-        )
-        .bind(network)
-        .execute(pool)
-        .await
-        .unwrap();
-    }
-
-    /// The walk reads a collections event at `block`, past the publication,
-    /// before it folds it.
-    pub async fn walk_past(pool: &PgPool, network: &str, block: i64, contract: &str) {
-        sqlx::query(
-            "UPDATE shop.chain_cursor SET last_block = $2 WHERE indexer = 'collections' AND network = $1",
-        )
-        .bind(network)
-        .bind(block)
-        .execute(pool)
-        .await
-        .unwrap();
-        sqlx::query(
-            "INSERT INTO shop.collection_event (network, block_number, log_index, block_time, kind, contract_address) \
-             VALUES ($1, $2, 0, 0, 'set_approved', $3)",
-        )
-        .bind(network)
-        .bind(block)
-        .bind(contract)
-        .execute(pool)
-        .await
-        .unwrap();
-    }
-}
+pub(crate) use crate::chain_index::catalogue::owning;
 
 /// A read of the mirrors' copy that skips readiness, for a test of what a
 /// route reads rather than whether it may.
@@ -995,6 +715,7 @@ pub(crate) async fn begin_unchecked(state: &MarketplaceState) -> CatalogueRead {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::chain_index::catalogue::MAX_CLOCK_SKEW;
     use chrono::Duration;
 
     fn ready_state(now: DateTime<Utc>) -> NetworkState {
@@ -1028,7 +749,7 @@ mod tests {
         let s = ready_state(now);
         for purpose in PURPOSES {
             assert_eq!(
-                index_verdict(&s, ChainNet::Matic, Some(137), purpose, now),
+                index_verdict(&s, Some(137), purpose, now),
                 Ok(Publication {
                     folded_block: 100,
                     folded_at: s.folded_at.unwrap(),
@@ -1050,32 +771,17 @@ mod tests {
             ..ready_state(now)
         };
         for purpose in PURPOSES {
-            assert!(index_verdict(&walking, ChainNet::Matic, Some(137), purpose, now).is_ok());
+            assert!(index_verdict(&walking, Some(137), purpose, now).is_ok());
         }
         let walked_events = NetworkState {
             walked_past: true,
             ..walking
         };
+        assert!(index_verdict(&walked_events, Some(137), Purpose::Priced, now).is_ok());
         assert!(
-            index_verdict(
-                &walked_events,
-                ChainNet::Matic,
-                Some(137),
-                Purpose::Priced,
-                now
-            )
-            .is_ok()
-        );
-        assert!(
-            index_verdict(
-                &walked_events,
-                ChainNet::Matic,
-                Some(137),
-                Purpose::Authorize,
-                now
-            )
-            .unwrap_err()
-            .contains("not published")
+            index_verdict(&walked_events, Some(137), Purpose::Authorize, now)
+                .unwrap_err()
+                .contains("not published")
         );
     }
 
@@ -1086,10 +792,10 @@ mod tests {
             folded_at: Some(now.naive_utc() - Duration::days(2)),
             ..ready_state(now)
         };
-        assert!(index_verdict(&old, ChainNet::Matic, Some(137), Purpose::Describe, now).is_ok());
+        assert!(index_verdict(&old, Some(137), Purpose::Describe, now).is_ok());
         for purpose in [Purpose::Priced, Purpose::Authorize] {
             assert!(
-                index_verdict(&old, ChainNet::Matic, Some(137), purpose, now)
+                index_verdict(&old, Some(137), purpose, now)
                     .unwrap_err()
                     .contains("past the")
             );
@@ -1145,7 +851,7 @@ mod tests {
         for s in &broken {
             for purpose in PURPOSES {
                 assert!(
-                    index_verdict(s, ChainNet::Matic, Some(137), purpose, now).is_err(),
+                    index_verdict(s, Some(137), purpose, now).is_err(),
                     "{s:?} {purpose:?}"
                 );
             }
@@ -1526,8 +1232,8 @@ mod tests {
         let now = Utc::now();
         let s = ready_state(now);
         for purpose in PURPOSES {
-            assert!(index_verdict(&s, ChainNet::Matic, Some(80002), purpose, now).is_err());
-            assert!(index_verdict(&s, ChainNet::Matic, None, purpose, now).is_err());
+            assert!(index_verdict(&s, Some(80002), purpose, now).is_err());
+            assert!(index_verdict(&s, None, purpose, now).is_err());
         }
     }
 
@@ -1640,11 +1346,11 @@ mod tests {
             folded_at: Some(now.naive_utc() + MAX_CLOCK_SKEW + Duration::minutes(1)),
             ..ready_state(now)
         };
-        assert!(index_verdict(&ahead, ChainNet::Matic, Some(137), Purpose::Priced, now).is_err());
+        assert!(index_verdict(&ahead, Some(137), Purpose::Priced, now).is_err());
         let within = NetworkState {
             folded_at: Some(now.naive_utc() + Duration::minutes(1)),
             ..ready_state(now)
         };
-        assert!(index_verdict(&within, ChainNet::Matic, Some(137), Purpose::Priced, now).is_ok());
+        assert!(index_verdict(&within, Some(137), Purpose::Priced, now).is_ok());
     }
 }

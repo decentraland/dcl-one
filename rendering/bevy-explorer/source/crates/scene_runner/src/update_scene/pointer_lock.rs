@@ -5,7 +5,7 @@ use common::{
     inputs::{Action, CommonInputAction, SystemAction, POINTER_SET},
     structs::{
         ActiveDialog, AppConfig, CameraOverride, ClientWindowFocus, CursorLocks, PhotoMode,
-        PrimaryCamera,
+        PrimaryCamera, CAMERA_CURSOR_LOCK,
     },
 };
 use input_manager::{InputManager, InputPriority};
@@ -331,9 +331,9 @@ pub fn update_pointer_lock(
     }
 
     if camera_locked {
-        locks.0.insert("camera");
+        locks.0.insert(CAMERA_CURSOR_LOCK);
     } else {
-        locks.0.remove("camera");
+        locks.0.remove(CAMERA_CURSOR_LOCK);
     }
 
     let pointer_lock = PbPointerLock {
@@ -529,7 +529,7 @@ mod tests {
                 .world()
                 .resource::<CursorLocks>()
                 .0
-                .contains("camera")
+                .contains(CAMERA_CURSOR_LOCK)
         }
 
         fn crdt_lock(&self) -> bool {

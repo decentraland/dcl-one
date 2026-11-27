@@ -914,7 +914,6 @@ pub async fn snapshot(State(state): State<SharedState>) -> Response {
 }
 
 /// The last snapshot, the log's newest `seq` read before it was taken, and when.
-#[allow(clippy::type_complexity)]
 static SNAPSHOT: parking_lot::Mutex<Option<(i64, std::time::Instant, MarketSnapshot)>> =
     parking_lot::Mutex::new(None);
 

@@ -1,0 +1,5016 @@
+[
+  {
+    "collection": "binance_us_collection",
+    "wearables": [
+      {
+        "id": "binance_us_hat",
+        "name": "Binance US Hat",
+        "description": "Binance US Hat",
+        "category": "hat",
+        "rarity": "uncommon",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "binance_us_upper_body",
+        "name": "Binance US Hoodie",
+        "description": "Binance US Hoodie",
+        "category": "upper_body",
+        "rarity": "uncommon",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      }
+    ]
+  },
+  {
+    "collection": "china_flying",
+    "wearables": [
+      {
+        "id": "china_flying_hair_female",
+        "name": "China flying hair",
+        "description": "Chinese Flying clothing is the expression of yearning for the sky and space, which is the most talented creation of Chinese artists.",
+        "category": "hair",
+        "rarity": "legendary",
+        "bodyShapes": [
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "china_flying_hair_male",
+        "name": "China flying boyHair",
+        "description": "Chinese Flying clothing is the expression of yearning for the sky and space, which is the most talented creation of Chinese artists.",
+        "category": "hair",
+        "rarity": "legendary",
+        "bodyShapes": [
+          "BaseMale"
+        ]
+      },
+      {
+        "id": "china_flying_pants",
+        "name": "China flying pants",
+        "description": "Chinese Flying clothing is the expression of yearning for the sky and space, which is the most talented creation of Chinese artists.",
+        "category": "lower_body",
+        "rarity": "legendary",
+        "bodyShapes": [
+          "BaseMale"
+        ]
+      },
+      {
+        "id": "china_flying_skirt",
+        "name": "China flying skirt",
+        "description": "Chinese Flying clothing is the expression of yearning for the sky and space, which is the most talented creation of Chinese artists.",
+        "category": "lower_body",
+        "rarity": "legendary",
+        "bodyShapes": [
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "china_flying_clothes_female",
+        "name": "China flying clothes",
+        "description": "Chinese Flying clothing is the expression of yearning for the sky and space, which is the most talented creation of Chinese artists.",
+        "category": "upper_body",
+        "rarity": "legendary",
+        "bodyShapes": [
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "china_flying_clothes_male",
+        "name": "China flying boyClothes",
+        "description": "Chinese Flying clothing is the expression of yearning for the sky and space, which is the most talented creation of Chinese artists.",
+        "category": "upper_body",
+        "rarity": "legendary",
+        "bodyShapes": [
+          "BaseMale"
+        ]
+      }
+    ]
+  },
+  {
+    "collection": "community_contest",
+    "wearables": [
+      {
+        "id": "cw_peacock_feather_earring",
+        "name": "Peacock Feather Earrings",
+        "description": "",
+        "category": "earring",
+        "rarity": "epic",
+        "bodyShapes": [
+          "BaseFemale",
+          "BaseMale"
+        ]
+      },
+      {
+        "id": "cw_aviator_googles_eyewear",
+        "name": "Aviator Goggles",
+        "description": "",
+        "category": "eyewear",
+        "rarity": "mythic",
+        "bodyShapes": [
+          "BaseFemale",
+          "BaseMale"
+        ]
+      },
+      {
+        "id": "cw_bitcoinglasses_eyewear",
+        "name": "Bitcoin Eyewear",
+        "description": "",
+        "category": "eyewear",
+        "rarity": "legendary",
+        "bodyShapes": [
+          "BaseFemale",
+          "BaseMale"
+        ]
+      },
+      {
+        "id": "cw_cyborg_monocle_eyewearraver",
+        "name": "Cyborg Monocle (It's over 9000!!!)",
+        "description": "It's over 9000!!!",
+        "category": "eyewear",
+        "rarity": "mythic",
+        "bodyShapes": [
+          "BaseFemale",
+          "BaseMale"
+        ]
+      },
+      {
+        "id": "cw_monocle_eyewear",
+        "name": "Monocle Eyewear",
+        "description": "",
+        "category": "eyewear",
+        "rarity": "epic",
+        "bodyShapes": [
+          "BaseFemale",
+          "BaseMale"
+        ]
+      },
+      {
+        "id": "cw_pineapple_eyewear",
+        "name": "Pineapple Eyewear",
+        "description": "",
+        "category": "eyewear",
+        "rarity": "epic",
+        "bodyShapes": [
+          "BaseFemale",
+          "BaseMale"
+        ]
+      },
+      {
+        "id": "cw_raver_eyewear",
+        "name": "Raver Goggles",
+        "description": "",
+        "category": "eyewear",
+        "rarity": "legendary",
+        "bodyShapes": [
+          "BaseFemale",
+          "BaseMale"
+        ]
+      },
+      {
+        "id": "cw_city_sneakers_feet",
+        "name": "City Decentraland Sneakers",
+        "description": "",
+        "category": "feet",
+        "rarity": "epic",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "cw_hazmat_shoes_feet",
+        "name": "Hazmat Shoes",
+        "description": "",
+        "category": "feet",
+        "rarity": "mythic",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "cw_raver_feet",
+        "name": "Raver Boots",
+        "description": "",
+        "category": "feet",
+        "rarity": "legendary",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "cw_rollers_feet",
+        "name": "Rollers",
+        "description": "",
+        "category": "feet",
+        "rarity": "mythic",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "cw_shoes_of_wonder_feet",
+        "name": "Shoes of Wonder",
+        "description": "",
+        "category": "feet",
+        "rarity": "mythic",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "f_cw_astronaut_shoes_feet",
+        "name": "Astronaut Shoes",
+        "description": "",
+        "category": "feet",
+        "rarity": "mythic",
+        "bodyShapes": [
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "f_cw_trendy_sport_shoes_feet",
+        "name": "Trendy Sport Shoes",
+        "description": "",
+        "category": "feet",
+        "rarity": "mythic",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "m_cw_trendy_sport_shoes_feet",
+        "name": "Trendy Sport Sandals",
+        "description": "",
+        "category": "feet",
+        "rarity": "mythic",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "cw_acornknitcap_hat",
+        "name": "Acorn Knit Cap",
+        "description": "",
+        "category": "hat",
+        "rarity": "legendary",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "cw_aviator_helmet_hat",
+        "name": "Aviator Helmet",
+        "description": "",
+        "category": "hat",
+        "rarity": "mythic",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "cw_bell_attendant_hat",
+        "name": "Bell Attendant Hat",
+        "description": "",
+        "category": "hat",
+        "rarity": "legendary",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "cw_bluegarment_hat",
+        "name": "Blue Garment of Gratitude Hat",
+        "description": "",
+        "category": "hat",
+        "rarity": "legendary",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "cw_casinovisor_hat",
+        "name": "Casino Visor",
+        "description": "",
+        "category": "hat",
+        "rarity": "epic",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "cw_foam_big_hat",
+        "name": "Mexican Foam Hat",
+        "description": "",
+        "category": "hat",
+        "rarity": "epic",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "cw_greengarment_hat",
+        "name": "Green Garment of Gratitude Hat",
+        "description": "",
+        "category": "hat",
+        "rarity": "legendary",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "cw_hat_of_wonder_hat",
+        "name": "Hat of Wonder",
+        "description": "",
+        "category": "hat",
+        "rarity": "mythic",
+        "bodyShapes": [
+          "BaseMale"
+        ]
+      },
+      {
+        "id": "cw_orangegarment_hat",
+        "name": "Orange Garment of Gratitude Hat",
+        "description": "",
+        "category": "hat",
+        "rarity": "legendary",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "cw_smiley_alien_hat",
+        "name": "Smiley Alien Hat",
+        "description": "",
+        "category": "hat",
+        "rarity": "legendary",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "cw_trendy_sport_hat",
+        "name": "Trendy Sport  Hat",
+        "description": "",
+        "category": "hat",
+        "rarity": "mythic",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "cw_western_hat",
+        "name": "Western Hat",
+        "description": "",
+        "category": "hat",
+        "rarity": "epic",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "cw_yellowgarment_hat",
+        "name": "Yellow Garment of Gratitude Hat",
+        "description": "",
+        "category": "hat",
+        "rarity": "legendary",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "f_cw_astronaut_helmet_helmet",
+        "name": "Decentraland Astronaut Helmet",
+        "description": "",
+        "category": "helmet",
+        "rarity": "mythic",
+        "bodyShapes": [
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "cw_aviator_trousers_lower_body",
+        "name": "Aviator Trousers",
+        "description": "",
+        "category": "lower_body",
+        "rarity": "mythic",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "cw_bell_attendant_lower_body",
+        "name": "Bell Attendant Trousers",
+        "description": "",
+        "category": "lower_body",
+        "rarity": "legendary",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "cw_bluegarment_lower_body",
+        "name": "Blue Garment of Gratitude Trousers",
+        "description": "",
+        "category": "lower_body",
+        "rarity": "legendary",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "cw_greengarment_lower_body",
+        "name": "Green Garment of Gratitude Trousers",
+        "description": "",
+        "category": "lower_body",
+        "rarity": "legendary",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "cw_orangegarment_lower_body",
+        "name": "Orange Garment of Gratitude Trousers",
+        "description": "",
+        "category": "lower_body",
+        "rarity": "legendary",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "cw_raver_lower_body",
+        "name": "Raver Shorts",
+        "description": "",
+        "category": "lower_body",
+        "rarity": "legendary",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "cw_yellowgarment_lower_body",
+        "name": "Yellow Garment of Gratitude Trousers",
+        "description": "",
+        "category": "lower_body",
+        "rarity": "legendary",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "f_cw_astronaut_pants_lower_body",
+        "name": "Decentraland Astronaut Pants",
+        "description": "",
+        "category": "lower_body",
+        "rarity": "mythic",
+        "bodyShapes": [
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "f_cw_trendy_pants_lower_body",
+        "name": "Trendy Sport Pants",
+        "description": "",
+        "category": "lower_body",
+        "rarity": "mythic",
+        "bodyShapes": [
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "m_cw_pants_of_wonder_lower_body",
+        "name": "Trousers of Wonder",
+        "description": "",
+        "category": "lower_body",
+        "rarity": "mythic",
+        "bodyShapes": [
+          "BaseMale"
+        ]
+      },
+      {
+        "id": "m_cw_trendy_pants_lower_body",
+        "name": "Trendy Sport Pants",
+        "description": "",
+        "category": "lower_body",
+        "rarity": "mythic",
+        "bodyShapes": [
+          "BaseMale"
+        ]
+      },
+      {
+        "id": "cw_native_american_tiara",
+        "name": "Native American Hat",
+        "description": "",
+        "category": "tiara",
+        "rarity": "mythic",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "cw_fox_top_head",
+        "name": "Fox Hat",
+        "description": "",
+        "category": "top_head",
+        "rarity": "mythic",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "cw_hot_dog_top_head",
+        "name": "Sombrero de Hot Dog",
+        "description": "",
+        "category": "top_head",
+        "rarity": "legendary",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "cw_icecream_top_head",
+        "name": "Icecream Hat",
+        "description": "",
+        "category": "top_head",
+        "rarity": "mythic",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "cw_aviator_coat_upper_body",
+        "name": "Aviator Coat",
+        "description": "",
+        "category": "upper_body",
+        "rarity": "mythic",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "cw_bell_attendant_upper_body",
+        "name": "Bell Attendant Suit",
+        "description": "",
+        "category": "upper_body",
+        "rarity": "legendary",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "cw_bluegarment_upper_body",
+        "name": "Blue Pullover of Garment of Gratitude",
+        "description": "",
+        "category": "upper_body",
+        "rarity": "legendary",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "cw_cyberpunk_coat_upper_body",
+        "name": "CyberPunk Coat",
+        "description": "",
+        "category": "upper_body",
+        "rarity": "mythic",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "cw_greengarment_upper_body",
+        "name": "Green Pullover of Garment of Gratitude",
+        "description": "",
+        "category": "upper_body",
+        "rarity": "legendary",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "cw_hazmat_suit_upper_body",
+        "name": "Hazmat Suit",
+        "description": "",
+        "category": "upper_body",
+        "rarity": "mythic",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "cw_neon_jacket_upper_body",
+        "name": "Neon Cool Jacket",
+        "description": "",
+        "category": "upper_body",
+        "rarity": "mythic",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "cw_orangegarment_upper_body",
+        "name": "Orange Pullover of Garment of Gratitude",
+        "description": "",
+        "category": "upper_body",
+        "rarity": "legendary",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "cw_raver_upper_body",
+        "name": "Raver Top",
+        "description": "",
+        "category": "upper_body",
+        "rarity": "legendary",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "cw_tuxedo_tshirt_upper_body",
+        "name": "Tuxedo T Shirt",
+        "description": "",
+        "category": "upper_body",
+        "rarity": "epic",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "cw_yellowgarment_upper_body",
+        "name": "Yellow Pullover of Garment of Gratitude",
+        "description": "",
+        "category": "upper_body",
+        "rarity": "legendary",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "f_cw_astronaut_suit_upper_body",
+        "name": "Decentraland Astronaut Suit",
+        "description": "",
+        "category": "upper_body",
+        "rarity": "mythic",
+        "bodyShapes": [
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "f_cw_trendy_jacket_upper_body",
+        "name": "Trendy Sportwear Jacket",
+        "description": "",
+        "category": "upper_body",
+        "rarity": "mythic",
+        "bodyShapes": [
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "m_cw_coat_of_wonder_upper_body",
+        "name": "Coat of Wonder",
+        "description": "",
+        "category": "upper_body",
+        "rarity": "mythic",
+        "bodyShapes": [
+          "BaseMale"
+        ]
+      },
+      {
+        "id": "m_cw_trendy_jacket_upper_body",
+        "name": "Trendy Sportwear Jacket",
+        "description": "",
+        "category": "upper_body",
+        "rarity": "mythic",
+        "bodyShapes": [
+          "BaseMale"
+        ]
+      }
+    ]
+  },
+  {
+    "collection": "cybermike_cybersoldier_set",
+    "wearables": [
+      {
+        "id": "cybersoldier_nightvision_eyewear",
+        "name": "CYBERSOLDIER NIGHT VISION GOGGLES - Winter Soldier Collection - FROM CYBERMIKE",
+        "description": "By Cybermike - Live Free or Die Hard",
+        "category": "eyewear",
+        "rarity": "mythic",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "cybersoldier_boots_feet",
+        "name": "CYBERSOLDIER HASTE BOOTS - Winter Soldier Collection - Mark III - FROM CYBERMIKE",
+        "description": "By Cybermike - Live Free or Die Hard",
+        "category": "feet",
+        "rarity": "mythic",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "cybersoldier_helmet",
+        "name": "CYBERSOLDIER HELMET - Winter Soldier Collection - Mark III - FROM CYBERMIKE",
+        "description": "By Cybermike - Live Free or Die Hard",
+        "category": "helmet",
+        "rarity": "mythic",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "cybersoldier_leggings_lower_body",
+        "name": "CYBERSOLDIER LEGGINGS - Winter Soldier Collection - Mark III - FROM CYBERMIKE",
+        "description": "By Cybermike - Live Free or Die Hard",
+        "category": "lower_body",
+        "rarity": "mythic",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "cybersoldier_gas_mask",
+        "name": "CYBERSOLDIER GAS MASK - Winter Soldier Collection - FROM CYBERMIKE",
+        "description": "By Cybermike - Live Free or Die Hard",
+        "category": "mask",
+        "rarity": "mythic",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "cybersoldier_torso_upper_body",
+        "name": "CYBERSOLDIER TORSO - Winter Soldier Collection - Mark III - FROM CYBERMIKE",
+        "description": "By Cybermike - Live Free or Die Hard",
+        "category": "upper_body",
+        "rarity": "mythic",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      }
+    ]
+  },
+  {
+    "collection": "cz_mercenary_mtz",
+    "wearables": [
+      {
+        "id": "holo_display_eyewear",
+        "name": "Holo Display",
+        "description": "Gives vision of infected",
+        "category": "eyewear",
+        "rarity": "legendary",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "open_source_helmet",
+        "name": "Open Source",
+        "description": "Big brain energy",
+        "category": "helmet",
+        "rarity": "legendary",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "aero_guard_mask",
+        "name": "Aero Guard",
+        "description": "Complete Virus Protection. No social distancing required",
+        "category": "mask",
+        "rarity": "legendary",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "exo_blades_top_head",
+        "name": "Exo-blades",
+        "description": "HOOOOOOOOOOOOOOHHHHHHHHOHHHHHHHHHHOOOOOOOOOOOOOOOOOOOOHHOOOOOOOOOOOOOOOHOOOOOHOHOOOOOOOOOOOOOOOOOHOOOOOOOOOOOOOOOOOOOOOOOOO OH",
+        "category": "top_head",
+        "rarity": "legendary",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "regen_aura_top_head",
+        "name": "Regen Aura",
+        "description": "Heal your allies in battle",
+        "category": "top_head",
+        "rarity": "legendary",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "exo_suit_upper_body",
+        "name": "Exo-Suit",
+        "description": "Avatar anatomy enhancement designed for a select class of warrior.",
+        "category": "upper_body",
+        "rarity": "legendary",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      }
+    ]
+  },
+  {
+    "collection": "dappcraft_moonminer",
+    "wearables": [
+      {
+        "id": "moonminer_goggles_eyewear",
+        "name": "DappCraft Moon Miner Goggles",
+        "description": "You can see reality as it is. ",
+        "category": "eyewear",
+        "rarity": "legendary",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "moonminer_boots_feet",
+        "name": "DappCraft Moon Miner Boots",
+        "description": "Moonlight will recharge these  trousers to keep neon effect going",
+        "category": "feet",
+        "rarity": "legendary",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "moonminer_neurahairs_hair",
+        "name": "DappCraft Moon Miner Neurahairs",
+        "description": "Neuralink prototype, (not yet) approved by Elon. Use with caution.",
+        "category": "hair",
+        "rarity": "legendary",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "moonminer_helmet",
+        "name": "DappCraft Moon Miner Helmet",
+        "description": "New level of crypto mining. Your brain is now connected to the neuro mining pool. Instant payouts. ",
+        "category": "hat",
+        "rarity": "legendary",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "moonminer_pants_lower_body",
+        "name": "DappCraft Moon Miner Trousers",
+        "description": "Keep them away from sunlight. Colors might change.",
+        "category": "lower_body",
+        "rarity": "legendary",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "moonminer_jacket_upper_body",
+        "name": "DappCraft Moon Miner Jacket",
+        "description": "Moonlight will recharge these  trousers to keep neon effect going",
+        "category": "upper_body",
+        "rarity": "legendary",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      }
+    ]
+  },
+  {
+    "collection": "dc_meta",
+    "wearables": [
+      {
+        "id": "meta_feet",
+        "name": "DC META 01000001",
+        "description": "01000100 01000011 00100000 01001101 01000101 01010100 01000001 00100000 01100110 01100101 01100101 01110100",
+        "category": "feet",
+        "rarity": "mythic",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "meta_hair",
+        "name": "DC META 01000100",
+        "description": "01000100 01000011 00100000 01001101 01000101 01010100 01000001 00100000 01001000 01100001 01101001 01110010",
+        "category": "hair",
+        "rarity": "mythic",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "meta_helmet",
+        "name": "DC META 01000011",
+        "description": "01000100 01000011 00100000 01001101 01000101 01010100 01000001 00100000 01101101 01101001 01101110 01100100",
+        "category": "helmet",
+        "rarity": "mythic",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "meta_lower_body",
+        "name": "DC META 01010100",
+        "description": "01000100 01000011 00100000 01001101 01000101 01010100 01000001 00100000 01101100 01100101 01100111 01110011",
+        "category": "lower_body",
+        "rarity": "mythic",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "meta_tiara",
+        "name": "DC META 01001101",
+        "description": "01000100 01000011 00100000 01001101 01000101 01010100 01000001 00100000 01110011 01101111 01110101 01101100",
+        "category": "tiara",
+        "rarity": "mythic",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "meta_upper_body",
+        "name": "DC META 01000101",
+        "description": "01000100 01000011 00100000 01001101 01000101 01010100 01000001 00100000 01100010 01101111 01100100 01111001",
+        "category": "upper_body",
+        "rarity": "mythic",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      }
+    ]
+  },
+  {
+    "collection": "dc_niftyblocksmith",
+    "wearables": [
+      {
+        "id": "blocksmith_eyewear",
+        "name": "DC Nifty Blocksmith Diamantex",
+        "description": "Diamantex TM",
+        "category": "eyewear",
+        "rarity": "legendary",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "blocksmith_feet",
+        "name": "DC Nifty Blocksmith Boots",
+        "description": "These boots will leave digital footprints wherever you go",
+        "category": "feet",
+        "rarity": "legendary",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "blocksmith_helmet",
+        "name": "DC Nifty Blocksmith Helmet",
+        "description": "This unique helmet will keep your thoughts positively focused. Zero toxicity.",
+        "category": "helmet",
+        "rarity": "legendary",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "blocksmith_lower_body",
+        "name": "DC Nifty Blocksmith Trousers",
+        "description": "Need some repair.",
+        "category": "lower_body",
+        "rarity": "legendary",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "blocksmith_top_head",
+        "name": "DC Nifty Blocksmith Drone",
+        "description": "BlockSmith’s pet. ",
+        "category": "top_head",
+        "rarity": "legendary",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "blocksmith_upper_body",
+        "name": "DC Nifty Blocksmith Jacket",
+        "description": "Tailor made one sleeve style.",
+        "category": "upper_body",
+        "rarity": "legendary",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      }
+    ]
+  },
+  {
+    "collection": "dcg_collection",
+    "wearables": [
+      {
+        "id": "dcg_black_hoodie_upper_body",
+        "name": "DCG Black Hoodie",
+        "description": "",
+        "category": "upper_body",
+        "rarity": "legendary",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "dcg_black_tshirt_upper_body",
+        "name": "DCG Black T Shirt",
+        "description": "",
+        "category": "upper_body",
+        "rarity": "legendary",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "dcg_white_hoodie_upper_body",
+        "name": "DCG White Hoodie",
+        "description": "",
+        "category": "upper_body",
+        "rarity": "legendary",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "dcg_white_tshirt_upper_body",
+        "name": "DCG White T Shirt",
+        "description": "",
+        "category": "upper_body",
+        "rarity": "legendary",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      }
+    ]
+  },
+  {
+    "collection": "dcl_launch",
+    "wearables": [
+      {
+        "id": "dcl_earrings_earring",
+        "name": "Decentraland Logo Earrings",
+        "description": "",
+        "category": "earring",
+        "rarity": "rare",
+        "bodyShapes": [
+          "BaseFemale",
+          "BaseMale"
+        ]
+      },
+      {
+        "id": "dcl_mana_earring",
+        "name": "MANA Earrings",
+        "description": "",
+        "category": "earring",
+        "rarity": "epic",
+        "bodyShapes": [
+          "BaseFemale",
+          "BaseMale"
+        ]
+      },
+      {
+        "id": "mana_eyewear",
+        "name": "MANA Eyewear",
+        "description": "",
+        "category": "eyewear",
+        "rarity": "legendary",
+        "bodyShapes": [
+          "BaseFemale",
+          "BaseMale"
+        ]
+      },
+      {
+        "id": "razor_blade_eyewear",
+        "name": "Razor Blade Eyewear",
+        "description": "",
+        "category": "eyewear",
+        "rarity": "mythic",
+        "bodyShapes": [
+          "BaseFemale",
+          "BaseMale"
+        ]
+      },
+      {
+        "id": "m_barbarian_feet",
+        "name": "Barbarian Shoes",
+        "description": "",
+        "category": "feet",
+        "rarity": "mythic",
+        "bodyShapes": [
+          "BaseMale"
+        ]
+      },
+      {
+        "id": "razor_blade_feet",
+        "name": "Razor Blade Shoes",
+        "description": "",
+        "category": "feet",
+        "rarity": "mythic",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "colorful_hat_hat",
+        "name": "Colorful Hat",
+        "description": "",
+        "category": "hat",
+        "rarity": "epic",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "dcl_hat_hat",
+        "name": "Decentraland Hat",
+        "description": "",
+        "category": "hat",
+        "rarity": "rare",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "m_barbarian_helmet_hat",
+        "name": "Barbarian Helmet",
+        "description": "",
+        "category": "hat",
+        "rarity": "mythic",
+        "bodyShapes": [
+          "BaseMale"
+        ]
+      },
+      {
+        "id": "mana_hat",
+        "name": "MANA Hat",
+        "description": "",
+        "category": "hat",
+        "rarity": "rare",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "umbrella_hat",
+        "name": "Umbrella Hat",
+        "description": "",
+        "category": "hat",
+        "rarity": "epic",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "m_barbarian_lower_body",
+        "name": "Barbarian Trousers",
+        "description": "",
+        "category": "lower_body",
+        "rarity": "mythic",
+        "bodyShapes": [
+          "BaseMale"
+        ]
+      },
+      {
+        "id": "razor_blade_lower_body",
+        "name": "Razor Blade Trousers",
+        "description": "",
+        "category": "lower_body",
+        "rarity": "mythic",
+        "bodyShapes": [
+          "BaseFemale",
+          "BaseMale"
+        ]
+      },
+      {
+        "id": "dcl_hoodie_upper_body",
+        "name": "Decentraland Hoodie",
+        "description": "",
+        "category": "upper_body",
+        "rarity": "rare",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "dcl_tshirt_upper_body",
+        "name": "Decentraland T-Shirt",
+        "description": "",
+        "category": "upper_body",
+        "rarity": "uncommon",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "launch_tshirt_upper_body",
+        "name": "Decentraland Launch T-Shirt",
+        "description": "",
+        "category": "upper_body",
+        "rarity": "rare",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "m_barbarian_upper_body",
+        "name": "Barbarian Chest Piece",
+        "description": "",
+        "category": "upper_body",
+        "rarity": "mythic",
+        "bodyShapes": [
+          "BaseMale"
+        ]
+      },
+      {
+        "id": "mana_hoodie_upper_body",
+        "name": "MANA Hoodie",
+        "description": "",
+        "category": "upper_body",
+        "rarity": "rare",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "mana_tshirt_upper_body",
+        "name": "MANA T-Shirt",
+        "description": "",
+        "category": "upper_body",
+        "rarity": "rare",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "razor_blade_upper_body",
+        "name": "Razor Blade Jacket",
+        "description": "",
+        "category": "upper_body",
+        "rarity": "mythic",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      }
+    ]
+  },
+  {
+    "collection": "dg_fall_2020",
+    "wearables": [
+      {
+        "id": "dg_money_shades_eyewear",
+        "name": "Money Shades glasses",
+        "description": "Shades worn while making money #moneyshades",
+        "category": "eyewear",
+        "rarity": "mythic",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "dg_dress_shoes_feet",
+        "name": "Dress Shoes",
+        "description": "Dress shoes essential with the DG suit #dgsuit",
+        "category": "feet",
+        "rarity": "mythic",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "dg_kicks_feet",
+        "name": "Shoes",
+        "description": "Comfortable mid top kicks with decadent DG cashmere socks #dgkicks",
+        "category": "feet",
+        "rarity": "mythic",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "dg_suit_bottom_lower_body",
+        "name": "Suit bottom",
+        "description": "A decadent & elegant pair of DG suit pants #dgsuit",
+        "category": "lower_body",
+        "rarity": "mythic",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "dg_robe_upper_body",
+        "name": "Robe",
+        "description": "A silky smooth robe that lets everyone know who's the real baus #cozybaus",
+        "category": "upper_body",
+        "rarity": "mythic",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "dg_suit_top_upper_body",
+        "name": "Suit Top",
+        "description": "A decadent & elegant DG suit jacket with golden accents #dgsuit",
+        "category": "upper_body",
+        "rarity": "mythic",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      }
+    ]
+  },
+  {
+    "collection": "dg_summer_2020",
+    "wearables": [
+      {
+        "id": "dg_flip_up_spectacles_eyewear",
+        "name": "DG Flip Up Spectacles",
+        "description": "Swaggy flip up spectacles for any occasion, inside or outside, featuring a chain to keep them secure #ice",
+        "category": "eyewear",
+        "rarity": "legendary",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "dg_deezys_feet",
+        "name": "DG Deezys",
+        "description": "Comfy and elegant sneakers #deezys",
+        "category": "feet",
+        "rarity": "legendary",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "dg_slides_feet",
+        "name": "DG Slides",
+        "description": "Lazy day designer slides complete with socks to keep your toes warm #cozyslides",
+        "category": "feet",
+        "rarity": "legendary",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "dg_tracksuit_bottom_lower_body",
+        "name": "DG Tracksuit Bottom",
+        "description": "The pants of the decadent and elegant DG tracksuit #drip",
+        "category": "lower_body",
+        "rarity": "legendary",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "dg_mink_fur_coat_upper_body",
+        "name": "DG Fur Mink",
+        "description": "An opulent fur coat made from minks #extrasaus",
+        "category": "upper_body",
+        "rarity": "legendary",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "dg_tracksuit_top_upper_body",
+        "name": "DG Tracksuit Top",
+        "description": "The jacket of the decadent and elegant DG tracksuit #drip",
+        "category": "upper_body",
+        "rarity": "legendary",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      }
+    ]
+  },
+  {
+    "collection": "dgtble_headspace",
+    "wearables": [
+      {
+        "id": "dgtble_rainbow_grid_shoes_feet",
+        "name": "The Headspace Rainbow Grid Shoes",
+        "description": "Rainbow Grid is a licensed artwork collab between The Headspace and Daniel Prust whose aysyemetric patterns and abstract designs deliver an experimental style that transforms outlandish dreams into pleasing aesthetics.",
+        "category": "feet",
+        "rarity": "legendary",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "dgtble_shorts_folife_lower_body",
+        "name": "The Headspace Flower of Life Shorts",
+        "description": "We are the divine, and together we make a web of divine life on this planet and beyond that is infinite and unbreakable.",
+        "category": "lower_body",
+        "rarity": "legendary",
+        "bodyShapes": [
+          "BaseMale"
+        ]
+      },
+      {
+        "id": "dgtble_protection_mask_dala_mask",
+        "name": "The Headspace Mandala Love Mask",
+        "description": "Mandala Love is a licensed artwork collab between The Headspace and Cameron Grey an Aria nominated Melbourne Artist  who believes you must teach people how to empower themselves from within their true self, at their core level of being, and the rest will always follow.",
+        "category": "mask",
+        "rarity": "legendary",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "dgtble_dress_folife_upper_body",
+        "name": "The Headspace Flower of Life Dress",
+        "description": "In your mind�s eye witness The Flower of Life in this space, floating before you in golden light. Take a moment to absorb the divine wisdom contained in this sacred figure.",
+        "category": "upper_body",
+        "rarity": "legendary",
+        "bodyShapes": [
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "dgtble_hoodi_linetang_upper_body",
+        "name": "The Headspace Linetangles Hoodie",
+        "description": "Linetangles is a licensed artwork from Daniel Prust whose aysyemetric patterns and abstract designs  deliver an experimental style that transforms outlandish dreams into pleasing aesthetics. ",
+        "category": "upper_body",
+        "rarity": "legendary",
+        "bodyShapes": [
+          "BaseMale"
+        ]
+      },
+      {
+        "id": "dgtble_tshirt_message_upper_body",
+        "name": "The Headspace The Messanger T-Shirt",
+        "description": "The Messenger is a licensed artwork from Grokko whose hand-drawn works are laid with the intention of stirring memories within our subconscious, to return us to the origins of humanity and discover our purpose going forward. It is through the connection to our timeless selves that our dreams can materialize.",
+        "category": "upper_body",
+        "rarity": "legendary",
+        "bodyShapes": [
+          "BaseMale"
+        ]
+      }
+    ]
+  },
+  {
+    "collection": "digital_alchemy",
+    "wearables": [
+      {
+        "id": "da_atomic_earring",
+        "name": "Digital Alchemy Atomic Earring",
+        "description": "Digital Alchemy Collection - Caution! Atomic energy carried by these earrings.",
+        "category": "earring",
+        "rarity": "legendary",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "da_dichroic_eyewear",
+        "name": "Digital Alchemy Dichroic Monocle",
+        "description": "Digital Alchemy Collection - The Dichroic Monocle allows you to see the whole spectrum without polarization.",
+        "category": "eyewear",
+        "rarity": "legendary",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "da_rock_boots_feet",
+        "name": "Digital Alchemy Rock Boots",
+        "description": "Digital Alchemy Collection - Do you want to rock this world? Do it with caution, these boots might cause some metaquakes.",
+        "category": "feet",
+        "rarity": "legendary",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "da_iridescent_hair",
+        "name": "Digital Alchemy Iridescent Hair",
+        "description": "Digital Alchemy Collection - Iridescent hair with crystals that shimmer when seen from different perspectives.",
+        "category": "hair",
+        "rarity": "legendary",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "da_baggy_pants_lower_body",
+        "name": "Digital Alchemy Baggy Pants",
+        "description": "Digital Alchemy Collection - Baggy pants, ready to wear and explore.",
+        "category": "lower_body",
+        "rarity": "legendary",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "da_coat_upper_body",
+        "name": "Digital Alchemy Disruptive Coat",
+        "description": "Digital Alchemy Collection - The disruptive coat pack partially protects your Elixir gem, which is connected through the heart to a transmuting backpack. *Includes matching gloves.",
+        "category": "upper_body",
+        "rarity": "legendary",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      }
+    ]
+  },
+  {
+    "collection": "ethermon_wearables",
+    "wearables": [
+      {
+        "id": "ethermon_feet",
+        "name": "Ethermon Shoes",
+        "description": "Each piece of the Ethermon Legendary Set provides its own unique buff when battling & capturing Mons. Wearing 4 pieces at once will grant the owner special access.",
+        "category": "feet",
+        "rarity": "legendary",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "ethermon_hat",
+        "name": "Ethermon Hat",
+        "description": "Each piece of the Ethermon Legendary Set provides its own unique buff when battling & capturing Mons. Wearing 4 pieces at once will grant the owner special access.",
+        "category": "hat",
+        "rarity": "legendary",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "ethermon_lower_body",
+        "name": "Ethermon Pants",
+        "description": "Each piece of the Ethermon Legendary Set provides its own unique buff when battling & capturing Mons. Wearing 4 pieces at once will grant the owner special access.",
+        "category": "lower_body",
+        "rarity": "legendary",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "barkindle_top_head",
+        "name": "Barkindle Wearable",
+        "description": "Each piece of the Ethermon Legendary Set provides its own unique buff when battling & capturing Mons. Wearing 4 pieces at once will grant the owner special access.",
+        "category": "top_head",
+        "rarity": "legendary",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "ruffski_top_head",
+        "name": "Ruffski Wearable",
+        "description": "Each piece of the Ethermon Legendary Set provides its own unique buff when battling & capturing Mons. Wearing 4 pieces at once will grant the owner special access.",
+        "category": "top_head",
+        "rarity": "legendary",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "ethermon_upper_body",
+        "name": "Ethermon Jacket",
+        "description": "Each piece of the Ethermon Legendary Set provides its own unique buff when battling & capturing Mons. Wearing 4 pieces at once will grant the owner special access.",
+        "category": "upper_body",
+        "rarity": "legendary",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      }
+    ]
+  },
+  {
+    "collection": "exclusive_masks",
+    "wearables": [
+      {
+        "id": "bird_mask",
+        "name": "Bird Mask",
+        "description": "",
+        "category": "mask",
+        "rarity": "legendary",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "classic_mask",
+        "name": "Classic Mask",
+        "description": "",
+        "category": "mask",
+        "rarity": "legendary",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "clown_nose",
+        "name": "Clown Nose",
+        "description": "",
+        "category": "mask",
+        "rarity": "legendary",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "asian_fox",
+        "name": "Asian Fox Mask",
+        "description": "",
+        "category": "mask",
+        "rarity": "legendary",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "killer_mask",
+        "name": "Killer Mask",
+        "description": "",
+        "category": "mask",
+        "rarity": "legendary",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "serial_killer_mask",
+        "name": "Serial Killer Mask",
+        "description": "",
+        "category": "mask",
+        "rarity": "legendary",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "theater_mask",
+        "name": "Theater",
+        "description": "",
+        "category": "mask",
+        "rarity": "legendary",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "tropical_mask",
+        "name": "Tropical Mask",
+        "description": "",
+        "category": "mask",
+        "rarity": "legendary",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      }
+    ]
+  },
+  {
+    "collection": "halloween_2019",
+    "wearables": [
+      {
+        "id": "bride_of_frankie_earring",
+        "name": "Spider Earrings",
+        "description": "It may be someone else's head but that doesn't mean you can't look good",
+        "category": "earring",
+        "rarity": "mythic",
+        "bodyShapes": [
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "bee_suit_earring",
+        "name": "Bee Earrings",
+        "description": "Do bees even have ears? They do now!",
+        "category": "earring",
+        "rarity": "epic",
+        "bodyShapes": [
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "jester_earring",
+        "name": "Jingle Bells Earrings",
+        "description": "Shiny lobe danglers to distract from that last terrible gag",
+        "category": "earring",
+        "rarity": "mythic",
+        "bodyShapes": [
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "spy_suit_eyewear",
+        "name": "Spy Suit Eyewear",
+        "description": "So stylish it's a shame you're undercover",
+        "category": "eyewear",
+        "rarity": "legendary",
+        "bodyShapes": [
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "bee_suit_feet",
+        "name": "Bee Suit Shoes",
+        "description": "Do bees have feet? They do now!",
+        "category": "feet",
+        "rarity": "epic",
+        "bodyShapes": [
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "bride_of_frankie_feet",
+        "name": "Bride of Frankie Shoes",
+        "description": "Lurch around slowly in comfort",
+        "category": "feet",
+        "rarity": "mythic",
+        "bodyShapes": [
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "creepy_nurse_feet",
+        "name": "Creepy Nurse Shoes",
+        "description": "Blood-splattered but also comfortable and hard-wearing for those long shifts on the ward",
+        "category": "feet",
+        "rarity": "legendary",
+        "bodyShapes": [
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "jester_feet",
+        "name": "Jester Shoes",
+        "description": "Run from dissatisfied royalty in style",
+        "category": "feet",
+        "rarity": "mythic",
+        "bodyShapes": [
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "spy_suit_feet",
+        "name": "Spy Suit Shoes",
+        "description": "Extra quiet, extra light and extra grip",
+        "category": "feet",
+        "rarity": "legendary",
+        "bodyShapes": [
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "witch_feet",
+        "name": "Witch Shoes",
+        "description": "An excellent covering for your cloven demon' hooves",
+        "category": "feet",
+        "rarity": "epic",
+        "bodyShapes": [
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "sad_clown_feet",
+        "name": "Sad Clown Shoes",
+        "description": "To go with your sad clown body",
+        "category": "feet",
+        "rarity": "epic",
+        "bodyShapes": [
+          "BaseMale"
+        ]
+      },
+      {
+        "id": "frankie_feet",
+        "name": "Frankie Shoes",
+        "description": "Lurch around slowly in comfort",
+        "category": "feet",
+        "rarity": "legendary",
+        "bodyShapes": [
+          "BaseMale"
+        ]
+      },
+      {
+        "id": "skeleton_suit_feet",
+        "name": "Skeleton Suit Feet",
+        "description": "Connected to the shin bones...",
+        "category": "feet",
+        "rarity": "mythic",
+        "bodyShapes": [
+          "BaseMale"
+        ]
+      },
+      {
+        "id": "vampire_feet",
+        "name": "Vampire Shoes",
+        "description": "Not that you’ll need them with all that floating around",
+        "category": "feet",
+        "rarity": "legendary",
+        "bodyShapes": [
+          "BaseMale"
+        ]
+      },
+      {
+        "id": "zombie_suit_feet",
+        "name": "Zombie Boots",
+        "description": "Used (and a little bit rancid) but good to go!",
+        "category": "feet",
+        "rarity": "epic",
+        "bodyShapes": [
+          "BaseMale"
+        ]
+      },
+      {
+        "id": "bride_of_frankie_hair",
+        "name": "Bride of Frankie Hair",
+        "description": "Engineered for style",
+        "category": "hair",
+        "rarity": "mythic",
+        "bodyShapes": [
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "jester_hair",
+        "name": "Jester Hair",
+        "description": "Made from the hair of actual jesters!",
+        "category": "hair",
+        "rarity": "mythic",
+        "bodyShapes": [
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "spy_suit_hair",
+        "name": "Pony Tail Hair",
+        "description": "Tightly cropped for extra sleekness",
+        "category": "hair",
+        "rarity": "legendary",
+        "bodyShapes": [
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "vampire_hair",
+        "name": "Vampire Hair",
+        "description": "Classic slick style befitting the Prince of Darkness",
+        "category": "hair",
+        "rarity": "legendary",
+        "bodyShapes": [
+          "BaseMale"
+        ]
+      },
+      {
+        "id": "creepy_nurse_hat",
+        "name": "Creepy Nurse Hat",
+        "description": "Even if you're a murderous psycho nurse you need to stay smart",
+        "category": "hat",
+        "rarity": "legendary",
+        "bodyShapes": [
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "witch_hat",
+        "name": "Witch Hat",
+        "description": "Witch hat? This one",
+        "category": "hat",
+        "rarity": "epic",
+        "bodyShapes": [
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "frankie_hat",
+        "name": "Frankie Hat",
+        "description": "With that legendary high hair",
+        "category": "hat",
+        "rarity": "legendary",
+        "bodyShapes": [
+          "BaseMale"
+        ]
+      },
+      {
+        "id": "mexican_hat",
+        "name": "Mexican Hat",
+        "description": "Óraleeee",
+        "category": "hat",
+        "rarity": "epic",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "mariachi_hat",
+        "name": "Mariachi Hat",
+        "description": "Guitar not included",
+        "category": "hat",
+        "rarity": "rare",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "classic_top_hat",
+        "name": "Classic Top Hat",
+        "description": "Rabbit not included",
+        "category": "hat",
+        "rarity": "epic",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "skeleton_suit_hat",
+        "name": "Skull Mexican Hat",
+        "description": "Now that's one hell of a stylish Day of the Dead hat!",
+        "category": "hat",
+        "rarity": "mythic",
+        "bodyShapes": [
+          "BaseMale"
+        ]
+      },
+      {
+        "id": "creepy_pumpkin_helmet",
+        "name": "Creepy Pumpkin",
+        "description": "Just in case wearing a pumpkin as a helmet wasn't creepy enough for you",
+        "category": "helmet",
+        "rarity": "legendary",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "happy_pumpkin_helmet",
+        "name": "Happy Pumpkin",
+        "description": "Flesh and seeds removed free of charge!",
+        "category": "helmet",
+        "rarity": "rare",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "undead_pirate_helmet",
+        "name": "Undead Pirate Head",
+        "description": "Even undead pirates need to look their best",
+        "category": "helmet",
+        "rarity": "mythic",
+        "bodyShapes": [
+          "BaseMale"
+        ]
+      },
+      {
+        "id": "bee_suit_lower_body",
+        "name": "Bee Suit Leggings",
+        "description": "You'll be the talk of the hive in these striking black and gold bee leggings",
+        "category": "lower_body",
+        "rarity": "epic",
+        "bodyShapes": [
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "bride_of_frankie_lower_body",
+        "name": "Bride of Frankie Skirt",
+        "description": "Doubles as a handy waitress outfit",
+        "category": "lower_body",
+        "rarity": "mythic",
+        "bodyShapes": [
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "creepy_nurse_lower_body",
+        "name": "Creepy Nurse Skirt",
+        "description": "With real virtual blood splatters!",
+        "category": "lower_body",
+        "rarity": "legendary",
+        "bodyShapes": [
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "jester_lower_body",
+        "name": "Jester Leggings",
+        "description": "Fits neatly into jester_upper_body",
+        "category": "lower_body",
+        "rarity": "mythic",
+        "bodyShapes": [
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "spy_suit_lower_body",
+        "name": "Spy Suit Pants",
+        "description": "Form fitting and friction-free material",
+        "category": "lower_body",
+        "rarity": "legendary",
+        "bodyShapes": [
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "witch_lower_body",
+        "name": "Witch Skirt",
+        "description": "Designed to withstand burnings, drownings and ritual stonings",
+        "category": "lower_body",
+        "rarity": "epic",
+        "bodyShapes": [
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "sad_clown_lower_body",
+        "name": "Sad Clown Pants",
+        "description": "Little known fact: blue, red and gold are the saddest colours",
+        "category": "lower_body",
+        "rarity": "epic",
+        "bodyShapes": [
+          "BaseMale"
+        ]
+      },
+      {
+        "id": "frankie_lower_body",
+        "name": "Frankie Pants",
+        "description": "Engineered for maximum chills",
+        "category": "lower_body",
+        "rarity": "legendary",
+        "bodyShapes": [
+          "BaseMale"
+        ]
+      },
+      {
+        "id": "skeleton_suit_lower_body",
+        "name": "Skeleton Suit Pants",
+        "description": "Anatomically correct in a light-wearing, form-fitting design",
+        "category": "lower_body",
+        "rarity": "mythic",
+        "bodyShapes": [
+          "BaseMale"
+        ]
+      },
+      {
+        "id": "undead_pirate_lower_body",
+        "name": "Undead Pirate Pants",
+        "description": "Featuring low rise trousers for maximum comfort",
+        "category": "lower_body",
+        "rarity": "mythic",
+        "bodyShapes": [
+          "BaseMale"
+        ]
+      },
+      {
+        "id": "vampire_lower_body",
+        "name": "Vampire Pants",
+        "description": "Tailored trousers with quick-morph bat fabric",
+        "category": "lower_body",
+        "rarity": "legendary",
+        "bodyShapes": [
+          "BaseMale"
+        ]
+      },
+      {
+        "id": "zombie_suit_lower_body",
+        "name": "Zombie Suit Pants",
+        "description": "When we say suit, we mean suit. Look your zombie best!",
+        "category": "lower_body",
+        "rarity": "epic",
+        "bodyShapes": [
+          "BaseMale"
+        ]
+      },
+      {
+        "id": "jester_mask",
+        "name": "Jester Mask",
+        "description": "Disguise your identity when the jokes fall flat",
+        "category": "mask",
+        "rarity": "mythic",
+        "bodyShapes": [
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "cat_mask",
+        "name": "Cat Mask",
+        "description": "Do cats have eyebrows? They do now!",
+        "category": "mask",
+        "rarity": "legendary",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "sad_clown_mask",
+        "name": "Sad Clown Mask",
+        "description": "Sad, but let’s be honest—still kinda freaky",
+        "category": "mask",
+        "rarity": "epic",
+        "bodyShapes": [
+          "BaseMale"
+        ]
+      },
+      {
+        "id": "muzzle_mask",
+        "name": "Muzzle Mask",
+        "description": "For that special serial killer in your life",
+        "category": "mask",
+        "rarity": "mythic",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "funny_skull_mask",
+        "name": "Funny Skull",
+        "description": "The funny bit is scaring people out of their wits",
+        "category": "mask",
+        "rarity": "epic",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "monkey_skull_mask",
+        "name": "Monkey Skull",
+        "description": "No virtual monkeys were harmed in the making of this mask",
+        "category": "mask",
+        "rarity": "epic",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "zombie_suit_mask",
+        "name": "Zombie Mask",
+        "description": "No hiding from the fact that this is one hideous outfit!",
+        "category": "mask",
+        "rarity": "epic",
+        "bodyShapes": [
+          "BaseMale"
+        ]
+      },
+      {
+        "id": "floral_skull_mask",
+        "name": "Floral Skull",
+        "description": "Ornate Day of the Dead mask with floral pattern",
+        "category": "mask",
+        "rarity": "legendary",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "lirio_skull_mask",
+        "name": "Lirio Skull",
+        "description": "Classic Day of the Dead lily design",
+        "category": "mask",
+        "rarity": "legendary",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "trippy_skull_mask",
+        "name": "Trippy Skull",
+        "description": "Just in case the other Day of the Dead masks weren’t trippy enough for you",
+        "category": "mask",
+        "rarity": "mythic",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "diamond_skull_mask",
+        "name": "Diamond Skull",
+        "description": "Ornate Day of the Dead mask with diamond",
+        "category": "mask",
+        "rarity": "mythic",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "rose_skull_mask",
+        "name": "Rose Skull",
+        "description": "Ornate Day of the Dead mask with rose",
+        "category": "mask",
+        "rarity": "legendary",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "star_skull_mask",
+        "name": "Star Skull",
+        "description": "Ornate Day of the Dead mask with star",
+        "category": "mask",
+        "rarity": "legendary",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "cross_skull_mask",
+        "name": "Cross Skull",
+        "description": "Ornate Day of the Dead mask with cross",
+        "category": "mask",
+        "rarity": "mythic",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "bee_suit_top_head",
+        "name": "Bee Headband",
+        "description": "The cutest way to top off your bee suit. Sadly with no actual antennae functionality",
+        "category": "top_head",
+        "rarity": "epic",
+        "bodyShapes": [
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "bloody_knife_headband_top_head",
+        "name": "Bloody Knife",
+        "description": "",
+        "category": "top_head",
+        "rarity": "epic",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "machete_headband_top_head",
+        "name": "Machete Headband",
+        "description": "If the knife headband wasn't enough to freak out your friends...",
+        "category": "top_head",
+        "rarity": "legendary",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "bee_suit_upper_body",
+        "name": "Bee Suit",
+        "description": "Bees beat their wings at around 230 beats per second. We'll be impressed if you can match this",
+        "category": "upper_body",
+        "rarity": "epic",
+        "bodyShapes": [
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "bride_of_frankie_upper_body",
+        "name": "Bride of Frankie Suit",
+        "description": "Doubles as a handy waitress outfit",
+        "category": "upper_body",
+        "rarity": "mythic",
+        "bodyShapes": [
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "creepy_nurse_upper_body",
+        "name": "Creepy Nurse Shirt",
+        "description": "With real virtual blood splatters!",
+        "category": "upper_body",
+        "rarity": "legendary",
+        "bodyShapes": [
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "jester_upper_body",
+        "name": "Jester Suit",
+        "description": "Makes an excellent platform for jester heads",
+        "category": "upper_body",
+        "rarity": "mythic",
+        "bodyShapes": [
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "spy_suit_upper_body",
+        "name": "Spy Suit",
+        "description": "Form fitting and friction-free material",
+        "category": "upper_body",
+        "rarity": "legendary",
+        "bodyShapes": [
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "witch_upper_body",
+        "name": "Witch Suit",
+        "description": "Designed to withstand burnings, drownings and ritual stonings",
+        "category": "upper_body",
+        "rarity": "epic",
+        "bodyShapes": [
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "sad_clown_upper_body",
+        "name": "Sad Clown Suit",
+        "description": "Little known fact: blue, red and gold are the saddest colours",
+        "category": "upper_body",
+        "rarity": "epic",
+        "bodyShapes": [
+          "BaseMale"
+        ]
+      },
+      {
+        "id": "frankie_upper_body",
+        "name": "Frankie Suit",
+        "description": "When we say suit, we mean suit. Look your zombie best!",
+        "category": "upper_body",
+        "rarity": "epic",
+        "bodyShapes": [
+          "BaseMale"
+        ]
+      },
+      {
+        "id": "skeleton_suit_upper_body",
+        "name": "Skeleton Suit",
+        "description": "Anatomically correct in a light-wearing, form-fitting design",
+        "category": "upper_body",
+        "rarity": "mythic",
+        "bodyShapes": [
+          "BaseMale"
+        ]
+      },
+      {
+        "id": "undead_pirate_upper_body",
+        "name": "Undead Pirate Torso",
+        "description": "Almost a body, but you get the drift",
+        "category": "upper_body",
+        "rarity": "mythic",
+        "bodyShapes": [
+          "BaseMale"
+        ]
+      },
+      {
+        "id": "vampire_upper_body",
+        "name": "Vampire Suit",
+        "description": "Check out that fancy cape!",
+        "category": "upper_body",
+        "rarity": "legendary",
+        "bodyShapes": [
+          "BaseMale"
+        ]
+      },
+      {
+        "id": "zombie_suit_upper_body",
+        "name": "Zombie Suit",
+        "description": "When we say suit, we mean suit. Look your zombie best!",
+        "category": "upper_body",
+        "rarity": "epic",
+        "bodyShapes": [
+          "BaseMale"
+        ]
+      }
+    ]
+  },
+  {
+    "collection": "mch_collection",
+    "wearables": [
+      {
+        "id": "mch_caocao_upper_body",
+        "name": "Caocao T-Shirt",
+        "description": "",
+        "category": "upper_body",
+        "rarity": "epic",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "mch_cleopatra_upper_body",
+        "name": "Cleopatra T-Shirt",
+        "description": "",
+        "category": "upper_body",
+        "rarity": "epic",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "mch_enemy_upper_body",
+        "name": "MCH Rare Enemy T-Shirt",
+        "description": "",
+        "category": "upper_body",
+        "rarity": "epic",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "mch_fukuzawa_upper_body",
+        "name": "Fukuzawa T-Shirt",
+        "description": "",
+        "category": "upper_body",
+        "rarity": "epic",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "mch_gennnaihiraga_upper_body",
+        "name": "Hiraga Gennai T-Shirt",
+        "description": "",
+        "category": "upper_body",
+        "rarity": "epic",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "mch_georgewashington_upper_body",
+        "name": "George Washington T-Shirt",
+        "description": "",
+        "category": "upper_body",
+        "rarity": "epic",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "mch_huangzhong_upper_body",
+        "name": "Huang Zhong T-Shirt",
+        "description": "",
+        "category": "upper_body",
+        "rarity": "epic",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "mch_kingarthur_upper_body",
+        "name": "King Arthur T-Shirt",
+        "description": "",
+        "category": "upper_body",
+        "rarity": "epic",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "mch_leodavinci_upper_body",
+        "name": "Leonardo Da Vinci T-Shirt",
+        "description": "",
+        "category": "upper_body",
+        "rarity": "epic",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "mch_napoleon_upper_body",
+        "name": "Napoleon T-Shirt",
+        "description": "",
+        "category": "upper_body",
+        "rarity": "epic",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "mch_nightingale_upper_body",
+        "name": "Nightingale T-Shirt",
+        "description": "",
+        "category": "upper_body",
+        "rarity": "epic",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "mch_nobunagaoda_upper_body",
+        "name": "Nobunaga Oda T-Shirt",
+        "description": "",
+        "category": "upper_body",
+        "rarity": "epic",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "mch_pascal_upper_body",
+        "name": "Pascal T-Shirt",
+        "description": "",
+        "category": "upper_body",
+        "rarity": "epic",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "mch_spartacs_upper_body",
+        "name": "Spartacs T-Shirt",
+        "description": "",
+        "category": "upper_body",
+        "rarity": "epic",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "mch_wrightbrother_upper_body",
+        "name": "Wright Brothers T-Shirt",
+        "description": "",
+        "category": "upper_body",
+        "rarity": "epic",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      }
+    ]
+  },
+  {
+    "collection": "mf_sammichgamer",
+    "wearables": [
+      {
+        "id": "mf_frogfins",
+        "name": "Frog fins",
+        "description": "Walk and swim like a frog. Frog fins of sammich gamer costume. By Mana-fever 2020 ©",
+        "category": "feet",
+        "rarity": "legendary",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "mf_wingsneakers",
+        "name": "Wing sneakers",
+        "description": "No run, no swim, just fly. These have a handwritten signature from creators Chestnutbruz and Pablo Estornut. By Mana-fever 2020 ©",
+        "category": "feet",
+        "rarity": "legendary",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "mf_animehair",
+        "name": "Anime warrior hair",
+        "description": "Hair inspired by anime for best fans. By Mana-fever 2020 ©",
+        "category": "hair",
+        "rarity": "legendary",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "mf_unicornhelmet",
+        "name": "Unicorn skate helmet",
+        "description": "A colorful unicorn skate helmet for sammich gamer costume. By Mana-fever 2020 ©",
+        "category": "helmet",
+        "rarity": "legendary",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "mf_unicornpants",
+        "name": "Unicorn pants",
+        "description": "Unicorn pants of sammich gamer costume. By Mana-fever 2020.",
+        "category": "lower_body",
+        "rarity": "legendary",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "mf_sammichtorso",
+        "name": "Sammich frog outfit",
+        "description": "A sammich t-shirt, frog backback and gloves. Minted with grandma love. Inspired by Sammich game. By Mana-fever 2020 ©",
+        "category": "upper_body",
+        "rarity": "legendary",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      }
+    ]
+  },
+  {
+    "collection": "ml_pekingopera",
+    "wearables": [
+      {
+        "id": "jing_feet",
+        "name": "Peking Opera Jing Shoes",
+        "description": "Peking Opera Character-Jing",
+        "category": "feet",
+        "rarity": "legendary",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "jing_hat",
+        "name": "Peking Opera Jing Hat",
+        "description": "Peking Opera Character-Jing",
+        "category": "hat",
+        "rarity": "legendary",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "jing_lower_body",
+        "name": "Peking Opera Jing Pants",
+        "description": "Peking Opera Character-Jing",
+        "category": "lower_body",
+        "rarity": "legendary",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "jing_xiangyu_mask",
+        "name": "Peking Opera Xiang Yu Mask",
+        "description": "Peking Opera Character-Xiang Yu",
+        "category": "mask",
+        "rarity": "legendary",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "jing_yingbu_mask",
+        "name": "Peking Opera Ying Bu Mask",
+        "description": "Peking Opera Character-Ying Bu",
+        "category": "mask",
+        "rarity": "legendary",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "jing_upper_body",
+        "name": "Peking Opera Jing Coat",
+        "description": "Peking Opera Character-Jing",
+        "category": "upper_body",
+        "rarity": "legendary",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      }
+    ]
+  },
+  {
+    "collection": "moonshot_2020",
+    "wearables": [
+      {
+        "id": "ms_axiegg_upper_body",
+        "name": "AxieGG Soccer T-Shirt",
+        "description": "AxieGG Soccer T-Shirt - Moonshot Tournament 2020",
+        "category": "upper_body",
+        "rarity": "legendary",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "ms_battleracers_upper_body",
+        "name": "Battle Racers Soccer T-Shirt",
+        "description": "Battle Racers Soccer T-Shirt - Moonshot Tournament 2020",
+        "category": "upper_body",
+        "rarity": "legendary",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "ms_bullionix_upper_body",
+        "name": "Bullionix Soccer T-Shirt",
+        "description": "Bullionix Soccer T-Shirt - Moonshot Tournament 2020",
+        "category": "upper_body",
+        "rarity": "legendary",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "ms_cent_upper_body",
+        "name": "Cent Soccer T-Shirt",
+        "description": "Cent Soccer T-Shirt - Moonshot Tournament 2020",
+        "category": "upper_body",
+        "rarity": "legendary",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "ms_crucible_upper_body",
+        "name": "Crucible Soccer T-Shirt",
+        "description": "Crucible Soccer T-Shirt - Moonshot Tournament 2020",
+        "category": "upper_body",
+        "rarity": "legendary",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "ms_dcl_upper_body",
+        "name": "Decentraland Soccer T-Shirt",
+        "description": "Decentraland Soccer T-Shirt - Moonshot Tournament 2020",
+        "category": "upper_body",
+        "rarity": "legendary",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "ms_dclcore_upper_body",
+        "name": "DCL Core Soccer T-Shirt",
+        "description": "DCL Core Soccer T-Shirt - Moonshot Tournament 2020",
+        "category": "upper_body",
+        "rarity": "legendary",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "ms_dclplazas_upper_body",
+        "name": "DCL Plazas Soccer T-Shirt",
+        "description": "DCL Plazas Soccer T-Shirt - Moonshot Tournament 2020",
+        "category": "upper_body",
+        "rarity": "legendary",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "ms_decentralgames_upper_body",
+        "name": "Decentral Games Soccer T-Shirt",
+        "description": "Decentral Games Soccer T-Shirt - Moonshot Tournament 2020",
+        "category": "upper_body",
+        "rarity": "legendary",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "ms_ethermon_upper_body",
+        "name": "Ethermon Soccer T-Shirt",
+        "description": "Ethermon Soccer T-Shirt - Moonshot Tournament 2020",
+        "category": "upper_body",
+        "rarity": "legendary",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "ms_gamecredits_upper_body",
+        "name": "Game Credits Soccer T-Shirt",
+        "description": "Game Credits Soccer T-Shirt - Moonshot Tournament 2020",
+        "category": "upper_body",
+        "rarity": "legendary",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "ms_knownorigin_upper_body",
+        "name": "Known Origin Soccer T-Shirt",
+        "description": "Known Origin Soccer T-Shirt - Moonshot Tournament 2020",
+        "category": "upper_body",
+        "rarity": "legendary",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "ms_matic_upper_body",
+        "name": "Matic Soccer T-Shirt",
+        "description": "Matic Soccer T-Shirt - Moonshot Tournament 2020",
+        "category": "upper_body",
+        "rarity": "legendary",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "ms_metafactory_upper_body",
+        "name": "MetaFactory Soccer T-Shirt",
+        "description": "MetaFactory Soccer T-Shirt - Moonshot Tournament 2020",
+        "category": "upper_body",
+        "rarity": "legendary",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "ms_metazone_upper_body",
+        "name": "MetaZone Soccer T-Shirt",
+        "description": "MetaZone Soccer T-Shirt - Moonshot Tournament 2020",
+        "category": "upper_body",
+        "rarity": "legendary",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "ms_mintbase_upper_body",
+        "name": "Mintbase Soccer T-Shirt",
+        "description": "Mintbase Soccer T-Shirt - Moonshot Tournament 2020",
+        "category": "upper_body",
+        "rarity": "legendary",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "ms_neighbourhood_upper_body",
+        "name": "Neighbourhood Project Soccer T-Shirt",
+        "description": "Neighbourhood Project Soccer T-Shirt - Moonshot Tournament 2020",
+        "category": "upper_body",
+        "rarity": "legendary",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "ms_nonfungible_upper_body",
+        "name": "NonFungible Soccer T-Shirt",
+        "description": "NonFungible Soccer T-Shirt - Moonshot Tournament 2020",
+        "category": "upper_body",
+        "rarity": "legendary",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "ms_opensea_upper_body",
+        "name": "OpenSea Soccer T-Shirt",
+        "description": "OpenSea Soccer T-Shirt - Moonshot Tournament 2020",
+        "category": "upper_body",
+        "rarity": "legendary",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "ms_pixelchain_upper_body",
+        "name": "Pixelchain Soccer T-Shirt",
+        "description": "Pixelchain Soccer T-Shirt - Moonshot Tournament 2020",
+        "category": "upper_body",
+        "rarity": "legendary",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "ms_pm_upper_body",
+        "name": "Polygonal Mind Soccer T-Shirt",
+        "description": "Polygonal Mind Soccer T-Shirt - Moonshot Tournament 2020",
+        "category": "upper_body",
+        "rarity": "legendary",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "ms_sorare_upper_body",
+        "name": "Sorare Soccer T-Shirt",
+        "description": "Sorare Soccer T-Shirt - Moonshot Tournament 2020",
+        "category": "upper_body",
+        "rarity": "legendary",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "ms_superare_upper_body",
+        "name": "SuperRare Soccer T-Shirt",
+        "description": "SuperRare Soccer T-Shirt - Moonshot Tournament 2020",
+        "category": "upper_body",
+        "rarity": "legendary",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "ms_vegascity_upper_body",
+        "name": "Vegas City Soccer T-Shirt",
+        "description": "Vegas City Soccer T-Shirt - Moonshot Tournament 2020",
+        "category": "upper_body",
+        "rarity": "legendary",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "ms_whale_upper_body",
+        "name": "Whale Soccer T-Shirt",
+        "description": "Whale Soccer T-Shirt - Moonshot Tournament 2020",
+        "category": "upper_body",
+        "rarity": "legendary",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "moonshot_2020_golden_boots_feet",
+        "name": "Golden Boots of Moonshot 2020",
+        "description": "Golden Boots of Moonshot 2020 - This boots were given to the best scorer during the first Crypto World Cup Soccer Tournament in Decentraland",
+        "category": "feet",
+        "rarity": "unique",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      }
+    ]
+  },
+  {
+    "collection": "pm_dreamverse_eminence",
+    "wearables": [
+      {
+        "id": "pm_dreamverse_eminence_boots",
+        "name": "Ethereal Dreamer Boots",
+        "description": "Expanding the Polygonal Mind Collection adding now the Dreamverse Eminence set",
+        "category": "feet",
+        "rarity": "mythic",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "pm_dreamverse_eminence_cap",
+        "name": "Ethereal Sage Hat",
+        "description": "Expanding the Polygonal Mind Collection adding now the Dreamverse Eminence set",
+        "category": "hat",
+        "rarity": "mythic",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "pm_dreamverse_eminence_hat_visor",
+        "name": "Lucid Visionary Crown",
+        "description": "Expanding the Polygonal Mind Collection adding now the Dreamverse Eminence set",
+        "category": "hat",
+        "rarity": "mythic",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "pm_dreamverse_eminence_pants",
+        "name": "Dream Bourgeois Breeches",
+        "description": "Expanding the Polygonal Mind Collection adding now the Dreamverse Eminence set",
+        "category": "lower_body",
+        "rarity": "mythic",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "pm_dreamverse_eminence_jacket",
+        "name": "Dream Oracle Jacket",
+        "description": "Expanding the Polygonal Mind Collection adding now the Dreamverse Eminence set",
+        "category": "upper_body",
+        "rarity": "mythic",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "pm_dreamverse_eminence_sweater",
+        "name": "Lucid Meditation Tunic",
+        "description": "Expanding the Polygonal Mind Collection adding now the Dreamverse Eminence set",
+        "category": "upper_body",
+        "rarity": "mythic",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      }
+    ]
+  },
+  {
+    "collection": "pm_outtathisworld",
+    "wearables": [
+      {
+        "id": "pm_col1_alien_helmet",
+        "name": "Alien Helmet",
+        "description": "An out of this world hat for the believers",
+        "category": "helmet",
+        "rarity": "legendary",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "pm_col1_cat_helmet",
+        "name": "Cat Helmet",
+        "description": "A domesticated purring mammal helmet for Cat Lovers",
+        "category": "helmet",
+        "rarity": "legendary",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "pm_col1_dino_helmet",
+        "name": "Dino Helmet",
+        "description": "A cartoon pre-human predator helmet",
+        "category": "helmet",
+        "rarity": "legendary",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "pm_col1_panda_helmet",
+        "name": "Panda Helmet",
+        "description": "A bamboo-eater helmet for Panda Lovers",
+        "category": "helmet",
+        "rarity": "legendary",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "pm_col1_cargo_pants_lower_body",
+        "name": "Polygonal Mind - Cargo Pants",
+        "description": "Some trendy triangle-patterned pants for you to show off",
+        "category": "lower_body",
+        "rarity": "legendary",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "pm_col1_trendy_coat_upper_body",
+        "name": "Polygonal Mind - Trendy Coat",
+        "description": "A trendy triangle-patterned coat for you to show off and stay warm in winter",
+        "category": "upper_body",
+        "rarity": "legendary",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      }
+    ]
+  },
+  {
+    "collection": "stay_safe",
+    "wearables": [
+      {
+        "id": "protection_mask_abstract_mask",
+        "name": "Abstract Protection Mask",
+        "description": "Supporting the #CryptoAgainstCOVID initiative",
+        "category": "mask",
+        "rarity": "epic",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "protection_mask_african_mask",
+        "name": "African Protection Mask",
+        "description": "Supporting the #CryptoAgainstCOVID initiative",
+        "category": "mask",
+        "rarity": "epic",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "protection_mask_funny_mask",
+        "name": "Funny Protection Mask",
+        "description": "Supporting the #CryptoAgainstCOVID initiative",
+        "category": "mask",
+        "rarity": "epic",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "protection_mask_graffiti_mask",
+        "name": "Graffiti Protection Mask",
+        "description": "Supporting the #CryptoAgainstCOVID initiative",
+        "category": "mask",
+        "rarity": "epic",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "protection_mask_hot_mask",
+        "name": "Hot Protection Mask",
+        "description": "Supporting the #CryptoAgainstCOVID initiative",
+        "category": "mask",
+        "rarity": "epic",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "protection_mask_monster_mask",
+        "name": "Monster Protection Mask",
+        "description": "Supporting the #CryptoAgainstCOVID initiative",
+        "category": "mask",
+        "rarity": "epic",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "protection_mask_skull_mask",
+        "name": "Skull Protection Mask",
+        "description": "Supporting the #CryptoAgainstCOVID initiative",
+        "category": "mask",
+        "rarity": "epic",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "protection_mask_tiger_mask",
+        "name": "Tiger Protection Mask",
+        "description": "Supporting the #CryptoAgainstCOVID initiative",
+        "category": "mask",
+        "rarity": "epic",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      }
+    ]
+  },
+  {
+    "collection": "sugarclub_yumi",
+    "wearables": [
+      {
+        "id": "yumi_glitter_eyes",
+        "name": "Yumi Glitter Eyes",
+        "description": "Awesome anime eyes for Sugar parties",
+        "category": "eyes",
+        "rarity": "legendary",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "yumi_retro_shades_eyewear",
+        "name": "Yumi Retro Shades",
+        "description": "Retro shades Sugar party look",
+        "category": "eyewear",
+        "rarity": "legendary",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "yumi_neon_boots_feet",
+        "name": "Yumi Neon Boots",
+        "description": "Those sugarclub boots will make you dance all night",
+        "category": "feet",
+        "rarity": "legendary",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "yumi_neon_hair",
+        "name": "Yumi Neon Hair",
+        "description": "Impress the crowd with this sugar anime hair style",
+        "category": "hair",
+        "rarity": "legendary",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "yumi_glitter_leggings_lower_body",
+        "name": "Yumi Glitter Leggings",
+        "description": "Very Kawaii and Sugar sweet bottoms",
+        "category": "lower_body",
+        "rarity": "legendary",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "yumi_glitter_jacket_upper_body",
+        "name": "Yumi Glitter Jacket",
+        "description": "Synthwave glitter & Sugar Sweet jacket",
+        "category": "upper_body",
+        "rarity": "legendary",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      }
+    ]
+  },
+  {
+    "collection": "tech_tribal_marc0matic",
+    "wearables": [
+      {
+        "id": "techtribal_shoes",
+        "name": "Tech Tribal Shoes",
+        "description": "Tech Tribal Leather Band Shoes.",
+        "category": "feet",
+        "rarity": "legendary",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "tech_tribal_trousers",
+        "name": "Tech Tribal Trousers",
+        "description": "Tech Tribal Trousers with armored Leg Braces.",
+        "category": "lower_body",
+        "rarity": "legendary",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "techtribal_beast_mask",
+        "name": "Tech Tribal Beast Mask",
+        "description": "VR Infused Beast Mask created by Marc0Matic",
+        "category": "mask",
+        "rarity": "legendary",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "techtribal_bird_mask",
+        "name": "Tech Tribal Bird Mask",
+        "description": "VR Infused Bird Mask created by Marc0Matic",
+        "category": "mask",
+        "rarity": "legendary",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "techtribal_shaman_garb",
+        "name": "Tech Tribal Shaman Garb",
+        "description": "Tech Tribal Shaman Garb. Worn by those familiar with 'Machine Speak.'",
+        "category": "upper_body",
+        "rarity": "legendary",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "techtribal_solar_garb",
+        "name": "Tech Tribal Solar Garb",
+        "description": "Tech Tribal Solar Garb with Solar Shoulder Pads. Worn by Mystics fluent in 'Machine Speak.",
+        "category": "upper_body",
+        "rarity": "legendary",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      }
+    ]
+  },
+  {
+    "collection": "wonderzone_meteorchaser",
+    "wearables": [
+      {
+        "id": "meteorchaser_transmitter_earring",
+        "name": "Meteorchaser transmitters",
+        "description": "Crafting reward from WonderZone. Gives the wearer a bonus while mining meteorites. Created by Chestnutbruze",
+        "category": "earring",
+        "rarity": "legendary",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "meteorchaser_shoes_feet",
+        "name": "Shoes of the meteorchaser",
+        "description": "Crafting reward from WonderZone. Gives the wearer a bonus while mining meteorites. Created by Chestnutbruze",
+        "category": "feet",
+        "rarity": "legendary",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "meteorite_protective_hardhat_hat",
+        "name": "Meteorite protective hardhat",
+        "description": "Crafting reward from WonderZone. Will save your life from meteorites falling on your head. Also gives the wearer a bonus while mining meteorites. Created by Chestnutbruze",
+        "category": "hat",
+        "rarity": "legendary",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "meteorchaser_trousers_lower_body",
+        "name": "Trousers of the meteorchaser",
+        "description": "Crafting reward from WonderZone. Gives the wearer a bonus while mining meteorites. Created by Chestnutbruze",
+        "category": "lower_body",
+        "rarity": "legendary",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "meteorite_dustmask_mask",
+        "name": "Meteorite dustmask",
+        "description": "Crafting reward from WonderZone. Gives the wearer a bonus while mining meteorites. Created by Chestnutbruze",
+        "category": "mask",
+        "rarity": "legendary",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "meteorchaser_vest_upper_body",
+        "name": "Vest of the Meteorchaser",
+        "description": "Crafting reward from WonderZone. Gives the wearer a bonus while mining meteorites. Created by Chestnutbruze",
+        "category": "upper_body",
+        "rarity": "legendary",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      }
+    ]
+  },
+  {
+    "collection": "wonderzone_steampunk",
+    "wearables": [
+      {
+        "id": "steampunk_goggles",
+        "name": "Steampunk Goggles",
+        "description": "Steampunk sight-enhancing goggles. Gives a bonus in the WonderMine game. Created by Maricela.",
+        "category": "eyewear",
+        "rarity": "legendary",
+        "bodyShapes": [
+          "BaseFemale",
+          "BaseMale"
+        ]
+      },
+      {
+        "id": "steampunk_boots",
+        "name": "Steampunk Boots",
+        "description": "Leather Steampunk Boots. Gives a bonus in the WonderMine game. Created by Maricela.",
+        "category": "feet",
+        "rarity": "legendary",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "steampunk_hat",
+        "name": "Steampunk Top Hat",
+        "description": "Steampunk top hat. Gives a bonus in the WonderMine game. Created by Maricela.",
+        "category": "hat",
+        "rarity": "legendary",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "steampunk_trousers",
+        "name": "Steampunks jodhpur trousers",
+        "description": "Steampunk jodhpur trousers or leggings. Gives a bonus in the WonderMine game. Created by Maricela.",
+        "category": "lower_body",
+        "rarity": "legendary",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "steampunk_mask",
+        "name": "Steampunk mask",
+        "description": "Steampunk mask. Gives a bonus in the WonderMine game. Created by Maricela",
+        "category": "mask",
+        "rarity": "legendary",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "steampunk_jacket",
+        "name": "Steampunk Jacket",
+        "description": "Elegant Steampunk jacket. Gives a bonus in the WonderMine game. Created by Maricela",
+        "category": "upper_body",
+        "rarity": "legendary",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      }
+    ]
+  },
+  {
+    "collection": "wz_wonderbot",
+    "wearables": [
+      {
+        "id": "wz_wonderbot_goggles",
+        "name": "Wonderbot goggles",
+        "description": "Robotic goggles, letting the wearer spot bulls and bears from far away. Wonderzone Collection 2020. Created by Chestnutbruze",
+        "category": "eyewear",
+        "rarity": "mythic",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "wz_wonderbot_feet",
+        "name": "Wonderbot Feet",
+        "description": "Robotic feet, giving you an extra spring in your step. Wonderzone Collection 2020. Created by Chestnutbruze",
+        "category": "feet",
+        "rarity": "mythic",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "wz_wonderbot_head",
+        "name": "Wonderbot Head",
+        "description": "Robotic head, allowing you to split your mind in two. Wonderzone Collection 2020. Created by Chestnutbruze",
+        "category": "helmet",
+        "rarity": "mythic",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "wz_wonderbot_legs",
+        "name": "Wonderbot Legs",
+        "description": "Robotic legs, allowing you to outrun Usain Bolt. Wonderzone Collection 2020. Created by Chestnutbruze",
+        "category": "lower_body",
+        "rarity": "mythic",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "wz_wonderbot_hat",
+        "name": "Wonderbot Tricorn Hat",
+        "description": "Robotic tricorn hat. Wonderzone Collection 2020. Created by Chestnutbruze",
+        "category": "top_head",
+        "rarity": "mythic",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "wz_wonderbot_torso",
+        "name": "Wonderbot Chestpiece",
+        "description": "Robotic torso, giving you the strength of 10 Avatars. Wonderzone Collection 2020. Created by Chestnutbruze",
+        "category": "upper_body",
+        "rarity": "mythic",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      }
+    ]
+  },
+  {
+    "collection": "xmas_2019",
+    "wearables": [
+      {
+        "id": "snowflake_earring",
+        "name": "Snowflake Earrings",
+        "description": "Get 'em before they melt!",
+        "category": "earring",
+        "rarity": "epic",
+        "bodyShapes": [
+          "BaseFemale",
+          "BaseMale"
+        ]
+      },
+      {
+        "id": "xmas_light_ball_earring",
+        "name": "Christmas Light Ball Earring",
+        "description": "Batteries not included.",
+        "category": "earring",
+        "rarity": "epic",
+        "bodyShapes": [
+          "BaseFemale",
+          "BaseMale"
+        ]
+      },
+      {
+        "id": "xmas_ball_earring",
+        "name": "Christmas Ball Earring",
+        "description": "Ding dong merrily on ears!",
+        "category": "earring",
+        "rarity": "epic",
+        "bodyShapes": [
+          "BaseFemale",
+          "BaseMale"
+        ]
+      },
+      {
+        "id": "xmas_light_tree_earring",
+        "name": "Christmas Light Tree Earring",
+        "description": "Batteries not included.",
+        "category": "earring",
+        "rarity": "epic",
+        "bodyShapes": [
+          "BaseFemale",
+          "BaseMale"
+        ]
+      },
+      {
+        "id": "xmas_cyberpunk_eyewear",
+        "name": "Christmas CyberPunk Eyewear",
+        "description": "Even cyberpunks celebrate Xmas.",
+        "category": "eyewear",
+        "rarity": "mythic",
+        "bodyShapes": [
+          "BaseFemale",
+          "BaseMale"
+        ]
+      },
+      {
+        "id": "xmas_ski_eyewear",
+        "name": "Christmas Ski Eyewear",
+        "description": "Is it snowing in Decentraland?",
+        "category": "eyewear",
+        "rarity": "mythic",
+        "bodyShapes": [
+          "BaseFemale",
+          "BaseMale"
+        ]
+      },
+      {
+        "id": "cyber_xmas_eyewear",
+        "name": "Christmas Neon Eyewear",
+        "description": "Hack the herald angels sing!",
+        "category": "eyewear",
+        "rarity": "mythic",
+        "bodyShapes": [
+          "BaseFemale",
+          "BaseMale"
+        ]
+      },
+      {
+        "id": "xmas_tree_eyewear",
+        "name": "Christmas Tree Eyewear",
+        "description": "See Xmas in a whole new light.",
+        "category": "eyewear",
+        "rarity": "mythic",
+        "bodyShapes": [
+          "BaseFemale",
+          "BaseMale"
+        ]
+      },
+      {
+        "id": "santa_facial_hair",
+        "name": "Santa Beard",
+        "description": "Santa's beard. Fake or real?",
+        "category": "facial_hair",
+        "rarity": "mythic",
+        "bodyShapes": [
+          "BaseMale"
+        ]
+      },
+      {
+        "id": "xmas_elf_feet",
+        "name": "Christmas Elf Shoes",
+        "description": "Rest of elf not included.",
+        "category": "feet",
+        "rarity": "mythic",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "sledge_sockets_feet",
+        "name": "Sledge Shoes",
+        "description": "We don't recommend them for ice skating.",
+        "category": "feet",
+        "rarity": "mythic",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "xmas_sockets_feet",
+        "name": "Christmas Sockets",
+        "description": "Embrace the spirit of Xmas—from top to toe.",
+        "category": "feet",
+        "rarity": "mythic",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "xmas_blue_hat",
+        "name": "Christmas Blue Hat",
+        "description": "Have a blue, blue, blue, blue Christmas",
+        "category": "hat",
+        "rarity": "epic",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "xmas_elf_hat",
+        "name": "Christmas Elf Hat",
+        "description": "Any size you like as long as it's XS.",
+        "category": "hat",
+        "rarity": "epic",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "xmas_green_hat",
+        "name": "Christmas Green Hat",
+        "description": " Colour yourself Xmas.",
+        "category": "hat",
+        "rarity": "epic",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "xmas_red_hat",
+        "name": "Christmas Red Hat",
+        "description": "Colour yourself Xmas.",
+        "category": "hat",
+        "rarity": "epic",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "xmas_reindeer_hat",
+        "name": "Christmas Reindeer Hat",
+        "description": "The Xmas party classic comes to Decentraland.",
+        "category": "hat",
+        "rarity": "mythic",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "xmas_yellow_hat",
+        "name": "Christmas Yellow Hat",
+        "description": "Colour yourself Xmas.",
+        "category": "hat",
+        "rarity": "epic",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "f_cyber_xmas_helmet",
+        "name": "Cyber Xmas Helmet",
+        "description": "Hack the herald angels sing!",
+        "category": "helmet",
+        "rarity": "mythic",
+        "bodyShapes": [
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "xmas_snowman_helmet",
+        "name": "Snowman Head",
+        "description": "Don't stand too close to the fire.",
+        "category": "helmet",
+        "rarity": "mythic",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "m_cyber_xmas_helmet",
+        "name": "Cyber Xmas Helmet",
+        "description": "Hack the herald angels sing!",
+        "category": "helmet",
+        "rarity": "mythic",
+        "bodyShapes": [
+          "BaseMale"
+        ]
+      },
+      {
+        "id": "f_cyber_suit_lower_body",
+        "name": "Cyber Pants",
+        "description": "Tron's a Xmas movie right?",
+        "category": "lower_body",
+        "rarity": "mythic",
+        "bodyShapes": [
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "f_led_suit_lower_body",
+        "name": "Led Pants",
+        "description": "Why just put up Xmas lights when you can wear them?",
+        "category": "lower_body",
+        "rarity": "mythic",
+        "bodyShapes": [
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "m_cyber_suit_lower_body",
+        "name": "Cyber Pants",
+        "description": "Tron's a Xmas movie right?",
+        "category": "lower_body",
+        "rarity": "mythic",
+        "bodyShapes": [
+          "BaseMale"
+        ]
+      },
+      {
+        "id": "m_led_suit_lower_body",
+        "name": "Led Pants",
+        "description": "Why just put up Xmas lights when you can wear them?",
+        "category": "lower_body",
+        "rarity": "mythic",
+        "bodyShapes": [
+          "BaseMale"
+        ]
+      },
+      {
+        "id": "f_led_suit_upper_body",
+        "name": "Led Suit",
+        "description": "Why just put up Xmas lights when you can wear them?",
+        "category": "upper_body",
+        "rarity": "mythic",
+        "bodyShapes": [
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "f_cyber_suit_upper_body",
+        "name": "Cyber Suit",
+        "description": "Tron's a Xmas movie right?",
+        "category": "upper_body",
+        "rarity": "mythic",
+        "bodyShapes": [
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "m_led_suit_upper_body",
+        "name": "Led Suit",
+        "description": "Why just put up Xmas lights when you can wear them?",
+        "category": "upper_body",
+        "rarity": "mythic",
+        "bodyShapes": [
+          "BaseMale"
+        ]
+      },
+      {
+        "id": "xmas_cyberpunk_upper_body",
+        "name": "Cyberpunk Jacket",
+        "description": "Coolest. Xmas. Jumper. Ever!",
+        "category": "upper_body",
+        "rarity": "mythic",
+        "bodyShapes": [
+          "BaseMale"
+        ]
+      },
+      {
+        "id": "m_cyber_suit_upper_body",
+        "name": "Cyber Suit",
+        "description": "Tron's a Xmas movie right?",
+        "category": "upper_body",
+        "rarity": "mythic",
+        "bodyShapes": [
+          "BaseMale"
+        ]
+      },
+      {
+        "id": "pixel_sweater_upper_body",
+        "name": "Pixel Christmas Sweater",
+        "description": "Even in virtual worlds there's no escape from the Xmas jumper.",
+        "category": "upper_body",
+        "rarity": "mythic",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "8bit_sweater_upper_body",
+        "name": "8 Bit Christmas Sweater",
+        "description": "Even in virtual worlds there's no escape from the Xmas jumper.",
+        "category": "upper_body",
+        "rarity": "mythic",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      }
+    ]
+  },
+  {
+    "collection": "halloween_2020",
+    "wearables": [
+      {
+        "id": "hwn_2020_cat_eyes",
+        "name": "Cat Eyes - Halloween 2020",
+        "description": "Exclusive Halloween 2020 Collection. Awarded as Treasure Hunt prize.",
+        "category": "eyes",
+        "rarity": "uncommon",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "hwn_2020_ddlm_01_eyes",
+        "name": "Dia de los Muertos Eyes - Halloween 2020",
+        "description": "Exclusive Halloween 2020 Collection. Awarded as Treasure Hunt prize.",
+        "category": "eyes",
+        "rarity": "epic",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "hwn_2020_ddlm_02_eyes",
+        "name": "Dia de los Muertos Skull Eyes - Halloween 2020",
+        "description": "Exclusive Halloween 2020 Collection. Awarded as Treasure Hunt prize.",
+        "category": "eyes",
+        "rarity": "legendary",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "hwn_2020_ddlm_03_eyes",
+        "name": "Dia de los Muertos Flower Eyes - Halloween 2020",
+        "description": "Exclusive Halloween 2020 Collection. Awarded as Treasure Hunt prize.",
+        "category": "eyes",
+        "rarity": "legendary",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "hwn_2020_cult_servant_feet",
+        "name": "Evil Cult Servant Boots - Halloween 2020",
+        "description": "Exclusive Halloween 2020 Collection. Awarded as Treasure Hunt prize.",
+        "category": "feet",
+        "rarity": "epic",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "hwn_2020_cult_supreme_feet",
+        "name": "Evil Cult Supreme Boots - Halloween 2020",
+        "description": "Exclusive Halloween 2020 Collection. Awarded as Treasure Hunt prize.",
+        "category": "feet",
+        "rarity": "mythic",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "hwn_2020_cult_servant_helmet",
+        "name": "Helmet of Servant of Evil Cult",
+        "description": "Exclusive Halloween 2020 Collection. Awarded as Treasure Hunt prize.",
+        "category": "helmet",
+        "rarity": "epic",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "hwn_2020_cult_supreme_helmet",
+        "name": "Helmet of Supreme of Evil Cult",
+        "description": "Exclusive Halloween 2020 Collection. Awarded as Treasure Hunt prize.",
+        "category": "helmet",
+        "rarity": "mythic",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "hwn_2020_cult_servant_lower_body",
+        "name": "Pants of Servant of Evil Cult - Halloween 2020",
+        "description": "Exclusive Halloween 2020 Collection. Awarded as Treasure Hunt prize.",
+        "category": "lower_body",
+        "rarity": "epic",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "hwn_2020_cult_supreme_lower_body",
+        "name": "Pants of Supreme of Evil Cult - Halloween 2020",
+        "description": "Exclusive Halloween 2020 Collection. Awarded as Treasure Hunt prize.",
+        "category": "lower_body",
+        "rarity": "mythic",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "hwn_2020_ghostblaster_lower_body",
+        "name": "GhostBlaster Pants - Halloween 2020",
+        "description": "Exclusive Halloween 2020 Collection. Awarded as Treasure Hunt prize.",
+        "category": "lower_body",
+        "rarity": "epic",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "hwn_2020_creepy_mouth",
+        "name": "Creepy Mouth - Halloween 2020",
+        "description": "Exclusive Halloween 2020 Collection. Awarded as Treasure Hunt prize.",
+        "category": "mouth",
+        "rarity": "uncommon",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "hwn_2020_ddlm_mouth",
+        "name": "Dia de los Muertos Mouth - Halloween 2020",
+        "description": "Exclusive Halloween 2020 Collection. Awarded as Treasure Hunt prize.",
+        "category": "mouth",
+        "rarity": "legendary",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "hwn_2020_dracula_mouth",
+        "name": "Dracula Mouth - Halloween 2020",
+        "description": "Exclusive Halloween 2020 Collection. Awarded as Treasure Hunt prize.",
+        "category": "mouth",
+        "rarity": "legendary",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "hwn_2020_pumpkin_mouth",
+        "name": "Pumpkin Mouth - Halloween 2020",
+        "description": "Exclusive Halloween 2020 Collection. Awarded as Treasure Hunt prize.",
+        "category": "mouth",
+        "rarity": "epic",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "hwn_2020_ghostblaster_tiara",
+        "name": "GhostBlaster NightVision Device",
+        "description": "Exclusive Halloween 2020 Collection. Awarded as Treasure Hunt prize.",
+        "category": "tiara",
+        "rarity": "epic",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "hwn_2020_cult_servant_upper_body",
+        "name": "Servent of Evil Cult Suit- Halloween 2020",
+        "description": "Exclusive Halloween 2020 Collection. Awarded as Treasure Hunt prize.",
+        "category": "upper_body",
+        "rarity": "epic",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "hwn_2020_cult_supreme_upper_body",
+        "name": "Supreme of Evil Cult Suit - Halloween 2020",
+        "description": "Exclusive Halloween 2020 Collection. Awarded as Treasure Hunt prize.",
+        "category": "upper_body",
+        "rarity": "mythic",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "hwn_2020_ghostblaster_upper_body",
+        "name": "GhostBlaster Suit - Halloween 2020",
+        "description": "Exclusive Halloween 2020 Collection. Awarded as Treasure Hunt prize.",
+        "category": "upper_body",
+        "rarity": "epic",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      }
+    ]
+  },
+  {
+    "collection": "xmas_2020",
+    "wearables": [
+      {
+        "id": "santa_xmas_2020_hat",
+        "name": "Christmas Santa Hat",
+        "description": "A festive gift from Save Xmas 2020",
+        "category": "hat",
+        "rarity": "epic",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "covinch_xmas_mask",
+        "name": "Covinch Christmas Mask",
+        "description": "A festive gift from Save Xmas 2020",
+        "category": "mask",
+        "rarity": "mythic",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "santa_xmas_mask",
+        "name": "santa Christmas Mask",
+        "description": "A festive gift from Save Xmas 2020",
+        "category": "mask",
+        "rarity": "mythic",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "blue_jacket_xmas_upper_body",
+        "name": "Blue Winter Jacket",
+        "description": "A festive gift from Save Xmas 2020",
+        "category": "upper_body",
+        "rarity": "epic",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "btc_xmas_sweater_upper_body",
+        "name": "Bitcoin Christmas Sweater",
+        "description": "A festive gift from Save Xmas 2020",
+        "category": "upper_body",
+        "rarity": "legendary",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "doge_xmas_tshirt_upper_body",
+        "name": "Dogecoin T Shirt",
+        "description": "A festive gift from Save Xmas 2020",
+        "category": "upper_body",
+        "rarity": "legendary",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "eth_xmas_sweater_upper_body",
+        "name": "Ethereum Christmas Sweater",
+        "description": "A festive gift from Save Xmas 2020",
+        "category": "upper_body",
+        "rarity": "legendary",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "mana_xmas_sweater_upper_body",
+        "name": "MANA Christmas Sweater",
+        "description": "A festive gift from Save Xmas 2020",
+        "category": "upper_body",
+        "rarity": "legendary",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "red_jacket_xmas_upper_body",
+        "name": "Red Winter Jacket",
+        "description": "A festive gift from Save Xmas 2020",
+        "category": "upper_body",
+        "rarity": "legendary",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "santa_xmas_2020_upper_body",
+        "name": "Santa Christmas Suit",
+        "description": "A festive gift from Save Xmas 2020",
+        "category": "upper_body",
+        "rarity": "epic",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "yellow_jacket_xmas_upper_body",
+        "name": "Yellow Winter Jacket",
+        "description": "A festive gift from Save Xmas 2020",
+        "category": "upper_body",
+        "rarity": "legendary",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      }
+    ]
+  },
+  {
+    "collection": "xmash_up_2020",
+    "wearables": [
+      {
+        "id": "xmash_up_googles_eyewear",
+        "name": "Bryfocals - Guest Artists Collection",
+        "description": "Bryfocals | Art by Bryan Blinkman - 3D Design by vrglit.ch | Guest Artists Collection",
+        "category": "eyewear",
+        "rarity": "mythic",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "xmash_up_boots_feet",
+        "name": "FEWO CLOUD SHOES - Guest Artists Collection",
+        "description": "FEWO CLOUD SHOES. It’s like Walking on Air... | Art by fewocious - 3D Design by vrglit.ch | Guest Artists Collection",
+        "category": "feet",
+        "rarity": "mythic",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "xmash_up_cap_hat",
+        "name": "The Delbo Comic Cap - Guest Artists Collection",
+        "description": "The Delbo Comic Cap. Because every great artist needs their hat... | Art by José Delbo - 3D Design by vrglit.ch | Guest Artists Collection",
+        "category": "hat",
+        "rarity": "mythic",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "xmash_up_pants_lower_body",
+        "name": "Joelle Pants",
+        "description": "Wash separately, colours may bleed. | Art by KJ Walker - 3D Design by vrglit.ch | Guest Artists Collection",
+        "category": "lower_body",
+        "rarity": "mythic",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "xmash_up_coat_upper_body",
+        "name": "Infinity Cow Coat - Guest Artists Collection",
+        "description": "Infinity Cow Coat. | Art by Jonathan Wolfe - 3D Design by vrglit.ch | Guest Artists Collection",
+        "category": "upper_body",
+        "rarity": "mythic",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      }
+    ]
+  },
+  {
+    "collection": "release_the_kraken",
+    "wearables": [
+      {
+        "id": "kraken_epic_hat",
+        "name": "Kraken Ruby-Eye Crown",
+        "description": "The Kraken is released upon Decentraland",
+        "category": "hat",
+        "rarity": "epic",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "kraken_hat",
+        "name": "Kraken Hat",
+        "description": "The Kraken is released upon Decentraland",
+        "category": "hat",
+        "rarity": "uncommon",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "kraken_legendary_hat",
+        "name": "Kraken Gold-Eye Crown",
+        "description": "The Kraken is released upon Decentraland",
+        "category": "hat",
+        "rarity": "legendary",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "kraken_mythic_hat",
+        "name": "Kraken Cyborg Crown",
+        "description": "The Kraken is released upon Decentraland",
+        "category": "hat",
+        "rarity": "mythic",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "kraken_hoodie_upper_body",
+        "name": "Kraken Hoodie",
+        "description": "The Kraken is released upon Decentraland",
+        "category": "upper_body",
+        "rarity": "uncommon",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "kraken_tshirt_upper_body",
+        "name": "Kraken T-Shirt",
+        "description": "The Kraken is released upon Decentraland",
+        "category": "upper_body",
+        "rarity": "uncommon",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      }
+    ]
+  },
+  {
+    "collection": "threelau_basics",
+    "wearables": [
+      {
+        "id": "3lau_blue_hat",
+        "name": "3LAU Blue Triangle Cap",
+        "description": "3LAU's signature triangle on a black and blue cap.",
+        "category": "hat",
+        "rarity": "legendary",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "3lau_white_hat",
+        "name": "3LAU White Triangle Cap",
+        "description": "3LAU's signature triangle on a black and white cap.",
+        "category": "hat",
+        "rarity": "epic",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "3lau_hoodie_b_upper_body",
+        "name": "3LAU Blue Triangle Hoodie",
+        "description": "3LAU's signature triangle on a black and blue hoodie.",
+        "category": "upper_body",
+        "rarity": "legendary",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "3lau_hoodie_w_upper_body",
+        "name": "3LAU White Triangle Hoodie",
+        "description": "3LAU's signature triangle on a black and white hoodie.",
+        "category": "upper_body",
+        "rarity": "epic",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "3lau_tshirt_b_upper_body",
+        "name": "3LAU Blue Triangle Tee",
+        "description": "3LAU's signature triangle on a black and blue tee.",
+        "category": "upper_body",
+        "rarity": "legendary",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "3lau_tshirt_w_upper_body",
+        "name": "3LAU White Triangle Tee",
+        "description": "3LAU's signature triangle on a black and white tee.",
+        "category": "upper_body",
+        "rarity": "epic",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      }
+    ]
+  },
+  {
+    "collection": "meme_dontbuythis",
+    "wearables": [
+      {
+        "id": "meme_helmet_pineapple",
+        "name": "Tasty Pineapple Head",
+        "description": "Tasty Pineapple Head from the $Meme Collection - Don't wear this",
+        "category": "helmet",
+        "rarity": "epic",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "meme_pants_pineapple",
+        "name": "Fresh Pineapple Pants",
+        "description": "Fresh Pineapple Pants from the $Meme collection - Don't wear this",
+        "category": "lower_body",
+        "rarity": "epic",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "meme_suit_pineapple_onesie",
+        "name": "Sweet Pineapple Onesie",
+        "description": "Sweet Pineapple Onesie from the $Meme collection - Don't wear this",
+        "category": "upper_body",
+        "rarity": "epic",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "meme_suit_pineapple",
+        "name": "Cool Pineapple Suit",
+        "description": "Cool Pineapple Suit from the $Meme collection - Don't wear this",
+        "category": "upper_body",
+        "rarity": "epic",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      }
+    ]
+  },
+  {
+    "collection": "ml_liondance",
+    "wearables": [
+      {
+        "id": "lion_dance_feet",
+        "name": "Lion Dance Shoes",
+        "description": "Dragon City 2021 Spring Festival Souvenirs",
+        "category": "feet",
+        "rarity": "epic",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "lion_dance_hat",
+        "name": "Lion Dance Hat",
+        "description": "Dragon City 2021 Spring Festival Souvenirs",
+        "category": "hat",
+        "rarity": "epic",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "lion_dance_lower_body",
+        "name": "Lion Dance Pants",
+        "description": "Dragon City 2021 Spring Festival Souvenirs",
+        "category": "lower_body",
+        "rarity": "epic",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "lion_dance_upper_body",
+        "name": "Lion Dance Coat",
+        "description": "Dragon City 2021 Spring Festival Souvenirs",
+        "category": "upper_body",
+        "rarity": "epic",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      }
+    ]
+  },
+  {
+    "collection": "atari_launch",
+    "wearables": [
+      {
+        "id": "atari_blue_hat",
+        "name": "Blue Atari Cap",
+        "description": "Atari's signature logo on a blue cap.",
+        "category": "hat",
+        "rarity": "epic",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "atari_green_hat",
+        "name": "Green Atari Cap",
+        "description": "Atari's signature logo on a green cap.",
+        "category": "hat",
+        "rarity": "epic",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "atari_orange_hat",
+        "name": "Orange Atari Cap",
+        "description": "Atari's signature logo on an orange cap.",
+        "category": "hat",
+        "rarity": "epic",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "atari_purple_hat",
+        "name": "Purple Atari Cap",
+        "description": "Atari's signature logo on a purple cap.",
+        "category": "hat",
+        "rarity": "epic",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "atari_red_hat",
+        "name": "Red Atari Cap",
+        "description": "Atari's signature logo on a red cap.",
+        "category": "hat",
+        "rarity": "epic",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "atari_blue_upper_body",
+        "name": "Blue Atari Tee",
+        "description": "Atari's signature logo on a blue tee.",
+        "category": "upper_body",
+        "rarity": "epic",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "atari_green_upper_body",
+        "name": "Green Atari Tee",
+        "description": "Atari's signature logo on a green tee.",
+        "category": "upper_body",
+        "rarity": "epic",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "atari_orange_upper_body",
+        "name": "Orange Atari Tee",
+        "description": "Atari's signature logo on an orange tee.",
+        "category": "upper_body",
+        "rarity": "epic",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "atari_purple_upper_body",
+        "name": "Purple Atari Tee",
+        "description": "Atari's signature logo on a purple tee.",
+        "category": "upper_body",
+        "rarity": "epic",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "atari_red_upper_body",
+        "name": "Red Atari Tee",
+        "description": "Atari's signature logo on a red tee.",
+        "category": "upper_body",
+        "rarity": "epic",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      }
+    ]
+  },
+  {
+    "collection": "rtfkt_x_atari",
+    "wearables": [
+      {
+        "id": "p_rtfkt_x_atari_feet",
+        "name": "Purple RTFKT X Atari Sneakers",
+        "description": "RTFKT x Atari sneakers with holographic print.",
+        "category": "feet",
+        "rarity": "epic",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "r_rtfkt_x_atari_feet",
+        "name": "Red RTFKT X Atari Sneakers",
+        "description": "Unique RTFKT x Atari sneakers in red.",
+        "category": "feet",
+        "rarity": "unique",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      }
+    ]
+  },
+  {
+    "collection": "rac_basics",
+    "wearables": [
+      {
+        "id": "rac_feet",
+        "name": "RAC footwear",
+        "description": "RAC's signature pink footwear.",
+        "category": "feet",
+        "rarity": "unique",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "rac_hat",
+        "name": "RAC Cap",
+        "description": "RAC's signature pink baseball cap.",
+        "category": "hat",
+        "rarity": "unique",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "rac_upper_body",
+        "name": "RAC Outfit",
+        "description": "RAC's signature pink outfit with matching trousers and long coat.",
+        "category": "upper_body",
+        "rarity": "unique",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      }
+    ]
+  },
+  {
+    "collection": "winklevoss_capital",
+    "wearables": [
+      {
+        "id": "winklevoss_hat",
+        "name": "Winklevoss Cap",
+        "description": "Winklevoss Capital branded cap in signature pink.",
+        "category": "hat",
+        "rarity": "epic",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "winklevoss_upper_body",
+        "name": "Winklevoss T-Shirt",
+        "description": "Winklevoss Capital branded T-shirt in signature pink",
+        "category": "upper_body",
+        "rarity": "epic",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      }
+    ]
+  },
+  {
+    "collection": "dg_atari_dillon_francis",
+    "wearables": [
+      {
+        "id": "gerald_patchwork_knit_sweater",
+        "name": "Gerald Patchwork Knit Sweater",
+        "description": "A cozy Barney Cools Gerald Patchwork Knit Sweater.",
+        "category": "upper_body",
+        "rarity": "epic",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "gerald_striped_knit_sweater",
+        "name": "Gerald Striped Knit Sweater",
+        "description": "A cozy Barney Cools Gerald Striped Knit Sweater.",
+        "category": "upper_body",
+        "rarity": "epic",
+        "bodyShapes": [
+          "BaseMale",
+          "BaseFemale"
+        ]
+      }
+    ]
+  },
+  {
+    "collection": "wearable_test",
+    "wearables": [
+      {
+        "id": "wearable_test_1",
+        "name": "Wearable Test 1",
+        "description": "",
+        "category": "hair",
+        "rarity": "legendary",
+        "bodyShapes": [
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "wearable_test_2",
+        "name": "Wearable Test 2",
+        "description": "",
+        "category": "hair",
+        "rarity": "legendary",
+        "bodyShapes": [
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "wearable_test_3",
+        "name": "Wearable Test 3",
+        "description": "",
+        "category": "hair",
+        "rarity": "legendary",
+        "bodyShapes": [
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "wearable_test_4",
+        "name": "Wearable Test 4",
+        "description": "",
+        "category": "hair",
+        "rarity": "legendary",
+        "bodyShapes": [
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "wearable_test_5",
+        "name": "Wearable Test 5",
+        "description": "",
+        "category": "hair",
+        "rarity": "legendary",
+        "bodyShapes": [
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "wearable_test_6",
+        "name": "Wearable Test 6",
+        "description": "",
+        "category": "hair",
+        "rarity": "legendary",
+        "bodyShapes": [
+          "BaseFemale"
+        ]
+      },
+      {
+        "id": "wearable_test_7",
+        "name": "Wearable Test 7",
+        "description": "",
+        "category": "hair",
+        "rarity": "legendary",
+        "bodyShapes": [
+          "BaseFemale"
+        ]
+      }
+    ]
+  }
+]

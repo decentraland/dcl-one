@@ -35,27 +35,6 @@
   background: var(--dcl-feedback-error);
 }
 
-.toggle {
-  composes: text626f64792f736d2d7374726f6e67 from '../../../foundations/typography/text-styles.module.css';
-  padding: 6px var(--dcl-space-8);
-  border: 0;
-  border-radius: var(--dcl-radius-xs);
-  background: transparent;
-  color: var(--dcl-text-primary);
-  cursor: pointer;
-  line-height: 1.75;
-  text-align: left;
-}
-
-.toggle:hover {
-  background: var(--dcl-bg-hover);
-}
-
-.toggle:focus-visible {
-  outline: 2px solid var(--dcl-neutrals-snow);
-  outline-offset: 2px;
-}
-
 .popover {
   position: absolute;
   top: calc(100% + var(--dcl-space-8));
