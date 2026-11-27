@@ -42,7 +42,8 @@ import sys
 
 ROOT = Path(__file__).resolve().parents[1]
 TREE = 'rendering/bevy-explorer/bevy'
-TREES = (TREE, 'rendering/bevy-explorer/vendor', 'library/vendor/rusty_enet', 'rendering/bevy-explorer/source', 'library/protocol/proto')
+TREES = (TREE, 'rendering/bevy-explorer/vendor', 'library/vendor/rusty_enet', 'rendering/bevy-explorer/source', 'library/protocol/proto',
+         'rendering/avatar-preview')
 # A hashless file in .fingerprint: tooling/bevy-target-cache.py removes only units' hashed entries, so the manifest stays cached.
 MANIFEST = 'bevy-mtimes.json'
 

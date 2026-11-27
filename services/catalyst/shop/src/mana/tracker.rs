@@ -55,7 +55,12 @@ pub const TOPIC_NAME_REGISTERED: &str = crate::market::nft_index::TOPIC_NAME_REG
 /// The next check: 5 s, 10 s, 20 s ... capped at a minute; the same
 /// schedule for an unmined hash and a settlement waiting for its index.
 pub fn backoff(attempts: i32) -> Duration {
-    Duration::from_secs((5u64 << attempts.clamp(0, 4) as u64).min(60))
+    Duration::from_secs((5u64 << attempts.clamp(0, 4).unsigned_abs()).min(60))
+}
+
+/// A receipt's block as the `bigint` column.
+fn receipt_block(n: u64) -> anyhow::Result<i64> {
+    i64::try_from(n).map_err(|_| anyhow::anyhow!("receipt block {n} is past i64"))
 }
 
 /// The address an indexed `address` topic carries (its low 20 bytes).
@@ -228,7 +233,7 @@ pub async fn index_confirms(
     };
     let now = Utc::now();
     // Every index this book reads is published on the book's own chain.
-    let chain_id = chain.chain_id.0 as i64;
+    let chain_id = crate::types::chain_id_column(chain.chain_id.0)?;
     let ready = |indexer: &'static str| async move {
         chain_walk::ready_cursor_on(pool, indexer, net, chain_id, now)
             .await
@@ -435,7 +440,7 @@ pub async fn expected_price(
         .venue
         .parse()
         .map_err(|_| ExpectedPriceError::Refused("the row's venue is not an address".into()))?;
-    let chain_id = row.chain_id.max(0) as u64;
+    let chain_id = u64::try_from(row.chain_id).unwrap_or(0);
     // A transaction that called another contract (a router, a wallet's
     // execute, a manager) has no top-level calldata to read the coupon from.
     // It pays the signed price unless a coupon manager paired with the venue
@@ -553,7 +558,7 @@ pub async fn step(
     row: &ExecutionRow,
     now: NaiveDateTime,
 ) -> anyhow::Result<&'static str> {
-    let chain_id = crate::types::ChainId(row.chain_id.max(0) as u64);
+    let chain_id = crate::types::ChainId(u64::try_from(row.chain_id).unwrap_or(0));
     let stay = |error: Option<String>, status: &'static str| Advance {
         status,
         block_number: None,
@@ -641,6 +646,7 @@ pub async fn step(
         .await?;
         return Ok(status);
     };
+    let block = receipt_block(receipt.block_number)?;
     if receipt.status == Some(false) {
         advance(
             &state.pool,
@@ -648,7 +654,7 @@ pub async fn step(
             &row.status,
             &Advance {
                 status: "reverted",
-                block_number: Some(receipt.block_number as i64),
+                block_number: Some(block),
                 confirmed_by: Some("receipt"),
                 settlement: Some(json!({ "reverted": true })),
                 error: None,
@@ -701,7 +707,7 @@ pub async fn step(
                 &row.status,
                 &Advance {
                     status: "mismatch",
-                    block_number: Some(receipt.block_number as i64),
+                    block_number: Some(block),
                     confirmed_by: Some("receipt"),
                     settlement: Some(json!({
                         (SENDER_MISMATCH): true,
@@ -718,7 +724,6 @@ pub async fn step(
     }
     let payer = actor;
     let proof = proof_of(row, &receipt, payer);
-    let block = receipt.block_number as i64;
     let (confirmed, by) = match index_confirms(&state.pool, &chain, row, block).await? {
         Some(true) => (true, "index"),
         Some(false) => (false, "index"),
@@ -896,6 +901,13 @@ pub type Shared = SharedState;
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_receipt_block_past_i64_is_refused() {
+        assert_eq!(receipt_block(7).unwrap(), 7);
+        let err = receipt_block(1 << 63).unwrap_err();
+        assert!(err.to_string().contains("past i64"), "{err}");
+    }
 
     #[test]
     fn only_the_sender_or_its_meta_transaction_signer_reported_the_hash() {

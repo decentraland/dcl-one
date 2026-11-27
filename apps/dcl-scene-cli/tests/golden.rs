@@ -24,6 +24,8 @@
 //! scripts/update-goldens.sh. A MISSING golden fails too — this repo's CI
 //! backstop counts passing tests and never checks for a dirty tree, so an
 //! auto-written golden would report green having asserted nothing.
+#![allow(clippy::unwrap_used, reason = "test support")]
+
 // Unix only: every staged fixture shares the toolchain's node_modules by symlink.
 #![cfg(unix)]
 #![recursion_limit = "256"]
@@ -211,6 +213,10 @@ fn work_dir() -> PathBuf {
 /// `OnceLock::get_or_init` is the lock: cargo runs these `#[test]`s in
 /// parallel and every one calls this before touching anything else, so the
 /// environment scrub below lands before any build reads it.
+#[allow(
+    unsafe_code,
+    reason = "clears inherited environment before any test thread reads it"
+)]
 fn node_modules_src() -> &'static Path {
     static SRC: OnceLock<PathBuf> = OnceLock::new();
     SRC.get_or_init(|| {

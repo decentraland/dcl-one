@@ -166,9 +166,12 @@ one `ops.admin_audit` row and links it through `credits.ledger.admin_audit_id`.
 | `studio_grant` and its imported budget link | `detail.studioName`, null when the name is unavailable |
 | Grant audit | `domain = 'credits'`, `action = 'grant'` |
 
-The credits report classifies grants with `studioName` as `studio_grant` and
-audited Decentraland grants as `grant`. IAP, sale proceeds and other USD
-sources folded into ledger grants keep their `migrated` report source.
+The credits report classifies a grant as `studio_grant` when a studio budget
+entry names its ledger row, or when its audit is such an upstream record
+(`upstreamCreditId` with `studioName`). An audited Decentraland grant is
+`grant`, as is an audit with a `studioName` alone, which the node's admin
+route once wrote on grants that spent no budget. IAP, sale proceeds and other
+USD sources folded into ledger grants keep their `migrated` report source.
 
 The audit insert and the ledger link commit together. A rerun fills missing
 links and preserves existing node or imported audit links. The money and

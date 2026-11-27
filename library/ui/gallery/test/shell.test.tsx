@@ -102,11 +102,17 @@ describe('when a reviewer opens the HUD Showcase', () => {
   beforeEach(() => window.history.replaceState(null, '', '/gallery/?component=Button'))
   afterEach(() => window.history.replaceState(null, '', '/'))
 
-  it('should list the Showcase, every section in its order, then the glyphs', () => {
+  it('should list the Showcase, then every section and the glyphs by name', () => {
     render(<Shell search={window.location.search} />)
-    expect(
-      hudLinks().map((a) => new URL((a as HTMLAnchorElement).href).searchParams.get('hud'))
-    ).toEqual(['Showcase', ...SHOWCASE_INDEX.map((section) => section.name), 'Glyphs'])
+    const listed = hudLinks().map((a) =>
+      new URL((a as HTMLAnchorElement).href).searchParams.get('hud')
+    )
+    expect(listed[0]).toBe('Showcase')
+    expect(listed.slice(1)).toEqual(
+      [...SHOWCASE_INDEX.map((section) => section.name), 'Glyphs'].sort((a, b) =>
+        a.localeCompare(b, 'en', { sensitivity: 'base', numeric: true })
+      )
+    )
   })
 
   it('should open a section in place, in a window of the HUD document, labelled HUD', () => {

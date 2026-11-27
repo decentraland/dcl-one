@@ -42,3 +42,29 @@ it("does nothing more when the visitor dismisses the share sheet", async () => {
   expect(writeText).not.toHaveBeenCalled();
   expect(track).not.toHaveBeenCalled();
 });
+
+it("links to the Creator Docs and reports the click", async () => {
+  withNavigator(undefined);
+  render(<CreatorHubElsewhere sid="sid-1" />);
+  const docs = screen.getByRole("link", { name: "Explore the Creator Docs" });
+  expect(docs.getAttribute("href")).toMatch(/creator/);
+  docs.addEventListener("click", (event) => event.preventDefault());
+
+  await userEvent.click(docs);
+
+  expect(track).toHaveBeenCalledWith("lp_creatorhub_docs_clicked", {}, expect.objectContaining({ sid: "sid-1" }));
+});
+
+it("leaves the button as it was when the link cannot be copied", async () => {
+  withNavigator(undefined);
+  writeText.mockRejectedValueOnce(new Error("denied"));
+  render(<CreatorHubElsewhere sid="sid-1" />);
+  const share = screen.getByRole("button", { name: "Share link" });
+  expect(share.getAttribute("type")).toBe("button");
+
+  await userEvent.click(share);
+
+  expect(writeText).toHaveBeenCalledOnce();
+  expect(screen.getByRole("button", { name: "Share link" })).toBeTruthy();
+  expect(track).not.toHaveBeenCalled();
+});

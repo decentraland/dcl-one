@@ -8,6 +8,7 @@
 use crate::deploy::DeployIdentity;
 use anyhow::{Context, Result};
 use dcl_auth::Wallet;
+use dcl_auth::signed_fetch::build_payload_v6;
 use serde_json::Value;
 use std::time::Duration;
 
@@ -105,10 +106,10 @@ impl Signer {
         }
     }
 
-    /// The `x-identity-*` headers for one request: the ADR-44 payload
-    /// `method:pathname:timestamp:metadata`, lowercased, signed by the key
-    /// (a simple chain) or by the session key under its delegation. The
-    /// metadata header keeps its original case; the verifier lowercases.
+    /// The `x-identity-*` headers for one request: the crypto-middleware 6.x
+    /// payload `method:pathname:timestamp:metadata` (method and path folded,
+    /// metadata verbatim, as sent in its header), signed by the key (a simple
+    /// chain) or by the session key under its delegation.
     pub fn headers(
         &self,
         method: &str,
@@ -116,7 +117,7 @@ impl Signer {
         metadata: &str,
     ) -> Result<Vec<(String, String)>> {
         let timestamp = crate::deploy::now_ms();
-        let payload = format!("{method}:{pathname}:{timestamp}:{metadata}").to_lowercase();
+        let payload = build_payload_v6(method, pathname, &timestamp.to_string(), metadata);
         let chain = match self {
             Signer::Key(hex) => {
                 let wallet = Wallet::from_hex(hex).context("the signing key is not valid")?;
@@ -303,7 +304,7 @@ mod tests {
         assert_eq!(link1["type"], "ECDSA_SIGNED_ENTITY");
         assert_eq!(
             link1["payload"],
-            format!("put:/values/high-score:{ts}:{}", meta.to_lowercase())
+            format!("put:/values/high-score:{ts}:{meta}")
         );
         assert!(headers.iter().all(|(n, _)| n != "x-identity-auth-chain-2"));
         let (recovered, metadata) = verify_signed_fetch_meta(

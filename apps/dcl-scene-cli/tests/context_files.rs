@@ -1,3 +1,5 @@
+#![allow(clippy::unwrap_used, reason = "test support")]
+
 use axum::routing::get;
 use axum::{Json, Router};
 use std::path::{Path, PathBuf};

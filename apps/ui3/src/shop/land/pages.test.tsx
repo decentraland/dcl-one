@@ -293,6 +293,19 @@ describe("/shop/token/:contract/:tokenId/manage", () => {
     expect(fireEvent.click(link)).toBe(false);
   });
 
+  it("opens the removal confirmation from the outlined rental action without sending a transaction", async () => {
+    const wallet = fakeWallet({ account: OWNER, chainId: 1, reads: [{ abi: erc721Abi, name: "isApprovedForAll", answer: () => true }] });
+    renderManage("web3", parcelResult({ rental: rentalListing() }), {}, wallet);
+    fireEvent.click(await enabledButton("Edit listing"));
+    const editor = await screen.findByRole("dialog", { name: "Edit listing" });
+    const remove = await within(editor).findByRole("button", { name: "Remove listing" });
+    expect(remove).toHaveAttribute("data-tone", "danger");
+    expect(remove).toHaveAttribute("data-variant", "outline");
+    fireEvent.click(remove);
+    expect(await screen.findByRole("dialog", { name: "Remove listing" })).toBeInTheDocument();
+    expect(wallet.sent).toHaveLength(0);
+  });
+
   it("marks removal as destructive in the rental confirmation", () => {
     const rental = rentalListing();
     const asset = { chainId: 1, contractAddress: NET.land, tokenId: rental.tokenId, openRentalId: rental.id, category: "parcel" as const };

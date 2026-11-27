@@ -74,7 +74,7 @@ const missingGlyphs = (mounted: ReadonlySet<string>) =>
 describe('when the Showcase is checked against the HUD design entry', () => {
   it('should find the named component exports, the glyphs apart, and no function or constant', () => {
     expect(components).toEqual(
-      expect.arrayContaining(['Chip', 'Pager', 'PopupHost', 'KeyCap', 'IconButton'])
+      expect.arrayContaining(['Chip', 'Pager', 'PopupHost', 'HintsButton', 'IconButton'])
     )
     for (const name of ['VerifiedBadge', 'showDialog', 'ARM_MS', 'rarityOf'])
       expect(components).not.toContain(name)

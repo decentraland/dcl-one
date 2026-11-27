@@ -3,7 +3,7 @@ use std::marker::PhantomData;
 use bevy::{ecs::system::SystemParam, prelude::*, window::PrimaryWindow};
 use common::{
     inputs::{Action, SystemAction, POINTER_SET},
-    structs::{ActiveDialog, AppConfig, CursorLocks, PrimaryCamera},
+    structs::{ActiveDialog, AppConfig, CursorLocks, PrimaryCamera, CAMERA_CURSOR_LOCK},
 };
 use input_manager::{InputManager, InputPriority};
 use platform::{platform_pointer_is_locked, platform_pointer_lock_requested};
@@ -196,9 +196,9 @@ pub fn update_pointer_lock(
     }
 
     if camera_locked {
-        locks.0.insert("camera");
+        locks.0.insert(CAMERA_CURSOR_LOCK);
     } else {
-        locks.0.remove("camera");
+        locks.0.remove(CAMERA_CURSOR_LOCK);
     }
 
     let pointer_lock = PbPointerLock {

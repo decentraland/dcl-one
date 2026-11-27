@@ -8,8 +8,7 @@
 import { Suspense, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { Link, useLocation, useNavigate, useParams } from "react-router";
 
-import { Button, ShopBadgeSkeleton, Tooltip } from "@dcl/one-ui";
-import EmptyState from "../../components/EmptyState";
+import { Button, EmptyState, ShopBadgeSkeleton, Tooltip } from "@dcl/one-ui";
 import { useCart } from "../cart/store";
 import { itemAsset, tokenAsset, type AssetId } from "@shop/model/asset";
 import { parseEvmAddress, shortAddress, sameAddress } from "@shop/model/address";
@@ -541,10 +540,12 @@ export default function ItemDetail() {
     return (
       <div className="shop-page" data-testid="item-not-found">
         <EmptyState
+          appearance="shop"
+          titleAs="h2"
           icon={<Icon name="cart" size={44} />}
           title={t("itemDetail.notAvailableTitle")}
           subtitle={t("itemDetail.notAvailableBody")}
-          actions={[{ label: t("notFound.cta"), onClick: () => navigate(`${SHOP_BASE}/items`) }]}
+          actions={<Button size="md" onClick={() => navigate(`${SHOP_BASE}/items`)}>{t("notFound.cta")}</Button>}
         />
       </div>
     );

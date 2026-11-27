@@ -339,7 +339,10 @@ async fn deployment_with(
     deployment_at(wallet, world, title, base, pointers, nav_thumb, thumb, now).await
 }
 
-#[allow(clippy::too_many_arguments)]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "one argument per deployment field"
+)]
 async fn deployment_at(
     wallet: &Wallet,
     world: &WorldName,

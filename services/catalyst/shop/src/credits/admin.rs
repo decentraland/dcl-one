@@ -129,23 +129,48 @@ pub(crate) async fn require_write_admin(
         state, headers, method, route_path, original, &admins, REFUSED,
     )
     .await?;
-    match signed_body_hash(headers) {
-        Some(Some(signed)) if signed.eq_ignore_ascii_case(&hex::encode(Sha256::digest(body))) => {}
-        Some(_) => {
-            return Err(ApiError::unauthorized(
-                "Unauthorized: the signed bodySha256 does not match the request body",
-            ));
-        }
-        None if state.settings.admin_writes_require_bound_body => {
+    if !signed_body_matches(headers, body)? {
+        if state.settings.admin_writes_require_bound_body {
             return Err(ApiError::unauthorized(
                 "Unauthorized: a wallet-signed write must sign its body (bodySha256 in the signed metadata)",
             ));
         }
-        None => {
-            tracing::warn!(%signer, route = route_path, method, "a wallet-signed admin write signed no bodySha256; accepted while CREDITS_ADMIN_WRITES_REQUIRE_BOUND_BODY is off");
-        }
+        tracing::warn!(%signer, route = route_path, method, "a wallet-signed admin write signed no bodySha256; accepted while CREDITS_ADMIN_WRITES_REQUIRE_BOUND_BODY is off");
     }
     Ok(signer)
+}
+
+/// Whether a wallet's signed write commits to `body`: `true` when its signed
+/// metadata carries [`BODY_SHA256_KEY`] and that is the SHA-256 of the exact
+/// bytes sent, `false` when it signs no hash (the caller's policy decides),
+/// and a 401 when the signed hash is another body's or cannot be read.
+pub(crate) fn signed_body_matches(headers: &HeaderMap, body: &[u8]) -> Result<bool, ApiError> {
+    match signed_body_hash(headers) {
+        Some(Some(signed)) if signed.eq_ignore_ascii_case(&hex::encode(Sha256::digest(body))) => {
+            Ok(true)
+        }
+        Some(_) => Err(ApiError::unauthorized(
+            "Unauthorized: the signed bodySha256 does not match the request body",
+        )),
+        None => Ok(false),
+    }
+}
+
+/// `headers` with a proxy `x-original-path` kept only when it IS `route_path`
+/// (query stripped): the credits host's own spelling of the route. The shared
+/// path rule admits one that merely ends with the route, so a signature over
+/// a foreign prefix would otherwise open it.
+pub(crate) fn exact_original_path(headers: &HeaderMap, route_path: &str) -> HeaderMap {
+    let mut headers = headers.clone();
+    let foreign = headers.get(ORIGINAL_PATH_HEADER).is_some_and(|v| {
+        v.to_str().map_or(true, |raw| {
+            raw.split('?').next().unwrap_or(raw) != route_path
+        })
+    });
+    if foreign {
+        headers.remove(ORIGINAL_PATH_HEADER);
+    }
+    headers
 }
 
 /// The body hash a request's signed metadata commits to: `None` when it signs
@@ -189,15 +214,7 @@ async fn signed_admin(
     // own balance route (`/credits/users/{address}/credits`), which an admin
     // signs routinely. A replayed signature over that path must not open an
     // admin route, so here the header counts only when it IS the route.
-    let mut headers = headers.clone();
-    let foreign = headers.get(ORIGINAL_PATH_HEADER).is_some_and(|v| {
-        v.to_str().map_or(true, |raw| {
-            raw.split('?').next().unwrap_or(raw) != route_path
-        })
-    });
-    if foreign {
-        headers.remove(ORIGINAL_PATH_HEADER);
-    }
+    let headers = exact_original_path(headers, route_path);
     let validator = state.eip1654.as_deref();
     let validator = if !method.eq_ignore_ascii_case("get") {
         validator.and_then(|v| v.fresh_validator())
@@ -302,24 +319,20 @@ pub fn validated_reason(reason: &Option<String>) -> Result<Option<String>, ApiEr
     }
 }
 
-/// An optional grant's studio: one printable line of at most
-/// [`MAX_STUDIO_NAME_CHARS`](super::admin_store::MAX_STUDIO_NAME_CHARS); blank is none.
-pub fn validated_studio_name(name: &Option<String>) -> Result<Option<String>, ApiError> {
-    let Some(name) = name.as_deref().map(str::trim).filter(|n| !n.is_empty()) else {
-        return Ok(None);
-    };
-    if name.chars().count() > super::admin_store::MAX_STUDIO_NAME_CHARS {
-        return Err(ApiError::bad_request(format!(
-            "\"studioName\" must be at most {} characters",
-            super::admin_store::MAX_STUDIO_NAME_CHARS
-        )));
+/// An admin grant is Decentraland's: a studio's gift is granted by one of its
+/// operators out of its budget (`POST /operator/studios/{studioId}/grants`),
+/// which names the studio from its own row. A body that still names a
+/// studio is refused rather than granted without one.
+pub fn refuse_studio_name(value: Option<&Value>) -> Result<(), ApiError> {
+    match value {
+        // Blank is none, as every other optional field of these routes reads it.
+        None | Some(Value::Null) => Ok(()),
+        Some(Value::String(name)) if name.trim().is_empty() => Ok(()),
+        Some(_) => Err(ApiError::bad_request(
+            "\"studioName\" is not accepted: a studio's gift is granted by one of its operators, \
+             with POST /operator/studios/{studioId}/grants",
+        )),
     }
-    if name.chars().any(char::is_control) {
-        return Err(ApiError::bad_request(
-            "\"studioName\" must be a single line of printable characters",
-        ));
-    }
-    Ok(Some(name.to_string()))
 }
 
 pub(crate) fn validate_escrow_ref(raw: &str) -> Result<String, ApiError> {
@@ -399,17 +412,18 @@ mod tests {
     }
 
     #[test]
-    fn a_studio_name_is_one_printable_line_of_at_most_80_characters() {
-        let v = |s: &str| validated_studio_name(&Some(s.to_string()));
-        assert_eq!(validated_studio_name(&None).unwrap(), None);
-        assert_eq!(v("   ").unwrap(), None);
-        assert_eq!(v(" Acme ").unwrap().as_deref(), Some("Acme"));
-        assert_eq!(
-            v(&"é".repeat(80)).unwrap().map(|s| s.chars().count()),
-            Some(80)
-        );
-        assert!(v(&"a".repeat(81)).is_err());
-        assert!(v("Acme\nEvil").is_err());
+    fn an_admin_grant_names_no_studio() {
+        assert!(refuse_studio_name(None).is_ok());
+        assert!(refuse_studio_name(Some(&json!(null))).is_ok());
+        assert!(refuse_studio_name(Some(&json!(""))).is_ok());
+        assert!(refuse_studio_name(Some(&json!("   "))).is_ok());
+        for named in [json!("Acme"), json!(" Acme "), json!(3)] {
+            let refused = refuse_studio_name(Some(&named)).unwrap_err();
+            assert!(
+                refused.to_string().contains("/operator/studios/"),
+                "{refused}"
+            );
+        }
     }
 
     #[tokio::test]

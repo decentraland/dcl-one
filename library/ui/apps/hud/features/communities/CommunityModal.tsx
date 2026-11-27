@@ -574,7 +574,7 @@ export function CommunityModal({
   }
 
   return (
-    // Just the card: the popup layer (PopupHost .dim/.pop) draws the scrim, DPI-scales it and animates
+    // Just the card: the popup layer (PopupHost's ModalBackdrop) draws the scrim, DPI-scales it and animates
     // it in. stopPropagation keeps a click on the card from reaching the scrim (and closing it).
     <div className={styles.modal} onClick={(e) => e.stopPropagation()}>
       <div className={styles.main}>

@@ -11,6 +11,13 @@
 //! status. The budget a wallet may pledge is `available` at the peg minus
 //! `SUM(usd_cents)` of its `authorized` and `retired` rows.
 
+// Money and chain values: a silently truncated or sign-flipped cast is a bug.
+#![deny(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    clippy::cast_possible_wrap
+)]
+
 use chrono::NaiveDateTime;
 use sqlx::Row;
 
@@ -395,7 +402,7 @@ impl Credits {
                 }
             }));
         }
-        for (position, line) in g.lines.iter().enumerate() {
+        for (position, line) in (0i32..).zip(g.lines.iter()) {
             sqlx::query(
                 "INSERT INTO credits.authorization_lines \
                      (authorization_id, position, quoted_cents, charged_cents, sale_kind, asset_kind, asset_chain_id, \
@@ -403,7 +410,7 @@ impl Credits {
                  VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::numeric, $10::numeric, $11, $12, $13, $14)",
             )
             .bind(g.id)
-            .bind(position as i32)
+            .bind(position)
             .bind(line.quoted_cents)
             .bind(line.charged_cents)
             .bind(line.sale_kind)
@@ -522,7 +529,7 @@ impl Credits {
             .map(|r| r.get::<NaiveDateTime, _>("expires_at"))
             .max();
         Ok(Retired {
-            retired: rows.len() as i64,
+            retired: i64::try_from(rows.len()).unwrap_or(i64::MAX),
             ids: rows.iter().map(|r| r.get("id")).collect(),
             latest_expiry: latest,
         })
@@ -530,7 +537,8 @@ impl Credits {
 
     /// The closure pass's name for [`Self::retire_intents`]: the count.
     pub async fn release_intents(&self, salts: &[String], address: &str) -> Result<u64, ApiError> {
-        Ok(self.retire_intents(salts, address).await?.retired as u64)
+        let retired = self.retire_intents(salts, address).await?.retired;
+        Ok(u64::try_from(retired).unwrap_or(0))
     }
 
     /// Stamps the transaction the caller reported submitting `salts` in, on
@@ -551,7 +559,7 @@ impl Credits {
         .bind(now())
         .execute(&self.pool)
         .await?;
-        Ok(res.rows_affected() as i64)
+        Ok(i64::try_from(res.rows_affected()).unwrap_or(i64::MAX))
     }
 
     /// The authorization `address` already reserved under `idempotency_key`,

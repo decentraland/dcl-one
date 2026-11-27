@@ -27,8 +27,6 @@ build() {
   RUSTUP_TOOLCHAIN=nightly-2026-04-15 "${WASM_PACK:-wasm-pack}" build $mode --target web --out-dir "$out" "$@"
   cp "$repo_root/rendering/bevy-explorer/source/deploy/web/engine/content_cache.js" "$out/content_cache.js"
   rm -f "$out/.gitignore"
-  # the build id the page keys its module requests on, so a rebuilt module is never served stale
-  printf '{"build":"%s"}\n' "$(date +%s)" > "$out/build.json"
   ls -l "$out"/*.wasm
 }
 build "$out_root/pkg" "$@"
