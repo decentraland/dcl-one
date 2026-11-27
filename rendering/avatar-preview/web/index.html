@@ -8,7 +8,8 @@
     html, body { margin: 0; height: 100%; background: transparent; color: #ddd; font: 14px system-ui; }
     #stage { position: fixed; inset: 0; }
     /* winit gives the canvas tabindex 0 and focuses it on every click, so the browser draws its keyboard focus ring
-       around the whole preview. The page takes no keys but the debug console's backquote: no ring. */
+       around the whole preview. The page takes no keys but the debug console's backquote: no ring, and no Tab stop
+       (the script below keeps the canvas at tabindex -1). */
     canvas { width: 100%; height: 100%; display: block; outline: none; }
     #status { position: fixed; left: 12px; bottom: 12px; opacity: .8; display: none; }
     #log { position: fixed; left: 12px; top: 12px; right: 12px; max-height: 45%; overflow: auto; margin: 0; display: none;
@@ -106,6 +107,12 @@
     window.addEventListener('unhandledrejection', e => push('e', [`unhandled rejection: ${e.reason}`]));
     window.__messages = [];
     window.addEventListener('message', e => { if (e.source === window && e.data && e.data.type) window.__messages.push(e.data); });
+    // winit makes the canvas a Tab stop when the engine starts. With no ring that stop would be invisible, and the
+    // preview takes no keys: Tab goes straight to the visible controls. A click still focuses it, as winit expects.
+    const canvasEl = document.getElementById('preview-canvas');
+    const untab = () => { if (canvasEl.getAttribute('tabindex') !== '-1') canvasEl.setAttribute('tabindex', '-1'); };
+    untab();
+    new MutationObserver(untab).observe(canvasEl, { attributes: true, attributeFilter: ['tabindex'] });
   </script>
   <script type="module">
     // tools/package.py points this at the published build's content-hashed script
