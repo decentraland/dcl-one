@@ -377,7 +377,9 @@ the [conventions ADR](../../../docs/adr/2026-11-17-console-command-conventions.m
   input action by its lowercase SDK name: `pointer`, `primary`, `jump`, `action_3`, ...), and
   answer with the hit, the hover entries, the scene's pointer events and a diagnosis
   (`docs/guidelines/running.md`). A hover lasts at most 1800 frames (`--frames`) and is never cut
-  short by `--timeout-frames`.
+  short by `--timeout-frames`. `/debug_pointer [true|false]` (preview only) shows or hides the
+  pointer target in the debug overlay and replies JSON with what the pointer targets now: its
+  `kind`, `crdtEntityId`, distances, entries, `hoverText`, `withinRange` and the `ray`.
 - Raycasts: `/raycast_stats` (the capped tier's `budgetMs`, `ran`, `deferred`, `spentMs` and the
   uncapped tier's `uncappedRan`, `uncappedSpentMs`) and `/raycast_budget [ms|auto]` (override the
   capped budget, a tenth of the target frame, from 0 to 10 ms). On the web, these and the two pointer commands go

@@ -143,3 +143,32 @@ When a press is still held at the end (`--clear`, or a click that failed after p
 release is played on the aimed entity first: the reply, and the end of the aim, wait until it has
 been played and the pointer pipeline has run after it, and other pointer commands are refused
 until then.
+
+## Reading the pointer target
+
+`/debug_pointer [true|false]` (preview only, `pointer_results.rs`) shows or hides the pointer
+target in the debug overlay, toggling it without an argument, and replies, as JSON, with what the
+pointer targets now. It reads the target and the ray the pipeline resolved, so it presses and
+hovers nothing; under a `/hover_entity` or `/click_entity` aim it reads that aim's target.
+
+```json
+{"kind": "scene_entity", "crdtEntityId": 512, "scene": "pointer-targets", "mesh": null,
+ "hitPoint": {"x": 8.0, "y": 1.0, "z": 6.0}, "distanceToPlayer": 4.0, "distanceToCamera": 5.22,
+ "hasPointerEvents": true, "withinRange": true, "hoverText": "Near",
+ "entries": [{"button": "IaPointer", "event": "PetDown", "hoverText": "Near", "enabled": true, "tooFar": false}],
+ "cursorLocked": true, "rayFromScreenCenter": true, "aimedByCommand": false,
+ "ray": {"origin": {"x": 8.0, "y": 2.5, "z": 1.0}, "direction": {"x": 0.0, "y": -0.2873, "z": 0.9578}}}
+```
+
+- `kind`: `scene_entity`, `ui` (a scene UI element), `avatar`, `world` (no scene's) or `nothing`.
+- `crdtEntityId` and `scene`: the scene entity that owns the target and its scene's title, or
+  `null`; `mesh` names the collider mesh hit, when it has a name.
+- `hitPoint` and `ray` are in world coordinates, as `/world_state` reports them; `hitPoint` is
+  `null` for a UI target. The distances are measured as for `/click_entity`'s `hit`.
+- `entries` are the target's cursor entries, as in `/click_entity`'s reply; `hasPointerEvents`
+  says it has any, `withinRange` that one is in reach, and `hoverText` is the text of one in reach
+  before one out of reach.
+- `cursorLocked`: the camera holds the cursor; `rayFromScreenCenter`: the ray goes through the
+  screen centre (locked, and no command aims); `aimedByCommand`: a pointer command's aim drives
+  the ray. `ray` is `null` when the pipeline cast none this frame: no camera or player, the
+  cursor outside the window, or an aim at an entity not placed yet.

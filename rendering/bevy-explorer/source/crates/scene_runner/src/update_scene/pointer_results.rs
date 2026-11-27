@@ -1,6 +1,6 @@
 use bevy::{
     diagnostic::FrameCount,
-    ecs::entity::Entities,
+    ecs::{entity::Entities, system::SystemParam},
     input::InputSystem,
     math::FloatOrd,
     platform::collections::{HashMap, HashSet},
@@ -10,16 +10,18 @@ use bevy::{
         primitives::Aabb,
     },
     ui::{CameraCursorPosition, RelativeCursorPosition, UiSystem},
+    window::{CursorGrabMode, PrimaryWindow},
 };
 use bevy_console::ConsoleCommand;
 use comms::global_crdt::ForeignPlayer;
-use console::DoAddConsoleCommand;
+use console::{reply, DoAddConsoleCommand};
+use serde_json::json;
 use system_bridge::{HoverAction, HoverEvent, ProximityEvent, SystemApi};
 
 use super::{
     left_drag_pan::LeftDragPan,
     synthetic_pointer::{
-        aim_ray, anchor_point, cursor_entries, expire_synthetic_aim, ui_gate_passes,
+        aim_ray, anchor_point, cursor_entries, expire_synthetic_aim, hover_entries, ui_gate_passes,
         LoggedPointerEvent, PointerEventLog, SyntheticPointer,
     },
 };
@@ -51,6 +53,7 @@ use dcl_component::{
             ColliderLayer, PbPointerEventsResult,
         },
     },
+    transform_and_parent::DclTranslation,
     SceneComponentId, SceneEntityId,
 };
 use dcl_types::interface::CrdtType;
@@ -965,9 +968,14 @@ fn resolve_pointer_target(
     *prev = new;
 }
 
+/// Show or hide the pointer target in the debug overlay (toggle without an argument), and answer,
+/// as JSON, with what the pointer targets now: kind (scene_entity, ui, avatar, world or nothing),
+/// crdtEntityId, scene, mesh, hitPoint, distanceToPlayer, distanceToCamera, hasPointerEvents,
+/// withinRange, hoverText, entries, cursorLocked, rayFromScreenCenter, aimedByCommand and ray
 #[derive(clap::Parser, ConsoleCommand)]
 #[command(name = "/debug_pointer")]
 struct DebugPointerCommand {
+    /// true shows the overlay, false hides it; the reply is the same either way
     show: Option<bool>,
 }
 
@@ -977,11 +985,87 @@ struct DebugPointers(bool);
 fn debug_pointer_command(
     mut input: ConsoleCommand<DebugPointerCommand>,
     mut debug: ResMut<DebugPointers>,
+    reading: PointerReading,
 ) {
     if let Some(Ok(command)) = input.take() {
         let new_state = command.show.unwrap_or(!debug.0);
         debug.0 = new_state;
-        input.ok();
+        input.reply_ok(reading.json().to_string());
+    }
+}
+
+/// What the pointer targets now, read from the target and the ray the pipeline resolved this
+/// frame, as `/debug_pointer` answers it.
+#[derive(SystemParam)]
+struct PointerReading<'w, 's> {
+    target: Res<'w, PointerTarget>,
+    ray: Res<'w, PointerRay>,
+    synthetic: Res<'w, SyntheticPointer>,
+    windows: Query<'w, 's, &'static Window, With<PrimaryWindow>>,
+    containers: Query<'w, 's, &'static ContainerEntity>,
+    scenes: Query<'w, 's, &'static RendererSceneContext>,
+    pointer_events: Query<'w, 's, &'static PointerEvents>,
+}
+
+impl PointerReading<'_, '_> {
+    fn json(&self) -> serde_json::Value {
+        // a world point as the scene sees it: Decentraland's axes, z flipped from bevy's
+        let point = |v: Vec3| {
+            let [x, y, z] = DclTranslation::from_bevy_translation(v).0;
+            json!({ "x": reply::round(x), "y": reply::round(y), "z": reply::round(z) })
+        };
+        let info = self.target.0.as_ref();
+        let container = info.and_then(|info| self.containers.get(info.container).ok());
+        let entries = info
+            .and_then(|info| {
+                let events = self.pointer_events.get(info.container).ok()?;
+                Some(hover_entries(info, events))
+            })
+            .unwrap_or_default();
+        let cursor_locked = self
+            .windows
+            .single()
+            .is_ok_and(|window| window.cursor_options.grab_mode == CursorGrabMode::Locked);
+        let aimed = self.synthetic.0.is_some();
+        json!({
+            "kind": match info {
+                None => "nothing",
+                Some(info) => match info.ty {
+                    PointerTargetType::Ui => "ui",
+                    PointerTargetType::Avatar => "avatar",
+                    PointerTargetType::World if info.in_scene => "scene_entity",
+                    PointerTargetType::World => "world",
+                },
+            },
+            "crdtEntityId": container.and_then(|c| c.container_id.as_proto_u32()),
+            "scene": container
+                .and_then(|c| self.scenes.get(c.root).ok())
+                .map(|scene| scene.title.clone()),
+            "mesh": info.and_then(|info| info.mesh_name.clone()),
+            "hitPoint": info.and_then(|info| info.position).map(point),
+            "distanceToPlayer": info.map(|info| reply::round(info.distance.0)),
+            "distanceToCamera": info.map(|info| reply::round(info.camera_distance.0)),
+            "hasPointerEvents": !entries.is_empty(),
+            "withinRange": entries.iter().any(|entry| entry.enabled),
+            // that of an entry in reach before that of one out of reach
+            "hoverText": entries
+                .iter()
+                .filter(|entry| entry.hover_text.is_some())
+                .max_by_key(|entry| entry.enabled)
+                .and_then(|entry| entry.hover_text.clone()),
+            "entries": entries,
+            "cursorLocked": cursor_locked,
+            "rayFromScreenCenter": cursor_locked && !aimed,
+            "aimedByCommand": aimed,
+            "ray": self.ray.0.map(|ray| json!({
+                "origin": point(ray.origin),
+                "direction": {
+                    "x": reply::round_fine(ray.direction.x),
+                    "y": reply::round_fine(ray.direction.y),
+                    "z": reply::round_fine(-ray.direction.z),
+                },
+            })),
+        })
     }
 }
 
@@ -2130,6 +2214,86 @@ mod distance_tests {
         assert!(!check(info(Some(0.0), None, None)));
         // camera distance plays no part in proximity
         assert!(!check(info(Some(2.4), None, Some(100.0))));
+    }
+}
+
+#[cfg(test)]
+mod debug_pointer_tests {
+    use bevy::ecs::system::SystemState;
+    use dcl_component::proto_components::sdk::components::{
+        pb_pointer_events::Info, PbPointerEvents,
+    };
+    use serde_json::Value;
+
+    use super::*;
+
+    fn read(world: &mut World) -> Value {
+        world.init_resource::<PointerTarget>();
+        world.init_resource::<PointerRay>();
+        world.init_resource::<SyntheticPointer>();
+        let mut state = SystemState::<PointerReading>::new(world);
+        state.get(world).json()
+    }
+
+    #[test]
+    fn with_no_target_the_pointer_reads_nothing() {
+        let reading = read(&mut World::new());
+        assert_eq!(reading["kind"], "nothing");
+        assert!(reading["crdtEntityId"].is_null());
+        assert!(reading["distanceToPlayer"].is_null());
+        assert!(reading["ray"].is_null());
+        assert_eq!(reading["hasPointerEvents"], false);
+        assert_eq!(reading["rayFromScreenCenter"], false);
+    }
+
+    #[test]
+    fn a_scene_entity_reads_with_its_entries_and_hover_text_in_scene_axes() {
+        let mut world = World::new();
+        let root = world.spawn_empty().id();
+        let pointer_events = PointerEvents::from(PbPointerEvents {
+            pointer_events: vec![Entry {
+                event_type: PointerEventType::PetDown as i32,
+                interaction_type: None,
+                event_info: Some(Info {
+                    button: Some(InputAction::IaPrimary as i32),
+                    hover_text: Some("Open".to_owned()),
+                    max_distance: Some(5.0),
+                    ..Default::default()
+                }),
+            }],
+        });
+        let container = world.spawn(pointer_events).id();
+        world.entity_mut(container).insert(ContainerEntity {
+            container,
+            root,
+            container_id: SceneEntityId::from_proto_u32(512),
+        });
+        world.insert_resource(PointerTarget(Some(PointerTargetInfo {
+            container,
+            mesh_name: None,
+            distance: FloatOrd(2.0),
+            camera_distance: FloatOrd(4.5),
+            in_scene: true,
+            position: Some(Vec3::new(1.0, 2.0, -3.0)),
+            normal: None,
+            face: None,
+            ty: PointerTargetType::World,
+        })));
+        world.insert_resource(PointerRay(Some(Ray3d::new(Vec3::ZERO, Dir3::NEG_Z))));
+
+        let reading = read(&mut world);
+        assert_eq!(reading["kind"], "scene_entity");
+        assert_eq!(reading["crdtEntityId"], 512);
+        // the root carries no scene context here
+        assert!(reading["scene"].is_null());
+        assert_eq!(reading["hitPoint"], json!({ "x": 1.0, "y": 2.0, "z": 3.0 }));
+        assert_eq!(reading["distanceToPlayer"], 2.0);
+        assert_eq!(reading["distanceToCamera"], 4.5);
+        assert_eq!(reading["hasPointerEvents"], true);
+        assert_eq!(reading["withinRange"], true);
+        assert_eq!(reading["hoverText"], "Open");
+        assert_eq!(reading["entries"][0]["button"], "IaPrimary");
+        assert_eq!(reading["ray"]["direction"]["z"], 1.0);
     }
 }
 

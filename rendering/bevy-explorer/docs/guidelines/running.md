@@ -576,6 +576,12 @@ The HUD and input:
   shorter than its frames plus 3, whatever `--timeout-frames` says.
   A blocked outcome is a resolved reply with `diagnosis` set, not a failure.
   [Interaction](interaction.md) has every option and reply field.
+- `/debug_pointer [true|false]` (preview only): show, hide or (without an argument) toggle the
+  pointer target in the debug overlay, and reply JSON with what the pointer targets now: `kind`
+  (`scene_entity`, `ui`, `avatar`, `world`, `nothing`), `crdtEntityId`, `scene`, `mesh`,
+  `hitPoint`, `distanceToPlayer`, `distanceToCamera`, `hasPointerEvents`, `withinRange`,
+  `hoverText`, `entries`, `cursorLocked`, `rayFromScreenCenter`, `aimedByCommand` and `ray`. It
+  presses and hovers nothing ([Interaction](interaction.md#reading-the-pointer-target)).
 - `/raycast_stats` (JSON: the capped tier's `budgetMs`, `ran`, `deferred` and `spentMs`, and the
   uncapped tier's `uncappedRan` and `uncappedSpentMs`, each for its last frame with raycasts to
   cast) and `/raycast_budget [ms|auto]` (show the capped budget, a tenth of the target frame, or
