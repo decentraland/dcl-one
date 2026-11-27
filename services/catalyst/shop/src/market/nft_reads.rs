@@ -320,14 +320,7 @@ pub(crate) fn timed_out() -> Response {
     ))
 }
 
-/// A statement of a read failed: a cancelled one is [`timed_out`]'s 503,
-/// anything else a 500.
-pub(super) fn read_error(e: sqlx::Error) -> Response {
-    if cancelled(&e) {
-        return timed_out();
-    }
-    ApiError::internal(e.to_string()).into_response()
-}
+pub(super) use super::readers::index_read_error as read_error;
 
 /// Whether `owner` holds more than [`LARGE_OWNER_TOKENS`] tokens in the nft
 /// index (counted up to one past the bound).
@@ -407,7 +400,7 @@ async fn read_conn(
         .map_err(|e| match e {
             ReadConnError::LandUnavailable => land_unavailable(),
             ReadConnError::NftUnavailable(source, m) => unavailable(source, &m),
-            ReadConnError::Pool(e) => ApiError::internal(e.to_string()).into_response(),
+            ReadConnError::Pool(e) => read_error(e),
         })
 }
 
@@ -1076,6 +1069,8 @@ fn candidate_legs(
                 .naive_utc(),
         );
         let since_p = b.bind_opt_time(since);
+        // created_at is timestamp(3), so ordering by it preserves the
+        // wire's millisecond ties and can use the existing signer index.
         // Not materialized: each leg's listing lookup then reads the
         // trades its owner signed (`idx_trades_signer_created`) instead
         // of scanning every open listing for every candidate row, which on
@@ -1106,7 +1101,7 @@ fn candidate_legs(
                 AND lower(u.network) = b.network AND u.contract_address_sent = b.contract_address AND u.token_id = b.token_id::text \
                 AND u.signer = b.owner ORDER BY {} LIMIT 1) v3 ON true",
                 super::orders::latest_trade_order_sql(
-                    "(EXTRACT(EPOCH FROM u.created_at) * 1000)::bigint",
+                    "u.created_at",
                     "u.id::text",
                     "u.amount_received",
                     "u.beneficiary",
@@ -1538,21 +1533,17 @@ async fn require_listing_sources(
     for &net in &nets {
         let nft_ownership =
             collection_nets.contains(&net) || (sources.names && net == ChainNet::Ethereum);
-        let published: bool = sqlx::query_scalar(
-            "SELECT EXISTS (
-                SELECT 1 FROM shop.projection_write
-                WHERE indexer='nft' AND network=$1 AND projection='nft_order' AND NOT pending
-             ) AND NOT EXISTS (
-                SELECT 1 FROM shop.projection_write
-                WHERE indexer='nft' AND network=$1 AND projection='nft' AND $2 AND pending
-             )",
+        let projections: &[&str] = if nft_ownership { &["nft"] } else { &[] };
+        if !super::orders::listing_rows_published_on(
+            conn,
+            net,
+            super::orders::BookRoute::Nfts,
+            projections,
+            Some("nft_order"),
         )
-        .bind(net.db_name())
-        .bind(nft_ownership)
-        .fetch_one(&mut *conn)
         .await
-        .map_err(super::readers::index_read_error)?;
-        if !published {
+        .map_err(read_error)?
+        {
             return Err(owned_items::not_ready(&format!(
                 "the {} nft index has not published the listing rows",
                 net.db_name()
@@ -1606,7 +1597,7 @@ async fn optional_land_on(conn: &mut PgConnection, land: LandNetwork) -> Result<
                 .rollback()
                 .await
                 .map_err(super::readers::index_read_error)?;
-            tracing::warn!(%error, "cannot read the optional LAND publication for the NFT page");
+            tracing::debug!(%error, "cannot read the optional LAND publication for the NFT page");
             Ok(false)
         }
     }
@@ -1628,9 +1619,7 @@ pub(super) async fn indexed_page(
         );
     }
     let mut sources = sources_for(f);
-    if (super::owned_items::walks_here(state) || needs_orders(f))
-        && f.category.is_none()
-        && !f.contract_addresses.is_empty()
+    if f.category.is_none()
         && f.contract_addresses
             .iter()
             .any(|addr| addr.eq_ignore_ascii_case(state.settings.catalogue().registrar()))

@@ -4317,6 +4317,149 @@ async fn the_nft_walk_folds_owners_orders_and_resumes_a_kill_backfills_a_late_co
 }
 
 #[tokio::test]
+async fn order_filtered_collections_refuse_a_committed_unpublished_nft_fold() {
+    let Some(db) = ScratchDb::create().await else {
+        return;
+    };
+    let pool = &db.pool;
+    let net = ChainNet::Matic;
+    let index = NftIndex::new(net);
+    let start = index.start_block();
+    let contract = "0x00000000000000000000000000000000000000c1";
+    let (market, market_start) = Deployments::mainnet(net).markets[0];
+    seed_collection(
+        pool,
+        "matic",
+        contract,
+        start + 10,
+        "urn:decentraland:matic:collections-v2:0xc1",
+        "Pirates",
+    )
+    .await;
+    seed_item(
+        pool,
+        "matic",
+        contract,
+        0,
+        "urn:decentraland:matic:collections-v2:0xc1:0",
+        "Pirate Hat",
+        "wearable_v2",
+        "hat",
+    )
+    .await;
+    trade_events::tests::publish_cursors(pool).await;
+    let logs = vec![
+        transfer(contract, ZERO, ALICE, U256::from(1), start + 20, 0),
+        log_at(
+            market,
+            vec![
+                nft_index::TOPIC_ORDER_CREATED.into(),
+                topic_word(U256::from(1)),
+                topic_addr(ALICE),
+            ],
+            (
+                FixedBytes::<32>::repeat_byte(0x42),
+                Address::from_str(contract).unwrap(),
+                U256::from(5_000),
+                U256::from(4_000_000_000_000_u64),
+            )
+                .abi_encode_params(),
+            market_start + 1,
+            0,
+        ),
+    ];
+    let chain = FakeChain::new(market_start + 100, logs, 1_000, 100);
+    chain.finalized_lag.store(2, Ordering::SeqCst);
+    let url = serve(chain.clone()).await;
+    let settings = index_settings(50, 1_000);
+    let state = trades_from_upstream(state_over(pool.clone(), &url, settings.clone(), false));
+    trades_pass_ended(&state, std::time::Duration::ZERO).await;
+    let before = publish_nft(&state, &url, &index).await;
+    assert!(before.published, "{before:?}");
+    let app = super::market_router(state.clone());
+    let endpoint = "/v1/nfts?network=MATIC&category=wearable&isOnSale=true";
+    let (code, body) = get_json(&app, endpoint).await;
+    assert_eq!(
+        (code, body["total"].as_i64()),
+        (StatusCode::OK, Some(1)),
+        "{body}"
+    );
+
+    // Walk a mint for another token. This fold changes ownership rows
+    // only, so the existing nft_order proof is still acknowledged.
+    let previous = chain_walk::cursor(pool, INDEXER_NFT, net)
+        .await
+        .unwrap()
+        .unwrap();
+    let next = previous.last_block + 1;
+    *chain.head.lock() += 1;
+    let source = chain_walk::RpcSource::new(Rpc::at(&state.http, &url));
+    let header = chain_walk::LogSource::header(&source, next as u64)
+        .await
+        .unwrap()
+        .value;
+    let owner = chain_walk::test_owner(pool, &index, &settings).await;
+    let mut tx = pool.begin().await.unwrap();
+    owner.check(&mut tx).await.unwrap();
+    index
+        .write(
+            &mut tx,
+            &[transfer(
+                contract,
+                ZERO,
+                ALICE,
+                U256::from(2),
+                next as u64,
+                0,
+            )],
+            &Default::default(),
+        )
+        .await
+        .unwrap();
+    chain_walk::advance(
+        &mut tx,
+        INDEXER_NFT,
+        net,
+        (previous.last_block, previous.last_block_hash.as_deref()),
+        &header,
+        false,
+    )
+    .await
+    .unwrap();
+    tx.commit().await.unwrap();
+    let counts = nft_index::fold(pool, net, Some(previous.last_block), &owner)
+        .await
+        .unwrap();
+    assert_eq!((counts.nfts, counts.orders), (1, 0));
+    chain_walk::record_fold(pool, &owner, next).await.unwrap();
+    let (code, body) = get_json(&app, endpoint).await;
+    assert_eq!(
+        (code, body["source"].as_str()),
+        (StatusCode::SERVICE_UNAVAILABLE, Some("nft-index")),
+        "{body}"
+    );
+    let (code, body) = get_json(&app, "/v1/nfts?network=MATIC&category=wearable").await;
+    assert_eq!(
+        (code, body["total"].as_i64()),
+        (StatusCode::OK, Some(2)),
+        "{body}"
+    );
+
+    assert!(
+        chain_walk::mark_folded(pool, &index, &owner, next, chrono::Utc::now())
+            .await
+            .unwrap()
+    );
+    let (code, body) = get_json(&app, endpoint).await;
+    assert_eq!(
+        (code, body["total"].as_i64()),
+        (StatusCode::OK, Some(1)),
+        "{body}"
+    );
+    db.drop().await;
+}
+
+#[tokio::test]
 async fn a_reorg_past_the_confirmation_depth_rewinds_and_the_refold_follows_the_new_chain() {
     let Some(db) = ScratchDb::create().await else {
         return;

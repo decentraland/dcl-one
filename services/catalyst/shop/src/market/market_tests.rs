@@ -11892,6 +11892,22 @@ async fn catalog_resales_read_the_published_legacy_book_and_v3_listings() {
         fold.and_utc().timestamp_millis(),
         "{page}"
     );
+    let set_fold_at = |at: chrono::NaiveDateTime| {
+        sqlx::query(
+            "UPDATE shop.chain_cursor SET folded_at=$1 WHERE indexer='nft' AND network='matic'",
+        )
+        .bind(at)
+        .execute(pool)
+    };
+    let stale = chrono::Utc::now() - super::chain_walk::READY_WINDOW - chrono::Duration::minutes(1);
+    set_fold_at(stale.naive_utc()).await.unwrap();
+    let (code, page) = get(app(), &v2_exact("2")).await;
+    assert_eq!(code, StatusCode::OK, "{page}");
+    assert_eq!(page["data"][0]["listings"], 0, "{page}");
+    let (code, page) = get(app(), &format!("{}&onlyListing=true", v2_exact("2"))).await;
+    assert_eq!(code, StatusCode::SERVICE_UNAVAILABLE, "{page}");
+    assert_eq!(page["source"], "nft-index");
+    set_fold_at(fold).await.unwrap();
     sqlx::query("UPDATE shop.mirror_state SET last_complete_pass_at=timezone('UTC',now()) WHERE mirror='collections' AND network='matic'")
         .execute(pool).await.unwrap();
     let (code, page) = get(app(), &mint_path).await;

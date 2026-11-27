@@ -420,6 +420,7 @@ pub(super) enum BookRoute {
     OpenByItems,
     Activity,
     Catalog,
+    Nfts,
 }
 
 impl BookRoute {
@@ -429,6 +430,7 @@ impl BookRoute {
             Self::OpenByItems => "open_by_items",
             Self::Activity => "activity",
             Self::Catalog => "catalog",
+            Self::Nfts => "nfts",
         }
     }
 }
@@ -599,17 +601,7 @@ pub(super) async fn require_published_book(
     // but not published yet, whichever binary wrote it, is not read.
     let projections: &[&str] = &["nft", "legacy_order"];
     for &net in nets {
-        let labels = [net.db_name(), route.label()];
-        FOLD_READ_CHECKS.handle(labels).increment(1);
-        if !super::chain_walk::rows_published_on(
-            conn,
-            super::chain_walk::INDEXER_NFT,
-            net,
-            projections,
-        )
-        .await?
-        {
-            UNPUBLISHED_FOLD_READS.handle(labels).increment(1);
+        if !listing_rows_published_on(conn, net, route, projections, None).await? {
             return Err(owned_items::ReadError::NotReady(
                 super::Source::NftIndex,
                 format!(
@@ -631,6 +623,30 @@ pub(super) async fn require_published_book(
         }
     }
     Ok(())
+}
+
+/// Count one check of the NFT fold and any refusal on the reader's snapshot.
+pub(super) async fn listing_rows_published_on(
+    conn: &mut PgConnection,
+    net: ChainNet,
+    route: BookRoute,
+    projections: &[&str],
+    required_projection: Option<&str>,
+) -> Result<bool, sqlx::Error> {
+    let labels = [net.db_name(), route.label()];
+    FOLD_READ_CHECKS.handle(labels).increment(1);
+    let published = super::chain_walk::projection_rows_published_on(
+        conn,
+        super::chain_walk::INDEXER_NFT,
+        net,
+        projections,
+        required_projection,
+    )
+    .await?;
+    if !published {
+        UNPUBLISHED_FOLD_READS.handle(labels).increment(1);
+    }
+    Ok(published)
 }
 
 fn reads_trades(f: &OrderFilters) -> bool {
@@ -1043,7 +1059,7 @@ const ORDER_FIELDS: &str = "id marketplaceAddress nftAddress tokenId owner buyer
 /// Compare the two raw expiry encodings on the Graph before paging.
 /// Nest OR under AND so it can share a query with column filters and the
 /// count cursor. The boundary is the NFT walk's `expires_ms` conversion.
-pub(super) fn graph_unexpired(field: &str, now_ms: i64) -> Value {
+fn graph_unexpired(field: &str, now_ms: i64) -> Value {
     let threshold = super::nft_index::LEGACY_EXPIRY_UNIT_THRESHOLD.to_string();
     let gt = format!("{field}_gt");
     json!([{ "or": [

@@ -416,7 +416,7 @@ pub(super) fn filters_collections_only(f: &NftFilters) -> bool {
         || f.item_id.is_some()
 }
 
-/// The subgraph `where` for the filters; `now_ms` bounds the open order.
+/// The subgraph `where` for metadata and geography filters.
 fn graph_where(f: &NftFilters) -> Value {
     let mut w = json!({});
     if let Some(o) = &f.owner {
@@ -515,8 +515,9 @@ fn graph_sort(sort_by: Option<NftSortBy>) -> (&'static str, &'static str) {
     match sort_by {
         Some(NftSortBy::Name) => ("name", "asc"),
         Some(NftSortBy::RecentlySold) => ("soldAt", "desc"),
-        Some(NftSortBy::CheapestParcel) => ("searchOrderPrice", "asc"),
-        Some(NftSortBy::RecentlyListed) => ("searchOrderCreatedAt", "desc"),
+        Some(NftSortBy::CheapestParcel | NftSortBy::RecentlyListed) => {
+            unreachable!("order sorts use the native index")
+        }
         Some(NftSortBy::Newest) | None => ("createdAt", "desc"),
     }
 }
@@ -700,11 +701,7 @@ pub async fn list_nfts(
     let now = chrono::Utc::now();
     let chain_id = state.settings.market.indexes.chain_id_ethereum;
     let network_filters;
-    let f = if f.network == Some(Network::Matic)
-        && (super::nft_reads::needs_orders(f)
-            || (super::owned_items::walks_here(state)
-                && state.settings.catalogue() == super::nft_index::Catalogue::Testnet))
-    {
+    let f = if f.network == Some(Network::Matic) {
         // LAND, Estate and NAME registries are on Ethereum for both served
         // pairs. A mixed contract filter can still name Polygon collections.
         if f.is_land
@@ -1174,10 +1171,7 @@ mod tests {
         );
         assert!(w.get("searchEmoteOutcomeType").is_some_and(Value::is_null));
         assert_eq!(w["searchEmoteLoop"], true);
-        assert_eq!(
-            graph_sort(Some(NftSortBy::CheapestParcel)),
-            ("searchOrderPrice", "asc")
-        );
+        assert_eq!(graph_sort(Some(NftSortBy::Name)), ("name", "asc"));
         assert!(is_land_routed(
             &parse_filters(&pairs(&[("category", "estate")])).unwrap()
         ));

@@ -1087,12 +1087,29 @@ pub async fn rows_published_on(
     net: ChainNet,
     projections: &[&str],
 ) -> Result<bool, sqlx::Error> {
+    projection_rows_published_on(conn, indexer, net, projections, None).await
+}
+
+/// Check for pending writes and, when requested, require an acknowledged
+/// row for a projection introduced after the cursor already existed.
+/// Other projections keep the established no-pending-write rule.
+pub(super) async fn projection_rows_published_on(
+    conn: &mut PgConnection,
+    indexer: &str,
+    net: ChainNet,
+    projections: &[&str],
+    required_projection: Option<&str>,
+) -> Result<bool, sqlx::Error> {
     let published: Option<bool> = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
-        "SELECT {ROWS_PUBLISHED} FROM shop.chain_cursor c WHERE c.indexer = $1 AND c.network = $2"
+        "SELECT {ROWS_PUBLISHED} AND ($4::text IS NULL OR EXISTS ( \
+            SELECT 1 FROM shop.projection_write w WHERE w.indexer = c.indexer \
+            AND w.network = c.network AND w.projection = $4 AND NOT w.pending)) \
+         FROM shop.chain_cursor c WHERE c.indexer = $1 AND c.network = $2"
     )))
     .bind(indexer)
     .bind(net.db_name())
     .bind(projections)
+    .bind(required_projection)
     .fetch_optional(conn)
     .await?;
     Ok(published.unwrap_or(false))

@@ -5354,7 +5354,11 @@ listings of that token through `trade_assets_erc721_token_idx` on
 every row. The index is 432 kB on 4,900 listing assets (the table 528 kB);
 each ERC-721 asset that the trades mirror or a local signed trade inserts
 adds one entry, and the migrate object pass builds it. Planning such a
-statement takes about 9 ms.
+statement takes about 9 ms. The lateral orders by `shop.trades.created_at`,
+a `timestamp(3)`, so the tie-break matches the wire's millisecond value
+without applying an epoch expression to the indexed sort column. A
+32,000-token owner's listed page took 211–221 ms on the
+[focused fixture](METRICS.md#nft-listing-publication-and-page-reads).
 
 Measured on a second seeded database (2,999,100 Polygon tokens over 100,000
 items of 5,000 collections, item popularity cubic-skewed so one collection
@@ -5695,8 +5699,8 @@ at whatever height. Reads refused that way are counted by
 between a fold's commit and its publication. The denominator is
 `catalyst_shop_order_book_fold_read_checks_total`, incremented once for each
 attempted network's publication check. Both counters use `network` and
-`route` labels. The route is `orders`, `open_by_items`, `activity` or `catalog`.
-Each activity page takes its own book snapshot and counts its checks.
+`route` labels. The route is `orders`, `open_by_items`, `activity`, `catalog`
+or `nfts`. Each activity page takes its own book snapshot and counts its checks.
 For the catalog label this also counts a withheld book leg on an
 ordinary page that can still serve item metadata.
 
@@ -5714,11 +5718,22 @@ binary's `mark_folded`, at the same height too). The table is created by the
 object pass. Initially existing cursors seed their ownership, legacy book and
 bid projections pending until the next publication. The `nft_order` proof
 starts at the first NFT publication after the object pass adds its triggers.
-Each cursor and projection use one row, rewritten by each fold statement that writes and each
-publication; the triggers add one transition table per write statement,
-sized by the rows it changed. A reader checks the writes on its response
-snapshot. The order-dependent NFT page additionally requires an explicit
-`nft_order` row acknowledged by a publication.
+Its cursor trigger also handles an empty projection and a publication from
+an older writer after upgrade. Each cursor and projection use one row. A
+write statement builds a transition table sized by the rows it changed.
+A reader checks the writes on the response snapshot. An order-dependent
+NFT page requires an explicit acknowledged `nft_order` row and checks the
+ownership projection for the collections or NAMEs it reads.
+
+The NFT fold commits before the head RPCs and a separate publication
+transaction. A read that sees one of its required projections pending
+returns `503 nft-index` until the publication acknowledges those rows. A
+failed head RPC can extend this gap to the next successful publication.
+In a local PostgreSQL test with two simulated Polygon RPCs at 25, 100 or
+250 ms each, the p95 gap was 57, 207 or 508 ms. With a row-changing fold
+every five seconds and uniform arrivals, those windows cover about
+1.1%, 4.1% or 10.2% of single-network checks. The `nfts` counters above
+measure the rate by network. See the [NFT listing measurements](METRICS.md#nft-listing-publication-and-page-reads).
 
 The NFT and sales folds, rewinds and rebuild clears lock the chain cursor
 before writing these projections. Rewind and clear take any notification
@@ -5753,9 +5768,11 @@ CREATE INDEX CONCURRENTLY IF NOT EXISTS legacy_order_issued_idx
   ON shop.legacy_order (token_id);
 CREATE INDEX CONCURRENTLY IF NOT EXISTS legacy_order_price_idx
   ON shop.legacy_order (price, order_id);
+CREATE INDEX CONCURRENTLY IF NOT EXISTS legacy_order_open_expiry_idx
+  ON shop.legacy_order (network, expires_at) WHERE status = 'open';
 ```
 
-Schema status checks index names. Before migrating, verify that both indexes
+Schema status checks index names. Before migrating, verify that these indexes
 have `pg_index.indisvalid` set and that `pg_get_indexdef(indexrelid)` matches
 the canonical definitions. Drop and rebuild any invalid or mismatched index
 before relying on its name.

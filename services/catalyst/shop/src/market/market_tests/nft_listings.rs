@@ -144,13 +144,15 @@ async fn shallow_nft_sale_filters_use_published_land_and_names_before_paging() {
             format!("contractAddress={estate}"),
             format!("contractAddress={names}"),
         ] {
-            let (code, page) = get(
-                app(walks),
-                &format!("/v1/nfts?network=MATIC&{filter}&isOnSale=true"),
-            )
-            .await;
-            assert_eq!(code, StatusCode::OK, "{page}");
-            assert_eq!(page["total"], 0);
+            for listing_filter in ["", "&isOnSale=true"] {
+                let (code, page) = get(
+                    app(walks),
+                    &format!("/v1/nfts?network=MATIC&{filter}{listing_filter}"),
+                )
+                .await;
+                assert_eq!(code, StatusCode::OK, "{page}");
+                assert_eq!(page["total"], 0);
+            }
         }
     }
     for walker in [true, false] {
@@ -475,6 +477,66 @@ async fn shallow_nft_sale_filters_use_published_land_and_names_before_paging() {
     let (code, page) = get(mirrored, "/v1/nfts?category=ens&isOnSale=true").await;
     assert_eq!(code, StatusCode::INTERNAL_SERVER_ERROR, "{page}");
     assert!(!page.to_string().contains("shop.trades_mirror"), "{page}");
+    assert!(
+        !graph
+            .requests
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|entity| entity == "nfts")
+    );
+    db.drop().await;
+}
+
+#[tokio::test]
+async fn a_mixed_nft_contract_page_filters_the_same_names_and_collection_rows() {
+    use super::super::chain_walk::ChainNet;
+
+    let graph = FakeGraph::new();
+    let url = serve_graph(graph.clone()).await;
+    let Some((state, db)) = state_over_own(&url, true).await else {
+        return;
+    };
+    let pool = &db.pool;
+    let names = super::super::nft_index::DCL_REGISTRAR;
+    let polygon = contract_of(&tag(), 1);
+    seed_item_row(pool, &polygon, "1", CREATOR).await;
+    sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
+        "INSERT INTO shop.nft (network,contract_address,token_id,owner,item_id,ens_subdomain,
+           minted_block,minted_at,transferred_block,transferred_log,transferred_at)
+         VALUES ('matic','{polygon}',1,'{WALLET_A}',1,NULL,1,1,1,0,1),
+                ('ethereum','{names}',2,'{WALLET_A}',NULL,'alpha',2,2,2,0,2);
+         INSERT INTO shop.nft_order (network,contract_address,token_id,order_id,
+           marketplace_address,status,seller,price,expires_at,created_at,updated_at,updated_block,updated_log)
+         VALUES ('ethereum','{names}',2,'legacy-name','{CREATOR}','open','{WALLET_A}',30,4102444800000,1,1,2,0)"
+    ))).execute(pool).await.unwrap();
+    super::super::owned_items::test_support::publish(pool, &ChainNet::ALL, true, Duration::ZERO)
+        .await;
+    super::super::trade_events::tests::publish_cursors(pool).await;
+    let mut settings = state.settings.clone();
+    settings.market.indexes.nft_enabled = false;
+    let reader = Arc::new(super::super::MarketplaceState::new(
+        pool.clone(),
+        crate::http::Outbound::for_tests(),
+        settings,
+    ));
+    reader.test_allow_loopback.store(true, Ordering::Relaxed);
+    let app = market_router(reader);
+    let path = format!("/v1/nfts?contractAddress={names}&contractAddress={polygon}");
+    for (suffix, total, first_contract) in [
+        ("&sortBy=newest", 2, names),
+        ("&sortBy=cheapest", 2, names),
+        ("&isOnSale=true", 1, names),
+        ("&isOnSale=false", 1, polygon.as_str()),
+    ] {
+        let (code, page) = get(app.clone(), &format!("{path}{suffix}")).await;
+        assert_eq!(code, StatusCode::OK, "{page}");
+        assert_eq!(page["total"], total, "{page}");
+        assert_eq!(
+            page["data"][0]["nft"]["contractAddress"], first_contract,
+            "{page}"
+        );
+    }
     assert!(
         !graph
             .requests
