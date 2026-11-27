@@ -23,6 +23,7 @@ pub(crate) const CONTENT_ROUTE_PATHS: &[&str] = &[
     "/entities/{type}",
     "/entities/active/collections/{collectionUrn}",
     "/entities/active",
+    "/entities/active/scenes",
     "/contents/{hashId}",
     "/contents/{hashId}/active-entities",
     "/available-content",

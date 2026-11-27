@@ -1137,6 +1137,38 @@ pub async fn all_snapshots(pool: &PgPool) -> Result<Vec<SnapshotMetadata>, sqlx:
         .collect())
 }
 
+/// One active scene and the parcels it holds, as `GET /entities/active/scenes` lists it.
+#[derive(Debug, sqlx::FromRow, serde::Serialize)]
+pub struct ActiveScene {
+    #[sqlx(rename = "entity_id")]
+    pub id: String,
+    pub pointers: Vec<String>,
+    pub timestamp: i64,
+    /// `scene.base` of its `scene.json`: the explorer places a far LOD from it.
+    pub base: Option<String>,
+}
+
+/// Every active scene, by id. Active as the pointer lookups read it: named by
+/// `active_pointers` and not overwritten.
+pub async fn active_scenes(pool: &PgPool) -> Result<Vec<ActiveScene>, sqlx::Error> {
+    sqlx::query_as(
+        r#"
+        SELECT dep.entity_id,
+               array_agg(ap.pointer::text ORDER BY ap.pointer COLLATE "C") AS pointers,
+               floor(date_part('epoch', dep.entity_timestamp) * 1000)::bigint AS "timestamp",
+               dep.entity_metadata -> 'v' -> 'scene' ->> 'base' AS base
+        FROM content.active_pointers ap
+        INNER JOIN content.deployments dep ON dep.entity_id = ap.entity_id
+        WHERE ap.entity_type = 'scene'
+          AND dep.deleter_deployment IS NULL
+        GROUP BY dep.id
+        ORDER BY dep.entity_id COLLATE "C"
+        "#,
+    )
+    .fetch_all(pool)
+    .await
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

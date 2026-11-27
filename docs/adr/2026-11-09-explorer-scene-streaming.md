@@ -177,8 +177,9 @@ the same kind.
 - **From the scene's hash alone.** The far LOD loads no entity definition. The url comes from
   the scene's hash, which the realm's pointers give, and the root goes at the scene's base
   parcel (the mesh is relative to it) as the realm listed it: the active-entities response that
-  fills the pointers carries each scene's `scene.json`, and `ScenePointers::base` keeps its base
-  parcel by hash, cleared with the pointers on a realm change. The mesh is one glTF container
+  fills the pointers carries each scene's `scene.json`, the content server's scene list
+  (`GET /entities/active/scenes`, where served) carries each scene's `base`, and
+  `ScenePointers::base` keeps its base parcel by hash, cleared with the pointers on a realm change. The mesh is one glTF container
   under the root, the url as its `src`, through the near LOD's container path. In place of a
   definition the root names the scene's hash (`StandInContent`), and a url resolves as itself
   under that hash with or without the scene's content map registered, so the download ranks in

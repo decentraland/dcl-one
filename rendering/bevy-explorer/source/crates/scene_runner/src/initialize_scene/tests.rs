@@ -1166,3 +1166,27 @@ fn a_realm_change_refused_in_a_preview_leaves_no_landing_for_the_next_one() {
     assert_eq!(landing_spawn_point(&app, player), Some(None));
     assert_eq!(landing_position(&app, player), None);
 }
+
+#[test]
+fn a_scene_list_fills_unresolved_parcels_and_empties_the_rest() {
+    let mut pointers = ScenePointers::default();
+    pointers.set_realm(IVec2::ZERO, IVec2::new(3, 0));
+    let exists = |hash: &str| PointerResult::Exists {
+        hash: hash.to_owned(),
+        urn: None,
+    };
+    pointers.insert(IVec2::ZERO, exists("resolved"));
+    assert!(pointers.get(IVec2::new(2, 0)).is_none());
+    assert!(!pointers.is_full());
+
+    pointers.insert_scene_list([
+        (IVec2::ZERO, "listed".to_owned(), None),
+        (IVec2::X, "listed".to_owned(), None),
+    ]);
+
+    let hash_at = |x| pointers.get(IVec2::new(x, 0)).cloned();
+    assert_eq!(hash_at(0), Some(exists("resolved")));
+    assert_eq!(hash_at(1), Some(exists("listed")));
+    assert_eq!(hash_at(2), Some(PointerResult::Nothing));
+    assert!(pointers.is_full());
+}

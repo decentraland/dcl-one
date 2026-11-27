@@ -58,11 +58,12 @@ serves the same router at the root and under `/content`
 | 6 | GET | `/contents/:hashId/active-entities` | `/content` | `services/catalyst/content/src/lib.rs:782-785` -> `active_entities.rs:218` | MATCH |
 | 7 | GET | `/available-content` | `/content` | `services/catalyst/content/src/lib.rs:786-789` -> `available_content.rs:14` | MATCH |
 | 8 | GET | `/audit/:type/:entityId` | `/content` | `services/catalyst/content/src/lib.rs:790` -> `audit.rs:13` | MATCH |
+| E1 | GET | none (proposed in `decentraland/catalyst` PR 1829, unmerged) | n/a | `/entities/active/scenes` -> `active_entities.rs` `get_active_scenes` | dcl-one only: every active scene as `{id, pointers, timestamp, base}`, cached as the entity reads; 503 `no-store` unless the node holds every scene |
 | X1 | any | unknown path (router miss) | `/content` | `services/catalyst/content/src/lib.rs:743-750,856` | MATCH |
 | X2 | wrong method on a known path | any | `/content` | axum `MethodRouter` default | DIVERGENT |
 | X3 | OPTIONS (preflight) and CORS on every response | any | `/content` | `services/catalyst/shared/src/cors.rs:20-70` | DIVERGENT |
 
-Counts: 8 endpoints: MATCH 3, GAP 0, DIVERGENT 5, MISSING 0. Cross-cutting: MATCH 1, DIVERGENT 2.
+Counts: 8 endpoints: MATCH 3, GAP 0, DIVERGENT 5, MISSING 0; dcl-one only 1. Cross-cutting: MATCH 1, DIVERGENT 2.
 
 ---
 

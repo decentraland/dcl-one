@@ -1,7 +1,7 @@
 use axum::Json;
 use axum::extract::{Path, RawQuery, Request, State};
-use axum::http::StatusCode;
-use axum::http::header::CONTENT_TYPE;
+use axum::http::header::{CACHE_CONTROL, CONTENT_TYPE};
+use axum::http::{HeaderValue, StatusCode};
 use axum::response::{IntoResponse, Response};
 use bytes::Bytes;
 
@@ -286,6 +286,43 @@ pub async fn get_entities_by_collection(
     body.extend_from_slice(&EntityDoc::json_array(&entities));
     body.push(b'}');
     Ok(([(CONTENT_TYPE, "application/json")], Bytes::from(body)))
+}
+
+/// GET /entities/active/scenes: every active scene as `{id, pointers, timestamp, base}`, so a client
+/// maps the whole realm in one read instead of sweeping pointers. 503 unless this node holds
+/// every scene: a partial list would read as empty land.
+pub async fn get_active_scenes(State(state): State<SharedState>) -> Response {
+    match active_scenes_body(&state).await {
+        Ok(body) => with_cache_control(
+            &state,
+            ([(CONTENT_TYPE, "application/json")], body).into_response(),
+        ),
+        Err(error) => {
+            let mut response = error.into_response();
+            response
+                .headers_mut()
+                .insert(CACHE_CONTROL, HeaderValue::from_static("no-store"));
+            response
+        }
+    }
+}
+
+async fn active_scenes_body(state: &SharedState) -> AppResult<Bytes> {
+    if !state.holds_every_scene() {
+        return Err(AppError::ServiceUnavailable(
+            "This node does not hold every scene".to_string(),
+        ));
+    }
+    state
+        .deployments_cache
+        .get_or_fetch("active-scenes".to_string(), || async {
+            let mut scenes = queries::active_scenes(&state.pool).await?;
+            scenes.retain(|scene| queries::non_denylisted(&scene.id, &state.denylist));
+            serde_json::to_vec(&scenes)
+                .map(Bytes::from)
+                .map_err(|e| AppError::Internal(e.to_string()))
+        })
+        .await
 }
 
 #[cfg(test)]

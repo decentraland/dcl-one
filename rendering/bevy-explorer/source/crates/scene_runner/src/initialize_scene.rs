@@ -39,8 +39,8 @@ use dcl_types::{
     SceneElapsedTime, SceneId, SceneResponse, SceneResponseSender, SceneWake,
 };
 use ipfs::{
-    ipfs_path::IpfsPath, ActiveEntityTask, EntityDefinition, IpfsAssetServer, RealmInitialLocation,
-    SceneIpfsLocation,
+    ipfs_path::IpfsPath, ActiveEntityTask, ActiveScenesTask, EntityDefinition, IpfsAssetServer,
+    RealmInitialLocation, SceneIpfsLocation,
 };
 use scene_material::{BoundRegion, SceneBounds, FIXED_SCENE_HEIGHT};
 use system_bridge::{LiveSceneInfo, SystemApi, SystemBridge};
@@ -982,8 +982,9 @@ pub struct ScenePointers {
     bake_clip: Option<(IVec2, IVec2)>,
     crcs: Vec<Vec<Option<u32>>>,
     terrain: TerrainTargets,
-    // The realm lists its scenes up front (a World) and they have all resolved, so a parcel none
-    // of them covers is empty rather than unknown; there is no pointer request to answer for it.
+    // The realm lists its scenes up front (a World, or a city's scene list) and they have all
+    // resolved, so a parcel none of them covers is empty rather than unknown; there is no pointer
+    // request to answer for it.
     all_scenes_known: bool,
     // each named scene's base parcel by hash, from its `scene.json` as the realm listed it: a far
     // LOD is placed from it without loading the scene's entity definition. Cleared with the
@@ -1015,7 +1016,7 @@ impl ScenePointers {
         }
 
         let expected_count = (self.realm_bounds.1 - self.realm_bounds.0 + 1).element_product();
-        self.pointers.len() >= expected_count as usize
+        self.all_scenes_known || self.pointers.len() >= expected_count as usize
     }
 
     pub fn get(&self, parcel: impl Borrow<IVec2>) -> Option<&PointerResult> {
@@ -1167,6 +1168,25 @@ impl ScenePointers {
     /// `crc` and the terrain take it mutably.
     pub(crate) fn generation(&self) -> u64 {
         self.generation
+    }
+
+    /// Take the realm's full scene list: unresolved parcels it names are filled, and every
+    /// other unresolved parcel is empty. A parcel already resolved is at least as fresh as the
+    /// list and is kept. Returns the realm bounds if they grew.
+    pub fn insert_scene_list(
+        &mut self,
+        listed: impl IntoIterator<Item = (IVec2, String, Option<String>)>,
+    ) -> Option<(IVec2, IVec2)> {
+        let mut new_bounds = None;
+        for (parcel, hash, urn) in listed {
+            if !self.pointers.contains_key(&parcel) {
+                new_bounds = self
+                    .insert(parcel, PointerResult::Exists { hash, urn })
+                    .or(new_bounds);
+            }
+        }
+        self.set_all_scenes_known();
+        new_bounds
     }
 
     pub fn min(&self) -> IVec2 {
@@ -1375,6 +1395,7 @@ fn load_active_entities(
     range: Res<SceneLoadDistance>,
     mut pointers: ResMut<ScenePointers>,
     mut pointer_request: Local<Option<(HashSet<IVec2>, HashMap<String, String>, ActiveEntityTask)>>,
+    mut scene_list: Local<SceneList>,
     ipfas: IpfsAssetServer,
     mut global_crdt: Query<&mut GlobalCrdtState>,
     mut consecutive_fetch_fail_count: Local<usize>,
@@ -1400,6 +1421,7 @@ fn load_active_entities(
         *fetch_count = 100;
         // drop current request
         *pointer_request = None;
+        *scene_list = SceneList::NotAsked;
         // clear stored parcels
         *stored_parcels = (IVec2::MAX, Vec::default());
 
@@ -1526,6 +1548,54 @@ fn load_active_entities(
     };
 
     let has_scene_urns = current_realm.config.lists_scenes();
+
+    let lists_scenes =
+        !has_scene_urns && !current_realm.address.is_empty() && ipfas.active_endpoint().is_some();
+    match std::mem::take(&mut *scene_list) {
+        SceneList::NotAsked if lists_scenes => {
+            *scene_list = SceneList::Pending(
+                ipfas
+                    .ipfs()
+                    .active_scenes(current_realm.config.city_loader_content_server.as_deref()),
+            );
+        }
+        SceneList::Pending(mut task) => match task.complete() {
+            None => *scene_list = SceneList::Pending(task),
+            // an empty list is a server that does not keep one, not an empty realm
+            Some(Ok(scenes)) if !scenes.is_empty() => {
+                info!("listed {} scenes", scenes.len());
+                for scene in &scenes {
+                    if let Some(base) = scene.base.as_deref().and_then(parse_parcel) {
+                        pointers.set_base(&scene.id, base);
+                    }
+                }
+                let listed = scenes.iter().flat_map(|scene| {
+                    let urn = city_loader_urn(&current_realm, &scene.id);
+                    scene
+                        .pointers
+                        .iter()
+                        .filter_map(|pointer| parse_parcel(pointer))
+                        .map(move |parcel| (parcel, scene.id.clone(), urn.clone()))
+                });
+                if let Some(new_bounds) = pointers.insert_scene_list(listed) {
+                    for mut context in global_crdt.iter_mut() {
+                        context.set_bounds(new_bounds.0, new_bounds.1);
+                    }
+                }
+                *pointer_request = None;
+                stored_parcels.1.clear();
+                *scene_list = SceneList::Done;
+            }
+            Some(result) => {
+                debug!(
+                    "no scene list ({:?}), resolving pointers by range",
+                    result.err()
+                );
+                *scene_list = SceneList::Done;
+            }
+        },
+        state => *scene_list = state,
+    }
 
     if pointer_request.is_none()
         && !current_realm.address.is_empty()
@@ -1687,33 +1757,18 @@ fn load_active_entities(
                 }
             };
 
-            let mut urn = urn_lookup.remove(&active_entity.id);
+            let urn = urn_lookup
+                .remove(&active_entity.id)
+                .or_else(|| city_loader_urn(&current_realm, &active_entity.id));
 
-            if urn.is_none() {
-                if let Some(scene_server) = current_realm.config.city_loader_content_server.as_ref()
-                {
-                    // city loader requires we source the scene entity from the city server as well (unless otherwise specified)
-                    urn = Some(format!(
-                        "urn:decentraland:entity:{}?=&baseUrl={}/contents/",
-                        active_entity.id, scene_server
-                    ));
-                }
-            }
-
-            let parcel = |pointer: &str| {
-                let (x, y) = pointer.split_once(',')?;
-                let x = x.parse::<i32>().ok()?;
-                let y = y.parse::<i32>().ok()?;
-                Some(IVec2::new(x, y))
-            };
             let parcels = meta
                 .scene
                 .parcels
                 .iter()
-                .filter_map(|pointer| parcel(pointer))
+                .filter_map(|pointer| parse_parcel(pointer))
                 .collect::<Vec<_>>();
             // a far LOD's mesh is relative to it (`scene_lod`)
-            if let Some(base) = parcel(&meta.scene.base) {
+            if let Some(base) = parse_parcel(&meta.scene.base) {
                 pointers.set_base(&active_entity.id, base);
             }
 
@@ -1763,6 +1818,28 @@ fn load_active_entities(
             pointers.set_all_scenes_known();
         }
     }
+}
+
+/// The realm's one-shot scene list (`GET /entities/active/scenes`).
+#[derive(Default)]
+enum SceneList {
+    #[default]
+    NotAsked,
+    Pending(ActiveScenesTask),
+    Done,
+}
+
+fn parse_parcel(pointer: &str) -> Option<IVec2> {
+    let (x, y) = pointer.split_once(',')?;
+    Some(IVec2::new(x.parse().ok()?, y.parse().ok()?))
+}
+
+// city loader requires we source the scene entity from the city server as well (unless otherwise specified)
+fn city_loader_urn(realm: &CurrentRealm, id: &str) -> Option<String> {
+    let scene_server = realm.config.city_loader_content_server.as_ref()?;
+    Some(format!(
+        "urn:decentraland:entity:{id}?=&baseUrl={scene_server}/contents/"
+    ))
 }
 
 #[derive(Resource, Default)]

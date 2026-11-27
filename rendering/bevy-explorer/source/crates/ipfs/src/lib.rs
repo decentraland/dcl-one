@@ -1693,6 +1693,39 @@ impl IpfsIo {
         }
     }
 
+    /// Every active scene of the realm in one read. Not every content server serves the list:
+    /// a failure means resolve pointers through [`Self::active_entities`] instead.
+    pub fn active_scenes(self: &Arc<Self>, endpoint: Option<&str>) -> ActiveScenesTask {
+        let url = match endpoint {
+            Some(url) => Some(url.to_owned()),
+            None => self
+                .realm_config_receiver
+                .borrow()
+                .as_ref()
+                .and_then(|c| c.about.content.as_ref())
+                .map(|content| content.public_url.to_owned()),
+        }
+        .map(|url| format!("{url}/entities/active/scenes"));
+        let client = self.client.clone();
+        IoTaskPool::get().spawn_compat(async move {
+            let url = url.ok_or(anyhow!("not connected"))?;
+            let fetched = platform::fetch(
+                client.get(url),
+                Duration::from_secs(30),
+                Duration::from_secs(10),
+            )
+            .await
+            .map_err(|e| match e {
+                platform::FetchError::Headers => anyhow!("timed out awaiting headers"),
+                platform::FetchError::Send(e) => anyhow!(e),
+                platform::FetchError::Body(e) => anyhow!(e),
+                platform::FetchError::Status(s, _) => anyhow!("status: {s}"),
+                platform::FetchError::Stalled => anyhow!("response stalled"),
+            })?;
+            serde_json::from_slice(&fetched.body).map_err(|e| anyhow!(e))
+        })
+    }
+
     pub fn client(&self) -> reqwest::Client {
         self.client.clone()
     }
@@ -2023,6 +2056,16 @@ impl IpfsIo {
 }
 
 pub type ActiveEntityTask = Task<Result<Vec<EntityDefinition>, anyhow::Error>>;
+
+pub type ActiveScenesTask = Task<Result<Vec<ActiveScene>, anyhow::Error>>;
+
+#[derive(Deserialize, Debug)]
+pub struct ActiveScene {
+    pub id: String,
+    pub pointers: Vec<String>,
+    #[serde(default)]
+    pub base: Option<String>,
+}
 
 #[derive(Debug)]
 pub struct ActiveEntity {

@@ -1765,6 +1765,136 @@ async fn an_imported_entity_id_is_hidden_from_the_reads() {
     clean().await;
 }
 
+async fn get_with_cache_control(router: Router, uri: &str) -> (StatusCode, Option<String>, Value) {
+    let resp = router
+        .oneshot(Request::get(uri).body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    let status = resp.status();
+    let cache_control = resp
+        .headers()
+        .get(header::CACHE_CONTROL)
+        .map(|v| v.to_str().unwrap().to_string());
+    let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    (
+        status,
+        cache_control,
+        serde_json::from_slice(&bytes).unwrap(),
+    )
+}
+
+fn seeded_scenes(body: &Value, tag: &str) -> Vec<Value> {
+    let prefix = format!("test-{tag}-");
+    body.as_array()
+        .unwrap()
+        .iter()
+        .filter(|scene| scene["id"].as_str().unwrap().starts_with(&prefix))
+        .cloned()
+        .collect()
+}
+
+#[tokio::test]
+async fn active_scenes_lists_each_scene_with_all_its_parcels() {
+    require_test_db!(Some(node) = TestNode::with_db("scenes-list").await);
+    node.state.sync.set_state(SyncState::Syncing);
+    let pool = node.state.pool.clone();
+    let tag = "scenes-list";
+    unseed(&pool, tag).await;
+
+    let estate = seed_deployment_with_pointers(
+        &pool,
+        tag,
+        1,
+        "scene",
+        &["9001,9002", "9001,9001"],
+        1_700_000_000_000,
+    )
+    .await;
+    let plot = seed_deployment(&pool, tag, 2, "scene", "9005,9005", 1_700_000_001_000).await;
+    seed_deployment(&pool, tag, 3, "profile", "0xscenes-list", 1_700_000_002_000).await;
+    sqlx::query("UPDATE content.deployments SET entity_metadata = $2::json WHERE entity_id = $1")
+        .bind(&estate.id)
+        .bind(json!({"v": {"scene": {"base": "9001,9002"}}}))
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    for uri in ["/entities/active/scenes", "/content/entities/active/scenes"] {
+        let (status, cache_control, body) = get_with_cache_control(node.router(), uri).await;
+        assert_eq!(status, StatusCode::OK, "{uri}");
+        assert_eq!(
+            cache_control.as_deref(),
+            Some("public, max-age=10"),
+            "{uri}"
+        );
+        assert_eq!(
+            seeded_scenes(&body, tag),
+            vec![
+                json!({
+                    "id": estate.id,
+                    "pointers": ["9001,9001", "9001,9002"],
+                    "timestamp": 1_700_000_000_000i64,
+                    "base": "9001,9002"
+                }),
+                json!({
+                    "id": plot.id,
+                    "pointers": ["9005,9005"],
+                    "timestamp": 1_700_000_001_000i64,
+                    "base": null
+                }),
+            ],
+            "{uri}"
+        );
+    }
+
+    require_test_db!(Some(denying) = TestNode::with_db("scenes-list-deny").await);
+    denying.state.sync.set_state(SyncState::Syncing);
+    denying.state.denylist.add(&estate.id);
+    let (status, body) = get_json(denying.router(), "/entities/active/scenes").await;
+    assert_eq!(status, StatusCode::OK);
+    let listed = seeded_scenes(&body, tag);
+    assert_eq!(listed.len(), 1);
+    assert_eq!(listed[0]["id"], plot.id);
+
+    unseed(&pool, tag).await;
+}
+
+#[tokio::test]
+async fn active_scenes_is_unavailable_on_a_node_that_may_miss_scenes() {
+    let bootstrapping = TestNode::without_db("scenes-bootstrapping").await;
+
+    let partial_sync = TestNode::without_db("scenes-partial-sync").await;
+    partial_sync
+        .state
+        .sync
+        .set_state(SyncState::PartiallySynced {
+            ready_types: vec!["wearable".to_string()],
+        });
+
+    let unsynced_copy = TestNode::without_db("scenes-unsynced-copy").await;
+    unsynced_copy.state.sync.set_state(SyncState::Syncing);
+    unsynced_copy.state.sync.set_unsynced_copy(true);
+
+    let mut settings = crate::Settings::for_tests();
+    settings.syncs_scenes = false;
+    let other_types_only = TestNode::without_db_settings("scenes-other-types-only", settings).await;
+    other_types_only.state.sync.set_state(SyncState::Syncing);
+
+    for (case, node) in [
+        ("bootstrapping", &bootstrapping),
+        ("scenes not synced yet", &partial_sync),
+        ("unsynced copy of a peer", &unsynced_copy),
+        ("syncs other types only", &other_types_only),
+    ] {
+        let (status, cache_control, _) =
+            get_with_cache_control(node.router(), "/entities/active/scenes").await;
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{case}");
+        assert_eq!(cache_control.as_deref(), Some("no-store"), "{case}");
+    }
+}
+
 #[tokio::test]
 async fn history_reads_over_seeded_rows() {
     require_test_db!(Some(node) = TestNode::with_db("history").await);
