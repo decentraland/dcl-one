@@ -90,7 +90,13 @@ pub fn is_provider_id(id: &str) -> bool {
 /// when the subgraph fails or an answer breaks the walk.
 pub async fn registry(index: &ChainIndex, url: &str) -> Result<Vec<Provider>, String> {
     let mut providers: Vec<Provider> = Vec::new();
-    let bound = MAX_PAGES * THE_GRAPH_PAGE_SIZE as usize;
+    #[allow(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        reason = "THE_GRAPH_PAGE_SIZE is the constant 1000"
+    )]
+    let page_size = THE_GRAPH_PAGE_SIZE as usize;
+    let bound = MAX_PAGES * page_size;
     for _ in 0..=MAX_PAGES {
         let id_from = providers
             .iter()
@@ -132,7 +138,7 @@ pub async fn registry(index: &ChainIndex, url: &str) -> Result<Vec<Provider>, St
         if providers.len() > bound {
             break;
         }
-        if page.len() < THE_GRAPH_PAGE_SIZE as usize {
+        if page.len() < page_size {
             providers.sort_by(|a, b| a.id.cmp(&b.id));
             if providers.windows(2).any(|w| w[0].id == w[1].id) {
                 return Err("registry answered a provider twice".into());
@@ -334,7 +340,10 @@ mod tests {
             .as_str()
             .unwrap_or("")
             .to_string();
-        let first = body["variables"]["first"].as_u64().unwrap_or(100) as usize;
+        let first = body["variables"]["first"]
+            .as_u64()
+            .and_then(|n| usize::try_from(n).ok())
+            .unwrap_or(100);
         let page: Vec<Value> = records
             .into_iter()
             .filter(|r| r["id"].as_str().is_none_or(|id| id > from.as_str()))
