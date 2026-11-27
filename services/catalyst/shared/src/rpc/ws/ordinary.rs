@@ -1,4 +1,5 @@
 //! Opt-in ordinary-message queue for the existing RPC writer.
+use crate::casts::ApproxF64;
 use parking_lot::Mutex;
 use std::collections::VecDeque;
 use std::sync::{Arc, Weak};
@@ -55,6 +56,11 @@ pub fn native_backpressure_limit(number: f64) -> Result<usize, &'static str> {
     if !number.is_finite() {
         return Err("WS_MAX_BACKPRESSURE must be finite for the bounded RPC writer");
     }
+    #[allow(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        reason = "rem_euclid keeps it in [0, 2^32)"
+    )]
     let bytes = number.trunc().rem_euclid(4294967296.0) as u32;
     if bytes == 0 {
         return Err(
@@ -78,8 +84,8 @@ fn js_max(a: f64, b: f64) -> f64 {
     }
 }
 fn timer_delay(ms: f64) -> Duration {
-    Duration::from_millis(if (1.0..=i32::MAX as f64).contains(&ms) {
-        ms.trunc() as u64
+    Duration::from_millis(if (1.0..=f64::from(i32::MAX)).contains(&ms) {
+        crate::casts::f64_to_u64(ms.trunc())
     } else {
         1
     })
@@ -163,7 +169,7 @@ impl Queue {
         let (completion, receiver) = oneshot::channel();
         if !self.active || !connected {
             let _ = completion.send(Ok(()));
-        } else if self.pending.len() as f64 >= self.capacity {
+        } else if self.pending.len().approx_f64() >= self.capacity {
             self.fail("Message queue size limit reached");
             // The overflowing source send returns an already resolved promise.
             let _ = completion.send(Ok(()));
@@ -191,7 +197,7 @@ impl Queue {
             let Some(item) = self.pending.front_mut() else {
                 break;
             };
-            if item.attempts as f64 >= self.config.max_retry_attempts {
+            if f64::from(item.attempts) >= self.config.max_retry_attempts {
                 self.counter("ws_backpressure_events", Some("max_retries"));
                 self.fail("Message not deliverable after max retries");
                 return;
@@ -205,7 +211,8 @@ impl Queue {
                 let pending_bytes = buffered();
                 if pending_bytes > 0 && !self.defer_socket_metrics {
                     dcl_metrics::gauge!("ws_queue_vs_backpressure_ratio").set(
-                        queued as f64 / (pending_bytes as f64 / self.config.estimated_message_size),
+                        queued.approx_f64()
+                            / (pending_bytes.approx_f64() / self.config.estimated_message_size),
                     );
                 }
             }
@@ -217,7 +224,7 @@ impl Queue {
                 };
                 if !self.defer_socket_metrics {
                     dcl_metrics::histogram!("ws_message_size_bytes","result"=>result)
-                        .record(size as f64);
+                        .record(size.approx_f64());
                 }
             }
             let attempts = match outcome {

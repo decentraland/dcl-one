@@ -4,6 +4,7 @@
 mod byte_budget;
 mod idle;
 mod ordinary;
+use crate::casts::ApproxF64;
 use byte_budget::ByteBudget;
 pub use idle::{IdleAction, IdleTimer};
 pub use ordinary::{OrdinaryQueueConfig, native_backpressure_limit};
@@ -475,7 +476,8 @@ where
     std::pin::Pin::new(&mut *sink).start_send(Message::Binary(bytes.into()))?;
     if social_metrics {
         dcl_metrics::counter!("ws_messages_sent").increment(1);
-        dcl_metrics::histogram!("ws_message_size_bytes", "result" => "success").record(size as f64);
+        dcl_metrics::histogram!("ws_message_size_bytes", "result" => "success")
+            .record(size.approx_f64());
     }
     futures::future::poll_fn(|cx| std::pin::Pin::new(&mut *sink).poll_flush(cx)).await
 }
@@ -532,6 +534,11 @@ where
     sent
 }
 #[cfg(test)]
+#[allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    reason = "test fixtures use small literal values"
+)]
 mod guarded_tests {
     use super::*;
     use crate::rpc::drpc::{

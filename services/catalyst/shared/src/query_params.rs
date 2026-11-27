@@ -189,11 +189,14 @@ pub fn parse_int_js(s: &str) -> Option<i64> {
 /// The `[start, end)` of JavaScript's `elements.slice(offset, offset +
 /// limit)` over `len` elements: a negative index counts from the end.
 pub fn js_slice_range(len: usize, offset: i64, limit: i64) -> (usize, usize) {
-    let len = len as i64;
+    let len = crate::casts::len_i64(len);
     let js_index = |i: i64| if i < 0 { (len + i).max(0) } else { i.min(len) };
     let (start, end) = (js_index(offset), js_index(offset.saturating_add(limit)));
     if start < end {
-        (start as usize, end as usize)
+        (
+            crate::casts::index_usize(start),
+            crate::casts::index_usize(end),
+        )
     } else {
         (0, 0)
     }
@@ -240,8 +243,9 @@ impl JsPagination {
         let Some((start, end)) = self.bounds() else {
             return 0..0;
         };
-        let len = len as i64;
-        let at = |i: i64| if i < 0 { (len + i).max(0) } else { i.min(len) } as usize;
+        let len = crate::casts::len_i64(len);
+        let at =
+            |i: i64| crate::casts::index_usize(if i < 0 { (len + i).max(0) } else { i.min(len) });
         let (start, end) = (at(start), at(end));
         if start < end { start..end } else { 0..0 }
     }

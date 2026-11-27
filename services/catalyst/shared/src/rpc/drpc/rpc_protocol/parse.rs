@@ -19,7 +19,7 @@ pub fn parse_header(data: &[u8]) -> Option<(RpcMessageTypes, u32)> {
     let message_header = RpcMessageHeader::decode(data).ok()?;
     let (message_type, message_number) =
         parse_message_identifier(message_header.message_identifier);
-    let rpc_message_type = RpcMessageTypes::try_from(message_type as i32).ok()?;
+    let rpc_message_type = RpcMessageTypes::try_from(i32::try_from(message_type).ok()?).ok()?;
     Some((rpc_message_type, message_number))
 }
 

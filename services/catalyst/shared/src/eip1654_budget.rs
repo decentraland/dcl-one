@@ -124,7 +124,8 @@ pub fn debug_assert_scoped(what: &str) {
 #[cfg(any(test, feature = "test-support"))]
 pub fn admitted_within(elapsed: std::time::Duration) -> std::ops::RangeInclusive<usize> {
     let per_minute = crate::limits::PREAUTH_PER_MINUTE;
-    let refill = (elapsed.as_secs_f64() * f64::from(per_minute) / 60.0).ceil() as usize;
+    let refill =
+        crate::casts::f64_to_usize((elapsed.as_secs_f64() * f64::from(per_minute) / 60.0).ceil());
     per_minute as usize..=per_minute as usize + refill
 }
 
@@ -292,6 +293,10 @@ impl Eip1654Validator for FreshBudgeted {
 }
 
 #[cfg(test)]
+#[allow(
+    clippy::cast_possible_truncation,
+    reason = "test fixtures use small literal values"
+)]
 mod tests {
     use super::*;
     use crate::limits::{PREAUTH_PER_MINUTE, PREAUTH_PER_MINUTE_PER_48};
