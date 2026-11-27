@@ -354,6 +354,26 @@ These single-execution SQL timings reflect the local cache state.
 Primary, secondary, and mixed rails returned byte-identical pairs of
 15 rows in both plan modes, including listing counts and prices.
 
+## Unscoped legacy catalogue price ranking
+
+The two-network fixture added 438 Ethereum items, 217,358 NFTs, and
+142,024 legacy orders (936 live) to the Polygon fixture above. For
+`/v1/catalog?first=24`, the existing query checked 70,648 NFT owners
+across both books. The price-prefix query and page detail query together
+checked 21,190. The generic plan read 110,350 shared blocks before the
+change and 64,532 after it. Temporary blocks fell from 1,437 to zero.
+
+| Prepared two-network first page | p95 before | p95 after |
+| --- | ---: | ---: |
+| Custom plan | 532 ms | 295 ms |
+| Generic plan | 571 ms | 278 ms |
+
+Each p95 uses 20 warm, alternating executions per variant. The new
+timings include both SQL statements. At offsets 0, 37, 500, and 15,000,
+the rows and exact totals matched the original query in both plan
+modes. The first two offsets used the price prefix. The latter two
+used the full query because the prefix could not prove the page.
+
 ## Latest sale per token
 
 The fixtures below are synthetic, measured on a laptop with PostgreSQL 17.6 while other builds were running. Treat the ranges as an order of magnitude.

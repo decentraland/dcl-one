@@ -153,13 +153,16 @@ impl CatalogFilters {
         )
     }
 
+    fn has_listing_filters(&self) -> bool {
+        self.only_listing
+            || self.is_on_sale.is_some()
+            || self.min_price.is_some()
+            || self.max_price.is_some()
+    }
+
     fn needs_resales(&self) -> bool {
         !self.only_minting
-            && (self.only_listing
-                || self.is_on_sale.is_some()
-                || self.min_price.is_some()
-                || self.max_price.is_some()
-                || (self.explicit_sort && self.sorts_on_listings()))
+            && (self.has_listing_filters() || (self.explicit_sort && self.sorts_on_listings()))
     }
 }
 
@@ -911,16 +914,23 @@ fn listing_contracts(f: &CatalogFilters) -> Vec<String> {
         .collect()
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum LegacyRows {
+    Book,
+    PricePrefix,
+    RankedPage,
+}
+
 /// Every legacy listing is bound to a token of the collection's served chain.
 /// A v1 token's Issue identifies the wearable by its name in the collection URN.
 fn build_legacy_orders_cte(
     b: &mut Builder,
     f: &CatalogFilters,
     books: &CatalogScope,
-    now_ms: i64,
+    now: &str,
     page_first: bool,
+    rows: LegacyRows,
 ) {
-    let now = b.bind_i64(now_ms);
     let contracts = listing_contracts(f);
     let contracts = (!page_first && !contracts.is_empty()).then(|| b.bind_strings(&contracts));
     let min = f.min_price.as_ref().map(|v| b.bind_string(v.clone()));
@@ -928,7 +938,8 @@ fn build_legacy_orders_cte(
     // Ranking by resale inputs probes the whole Polygon book. Read the
     // small unpublished event tail once, in block order on the event PK.
     // Read one extra row to detect when the tail needs per-token checks.
-    let polygon_tail = !page_first && books.nets.contains(&ChainNet::Matic);
+    let polygon_tail =
+        (!page_first || rows == LegacyRows::RankedPage) && books.nets.contains(&ChainNet::Matic);
     if polygon_tail {
         b.push(&format!(
             "polygon_transfer_tail AS MATERIALIZED (
@@ -979,8 +990,33 @@ fn build_legacy_orders_cte(
         if let Some(max) = &max {
             live.push_str(&format!(" AND o.price <= {max}::numeric"));
         }
-        let book = "shop.legacy_order o JOIN shop.collections c
-                    ON c.network = o.network AND c.contract_address = o.contract_address";
+        let order_rows = match (rows, net) {
+            (LegacyRows::PricePrefix, _) => "legacy_price_prefix o".to_owned(),
+            // The Polygon fold derives item_id from the high bits of token_id.
+            // Use the same interval to reach the page's orders by their index.
+            (LegacyRows::RankedPage, ChainNet::Matic) => format!(
+                "catalog_candidates candidate JOIN LATERAL (
+                    SELECT o.* FROM shop.legacy_order o
+                    WHERE o.network = 'matic' AND o.contract_address = candidate.contract_address
+                      AND o.token_id >= candidate.item_id * {ITEM_ID_SHIFT}::numeric
+                      AND o.token_id < (candidate.item_id + 1) * {ITEM_ID_SHIFT}::numeric
+                      AND o.status = 'open' AND o.expires_at > {now}
+                    OFFSET 0
+                ) o ON candidate.network = 'matic'"
+            ),
+            _ => "shop.legacy_order o".to_owned(),
+        };
+        let book = format!(
+            "{order_rows} JOIN shop.collections c
+             ON c.network = o.network AND c.contract_address = o.contract_address"
+        );
+        if rows == LegacyRows::RankedPage && net == ChainNet::Ethereum {
+            live.push_str(
+                " AND o.contract_address IN (
+                    SELECT contract_address FROM catalog_candidates WHERE network = 'ethereum'
+                )",
+            );
+        }
         let (book, live) = if ordered_polygon {
             // Walk the NFT keyspace in order even when the expiry index
             // yields a large, scattered book. Keep the sort below the probes.
@@ -992,7 +1028,7 @@ fn build_legacy_orders_cte(
                 String::new(),
             )
         } else {
-            (book.to_owned(), format!(" AND {live}"))
+            (book, format!(" AND {live}"))
         };
         b.push(&format!(
             "SELECT o.network, o.contract_address, {item} AS item_id,
@@ -1378,13 +1414,102 @@ pub fn build_catalog_query(
     since: Option<chrono::NaiveDateTime>,
     count: bool,
 ) -> (String, PgArguments) {
-    build_catalog_page_query(f, is_v2, now, since, count, None)
+    build_catalog_page_query(f, is_v2, now, since, count, None, None)
 }
 
 fn catalog_item_joins(b: &mut Builder, is_v2: bool) {
     b.push(" FROM shop.items items LEFT JOIN shop.collections c ON c.network = items.network AND c.contract_address = items.contract_address AND c.chain_id = items.chain_id ");
     if is_v2 {
         b.push(" LEFT JOIN offchain_orders ON offchain_orders.network = items.network AND offchain_orders.chain_id = items.chain_id AND offchain_orders.contract_address_sent = items.contract_address AND offchain_orders.item_id = items.item_id ");
+    }
+}
+
+const CATALOG_LEGACY_JOIN: &str = " LEFT JOIN legacy_orders
+    ON legacy_orders.network = items.network AND legacy_orders.contract_address = items.contract_address
+      AND legacy_orders.item_id = items.item_id ";
+
+/// Includes a lookahead order to distinguish an exhausted book from a price
+/// boundary. At a full prefix, only prices strictly below its highest price
+/// prove a complete rank, including all ties and the mint offers.
+const CATALOG_PRICE_PREFIX_LIMIT: i64 = 2_049;
+
+fn build_catalog_price_prefix(f: &CatalogFilters, scope: &CatalogScope, now_ms: i64) -> Builder {
+    let mut b = Builder::new();
+    let now = b.bind_i64(now_ms);
+    b.push(&format!(
+        "WITH legacy_price_prefix AS MATERIALIZED (
+            SELECT network, contract_address, token_id, seller, price, created_at, status, expires_at
+            FROM shop.legacy_order
+            WHERE status = 'open' AND expires_at > {now}
+            ORDER BY price LIMIT {CATALOG_PRICE_PREFIX_LIMIT}
+        ), price_bound AS MATERIALIZED (
+            SELECT count(*) < {CATALOG_PRICE_PREFIX_LIMIT} AS exhaustive, max(price) AS frontier
+            FROM legacy_price_prefix
+        ), "
+    ));
+    build_legacy_orders_cte(&mut b, f, scope, &now, false, LegacyRows::PricePrefix);
+    let min_price = format!("LEAST({}, legacy_orders.min_price)", mint_price_sql(false));
+    b.push(&format!(
+        "SELECT items.network, items.contract_address, items.item_id::text AS item_id,
+                COUNT(*) OVER()::int8 AS total,
+                (price_bound.exhaustive OR COALESCE({min_price} < price_bound.frontier, false)) AS covered,
+                {min_price} AS min_price_num"
+    ));
+    catalog_item_joins(&mut b, false);
+    b.push(CATALOG_LEGACY_JOIN);
+    b.push(" CROSS JOIN price_bound ");
+    let listings = ListingValues::new(true, false);
+    build_where(&mut b, f, false, &listings, Some(scope));
+    build_order_by(&mut b, f, false, &listings);
+    catalog_limit(&mut b, f);
+    b
+}
+
+#[derive(sqlx::FromRow)]
+struct RankedCatalogItem {
+    network: String,
+    contract_address: String,
+    item_id: String,
+    total: i64,
+    covered: bool,
+}
+
+struct RankedCatalogPage {
+    items: Vec<RankedCatalogItem>,
+    total: i64,
+}
+
+impl RankedCatalogPage {
+    fn covered(items: Vec<RankedCatalogItem>) -> Option<Self> {
+        let total = items.first()?.total;
+        items
+            .iter()
+            .all(|item| item.covered)
+            .then_some(Self { items, total })
+    }
+
+    fn bind_candidates(&self, b: &mut Builder) {
+        let mut networks = Vec::with_capacity(self.items.len());
+        let mut contracts = Vec::with_capacity(self.items.len());
+        let mut items = Vec::with_capacity(self.items.len());
+        for item in &self.items {
+            networks.push(item.network.clone());
+            contracts.push(item.contract_address.clone());
+            items.push(item.item_id.clone());
+        }
+        let networks = b.bind_strings(&networks);
+        let contracts = b.bind_strings(&contracts);
+        let items = b.bind_strings(&items);
+        let total = b.bind_i64(self.total);
+        b.push(&format!(
+            "catalog_candidates AS MATERIALIZED (
+                SELECT items.network, items.chain_id, items.contract_address, items.item_id, {total}::bigint AS total
+                FROM unnest({networks}::text[], {contracts}::text[], {items}::text[])
+                     AS k(network, contract_address, item_id)
+                JOIN shop.items items ON items.network = k.network AND items.contract_address = k.contract_address
+                  AND items.item_id = k.item_id::numeric
+            ), "
+        ));
     }
 }
 
@@ -1403,12 +1528,14 @@ fn build_catalog_page_query(
     since: Option<chrono::NaiveDateTime>,
     count: bool,
     scope: Option<&CatalogScope>,
+    ranked: Option<&RankedCatalogPage>,
 ) -> (String, PgArguments) {
     let mut b = Builder::new();
-    let page_first = !count
-        && scope.is_some_and(|s| s.reads_book)
-        && !f.needs_resales()
-        && !f.sorts_on_listings();
+    let page_first = ranked.is_some()
+        || !count
+            && scope.is_some_and(|s| s.reads_book)
+            && !f.needs_resales()
+            && !f.sorts_on_listings();
     let books = scope.filter(|s| s.reads_book && (!count || f.needs_resales()));
     if is_v2 || books.is_some() {
         b.push("WITH ");
@@ -1426,7 +1553,9 @@ fn build_catalog_page_query(
         build_offchain_orders_cte(&mut b, f, scope);
         b.push(if books.is_some() { ", " } else { " " });
     }
-    if page_first {
+    if let Some(ranked) = ranked {
+        ranked.bind_candidates(&mut b);
+    } else if page_first {
         let listings = ListingValues::new(false, is_v2);
         b.push(
             "catalog_candidates AS MATERIALIZED (
@@ -1440,13 +1569,13 @@ fn build_catalog_page_query(
         b.push("), ");
     }
     if let Some(books) = books {
-        build_legacy_orders_cte(
-            &mut b,
-            f,
-            books,
-            now.and_utc().timestamp_millis(),
-            page_first,
-        );
+        let now = b.bind_i64(now.and_utc().timestamp_millis());
+        let rows = if ranked.is_some() {
+            LegacyRows::RankedPage
+        } else {
+            LegacyRows::Book
+        };
+        build_legacy_orders_cte(&mut b, f, books, &now, page_first, rows);
     }
     let listings = ListingValues::new(books.is_some(), is_v2);
     if count {
@@ -1485,7 +1614,7 @@ fn build_catalog_page_query(
     }
     catalog_item_joins(&mut b, is_v2);
     if books.is_some() {
-        b.push(" LEFT JOIN legacy_orders ON legacy_orders.network = items.network AND legacy_orders.contract_address = items.contract_address AND legacy_orders.item_id = items.item_id ");
+        b.push(CATALOG_LEGACY_JOIN);
     }
     if page_first {
         b.push(
@@ -1630,6 +1759,16 @@ fn row_to_item(r: &sqlx::postgres::PgRow) -> CatalogItem {
     }
 }
 
+fn catalog_page_error(e: sqlx::Error) -> Response {
+    tracing::error!(error = ?e, "catalog query failed");
+    if super::nft_reads::cancelled(&e) {
+        super::nft_reads::timed_out()
+    } else {
+        ApiError::bad_request("Couldn't fetch the catalog with the filters provided")
+            .into_response()
+    }
+}
+
 async fn fetch_page(
     state: &MarketplaceState,
     read: &mut CatalogueRead,
@@ -1640,23 +1779,35 @@ async fn fetch_page(
     // The read's clock: the trades check decided on the same instant.
     let now = read.now.naive_utc();
     let since = super::trades::mirrored_since(&state.settings, now);
-    let (sql, args) = build_catalog_page_query(f, is_v2, now, since, false, books);
+    let ranked = if let Some(scope) = books.filter(|scope| {
+        !is_v2
+            && scope.reads_book
+            && scope.nets.len() == ChainNet::ALL.len()
+            && f.sort_by == Some(CatalogSortBy::Cheapest)
+            && !f.has_listing_filters()
+            && (f.search.is_none() || f.ids.is_empty())
+    }) {
+        let probe = build_catalog_price_prefix(f, scope, read.now.timestamp_millis());
+        let rows: Vec<RankedCatalogItem> =
+            sqlx::query_as_with(sqlx::AssertSqlSafe(probe.sql), probe.args)
+                .fetch_all(&mut *read.tx)
+                .await
+                .map_err(catalog_page_error)?;
+        // A full prefix proves only prices before its frontier. An empty
+        // page may still need the original count query for a nonzero skip.
+        RankedCatalogPage::covered(rows)
+    } else {
+        None
+    };
+    let (sql, args) = build_catalog_page_query(f, is_v2, now, since, false, books, ranked.as_ref());
     let rows = sqlx::query_with(sqlx::AssertSqlSafe(sql), args)
         .fetch_all(&mut *read.tx)
         .await
-        .map_err(|e| {
-            tracing::error!(error = ?e, "catalog query failed");
-            if super::nft_reads::cancelled(&e) {
-                super::nft_reads::timed_out()
-            } else {
-                ApiError::bad_request("Couldn't fetch the catalog with the filters provided")
-                    .into_response()
-            }
-        })?;
+        .map_err(catalog_page_error)?;
     let total: i64 = match rows.first() {
         Some(r) => r.get("total"),
         None if clamp_skip(f.skip) > 0 => {
-            let (sql, args) = build_catalog_page_query(f, is_v2, now, since, true, books);
+            let (sql, args) = build_catalog_page_query(f, is_v2, now, since, true, books, None);
             sqlx::query_with(sqlx::AssertSqlSafe(sql), args)
                 .fetch_one(&mut *read.tx)
                 .await
@@ -2029,6 +2180,122 @@ mod tests {
         assert_eq!(first[0].2, next[0].2);
         assert_ne!(first, next);
         drop(read);
+        db.drop().await;
+    }
+
+    #[tokio::test]
+    async fn price_prefix_proves_both_network_pages_before_hydrating() {
+        let Some(db) = super::super::tests::support::OwnDb::create("catalog_prefix").await else {
+            return;
+        };
+        let state = MarketplaceState::new(
+            db.pool.clone(),
+            crate::http::Outbound::for_tests(),
+            super::super::Settings::for_tests(),
+        );
+        let contract = "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+        let owner = "0xcccccccccccccccccccccccccccccccccccccccc";
+        sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
+            "INSERT INTO shop.collections
+                (network,contract_address,chain_id,name,creator,owner,urn,is_completed,
+                 is_approved,is_editable,created_at,updated_at,reviewed_at,mirrored_at)
+             SELECT network,'{contract}',chain,'Fixture','{owner}','{owner}',
+                 'urn:fixture:'||network,true,true,false,1,1,1,now()
+             FROM (VALUES ('ethereum',1),('matic',137)) chains(network,chain);
+             INSERT INTO shop.items
+                (network,contract_address,item_id,chain_id,item_type,urn,creator,rarity,
+                 total_supply,max_supply,available,price,name,category,first_listed_at,
+                 created_at,updated_at,reviewed_at,mirrored_at,
+                 search_is_collection_approved,search_is_store_minter)
+             SELECT network,'{contract}',id,chain,kind,'urn:fixture:'||network||':'||id,
+                 '{owner}','common',1,10,9,price,'Fixture','hat',listed,1,1,1,now(),true,mint
+             FROM (VALUES ('ethereum',1,1,'wearable_v1',90,NULL::bigint,false),
+                          ('matic',137,1,'wearable_v2',90,1,false),
+                          ('matic',137,2,'wearable_v2',7,2,true),
+                          ('ethereum',1,3,'wearable_v1',0,3,false)) items(network,chain,id,kind,price,listed,mint);
+             INSERT INTO shop.nft
+               (network,contract_address,token_id,owner,item_id,wearable_id,minted_block,minted_at,
+                transferred_block,transferred_log,transferred_at)
+             VALUES ('ethereum','{contract}',1,'{owner}',NULL,'1',1,1,1,0,1),
+                    ('ethereum','{contract}',2,'{owner}',NULL,'1',1,1,1,0,1),
+                    ('matic','{contract}',{ITEM_ID_SHIFT}::numeric+1,'{owner}',1,NULL,1,1,1,0,1),
+                    ('matic','{contract}',{ITEM_ID_SHIFT}::numeric+2,'{owner}',1,NULL,1,1,1,0,1);
+             INSERT INTO shop.legacy_order
+               (network,marketplace_address,order_id,contract_address,token_id,seller,price,expires_at,status,
+                created_block,created_log,created_at,updated_block,updated_log,updated_at)
+             SELECT network,'{contract}',token::text,'{contract}',token,'{owner}',price,5000,'open',1,0,1,1,0,1
+             FROM (VALUES ('ethereum',1::numeric,5),('ethereum',2,80),
+                          ('matic',{ITEM_ID_SHIFT}::numeric+1,5),('matic',{ITEM_ID_SHIFT}::numeric+2,90)) offers(network,token,price)
+             UNION ALL
+             SELECT 'matic','{contract}','extra-'||g,'{contract}',g,'{owner}',8,5000,'open',1,0,1,1,0,1
+             FROM generate_series(1,{CATALOG_PRICE_PREFIX_LIMIT}) g;"
+        )))
+        .execute(&db.pool)
+        .await
+        .unwrap();
+        super::super::owned_items::test_support::publish(
+            &db.pool,
+            &ChainNet::ALL,
+            false,
+            std::time::Duration::ZERO,
+        )
+        .await;
+        let mut scope = CatalogScope::new(Catalogue::Mainnet, ChainNet::ALL.to_vec());
+        scope.reads_book = true;
+        for ties in [false, true] {
+            if ties {
+                sqlx::raw_sql(
+                    "UPDATE shop.legacy_order SET price=5 WHERE order_id LIKE 'extra-%';
+                     UPDATE shop.items SET price=5, search_is_store_minter=true WHERE item_id=1;",
+                )
+                .execute(&db.pool)
+                .await
+                .unwrap();
+            }
+            let mut read = catalogue::begin_unchecked(&state).await;
+            read.now = chrono::DateTime::from_timestamp_millis(2000).unwrap();
+            for (skip, expected_coverage) in [(0, !ties), (1, !ties), (2, false), (12, false)] {
+                let f = CatalogFilters {
+                    sort_by: Some(CatalogSortBy::Cheapest),
+                    first: Some(2),
+                    skip: Some(skip),
+                    ..Default::default()
+                };
+                let now = read.now.naive_utc();
+                let prefix = build_catalog_price_prefix(&f, &scope, read.now.timestamp_millis());
+                let prices: Vec<RankedCatalogItem> =
+                    sqlx::query_as_with(sqlx::AssertSqlSafe(prefix.sql), prefix.args)
+                        .fetch_all(&mut *read.tx)
+                        .await
+                        .unwrap();
+                assert_eq!(
+                    !prices.is_empty() && prices.iter().all(|item| item.covered),
+                    expected_coverage
+                );
+                let (old, args) =
+                    build_catalog_page_query(&f, false, now, None, false, Some(&scope), None);
+                let expected = sqlx::query_with(sqlx::AssertSqlSafe(old), args)
+                    .fetch_all(&mut *read.tx)
+                    .await
+                    .unwrap();
+                let legacy: Vec<_> = expected.iter().map(row_to_item).collect();
+                let (page, total) = fetch_page(&state, &mut read, &f, false, Some(&scope))
+                    .await
+                    .unwrap();
+                assert_eq!(total, 4, "skip={skip}, ties={ties}");
+                assert_eq!(
+                    serde_json::to_value(&page).unwrap(),
+                    serde_json::to_value(&legacy).unwrap(),
+                    "skip={skip}, ties={ties}"
+                );
+                if skip == 0 {
+                    assert_eq!(page[0].network, Network::Ethereum);
+                    assert_eq!(page[1].network, Network::Matic);
+                    assert_eq!(page[0].max_listing_price.as_deref(), Some("80"));
+                    assert_eq!(page[1].max_listing_price.as_deref(), Some("90"));
+                }
+            }
+        }
         db.drop().await;
     }
 
