@@ -33,6 +33,8 @@ vi.mock("./CastStage", () => ({ useCastTracks: () => [], WatcherStage: () => nul
 vi.mock("@/data/lib/auth/context", () => ({ useAuth: () => ({ identity: auth.identity }) }));
 vi.mock("@/features/components/chrome/SitesLayout", () => ({ default: ({ children }: { children?: ReactNode }) => <>{children}</> }));
 
+import { CatalystError } from "@/data/lib/catalyst/client";
+
 import { joinCast, type CastSession } from "./session";
 import LiveCastWatch from "./LiveCastWatch";
 
@@ -86,6 +88,39 @@ describe("a world watcher link without a parcel", () => {
     await waitFor(() => expect(cast.getWatcherToken).toHaveBeenCalledTimes(1));
     expect(cast.getWatcherToken).toHaveBeenCalledWith(auth.identity,
       expect.objectContaining({ location: WORLD, parcel: "4,2" }), expect.anything());
+  });
+
+  it("lets the viewer choose another scene after the first has no Cast", async () => {
+    cast.getWatcherToken.mockRejectedValueOnce(new CatalystError("No active Cast", "/cast/watcher-token", 404));
+    renderAt(WORLD, SCENES);
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: "Main stage 0,0" }));
+    await user.click(await screen.findByRole("button", { name: "JOIN NOW" }));
+    await screen.findByText("Choose a scene to watch");
+    expect(joinCast).not.toHaveBeenCalled();
+
+    await user.click(screen.getByRole("button", { name: "Second stage 4,2" }));
+    expect(screen.queryByText("No one is currently casting to this link...")).toBeNull();
+    await user.click(await screen.findByRole("button", { name: "JOIN NOW" }));
+    await waitFor(() => expect(joinCast).toHaveBeenCalledTimes(1));
+    expect(cast.getWatcherToken).toHaveBeenNthCalledWith(1, auth.identity,
+      expect.objectContaining({ parcel: "0,0" }), expect.anything());
+    expect(cast.getWatcherToken).toHaveBeenNthCalledWith(2, auth.identity,
+      expect.objectContaining({ parcel: "4,2" }), expect.anything());
+  });
+
+  it.each([
+    { scenes: SCENES.slice(0, 1), parcel: undefined, expected: "0,0" },
+    { scenes: SCENES, parcel: "9,9", expected: "9,9" },
+  ])("keeps a fixed parcel after a missing Cast: $expected", async ({ scenes, parcel, expected }) => {
+    cast.getWatcherToken.mockRejectedValueOnce(new CatalystError("No active Cast", "/cast/watcher-token", 404));
+    renderAt(WORLD, scenes, parcel);
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: "JOIN NOW" }));
+    await screen.findByText("No one is currently casting to this link...");
+    expect(screen.queryByText("Choose a scene to watch")).toBeNull();
+    expect(cast.getWatcherToken).toHaveBeenCalledWith(auth.identity,
+      expect.objectContaining({ parcel: expected }), expect.anything());
   });
 
   it("automatically uses the only scene's parcel", async () => {

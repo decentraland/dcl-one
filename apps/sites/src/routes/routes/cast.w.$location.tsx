@@ -2,7 +2,7 @@ import { type PageDefaults } from "@/core/lib/telemetry/page-loader";
 import { pageLoader } from "@/core/lib/telemetry/page-loader";
 
 import { isWorldLocation } from "@/data/lib/catalyst/landings/cast-watcher";
-import { loadWorldScenes } from "@/data/lib/catalyst/places/world-scenes";
+import { loadWorldScenes, type WorldScene } from "@/data/lib/catalyst/places/world-scenes";
 
 import LiveCastWatch from "@/features/social/cast-live/LiveCastWatch";
 
@@ -19,9 +19,17 @@ const DEFAULT_ASSIGNMENT: PageDefaults = {
 export async function loader({ request, context, params }: Route.LoaderArgs) {
   const { sid, assignment, wrap } = await pageLoader(request, context, DEFAULT_ASSIGNMENT);
   const location = params.location.trim();
-  const scenes = isWorldLocation(location)
-    ? await loadWorldScenes(location, { signal: request.signal })
-    : null;
+  let scenes: WorldScene[] | null = null;
+  if (isWorldLocation(location)) {
+    const deadline = AbortSignal.timeout(3000);
+    try {
+      scenes = await loadWorldScenes(location, {
+        signal: AbortSignal.any([request.signal, deadline]),
+      });
+    } catch (error) {
+      if (request.signal.aborted || !deadline.aborted) throw error;
+    }
+  }
   return wrap({ sid, assignment, location, scenes });
 }
 

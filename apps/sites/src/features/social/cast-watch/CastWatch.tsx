@@ -216,7 +216,11 @@ export default function CastWatch({
               This world has several scenes. Pick the one that is casting.
               <br />
               {chooseScene.scenes.map((scene) => (
-                <Button key={scene.base} type="button" variant="secondary" size="sm" className="cast-watch__scene" onClick={() => chooseScene.onChoose(scene.base)}>
+                <Button key={scene.base} type="button" variant="secondary" size="sm" className="cast-watch__scene" onClick={() => {
+                  setRefusal(null);
+                  setState("onboarding");
+                  chooseScene.onChoose(scene.base);
+                }}>
                   {scene.title} {scene.base}
                 </Button>
               ))}

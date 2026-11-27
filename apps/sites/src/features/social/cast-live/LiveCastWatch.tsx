@@ -106,9 +106,8 @@ export default function LiveCastWatch({
   scenes?: Array<{ base: string; title: string }> | null;
 }) {
   const { identity } = useAuth();
-  const [chosenParcel, setChosenParcel] = useState(
-    () => parcel ?? (scenes?.length === 1 ? scenes[0].base : undefined),
-  );
+  const [pickedParcel, setPickedParcel] = useState<string>();
+  const chosenParcel = parcel ?? (scenes?.length === 1 ? scenes[0].base : pickedParcel);
   const [session, setSession] = useState<CastSession | null>(null);
   const sessionRef = useRef<CastSession | null>(null);
   const aborter = useRef<AbortController | null>(null);
@@ -136,7 +135,10 @@ export default function LiveCastWatch({
     const joined = await joinAsWatcher(signer, { location, parcel: chosenParcel }, controller.signal);
     // Abandoned: the page left or a newer join started. Never settles, so nothing renders.
     if (joined === null) return new Promise<WatchJoin>(() => {});
-    if ("refused" in joined) return { refused: joined.refused };
+    if ("refused" in joined) {
+      if (joined.refused.kind === "waiting") setPickedParcel(undefined);
+      return { refused: joined.refused };
+    }
     if (joined.credentials.placeName) setPlaceName(joined.credentials.placeName);
     setJoinedPlace({ placeName: joined.credentials.placeName || location, location, isWorld: isWorldLocation(location) });
     sessionRef.current = joined.session;
@@ -172,7 +174,7 @@ export default function LiveCastWatch({
     () => ({
       join,
       chooseScene: scenes && scenes.length > 1 && !chosenParcel
-        ? { scenes, onChoose: setChosenParcel }
+        ? { scenes, onChoose: setPickedParcel }
         : undefined,
       leave,
       bindLost,
