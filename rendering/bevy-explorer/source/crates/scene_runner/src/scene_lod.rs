@@ -1509,7 +1509,7 @@ mod tests {
     /// An ipfs client with a variants base, so far LODs can be offered.
     fn ipfs_resource_with_base() -> IpfsResource {
         let ipfs = ipfs_resource();
-        ipfs.set_bevy_variants_base(Some("https://abgen.example"), "test");
+        ipfs.init_bevy_variants_base(Some("https://abgen.example"), "test");
         ipfs
     }
 
@@ -2400,7 +2400,7 @@ mod tests {
 
         app.world()
             .resource::<IpfsResource>()
-            .set_bevy_variants_base(Some("https://abgen.example"), "test");
+            .init_bevy_variants_base(Some("https://abgen.example"), "test");
         let waiting = far(&mut app);
         app.world_mut().run_system_once(start_scene_lods).unwrap();
         assert!(matches!(

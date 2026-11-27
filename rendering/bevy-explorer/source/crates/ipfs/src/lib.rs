@@ -1164,7 +1164,11 @@ pub struct IpfsIo {
     in_flight: InFlightDownloads,
     // urls that failed, answered from memory on a repeat request (`failed_remotes`)
     failed_remotes: std::sync::Mutex<FailedRemotes>,
-    pub(crate) bevy_variants: bevy_variants::BevyVariants,
+    pub(crate) content_file_variants_config: bevy_variants::ContentFileVariantsConfig,
+    pub(crate) content_file_variant_manifests: bevy_variants::ContentFileVariantManifests,
+    pub(crate) content_file_variant_session: bevy_variants::ContentFileVariantSession,
+    // what the far LOD requests have answered: missing meshes and the breaker
+    pub(crate) far_lod_health: std::sync::Mutex<bevy_variants::FarLodHealth>,
     // cached entries checked after a failed load (`cache_heal`)
     pub(crate) cache_heals: cache_heal::CacheHeals,
     #[cfg(feature = "ipfs_debug")]
@@ -1210,7 +1214,10 @@ impl IpfsIo {
                 .unwrap(),
             in_flight: Default::default(),
             failed_remotes: Default::default(),
-            bevy_variants: Default::default(),
+            content_file_variants_config: Default::default(),
+            content_file_variant_manifests: Default::default(),
+            content_file_variant_session: Default::default(),
+            far_lod_health: Default::default(),
             cache_heals: Default::default(),
             #[cfg(feature = "ipfs_debug")]
             debug_overlay_sender,

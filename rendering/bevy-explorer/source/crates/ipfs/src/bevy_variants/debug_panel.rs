@@ -4,7 +4,10 @@ use common::sync::MutexExt;
 use console::{AddDebugSection, DebugSection, DoAddConsoleCommand};
 use serde_json::{json, Value};
 
-use super::{Base, BevyVariants, ManifestState};
+use super::{
+    Base, ContentFileVariantManifests, ContentFileVariantSession, ContentFileVariantsConfig,
+    ManifestState,
+};
 use crate::IpfsResource;
 
 pub(super) struct BevyVariantsDebugPanelPlugin;
@@ -47,16 +50,28 @@ struct BevyVariantsCommand;
 
 fn bevy_variants_state(mut input: ConsoleCommand<BevyVariantsCommand>, ipfs: Res<IpfsResource>) {
     if let Some(Ok(_)) = input.take() {
-        input.reply_ok(snapshot(&ipfs.bevy_variants).to_string());
+        input.reply_ok(
+            snapshot(
+                &ipfs.content_file_variants_config,
+                &ipfs.content_file_variant_manifests,
+                &ipfs.content_file_variant_session,
+            )
+            .to_string(),
+        );
     }
 }
 
-pub(super) fn snapshot(variants: &BevyVariants) -> Value {
+pub(super) fn snapshot(
+    config: &ContentFileVariantsConfig,
+    manifests: &ContentFileVariantManifests,
+    session: &ContentFileVariantSession,
+) -> Value {
     let mut counts = [0u64; 5];
-    let route = variants.route.borrow().clone();
-    let mut manifests: Vec<String> = variants
-        .manifests
+    let route = config.route();
+    let mut manifests: Vec<String> = manifests
+        .0
         .lock_ignore_poison()
+        .states
         .iter()
         .map(|(entity, state)| {
             let (slot, text) = match &*state.borrow() {
@@ -85,8 +100,8 @@ pub(super) fn snapshot(variants: &BevyVariants) -> Value {
         .collect();
     manifests.sort();
 
-    let session = variants.session.lock_ignore_poison();
-    let state = match (&route.base, &session.disabled, variants.bc.get()) {
+    let session = session.lock();
+    let state = match (&route.base, &session.disabled, config.reported_bc()) {
         (Base::Off, _, _) => "off".to_owned(),
         (Base::Pending(_), _, _) => "waiting for the endpoint flag".to_owned(),
         (Base::On(..), Some(reason), _) => format!("off for this session: {reason}"),
@@ -97,7 +112,7 @@ pub(super) fn snapshot(variants: &BevyVariants) -> Value {
         (Base::On(..), None, Some(true)) => "on".to_owned(),
     };
     let base = match &route.base {
-        Base::On(url, _) => Some(url.as_str()),
+        Base::On(base_url, _) => Some(base_url.view().as_str()),
         Base::Pending(_) | Base::Off => None,
     };
     let recent: Vec<String> = session

@@ -127,7 +127,7 @@ pub fn apply_client(
         if routing.flag_may_route {
             ipfs.route_bevy_variants_by_flag(base, routing.source);
         } else {
-            ipfs.set_bevy_variants_base(base, routing.source);
+            ipfs.init_bevy_variants_base(base, routing.source);
         }
     }
 
