@@ -164,19 +164,34 @@ describe('Toolkit Restart with the published SDK', () => {
     });
   }
 
-  it('keeps volume and loop changes made while Restart is pending', async () => {
+  it('keeps volume and loop changes through Restart and source restoration', async () => {
     const p = setup();
     p.controls.restart();
     await p.tick();
     p.controls.setVolumeExact(0.8);
     p.controls.setLoop(true);
-    await p.tick(0.2);
+    await p.tick(0.1);
+    expect(p.VideoPlayer.get(p.screen)).toMatchObject({
+      playing: false,
+      position: -1,
+      volume: 0.8,
+      loop: true,
+    });
+    await p.tick(0.1);
     expect(p.VideoPlayer.get(p.screen)).toMatchObject({
       playing: true,
       position: 0,
       volume: 0.8,
       loop: true,
     });
+    p.VideoPlayer.getMutable(p.screen).src = 'untrusted.mp4';
+    await p.tick();
+    expect(p.sent[p.sent.length - 1]).toMatchObject({
+      src: 'video.mp4',
+      playing: true,
+      loop: true,
+    });
+    expect(p.sent[p.sent.length - 1].volume).toBeCloseTo(0.8);
   });
 
   it('applies batched remote Restarts in separate local updates, after sender validation', async () => {

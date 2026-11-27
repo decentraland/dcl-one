@@ -69,6 +69,10 @@ const MSG = {
   SYNC_ADMINS: 'admin:sync-admins',
 } as const;
 
+const RESTART_PAUSE_SECONDS = 0.2;
+const REQUEST_RETRY_INTERVAL_MS = 1000;
+const MAX_REQUEST_ATTEMPTS = 10;
+
 // ── Public interface ─────────────────────────────────────────────────────────
 
 export interface AdminMessageBusInstance {
@@ -241,7 +245,7 @@ export function initAdminMessageBus(
         continue;
       }
       pending.elapsed += dt;
-      if (pending.elapsed < 0.2) continue;
+      if (pending.elapsed < RESTART_PAUSE_SECONDS) continue;
       pendingRestarts.delete(entity);
       const auth = authoritativeVideo.get(entity);
       if (auth) auth.playing = true;
@@ -286,17 +290,10 @@ export function initAdminMessageBus(
       const current = VideoPlayer.getOrNull(entity);
       if (!current) continue;
       const restarting = pendingRestarts.has(entity);
-      if (restarting || current.src !== (screen?.defaultURL || '')) {
-        const { src, playing, volume, loop } = current;
-        // Include the target state so a partial reply cannot stop retries for a missing screen.
-        video.push({
-          entity: entity as number,
-          src,
-          playing: restarting ? true : playing,
-          volume,
-          loop,
-        });
-      }
+      if (!restarting && current.src === (screen?.defaultURL || '')) continue;
+      const { src, playing, volume, loop } = current;
+      // Include the target state so a partial reply cannot stop retries for a missing screen.
+      video.push({ entity: entity as number, src, playing: restarting || playing, volume, loop });
     }
 
     const ta = TextAnnouncements.getOrNull(adminToolkitUiEntity);
@@ -369,8 +366,6 @@ export function initAdminMessageBus(
   // carries video state), not adminHasActed and not an announcement-only reply:
   // either would stop the retry without ever delivering the video state we're
   // still missing.
-  const REQUEST_RETRY_INTERVAL_MS = 1000;
-  const MAX_REQUEST_ATTEMPTS = 10;
   let requestAttempts = 1;
 
   emitMessage(MSG.REQUEST_STATE, {});
