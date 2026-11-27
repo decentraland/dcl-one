@@ -573,11 +573,35 @@ pub fn uint_or_null(expr: &str) -> String {
 /// collections require an active watch. The mainnets and the Ethereum NAME
 /// registrar have fixed coverage. The aliases are trusted query fragments.
 pub(super) fn nft_owner_at_fold_sql(nft: &str, cursor: &str) -> String {
-    use super::chain_walk::ChainNet;
+    nft_owner_at_fold_with_tail_sql(nft, cursor, false)
+}
 
-    let folded_block = format!("{cursor}.folded_block");
+const POLYGON_TRANSFER_TAIL_LIMIT: i32 = 1_024;
+
+fn nft_owner_at_fold_with_tail_sql(nft: &str, cursor: &str, polygon_tail: bool) -> String {
+    let no_transfer = format!(
+        "NOT EXISTS (
+            SELECT FROM shop.nft_event e
+            WHERE e.network = {nft}.network AND e.contract_address = {nft}.contract_address
+              AND e.token_id = {nft}.token_id AND e.kind = 'transfer'
+              AND e.block_number > {cursor}.folded_block
+        )"
+    );
+    // If the probe hit its limit, use the complete per-token proof. A
+    // partial tail can miss an earlier transfer above the published fold.
+    let no_transfer = if polygon_tail {
+        format!(
+            "CASE WHEN EXISTS (SELECT FROM polygon_transfer_tail OFFSET {POLYGON_TRANSFER_TAIL_LIMIT})
+             THEN {no_transfer}
+             ELSE ({nft}.contract_address, {nft}.token_id) NOT IN (
+                 SELECT e.contract_address, e.token_id FROM polygon_transfer_tail e WHERE e.kind = 'transfer'
+             ) END"
+        )
+    } else {
+        no_transfer
+    };
     format!(
-        "({nft}.transferred_block <= {folded_block}
+        "({nft}.transferred_block <= {cursor}.folded_block
           AND ({cursor}.chain_id IN ({ethereum}, {polygon})
             OR ({cursor}.network = 'ethereum' AND {nft}.contract_address = '{registrar}')
             OR EXISTS (
@@ -588,12 +612,7 @@ pub(super) fn nft_owner_at_fold_sql(nft: &str, cursor: &str) -> String {
                   AND active.chain_id = {cursor}.chain_id AND active.testnet_verified
             )
           )
-          AND NOT EXISTS (
-              SELECT FROM shop.nft_event e
-              WHERE e.network = {nft}.network AND e.contract_address = {nft}.contract_address
-                AND e.token_id = {nft}.token_id AND e.kind = 'transfer'
-                AND e.block_number > {folded_block}
-          )
+          AND {no_transfer}
           AND NOT EXISTS (
               SELECT FROM shop.nft_contract watched
               WHERE watched.network = {nft}.network AND watched.contract_address = {nft}.contract_address
@@ -888,7 +907,23 @@ fn build_legacy_orders_cte(
     let contracts = (!page_first && !contracts.is_empty()).then(|| b.bind_strings(&contracts));
     let min = f.min_price.as_ref().map(|v| b.bind_string(v.clone()));
     let max = f.max_price.as_ref().map(|v| b.bind_string(v.clone()));
-    let owner_at_fold = nft_owner_at_fold_sql("n", "nft_fold");
+    // Ranking by resale inputs probes the whole Polygon book. Read the
+    // small unpublished event tail once, in block order on the event PK.
+    // Read one extra row to detect when the tail needs per-token checks.
+    let polygon_tail = !page_first && books.nets.contains(&ChainNet::Matic);
+    if polygon_tail {
+        b.push(&format!(
+            "polygon_transfer_tail AS MATERIALIZED (
+                SELECT e.contract_address, e.token_id, e.kind FROM shop.nft_event e
+                WHERE e.network = 'matic' AND e.block_number > (
+                    SELECT folded_block FROM shop.chain_cursor
+                    WHERE indexer = 'nft' AND network = 'matic'
+                )
+                ORDER BY e.block_number DESC, e.log_index DESC LIMIT {}
+            ), ",
+            POLYGON_TRANSFER_TAIL_LIMIT + 1
+        ));
+    }
     b.push("legacy_orders AS (");
     for (idx, &net) in books.nets.iter().enumerate() {
         if idx != 0 {
@@ -912,15 +947,40 @@ fn build_legacy_orders_cte(
                 ),
             ),
         };
-        // The live order set is small relative to the token catalogue.
-        // Keep the keyed ownership probe attached to each qualifying order
-        // even when a generic plan cannot estimate the expiry parameter.
+        let ordered_polygon = polygon_tail && net == ChainNet::Matic;
+        let owner_at_fold = nft_owner_at_fold_with_tail_sql("n", "nft_fold", ordered_polygon);
+        let mut live = format!(
+            "o.network = '{network}' AND {collections} AND o.status = 'open' AND o.expires_at > {now}"
+        );
+        if let Some(contracts) = &contracts {
+            live.push_str(&format!(" AND o.contract_address = ANY({contracts})"));
+        }
+        if let Some(min) = &min {
+            live.push_str(&format!(" AND o.price >= {min}::numeric"));
+        }
+        if let Some(max) = &max {
+            live.push_str(&format!(" AND o.price <= {max}::numeric"));
+        }
+        let book = "shop.legacy_order o JOIN shop.collections c
+                    ON c.network = o.network AND c.contract_address = o.contract_address";
+        let (book, live) = if ordered_polygon {
+            // Walk the NFT keyspace in order even when the expiry index
+            // yields a large, scattered book. Keep the sort below the probes.
+            (
+                format!(
+                    "(SELECT o.network, o.contract_address, o.token_id, o.seller, o.price, o.created_at
+                      FROM {book} WHERE {live} ORDER BY o.contract_address, o.token_id OFFSET 0) o"
+                ),
+                String::new(),
+            )
+        } else {
+            (book.to_owned(), format!(" AND {live}"))
+        };
         b.push(&format!(
             "SELECT o.network, o.contract_address, {item} AS item_id,
                    count(*) AS listings_count, min(o.price) AS min_price, max(o.price) AS max_price,
                    max(o.created_at) AS latest
-             FROM shop.legacy_order o
-             JOIN shop.collections c ON c.network = o.network AND c.contract_address = o.contract_address
+             FROM {book}
              JOIN LATERAL (
                  SELECT n.network, n.contract_address, n.token_id, n.owner, n.transferred_block,
                         n.item_id, n.wearable_id
@@ -931,8 +991,7 @@ fn build_legacy_orders_cte(
              ) n ON true
              {nft_fold}
              {wearable}
-             WHERE o.network = '{network}' AND {collections} AND {item} IS NOT NULL
-               AND o.status = 'open' AND o.expires_at > {now} AND {owner_at_fold}",
+             WHERE {item} IS NOT NULL AND {owner_at_fold}{live}",
             nft_fold = super::orders::BOOK_NFT_FOLD_JOIN,
         ));
         if page_first {
@@ -941,15 +1000,6 @@ fn build_legacy_orders_cte(
                   AND (o.network, o.contract_address, {item})
                       IN (SELECT network, contract_address, item_id FROM catalog_candidates)",
             ));
-        }
-        if let Some(contracts) = &contracts {
-            b.push(&format!(" AND o.contract_address = ANY({contracts})"));
-        }
-        if let Some(min) = &min {
-            b.push(&format!(" AND o.price >= {min}::numeric"));
-        }
-        if let Some(max) = &max {
-            b.push(&format!(" AND o.price <= {max}::numeric"));
         }
         b.push(" GROUP BY o.network, o.contract_address, 3");
     }
