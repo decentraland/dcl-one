@@ -1162,6 +1162,28 @@ async fn a_creators_acceptances_keep_one_row_no_larger_than_its_collections_item
         Some(OWNER_KEY),
         "POST",
         &path,
+        Some(accept(vec![hash('c')])),
+    )
+    .await;
+    assert_eq!(status, 200);
+    let waiting: Value = sqlx::query_scalar(
+        "SELECT body->'hashes' FROM builder.terms_acceptances \
+         WHERE collection_id = $1 AND event = 'publish_third_party_items_tos'",
+    )
+    .bind(id)
+    .fetch_one(&node.pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        waiting,
+        json!([hash('b'), hash('c')]),
+        "a merged acceptance keeps no more hashes than the collection has items, the newest"
+    );
+    let (status, _) = call(
+        &node.app,
+        Some(OWNER_KEY),
+        "POST",
+        &path,
         Some(json!({ "email": "jane.doe@example.com" })),
     )
     .await;

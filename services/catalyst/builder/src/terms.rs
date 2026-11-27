@@ -104,7 +104,8 @@ pub fn parse(body: &Value) -> Result<Acceptance, ApiError> {
 /// Stores `acceptance` for the collection `manage` names, in place of the
 /// signer's earlier one of the same event, in one transaction that locks
 /// the collection and decides again ([`access::confirm_collection_manage`]);
-/// more hashes than the collection has items is a 400. Then tries its
+/// more hashes than the collection has items is a 400, and an acceptance
+/// merged into a waiting one keeps at most that many, the newest. Then tries its
 /// forward once when a warehouse is configured.
 pub async fn accept(
     state: &State,
@@ -122,15 +123,17 @@ pub async fn accept(
     .ok_or_else(|| ApiError::not_found("Collection not found"))?;
     let view = chain_state::for_decision(&mut tx).await?;
     access::confirm_collection_manage(&mut tx, &view, manage).await?;
-    if let Some(hashes) = &acceptance.hashes {
-        let items: i64 =
-            sqlx::query_scalar("SELECT count(*) FROM builder.items WHERE collection_id = $1")
-                .bind(manage.id())
-                .fetch_one(&mut *tx)
-                .await?;
-        if hashes.len() as i64 > items {
-            return Err(invalid_body());
-        }
+    let items: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM builder.items WHERE collection_id = $1")
+            .bind(manage.id())
+            .fetch_one(&mut *tx)
+            .await?;
+    if acceptance
+        .hashes
+        .as_ref()
+        .is_some_and(|hashes| hashes.len() as i64 > items)
+    {
+        return Err(invalid_body());
     }
     sqlx::query(
         "DELETE FROM builder.terms_acceptances \
@@ -154,7 +157,11 @@ pub async fn accept(
         THIRD_PARTY_EVENT => json!({
             "email": acceptance.email,
             "urn": urn.unwrap_or_else(|| "Unknown urn".into()),
-            "hashes": merged(waiting.as_ref().map(|(_, body)| &body["hashes"]), acceptance.hashes),
+            "hashes": merged(
+                waiting.as_ref().map(|(_, body)| &body["hashes"]),
+                acceptance.hashes,
+                usize::try_from(items).unwrap_or(0).min(MAX_HASHES),
+            ),
         }),
         _ => json!({
             "email": acceptance.email,
@@ -186,8 +193,8 @@ pub async fn accept(
 }
 
 /// The hashes of an acceptance still waiting for the warehouse, then the
-/// new ones it doesn't hold, at most [`MAX_HASHES`], the newest kept.
-fn merged(waiting: Option<&Value>, new: Option<Vec<String>>) -> Option<Vec<String>> {
+/// new ones it doesn't hold, at most `limit`, the newest kept.
+fn merged(waiting: Option<&Value>, new: Option<Vec<String>>, limit: usize) -> Option<Vec<String>> {
     let mut hashes: Vec<String> = waiting
         .and_then(Value::as_array)
         .into_iter()
@@ -203,7 +210,7 @@ fn merged(waiting: Option<&Value>, new: Option<Vec<String>>) -> Option<Vec<Strin
             hashes.push(hash);
         }
     }
-    let excess = hashes.len().saturating_sub(MAX_HASHES);
+    let excess = hashes.len().saturating_sub(limit);
     Some(hashes.split_off(excess))
 }
 
