@@ -13209,7 +13209,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/chat/ConversationMenu.tsx",
-      "sha256": "5f6f05f8512cf2f580951f7b36637600572780b6b6b724bd0d9e57a0d8aae291"
+      "sha256": "cf82e04220b8465d1e403e309fe11b731f0c9bc75a68c9dfe14b33af9b999cd4"
     },
     {
       "path": "library/ui/apps/hud/features/chat/ConversationRail.tsx",
@@ -17065,11 +17065,11 @@
     },
     {
       "path": "library/ui/components/ContextMenu/ContextMenu.module.css",
-      "sha256": "e30667ab83af768c6d9495214bfc7e7c1758c729e922527fc142c91335962939"
+      "sha256": "88ba2b56f037f9b007a4536e499a47f0223fb29c43ef9460198ebce0552a56da"
     },
     {
       "path": "library/ui/components/ContextMenu/ContextMenu.tsx",
-      "sha256": "2e554b0589471f454d6a4ad011ea560487ed9587b9966084d362cec6df270fe0"
+      "sha256": "d87199ed5111d6616228798841515be07b803a300cd505bccc95eaee74278386"
     },
     {
       "path": "library/ui/components/ContextMenu/KebabMenu.tsx",

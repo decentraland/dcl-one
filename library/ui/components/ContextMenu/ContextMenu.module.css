@@ -20,7 +20,7 @@
   max-width: var(--menu-width, 280px);
   padding: var(--dcl-space-8);
   background: var(--dcl-bg-page);
-  border: 2px solid var(--dcl-transparencies-white-10);
+  border: 2px solid var(--dcl-border-subtle);
   border-radius: var(--dcl-radius-md);
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5);
   color: var(--dcl-text-primary);
@@ -67,7 +67,7 @@
 .title {
   display: flex;
   align-items: center;
-  height: 36px;
+  min-height: 36px;
   padding: 0 var(--dcl-space-12);
   color: var(--dcl-text-secondary);
   font-size: var(--dcl-font-size-label-xs-caps);
@@ -95,18 +95,19 @@
 .sep {
   height: 1px;
   margin: var(--dcl-space-4) 0 5px;
-  background: var(--dcl-transparencies-white-10);
+  background: var(--dcl-border-subtle);
 }
 
-/* Figma's option row: a 20px icon, the label (body/sm-strong) and what trails it, 36px high. */
+/* Figma's option row: a 20px icon, the label (body/sm-strong) and what trails it, 36px high. A label too long for
+   one line wraps and the row grows: names people choose (a community's) are never cut. */
 .item {
   box-sizing: border-box;
   width: 100%;
-  height: 36px;
+  min-height: 36px;
   display: flex;
   align-items: center;
   gap: var(--dcl-space-8);
-  padding: 0 var(--dcl-space-12);
+  padding: var(--dcl-space-4) var(--dcl-space-12);
   text-align: left;
   background: none;
   border: none;
@@ -125,7 +126,8 @@
 .item:active {
   background: rgba(255, 255, 255, 0.05);
 }
-.icon {
+.icon,
+.item > .subIcon {
   flex: none;
   display: flex;
   align-items: center;
@@ -137,24 +139,24 @@
 .label {
   flex: 1;
   min-width: 0;
-  overflow: hidden;
-  white-space: nowrap;
-  text-overflow: ellipsis;
+  overflow-wrap: anywhere;
 }
-.chev {
+.chev,
+.item > .subChev {
   flex: none;
   display: flex;
-  color: var(--dcl-neutrals-silver);
+  color: var(--dcl-text-secondary);
 }
 /* Figma's destructive tone: the label in the system red, the icon in the primary action's. */
 .itemDanger {
-  color: var(--dcl-system-red);
+  color: var(--dcl-feedback-error);
 }
 .itemDanger .icon {
   color: var(--dcl-action-primary);
 }
 
-/* A row that opens a list beside it. The row takes the host menu's row class too. */
+/* A row that opens a list beside it. The row takes the host menu's row class too: in a ContextMenu its icon and
+   chevron take the menu's look (above), and elsewhere they keep the host row's own. */
 .subWrap {
   position: relative;
 }
@@ -164,10 +166,21 @@
   width: 100%;
   text-align: left;
 }
-/* Beside the row, a 4px gap from the surface it opens from, its first row level with the row. */
+.subIcon {
+  display: inline-flex;
+  flex: none;
+}
+.subChev {
+  flex: none;
+  display: flex;
+  color: rgba(255, 255, 255, 0.45); /* = HUD --ink-45 */
+}
+/* Beside the row, a 4px gap from the surface it opens from, its first row level with the row. As wide as its
+   list's rows, not as the row's room: a long name widens the list up to its maximum before it wraps. */
 .flyout {
   --menu-width: initial;
   position: absolute;
+  width: max-content;
   top: calc(-1 * var(--menu-edge, 0px));
   left: calc(100% + var(--menu-edge, 0px));
   padding-left: var(--dcl-space-4);

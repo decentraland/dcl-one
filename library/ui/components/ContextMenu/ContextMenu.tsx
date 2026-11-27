@@ -156,9 +156,9 @@ export function ContextMenu({
   )
 }
 
-function Chevron() {
+function Chevron({ className = styles.chev }: { className?: string }) {
   return (
-    <span className={styles.chev} aria-hidden="true">
+    <span className={className} aria-hidden="true">
       <GeneralRightArrow size={20} />
     </span>
   )
@@ -285,9 +285,9 @@ export function Submenu({ label, icon, children, className, whileOpen }: Submenu
           setOpen(true)
         }}
       >
-        {icon != null && <span className={styles.icon}>{icon}</span>}
+        {icon != null && <span className={styles.subIcon}>{icon}</span>}
         <span className={styles.label}>{label}</span>
-        <Chevron />
+        <Chevron className={styles.subChev} />
       </button>
       {open && (
         <div

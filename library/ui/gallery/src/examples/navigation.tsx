@@ -632,11 +632,18 @@ export const navigationEntries: GalleryEntry[] = [
       },
       {
         id: 'submenu',
-        title: 'A row that opens a list beside it, on hover or press',
+        title: 'A row that opens a list beside it, on hover or press; a long name wraps',
         render: () => (
           <div style={{ width: 240, minHeight: 150 }}>
             <Submenu label="Invite to Community">
-              <ContextMenu items={[{ label: 'Pixel Builders' }, { label: 'Neon Club' }]} scroll />
+              <ContextMenu
+                items={[
+                  { label: 'Pixel Builders' },
+                  { label: 'Neon Club' },
+                  { label: 'The Northern District Builders and Friends of Genesis Plaza' }
+                ]}
+                scroll
+              />
             </Submenu>
           </div>
         )

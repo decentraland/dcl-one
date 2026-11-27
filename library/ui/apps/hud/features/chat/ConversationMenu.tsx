@@ -8,7 +8,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { registerCancelLayer } from '@explorer-core/lib/cancelLayers'
 import { autoTranslates, setAutoTranslate } from '@explorer-core/features/chat/translation'
-import { MenusDelete, MenusNotifications, MenusTranslate } from '@dcl/one-ui'
+import { GeneralLeftArrow, MenusDelete, MenusNotifications, MenusTranslate } from '@dcl/one-ui'
 import { ContextMenu, type ContextMenuItem } from '../../design'
 import { KebabDots } from './ChatIcons'
 import { PING_MODES, clearPingMode, setPingMode, usePingPrefs } from './ping'
@@ -130,7 +130,8 @@ export function ConversationMenu({ channel, entries = [] }: { channel: string; e
           { kind: 'option', label: 'Default', checked: override == null, onClick: () => { clearPingMode(channel); close() } },
           ...PING_MODES.map((m): ContextMenuItem => ({ kind: 'option', label: m.label, checked: override === m.mode, onClick: () => { setPingMode(channel, m.mode); close() } })),
           { kind: 'separator' },
-          { label: 'Back', onClick: () => setPage('root') }
+          // an icon, as every row of the design has, keeps its label in line with the options'
+          { label: 'Back', icon: <GeneralLeftArrow size={20} />, onClick: () => setPage('root') }
         ]
   return (
     <>
