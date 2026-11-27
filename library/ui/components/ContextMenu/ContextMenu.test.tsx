@@ -167,6 +167,33 @@ describe('ContextMenu', () => {
     expect(whileSubmenuOpen).toHaveBeenCalledTimes(1)
   })
 
+  it("names each row with an icon by its label alone, keeps a row's state on the row and hides every icon", () => {
+    // Each icon carries a name of its own, so a row would read it unless the icon is hidden.
+    const icon = (name: string) => <img alt={name} />
+    render(
+      <ContextMenu
+        items={[
+          { label: 'View profile', icon: icon('person') },
+          { kind: 'toggle', label: 'Auto-Translate', icon: icon('translate'), checked: true },
+          { kind: 'option', label: 'All Messages', icon: icon('bell'), checked: true },
+          { kind: 'option', label: 'None', icon: icon('muted'), checked: false },
+          { kind: 'submenu', label: 'Notification Ping', icon: icon('ping'), onClick: () => {} },
+          { kind: 'submenu', label: 'Invite to Community', icon: icon('people'), items: [{ label: 'Pixel Builders' }] },
+          { label: 'Delete Chat History', icon: icon('bin'), danger: true }
+        ]}
+      />
+    )
+    expect(screen.getByRole('menuitem', { name: 'View profile' })).toBeInTheDocument()
+    expect(screen.getByRole('menuitemcheckbox', { name: 'Auto-Translate', checked: true })).toBeInTheDocument()
+    expect(screen.getByRole('menuitemradio', { name: 'All Messages', checked: true })).toBeInTheDocument()
+    expect(screen.getByRole('menuitemradio', { name: 'None', checked: false })).toBeInTheDocument()
+    expect(screen.getByRole('menuitem', { name: 'Notification Ping' })).toBeInTheDocument()
+    expect(screen.getByRole('menuitem', { name: 'Invite to Community' })).toHaveAttribute('aria-haspopup', 'menu')
+    expect(screen.getByRole('menuitem', { name: 'Delete Chat History' })).toBeInTheDocument()
+    expect(screen.queryAllByRole('img')).toHaveLength(0)
+    expect(screen.getAllByRole('img', { hidden: true, name: /^(person|translate|bell|muted|ping|people|bin)$/ })).toHaveLength(7)
+  })
+
   it('takes the scroll form', () => {
     const view = render(<ContextMenu items={[]} />)
     const plain = screen.getByRole('menu').className
@@ -208,6 +235,16 @@ describe('Submenu', () => {
     expect(inMenu.lastElementChild?.querySelector('svg')).not.toBeNull()
     expect(inMenu).not.toHaveTextContent('›')
     expect(screen.getByTestId('people').parentElement?.className).not.toBe(aloneIcon)
+  })
+
+  it('names its row by the label alone outside a menu too, with the icon hidden', () => {
+    render(
+      <Submenu label="Invite" icon={<img alt="people" />}>
+        {list}
+      </Submenu>
+    )
+    expect(screen.getByRole('menuitem', { name: 'Invite' })).toBeInTheDocument()
+    expect(screen.queryByRole('img')).toBeNull()
   })
 
   it('opens on hover and closes when the pointer leaves', () => {
