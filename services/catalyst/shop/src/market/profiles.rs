@@ -30,7 +30,7 @@ use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use serde_json::{Value, json};
 
-use crate::content::queries::{active_entity_docs_by_pointers, retain_non_denylisted};
+use crate::content::read_through::active_entity_docs;
 
 use super::owned_items::{self, Rule};
 use super::third_party;
@@ -76,9 +76,16 @@ pub(super) const PROFILE_LOOKUP_CHUNK: usize = 1000;
 /// failed, by `route` and `layer` (`entities`, `ownership`). The Registry
 /// and Lambdas can use their normal response statuses for these failures.
 pub(super) const PROFILE_LOOKUP_FAILURES: &str = "profiles_lookup_failures_total";
+const LOOKUP_FAILURE_COUNTER: dcl_metrics::CounterFamily<2> = dcl_metrics::CounterFamily::new(
+    PROFILE_LOOKUP_FAILURES,
+    "Profile lookups that failed, by route and failed lookup layer.",
+    Some(dcl_metrics::Unit::Count),
+    &["route", "layer"],
+);
+pub const FAMILIES: &[dcl_metrics::Descriptor] = &[LOOKUP_FAILURE_COUNTER.descriptor];
 
 pub(super) fn count_lookup_failure(route: &'static str, layer: &'static str) {
-    metrics::counter!(PROFILE_LOOKUP_FAILURES, "route" => route, "layer" => layer).increment(1);
+    LOOKUP_FAILURE_COUNTER.handle([route, layer]).increment(1);
 }
 
 /// A pointer that can name a profile: an address (`0x` and 40 hex digits,
@@ -534,6 +541,7 @@ async fn process_profiles_observed(
                         // snapshot.
                         owned_items::owned_tokens_and_names(
                             &state.pool,
+                            state.settings.catalogue(),
                             &requested,
                             &addresses,
                             Rule::Complete,
@@ -542,10 +550,15 @@ async fn process_profiles_observed(
                         .map(|(owned, names, seen)| (owned, Some(names), Some(seen)))
                         .map_err(|e| e.to_string())
                     } else if collections && !requested.is_empty() {
-                        owned_items::owned_tokens_observed(&state.pool, &requested, Rule::Complete)
-                            .await
-                            .map(|(owned, seen)| (owned, None, seen))
-                            .map_err(|e| e.to_string())
+                        owned_items::owned_tokens_observed(
+                            &state.pool,
+                            state.settings.catalogue(),
+                            &requested,
+                            Rule::Complete,
+                        )
+                        .await
+                        .map(|(owned, seen)| (owned, None, seen))
+                        .map_err(|e| e.to_string())
                     } else {
                         Ok((HashMap::new(), None, None))
                     }
@@ -634,14 +647,17 @@ pub(super) async fn active_entities(
     if pointers.is_empty() {
         return Ok(Vec::new());
     }
-    let mut docs = match &state.read_through {
-        Some(read_through) => read_through.active_docs(false, pointers).await,
-        None => active_entity_docs_by_pointers(&state.pool, pointers).await,
-    }
+    let docs = active_entity_docs(
+        &state.pool,
+        state.read_through.as_deref(),
+        false,
+        pointers,
+        Some(&state.denylist),
+    )
+    .await
     .map_err(|e| {
         tracing::error!(error = %e, "lambdas: active entities query failed");
     })?;
-    retain_non_denylisted(&mut docs, &state.denylist);
     Ok(docs.iter().filter_map(|d| d.to_value()).collect())
 }
 
@@ -1041,6 +1057,31 @@ pub async fn profiles_metadata(
         }
     }
     Json(compact).into_response()
+}
+
+/// The profile's name when the address holds it as a NAME (`hasClaimedName`,
+/// the same check `profiles` serves), as the purchase receipt greets its
+/// buyer. `None` for an unclaimed name, no profile, or a failed read: an
+/// unclaimed name is a non-unique default, and a greeting is never worth an
+/// error.
+pub async fn claimed_name(state: &MarketplaceState, address: &str) -> Option<String> {
+    let pointer = address.to_lowercase();
+    let found = processed_profiles(state, std::slice::from_ref(&pointer))
+        .await
+        .ok()?;
+    let (_, profile) = found
+        .into_iter()
+        .find(|(found, _)| found.eq_ignore_ascii_case(&pointer))?;
+    let avatar = profile.get("avatars")?.as_array()?.first()?;
+    if avatar.get("hasClaimedName").and_then(Value::as_bool) != Some(true) {
+        return None;
+    }
+    avatar
+        .get("name")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+        .map(str::to_string)
 }
 
 pub async fn profile_by_id(State(state): State<SharedState>, Path(id): Path<String>) -> Response {

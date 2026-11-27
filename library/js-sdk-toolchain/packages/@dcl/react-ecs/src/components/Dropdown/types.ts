@@ -1,6 +1,6 @@
-import { PBUiDropdown } from '@dcl/ecs'
-import { TextAlignType, UiFontType } from '../Label/types'
-import { EntityPropTypes, ScaleUnit } from '../types'
+import type { PBUiDropdown } from '@dcl/ecs'
+import type { TextAlignType, UiFontType } from '../Label/types'
+import type { EntityPropTypes, ScaleUnit } from '../types'
 
 /**
  * @public

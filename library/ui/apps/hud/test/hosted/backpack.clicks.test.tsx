@@ -2,7 +2,7 @@ import { describe, it, expect, vi } from 'vitest'
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { BackpackPage } from '../../features/backpack/BackpackPage'
-import type { Outfit, OutfitSlot, Wearable } from '@explorer-core/engine/protocol'
+import type { Emote, Outfit, OutfitSlot, Wearable } from '@explorer-core/engine/protocol'
 import type { BackpackState } from '../../features/session/useEngineSession'
 import { SessionProvider } from '../../features/session/SessionContext'
 import { fakeProfileState, fakeSession } from '../harness'
@@ -22,9 +22,11 @@ const outfitSlot = (slot: number, wearables: string[]): OutfitSlot => {
   return { slot, outfit }
 }
 
-function renderBackpack(over: Partial<BackpackState> = {}, modal = false): BackpackState {
+const WAVE: Emote = { slot: 1, urn: 'urn:wave', name: 'Wave' }
+
+function renderBackpack(over: Partial<BackpackState> = {}, modal = false, emoteList: Emote[] = [WAVE]): BackpackState {
   const backpack: BackpackState = { ...fakeSession().backpack, open: true, list: [wearable()], equip: vi.fn(), preview: vi.fn(), ...over }
-  const emotes = { ...fakeSession().emotes, list: [{ slot: 1, urn: 'urn:wave', name: 'Wave' }] }
+  const emotes = { ...fakeSession().emotes, list: emoteList }
   render(
     <SessionProvider value={fakeSession()}>
       <BackpackPage
@@ -52,18 +54,30 @@ describe('backpack page clicks', () => {
     expect(vi.mocked(backpack.equip)).not.toHaveBeenCalled()
   })
 
-  it('in the modal the detail has a close button, which puts the selection away', async () => {
-    renderBackpack({}, true)
+  it("the detail panel shows the selected wearable's description", async () => {
+    renderBackpack({ list: [wearable({ description: '  Keeps the sun off.  ' })] })
     await userEvent.click(screen.getByRole('button', { name: 'Cool Hat' }))
-    await userEvent.click(screen.getByRole('button', { name: 'Close item details' }))
-    expect(screen.getByText('No item selected')).toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: 'Close item details' })).toBeNull()
+    expect(screen.getByText('Keeps the sun off.')).toBeInTheDocument()
+    expect(screen.queryByText(/does not have a description set/)).toBeNull()
   })
 
-  it('on the page the detail has no close button', async () => {
-    renderBackpack()
+  it.each([undefined, '', '   '])('the detail panel says a wearable has no description when it is %j', async (description) => {
+    renderBackpack({ list: [wearable({ description })] })
     await userEvent.click(screen.getByRole('button', { name: 'Cool Hat' }))
-    expect(screen.queryByRole('button', { name: 'Close item details' })).toBeNull()
+    expect(screen.getByText('This wearable does not have a description set.')).toBeInTheDocument()
+  })
+
+  it('in the modal (the lobby) a click shows no detail panel, and a double-click still equips', async () => {
+    const backpack = renderBackpack({}, true)
+    expect(screen.queryByText('No item selected')).toBeNull()
+    await userEvent.click(screen.getByRole('button', { name: 'Cool Hat' }))
+    expect(screen.queryByRole('complementary')).toBeNull()
+    expect(screen.queryByText('No item selected')).toBeNull()
+    expect(screen.queryByText('Cool Hat')).toBeNull()
+    expect(vi.mocked(backpack.preview)).not.toHaveBeenCalled()
+    expect(vi.mocked(backpack.equip)).not.toHaveBeenCalled()
+    await userEvent.dblClick(screen.getByRole('button', { name: 'Cool Hat' }))
+    expect(vi.mocked(backpack.equip)).toHaveBeenCalledWith(['urn:hat'])
   })
 
   it('double-clicking a wearable card equips it', async () => {
@@ -111,7 +125,7 @@ describe('backpack page clicks', () => {
     expect(document.querySelectorAll('[class*="outfitEquipped"]')).toHaveLength(1)
   })
 
-  it('outfits: a single click neither equips nor previews', async () => {
+  it('outfits: a click shows the outfit on the avatar without equipping it', async () => {
     const backpack = renderBackpack({
       list: [],
       equipped: [],
@@ -119,21 +133,49 @@ describe('backpack page clicks', () => {
     })
     await userEvent.click(screen.getByRole('tab', { name: /saved outfits/i }))
     await userEvent.click(screen.getByRole('button', { name: 'Outfit 1' }))
+    expect(vi.mocked(backpack.previewOutfit)).toHaveBeenCalledWith(0)
     expect(vi.mocked(backpack.equipOutfit)).not.toHaveBeenCalled()
-    expect(vi.mocked(backpack.preview)).not.toHaveBeenCalled()
   })
 
-  it('outfits: double-clicking an outfit equips it', async () => {
+  it('outfits: double-clicking an outfit does not equip it', async () => {
     const backpack = renderBackpack({ list: [], equipped: [], outfits: [outfitSlot(0, ['urn:hat'])] })
     await userEvent.click(screen.getByRole('tab', { name: /saved outfits/i }))
     await userEvent.dblClick(screen.getByRole('button', { name: 'Outfit 1' }))
-    expect(vi.mocked(backpack.equipOutfit)).toHaveBeenCalledWith(0)
+    expect(vi.mocked(backpack.previewOutfit)).toHaveBeenCalledWith(0)
+    expect(vi.mocked(backpack.equipOutfit)).not.toHaveBeenCalled()
+  })
+
+  it('outfits: EQUIP equips the outfit', async () => {
+    const backpack = renderBackpack({ list: [], equipped: [], outfits: [outfitSlot(1, ['urn:hat'])] })
+    await userEvent.click(screen.getByRole('tab', { name: /saved outfits/i }))
+    await userEvent.click(screen.getByRole('button', { name: 'EQUIP' }))
+    expect(vi.mocked(backpack.equipOutfit)).toHaveBeenCalledWith(1)
+    expect(vi.mocked(backpack.previewOutfit)).not.toHaveBeenCalled()
+  })
+
+  it('outfits: leaving the Saved Outfits puts back the look from before a preview', async () => {
+    const backpack = renderBackpack({ list: [], equipped: [], outfits: [outfitSlot(0, ['urn:hat'])] })
+    expect(vi.mocked(backpack.restoreOutfitPreview)).not.toHaveBeenCalled()
+    await userEvent.click(screen.getByRole('tab', { name: /saved outfits/i }))
+    expect(vi.mocked(backpack.restoreOutfitPreview)).not.toHaveBeenCalled()
+    await userEvent.click(screen.getByRole('tab', { name: 'Emotes' }))
+    expect(vi.mocked(backpack.restoreOutfitPreview)).toHaveBeenCalledTimes(1)
   })
 
   it('switching to the Emotes tab shows the equipped emotes', async () => {
     renderBackpack()
     await userEvent.click(screen.getByRole('tab', { name: 'Emotes' }))
     expect(screen.getByText('Wave')).toBeInTheDocument()
+  })
+
+  it("the detail panel shows an emote's description, and says so when it has none", async () => {
+    renderBackpack({}, false, [WAVE, { urn: 'urn:clap', name: 'Clap', description: 'A slow, sincere clap.' }])
+    await userEvent.click(screen.getByRole('tab', { name: 'Emotes' }))
+    await userEvent.click(screen.getByRole('button', { name: 'Clap' }))
+    expect(screen.getByText('A slow, sincere clap.')).toBeInTheDocument()
+    await userEvent.click(screen.getByRole('button', { name: 'Wave' }))
+    expect(screen.getByText('This emote does not have a description set.')).toBeInTheDocument()
+    expect(screen.queryByText('A slow, sincere clap.')).toBeNull()
   })
 
   it('opens directly on the Emotes tab when initialTab="emotes" (the wheel\'s "Customise [E]")', () => {

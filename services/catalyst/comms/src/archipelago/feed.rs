@@ -722,7 +722,6 @@ mod tests {
             state.clone(),
             false,
             Default::default(),
-            crate::stats::http::test_support::matcher(),
             Arc::new(crate::content::Denylist::default()),
         );
         let bytes = IslandStatusMessage {
@@ -890,7 +889,6 @@ mod tests {
             state.clone(),
             true,
             Default::default(),
-            crate::stats::http::test_support::matcher(),
             Arc::new(crate::content::Denylist::default()),
         )
         .root

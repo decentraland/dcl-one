@@ -11,6 +11,7 @@
 //! `[senderLen u8][sender][frame]`; a custom event's payload is the envelope
 //! `{eventType: String, timestamp: Int64}` followed by the registered schema,
 //! all little-endian with u32 length-prefixed utf8 strings.
+#![allow(clippy::unwrap_used, reason = "test support")]
 
 mod common {
     pub mod testgate;
@@ -73,6 +74,10 @@ fn node_bin() -> Option<PathBuf> {
 
 /// A fresh scaffold with the flag set and the proof scene in place, built
 /// the way `start` builds it.
+#[allow(
+    unsafe_code,
+    reason = "clears inherited environment before the test starts tasks"
+)]
 async fn build_flagged_scene() -> PathBuf {
     for key in ["DCL_PRIVATE_KEY", "RUST_LOG", "NO_COLOR"] {
         // SAFETY: the only test here that reads the environment writes it

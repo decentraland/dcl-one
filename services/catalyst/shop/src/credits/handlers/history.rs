@@ -68,10 +68,17 @@ pub async fn credit_orders(
         query.get("offset").map(String::as_str),
         500,
     );
+    // Gifts page on their own: paging through the orders must not skip or
+    // repeat a gift.
+    let (gifts_limit, gifts_offset) = clamp_page(
+        query.get("giftsLimit").map(String::as_str),
+        query.get("giftsOffset").map(String::as_str),
+        500,
+    );
     Ok(Json(
         state
             .credits
-            .credit_orders_history(&wallet, limit, offset)
+            .credit_orders_history(&wallet, limit, offset, gifts_limit, gifts_offset)
             .await?,
     ))
 }

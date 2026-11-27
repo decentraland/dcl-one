@@ -27,7 +27,7 @@ struct Cli {
 enum Command {
     /// Verify the schema, attach the workers and serve HTTP.
     Serve(Box<Config>),
-    /// Run chain indexes and marketplace mirrors. INDEX_METRICS_BIND enables a loopback metrics listener.
+    /// Run chain indexes and marketplace mirrors with a private metrics listener.
     Index(Box<Config>),
     /// Administrative schema operations.
     Schema {
@@ -178,7 +178,7 @@ enum ShopCommand {
         database_url: String,
         #[arg(long, value_parser = ["ethereum", "matic"])]
         net: String,
-        #[arg(long, value_parser = ["nft", "sales", "trade_events", "committee", "mana_transfers", "rentals", "third_party_registry"])]
+        #[arg(long, value_parser = ["nft", "sales", "trade_events", "committee", "mana_transfers", "rentals", "third_party_registry", "collections"])]
         indexer: String,
         #[arg(long)]
         from: u64,
@@ -220,6 +220,42 @@ enum ExploreCommand {
         /// The export; `-` reads standard input.
         #[arg(long)]
         file: String,
+    },
+    /// Make wallets events moderators (`explore.moderators`, the old events
+    /// service's `ADMIN_ADDRESSES`): they see pending events and administer
+    /// schedules and profile settings from the next request on. `--addresses`
+    /// takes that variable's comma-separated value as it was; an entry that is
+    /// not exactly a wallet address refuses the whole list. A listed wallet
+    /// keeps its row, so a re-run adds nothing. Each new row records
+    /// `--added-by` and an `explore`/`events.moderator.add` audit row by
+    /// `cli:<wallet>`. Prints the outcome as JSON. Not behind
+    /// OPS_WRITES_ENABLED: a seed is operator data.
+    ModeratorsAdd {
+        #[arg(long, env = "DATABASE_URL", hide_env_values = true)]
+        database_url: String,
+        /// Comma-separated wallet addresses.
+        #[arg(long)]
+        addresses: String,
+        /// The operator wallet recorded as `added_by` and in the audit actor.
+        #[arg(long, value_parser = wallet)]
+        added_by: String,
+    },
+    /// Remove events moderators (`--addresses` as for `moderators-add`),
+    /// each with an `events.moderator.remove` audit row by `cli:<actor>`.
+    ModeratorsRemove {
+        #[arg(long, env = "DATABASE_URL", hide_env_values = true)]
+        database_url: String,
+        /// Comma-separated wallet addresses.
+        #[arg(long)]
+        addresses: String,
+        /// The operator wallet recorded in the audit actor.
+        #[arg(long, value_parser = wallet)]
+        actor: String,
+    },
+    /// Print the events moderators as JSON.
+    ModeratorsList {
+        #[arg(long, env = "DATABASE_URL", hide_env_values = true)]
+        database_url: String,
     },
 }
 
@@ -539,6 +575,22 @@ enum SchemaCommand {
     Functions,
 }
 
+/// A one-connection pool over a bootstrapped database, for an operator command.
+async fn operator_pool(database_url: &str) -> anyhow::Result<sqlx::PgPool> {
+    tracing_subscriber::fmt().with_target(false).init();
+    let pool = db::connect_pool(
+        database_url,
+        &db::PoolSettings {
+            max_connections: 1,
+            ..Default::default()
+        },
+    )
+    .await
+    .context("connecting to DATABASE_URL")?;
+    db::bootstrap(&pool).await?;
+    Ok(pool)
+}
+
 /// `catalyst schema layout`.
 fn schema_layout() -> String {
     catalyst::schema_migrate::layout(
@@ -550,12 +602,15 @@ fn schema_layout() -> String {
 }
 
 fn main() -> anyhow::Result<()> {
-    // The posture writes the environment clap reads, so it expands first,
-    // while this is the only thread.
-    posture::apply_to_process_env()?;
+    // The posture writes the environment clap reads, so it expands first.
+    // SAFETY: no other thread has started yet.
+    #[allow(unsafe_code, reason = "the posture writes the process environment")]
+    unsafe {
+        posture::apply_to_process_env()?;
+    }
     // The complete clap tree exceeds the default Windows debug stack. This
     // parser-only thread returns plain values and finishes before V8 or runtime
-    // initialization; it never owns engine state or serves matcher work.
+    // initialization.
     let parsed = std::thread::Builder::new()
         .name("cli-parser".into())
         .stack_size(64 << 20)
@@ -568,37 +623,27 @@ fn main() -> anyhow::Result<()> {
         .join()
         .map_err(|_| anyhow::anyhow!("CLI parser thread panicked"))?;
     let (mut cli, matches) = parsed.unwrap_or_else(|error| error.exit());
-    let prepared = match &mut cli.command {
+    match &mut cli.command {
         Command::Serve(config) => {
             if let Some(arguments) = matches.subcommand_matches("serve") {
                 config.refuse_argv_secrets(arguments)?;
             }
             serve_preflight(config, &|key: &str| std::env::var(key).ok())?;
             catalyst::worlds::scene_state::jsruntime::ensure_v8_initialized();
-            // SAFETY: This startup thread performs the first common initialization.
-            // All runtime/blocking workers descend from it afterwards. Prepared
-            // state never escapes this runtime; its drop joins canceled blocking
-            // work, and final handles are destroyed within this permitted subtree.
-            Some(unsafe {
-                catalyst::metrics_matcher::prepare(
-                    catalyst::comms::stats::http::Settings::from_env(),
-                )?
-            })
         }
         Command::Index(config) => {
             if let Some(arguments) = matches.subcommand_matches("index") {
                 config.refuse_argv_secrets(arguments)?;
             }
             check_posture(config)?;
-            None
         }
-        _ => None,
-    };
+        _ => {}
+    }
     tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
         .context("building the tokio runtime")?
-        .block_on(run(cli, prepared))
+        .block_on(run(cli))
 }
 
 /// The refusals of [`posture::check`] against this process's environment.
@@ -614,16 +659,13 @@ fn serve_preflight(config: &Config, env: &posture::Lookup) -> anyhow::Result<()>
     Ok(())
 }
 
-async fn run(
-    cli: Cli,
-    prepared: Option<catalyst::metrics_matcher::PreparedStats>,
-) -> anyhow::Result<()> {
+#[allow(
+    clippy::print_stdout,
+    reason = "subcommands print their reports, JSON and SQL to stdout"
+)]
+async fn run(cli: Cli) -> anyhow::Result<()> {
     match cli.command {
-        Command::Serve(config) => {
-            let prepared =
-                prepared.context("serve metrics must be prepared before runtime creation")?;
-            catalyst::serve::serve(*config, prepared).await
-        }
+        Command::Serve(config) => catalyst::serve::serve(*config).await,
         Command::Index(config) => catalyst::index::run(*config).await,
         Command::Schema {
             command: SchemaCommand::Apply { database_url },
@@ -800,6 +842,42 @@ async fn run(
             };
             let out =
                 explore::places::interactions::import_upstream_likes(&pool, reader.lines()).await?;
+            println!("{}", serde_json::to_string(&out)?);
+            Ok(())
+        }
+        Command::Explore {
+            command:
+                ExploreCommand::ModeratorsAdd {
+                    database_url,
+                    addresses,
+                    added_by,
+                },
+        } => {
+            let pool = operator_pool(&database_url).await?;
+            let out =
+                explore::events::moderators::apply_cli(&pool, &addresses, &added_by, true).await?;
+            println!("{}", serde_json::to_string(&out)?);
+            Ok(())
+        }
+        Command::Explore {
+            command:
+                ExploreCommand::ModeratorsRemove {
+                    database_url,
+                    addresses,
+                    actor,
+                },
+        } => {
+            let pool = operator_pool(&database_url).await?;
+            let out =
+                explore::events::moderators::apply_cli(&pool, &addresses, &actor, false).await?;
+            println!("{}", serde_json::to_string(&out)?);
+            Ok(())
+        }
+        Command::Explore {
+            command: ExploreCommand::ModeratorsList { database_url },
+        } => {
+            let pool = operator_pool(&database_url).await?;
+            let out = explore::events::moderators::list(&pool).await?;
             println!("{}", serde_json::to_string(&out)?);
             Ok(())
         }

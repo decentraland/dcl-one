@@ -398,7 +398,7 @@ struct TestPeer {
     http: tokio::task::JoinHandle<()>,
     down: Arc<AtomicBool>,
     snapshots: watch::Sender<Value>,
-    files: Arc<StdMutex<HashMap<String, Vec<u8>>>>,
+    files: Arc<SyncMutex<HashMap<String, Vec<u8>>>>,
     snapshot_gate: RequestGate,
     content_gate: RequestGate,
 }
@@ -416,7 +416,6 @@ impl TestPeer {
         let hash = crate::auth::hash_bytes_v1(&snapshot);
         self.files
             .lock()
-            .unwrap()
             .extend([(id.clone(), entity), (hash.clone(), snapshot)]);
         self.snapshots.send_replace(json!([{
             "hash": hash,
@@ -496,7 +495,7 @@ async fn spawn_test_peer(
         deltas.push(deployment);
         ids.push(id);
     }
-    let files = Arc::new(StdMutex::new(files));
+    let files = Arc::new(SyncMutex::new(files));
     let (snapshots, listed) = watch::channel(snapshots);
     let snapshot_gate = RequestGate::default();
     let content_gate = RequestGate::default();
@@ -532,7 +531,6 @@ async fn spawn_test_peer(
                     gate.enter().await;
                     files
                         .lock()
-                        .unwrap()
                         .get(&id)
                         .cloned()
                         .ok_or(axum::http::StatusCode::NOT_FOUND)
@@ -716,17 +714,69 @@ async fn an_unreachable_peer_does_not_hold_the_node_in_bootstrap() {
     .await;
     let peers: HashSet<String> = [good.url.clone(), dead.url.clone()].into_iter().collect();
 
+    let (_metrics, recorded) = crate::sync::metrics::local_recorder();
     let (first, repo, temp) = test_orchestrator(&pool, fast_config()).await;
     let _handle = first.sync_with_servers(peers.clone()).await.unwrap();
     wait_until("the steady state with a dead peer", async || {
         first.state() == SyncState::Syncing
     })
     .await;
+    let good_origin = crate::sync::metrics::remote_server(&good.url);
+    wait_until("the good peer's stream", async || {
+        crate::sync::metrics::sample(
+            &recorded.render(),
+            &format!(
+                "dcl_deployments_stream_reconnection_count{{remote_server=\"{good_origin}\"}}"
+            ),
+        )
+        .is_some()
+    })
+    .await;
     let good_deployed = deployed(&pool, &good_ids).await;
     let dead_deployed = deployed(&pool, &dead_ids).await;
     let dead_cursor = repo.get_server_sync_cursor(&dead.url).await.unwrap();
     let good_cursor = repo.get_server_sync_cursor(&good.url).await.unwrap();
+    let during = recorded.render();
     first.stop().await;
+    let stopped = recorded.render();
+    for (series, value) in [
+        ("dcl_bootstrapping_servers{from=\"snapshots\"}", 1.0),
+        ("dcl_bootstrapping_servers{from=\"pointer-changes\"}", 0.0),
+        ("dcl_syncing_servers", 1.0),
+        ("dcl_content_server_sync_state", 1.0),
+    ] {
+        let got = crate::sync::metrics::sample(&during, series);
+        assert_eq!(got, Some(value), "{series}:\n{during}");
+    }
+    for series in [
+        format!(
+            "dcl_entities_deployments_streamed_total{{remote_server=\"{good_origin}\",source=\"pointer-changes\"}}"
+        ),
+        format!(
+            "dcl_entities_deployments_processed_total{{remote_server=\"{good_origin}\",source=\"pointer-changes\"}}"
+        ),
+    ] {
+        let got = crate::sync::metrics::sample(&during, &series);
+        assert!(
+            got.is_some_and(|n| n >= good_ids.len() as f64),
+            "{series}:\n{during}"
+        );
+    }
+    let page_times = format!(
+        "dcl_catalysts_pointer_changes_response_time_seconds_count{{remote_server=\"{good_origin}\"}}"
+    );
+    assert!(crate::sync::metrics::sample(&during, &page_times).is_some_and(|n| n >= 1.0));
+    for series in [
+        "dcl_bootstrapping_servers{from=\"snapshots\"}",
+        "dcl_syncing_servers",
+    ] {
+        let got = crate::sync::metrics::sample(&stopped, series);
+        assert_eq!(
+            got,
+            Some(0.0),
+            "a stopped orchestrator follows no peer: {series}"
+        );
+    }
     let _ = std::fs::remove_dir_all(&temp);
     assert_eq!(
         good_deployed,

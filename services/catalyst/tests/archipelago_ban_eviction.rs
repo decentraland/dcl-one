@@ -35,10 +35,8 @@ use futures::{SinkExt, StreamExt};
 use prost::Message as _;
 use tokio_tungstenite::tungstenite::Message as WsMessage;
 
-#[path = "support/archipelago.rs"]
-mod archipelago;
-#[path = "support/db.rs"]
-mod db;
+use crate::archipelago;
+use crate::db;
 
 /// The ban authority over the scratch database: `ban` blocks a wallet for the next check.
 struct Bans {
@@ -191,7 +189,7 @@ async fn handshake(port: u16, wallet: &PrivateKeySigner) -> WsStream {
 
 async fn wait_for_peer(state: &AppState, addr: &str) {
     for _ in 0..60 {
-        if archipelago::peer(&state, addr).is_some() {
+        if archipelago::peer(state, addr).is_some() {
             return;
         }
         tokio::time::sleep(Duration::from_millis(50)).await;

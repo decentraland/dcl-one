@@ -224,6 +224,8 @@
   letter-spacing: 0;
   color: rgba(255, 255, 255, 0.62);
 }
+/* The shared strip's rules sit in a cascade layer, so the dimmed colour above would hold on hover. */
+.tabs.tabs [role='tab']:hover:not(:disabled),
 .tabs.tabs [role='tab'][aria-selected='true'] {
   color: #fff;
 }
@@ -544,7 +546,7 @@
 }
 /* The shared equipped tile, as the passport draws it: 150px square picture in a
    light bevel, 14px name and a square-cornered rarity tag on a wine body. Local overrides of
-   design/EquippedItemCard (see the hand-off: these belong in the component). */
+   the shared EquippedItemCard, by element (see the hand-off: these belong in the component). */
 .equippedRow > div {
   border-radius: 12px;
 }

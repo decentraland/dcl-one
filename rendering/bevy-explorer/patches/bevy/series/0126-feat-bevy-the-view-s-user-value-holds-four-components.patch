@@ -1,0 +1,40 @@
+From 0000000000000000000000000000000000000000
+Subject: feat(bevy): the view's user value holds four components
+Date: 2026-11-25T17:12:22+00:00
+
+---
+diff --git a/crates/bevy_render/src/view/mod.rs b/crates/bevy_render/src/view/mod.rs
+index 475846ae21e900ec3bb5caaf644ecf405d02a028..1ee1d939435a11d513290d41ac8e72a40e7a84b1 100644
+--- a/crates/bevy_render/src/view/mod.rs
++++ b/crates/bevy_render/src/view/mod.rs
+@@ -577,7 +577,7 @@ pub struct ViewUniform {
+     pub color_grading: ColorGradingUniform,
+     pub mip_bias: f32,
+     pub frame_count: u32,
+-    pub user_value: f32,
++    pub user_value: Vec4,
+ }
+ 
+ #[derive(Resource)]
+@@ -895,8 +895,9 @@ impl ViewDepthTexture {
+     }
+ }
+ 
++/// Four values of the app's own, read in shaders as `view.user_value`.
+ #[derive(Component, Clone, ExtractComponent)]
+-pub struct ViewUserValue(pub f32);
++pub struct ViewUserValue(pub Vec4);
+ 
+ pub fn prepare_view_uniforms(
+     mut commands: Commands,
+diff --git a/crates/bevy_render/src/view/view.wgsl b/crates/bevy_render/src/view/view.wgsl
+index c98692660e06d4c8d8c081d05b8f8055aafbeae4..e0baa3aa1c49da1ddb19773bce11dbd445d74dea 100644
+--- a/crates/bevy_render/src/view/view.wgsl
++++ b/crates/bevy_render/src/view/view.wgsl
+@@ -63,5 +63,5 @@ struct View {
+     color_grading: ColorGrading,
+     mip_bias: f32,
+     frame_count: u32,
+-    user_value: f32,
++    user_value: vec4<f32>,
+ };

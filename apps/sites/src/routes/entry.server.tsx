@@ -11,7 +11,7 @@ import { markdownResponse, wantsMarkdown } from "@/data/lib/agent/markdown";
 import { renderAgentMarkdown } from "@/data/lib/agent/dispatch.server";
 import type { RouterContextProvider } from "react-router";
 
-import { requestSession } from "@/core/lib/telemetry/session";
+import { publicResponseContext, requestSession } from "@/core/lib/telemetry/session";
 import { track, withoutSensitiveParams } from "@/core/lib/telemetry/track";
 
 import { applyFrameIsolation } from "./lib/frame-isolation";
@@ -71,8 +71,11 @@ export default function handleRequest(
   return new Promise((resolve, reject) => {
     let shellRendered = false;
 
+    // A response that a shared cache may keep is sent only when its render is complete: a render error or the
+    // timeout then gives a 500 that no cache keeps, not a public 200 that holds the error.
+    const shared = loadContext.get(publicResponseContext);
     const readyOption: keyof RenderToPipeableStreamOptions =
-      bot || routerContext.isSpaMode
+      bot || routerContext.isSpaMode || shared
         ? "onAllReady"
         : "onShellReady";
 
@@ -85,6 +88,7 @@ export default function handleRequest(
           const stream = createReadableStreamFromReadable(body);
 
           responseHeaders.set("Content-Type", "text/html");
+          if (shared && responseStatusCode >= 500) responseHeaders.set("Cache-Control", "no-store");
 
           resolve(
             new Response(stream, {

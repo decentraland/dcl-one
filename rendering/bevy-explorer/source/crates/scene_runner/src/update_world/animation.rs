@@ -1,26 +1,34 @@
 // TODO
-// - support blending animations
 // - suport morph targets
 use bevy::{
-    animation::{graph::AnimationNodeType, AnimationEntityMut, AnimationTarget, RepeatAnimation},
+    animation::{
+        graph::AnimationNodeType, ActiveAnimation, AnimationEntityMut, AnimationTarget,
+        RepeatAnimation,
+    },
     platform::collections::{HashMap, HashSet},
     prelude::*,
     scene::{InstanceId, SceneSpawner},
 };
 
-use common::sets::SceneSets;
+use common::{anim_last_system, sets::SceneSets, structs::NoRenderApp};
 use dcl_component::{
     proto_components::sdk::components::{PbAnimationState, PbAnimator},
-    SceneComponentId,
+    DclReader, DclWriter, FromDclReader, SceneComponentId, SceneCrdtTimestamp, SceneEntityId,
 };
-use dcl_types::interface::ComponentPosition;
+use dcl_types::{
+    crdt::lww::CrdtLWWState,
+    interface::{ComponentPosition, CrdtType},
+};
 
-use crate::SceneEntity;
+use crate::{RendererSceneContext, SceneEntity, SceneLoopSchedule, SceneLoopSets};
 
-use super::{gltf_container::GltfReady, AddCrdtInterfaceExt};
+use super::{
+    gltf_container::GltfReady, process_crdt_lww_updates, AddCrdtInterfaceExt, CrdtStateComponent,
+};
 
 pub struct AnimatorPlugin;
 
+mod diagnostics;
 #[cfg(test)]
 mod tests;
 
@@ -31,7 +39,22 @@ impl Plugin for AnimatorPlugin {
             ComponentPosition::Any,
         );
 
+        app.init_resource::<FinishReports>();
+        // On a scene's reply before it is applied, in the pass that receives it, so the scene's
+        // next tick starts from what this settles.
+        app.world_mut()
+            .resource_mut::<SceneLoopSchedule>()
+            .schedule
+            .add_systems(
+                settle_stale_animator_writes
+                    .in_set(SceneLoopSets::UpdateWorld)
+                    .before(process_crdt_lww_updates::<PbAnimator, Animator>),
+            );
         app.add_systems(Update, update_animations.in_set(SceneSets::PostLoop));
+        app.add_systems(PostUpdate, report_finished_clips.after(anim_last_system!()));
+        if app.world().get_resource::<NoRenderApp>().is_none() {
+            app.add_plugins(diagnostics::AnimatorDiagnosticsPlugin);
+        }
     }
 }
 
@@ -45,6 +68,99 @@ pub struct Animator {
 impl From<PbAnimator> for Animator {
     fn from(pb_animator: PbAnimator) -> Self {
         Self { pb_animator }
+    }
+}
+
+/// How many clips have been reported to their scenes as finished, for the debug panel.
+#[derive(Resource, Default)]
+struct FinishReports(u64);
+
+/// The model's Animator plays a clip once, so the clip's end is watched for.
+#[derive(Component)]
+pub(super) struct PlaysOnce;
+
+/// The clips the scene has been told ended, each with the timestamp of the Animator that told
+/// it. A scene write that does not pass a clip's timestamp was made before the scene read that
+/// end.
+#[derive(Component, Default)]
+struct ReportedClips(Vec<(String, SceneCrdtTimestamp)>);
+
+impl ReportedClips {
+    fn tell(&mut self, clip: &str, timestamp: SceneCrdtTimestamp) {
+        match self.0.iter_mut().find(|(told, _)| told == clip) {
+            Some(told) => told.1 = timestamp,
+            None => self.0.push((clip.to_owned(), timestamp)),
+        }
+    }
+}
+
+/// The SDK's default for `loop`, which is not the generated getter's.
+fn is_looping(state: &PbAnimationState) -> bool {
+    state.r#loop.unwrap_or(true)
+}
+
+fn plays_once(animator: &PbAnimator, clips: &Clips) -> bool {
+    animator.states.iter().any(|state| {
+        state.playing() && !is_looping(state) && clips.named.contains_key(state.clip.as_str())
+    })
+}
+
+/// A clip can end while its scene's tick is running. That tick's write still says the clip is
+/// playing, and would play it again. Such a write keeps its other changes, and the scene is
+/// sent the result, which its next tick starts from.
+fn settle_stale_animator_writes(
+    mut commands: Commands,
+    mut scenes: Query<(
+        &mut RendererSceneContext,
+        &mut CrdtStateComponent<CrdtLWWState, PbAnimator>,
+    )>,
+    mut reported: Query<&mut ReportedClips>,
+) {
+    for (mut context, mut writes) in scenes.iter_mut() {
+        let told: Vec<(SceneEntityId, Entity)> = writes
+            .last_write
+            .keys()
+            .filter_map(|id| {
+                let ent = context.bevy_entity(*id)?;
+                reported.contains(ent).then_some((*id, ent))
+            })
+            .collect();
+        for (id, ent) in told {
+            let Ok(mut reported) = reported.get_mut(ent) else {
+                continue;
+            };
+            let Some(write) = writes.last_write.get_mut(&id) else {
+                continue;
+            };
+            // a write that passes a clip's timestamp was made after the scene read that end:
+            // playing the clip again is its choice
+            reported.0.retain(|(_, told)| write.timestamp <= *told);
+            if reported.0.is_empty() {
+                commands.entity(ent).try_remove::<ReportedClips>();
+                continue;
+            }
+            if !write.is_some {
+                // the report the scene has yet to read would give it the Animator back
+                context.clear_crdt(SceneComponentId::ANIMATOR, CrdtType::LWW_ANY, id);
+                commands.entity(ent).try_remove::<ReportedClips>();
+                continue;
+            }
+            let Ok(mut animator) = PbAnimator::from_reader(&mut DclReader::new(&write.data)) else {
+                continue;
+            };
+            for state in animator.states.iter_mut() {
+                if state.playing() && reported.0.iter().any(|(clip, _)| *clip == state.clip) {
+                    state.playing = Some(false);
+                }
+            }
+            write.data.clear();
+            DclWriter::new(&mut write.data).write(&animator);
+            let timestamp =
+                context.update_crdt(SceneComponentId::ANIMATOR, CrdtType::LWW_ANY, id, &animator);
+            for (_, told) in reported.0.iter_mut() {
+                *told = timestamp;
+            }
+        }
     }
 }
 
@@ -131,8 +247,17 @@ fn update_animations(
                 );
             }
             if maybe_animator.is_none() {
+                commands.entity(ent).try_remove::<PlaysOnce>();
                 continue;
             }
+        }
+        if maybe_animator
+            .as_ref()
+            .is_some_and(|animator| plays_once(&animator.pb_animator, clips))
+        {
+            commands.entity(ent).try_insert(PlaysOnce);
+        } else {
+            commands.entity(ent).try_remove::<PlaysOnce>();
         }
         debug!(
             "[{ent:?} / {scene_ent:?}] {:?}",
@@ -152,7 +277,13 @@ fn update_animations(
                 .collect(),
             None => clips
                 .default
-                .map(|clip| (clip, (0.0, PbAnimationState::default())))
+                .map(|clip| {
+                    let state = PbAnimationState {
+                        playing: Some(true),
+                        ..Default::default()
+                    };
+                    (clip, (0.0, state))
+                })
                 .into_iter()
                 .collect(),
         };
@@ -163,7 +294,7 @@ fn update_animations(
             .collect();
 
         for (ix, (duration, state)) in targets.into_iter() {
-            let playing = state.playing.unwrap_or(true);
+            let playing = state.playing();
             // clamp: bevy normalizes by the summed weight, so negative weights extrapolate
             let new_weight = if !playing {
                 0.0
@@ -182,9 +313,10 @@ fn update_animations(
             };
 
             let active_animation = match (prev_anims.remove(&ix), state.should_reset()) {
-                // if shouldReset, we always (re)start
+                // shouldReset (re)starts the clip on every write. On a stopped state that
+                // rewinds it, so its next play starts from the first frame.
                 (_, true) |
-                // if not playing we start
+                // a clip that is new to the player, or has finished, starts
                 (false, _) => {
                     let anim = player.start(ix);
 
@@ -199,7 +331,7 @@ fn update_animations(
 
             active_animation.set_weight(new_weight);
             active_animation.set_speed(new_speed);
-            if state.r#loop.unwrap_or(true) {
+            if is_looping(&state) {
                 active_animation.repeat();
             } else {
                 active_animation.set_repeat(RepeatAnimation::Never);
@@ -219,6 +351,81 @@ fn update_animations(
         // stop anims that have been removed
         for ix in prev_anims {
             player.stop(ix);
+        }
+    }
+}
+
+/// Tells the scene when a clip it asked to play once has reached its end: that state's
+/// `playing` becomes false in the scene's Animator. The clip stops contributing, so the model
+/// holds the pose it ended on.
+fn report_finished_clips(
+    mut commands: Commands,
+    mut players: Query<
+        (
+            Entity,
+            &SceneEntity,
+            &mut Animator,
+            &mut AnimationPlayer,
+            &Clips,
+            Option<&mut ReportedClips>,
+        ),
+        With<PlaysOnce>,
+    >,
+    mut scenes: Query<&mut RendererSceneContext>,
+    mut reports: ResMut<FinishReports>,
+) {
+    for (ent, scene_ent, mut animator, mut player, clips, reported) in players.iter_mut() {
+        let finished: Vec<(usize, AnimationNodeIndex)> = animator
+            .pb_animator
+            .states
+            .iter()
+            .enumerate()
+            .filter(|(_, state)| state.playing() && !is_looping(state))
+            .filter_map(|(state_ix, state)| {
+                let (node, _) = clips.named.get(state.clip.as_str())?;
+                player
+                    .animation(*node)
+                    .is_some_and(ActiveAnimation::is_finished)
+                    .then_some((state_ix, *node))
+            })
+            .collect();
+        if finished.is_empty() {
+            continue;
+        }
+        let Ok(mut context) = scenes.get_mut(scene_ent.root) else {
+            continue;
+        };
+
+        // The scene is told below; marking the Animator changed would apply it again and
+        // restart its clips.
+        let animator = animator.bypass_change_detection();
+        for (state_ix, node) in &finished {
+            animator.pb_animator.states[*state_ix].playing = Some(false);
+            if let Some(active) = player.animation_mut(*node) {
+                active.set_weight(0.0);
+            }
+        }
+        let timestamp = context.update_crdt(
+            SceneComponentId::ANIMATOR,
+            CrdtType::LWW_ANY,
+            scene_ent.id,
+            &animator.pb_animator,
+        );
+        reports.0 += finished.len() as u64;
+
+        let ended = finished
+            .iter()
+            .map(|(state_ix, _)| animator.pb_animator.states[*state_ix].clip.as_str());
+        match reported {
+            Some(mut reported) => ended.for_each(|clip| reported.tell(clip, timestamp)),
+            None => {
+                let mut reported = ReportedClips::default();
+                ended.for_each(|clip| reported.tell(clip, timestamp));
+                commands.entity(ent).try_insert(reported);
+            }
+        }
+        if !plays_once(&animator.pb_animator, clips) {
+            commands.entity(ent).try_remove::<PlaysOnce>();
         }
     }
 }

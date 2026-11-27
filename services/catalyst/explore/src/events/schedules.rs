@@ -75,7 +75,10 @@ impl SchedulesComponent {
     }
 
     pub fn invalidate(&self) {
-        self.cache.lock().unwrap().clear();
+        self.cache
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clear();
     }
 
     /// Every schedule row, in the old order (`active_since`, then id).

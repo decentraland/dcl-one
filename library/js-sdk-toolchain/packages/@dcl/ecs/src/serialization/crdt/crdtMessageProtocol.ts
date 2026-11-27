@@ -1,5 +1,6 @@
-import { ByteBuffer } from '../ByteBuffer'
-import { CrdtMessageType, CrdtMessageHeader, CRDT_MESSAGE_HEADER_LENGTH } from './types'
+import type { ByteBuffer } from '../ByteBuffer'
+import type { CrdtMessageType, CrdtMessageHeader } from './types'
+import { CRDT_MESSAGE_HEADER_LENGTH } from './types'
 
 /**
  * @public

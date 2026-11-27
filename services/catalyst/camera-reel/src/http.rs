@@ -57,6 +57,9 @@ pub enum ApiError {
     Forbidden(String),
     #[error("max limit reached")]
     MaxLimitReached(String),
+    /// The client source spent its contract-wallet checks (`eip1654_budget`).
+    #[error("{0}")]
+    TooManyRequests(String),
     #[error("{0}")]
     NotFound(String),
     #[error("bad gateway: {0}")]
@@ -77,6 +80,12 @@ impl IntoResponse for ApiError {
             ApiError::MaxLimitReached(m) => {
                 (StatusCode::FORBIDDEN, Json(ForbiddenError::new(m))).into_response()
             }
+            ApiError::TooManyRequests(m) => (
+                StatusCode::TOO_MANY_REQUESTS,
+                [(axum::http::header::RETRY_AFTER, "1")],
+                Json(ResponseError::new(m)),
+            )
+                .into_response(),
             ApiError::BadRequest(m) => {
                 (StatusCode::BAD_REQUEST, Json(ResponseError::new(m))).into_response()
             }
@@ -116,13 +125,6 @@ mod tests {
     use super::*;
     use serde_json::json;
 
-    #[test]
-    fn custom_methods_share_the_bounded_other_series() {
-        assert_eq!(metric_method(&axum::http::Method::GET), "GET");
-        assert_eq!(metric_method(&"FOO1".parse().unwrap()), "other");
-        assert_eq!(metric_method(&"FOO2".parse().unwrap()), "other");
-    }
-
     #[tokio::test]
     async fn error_envelope_wire_shape() {
         let resp = ApiError::MaxLimitReached("gallery is full".to_string()).into_response();
@@ -133,6 +135,15 @@ mod tests {
             v,
             json!({ "reason": "maxLimitReached", "message": "gallery is full" })
         );
+    }
+
+    /// A contract-wallet check the client source's budget refused is a 429
+    /// with `Retry-After`, never the signed-fetch 401.
+    #[tokio::test]
+    async fn a_rate_limited_signature_check_is_a_429_with_retry_after() {
+        let resp = ApiError::TooManyRequests("slow down".to_string()).into_response();
+        assert_eq!(resp.status(), StatusCode::TOO_MANY_REQUESTS);
+        assert_eq!(resp.headers()[axum::http::header::RETRY_AFTER], "1");
     }
 }
 
@@ -261,7 +272,7 @@ pub(crate) async fn cors(
             return Response::builder()
                 .status(StatusCode::BAD_REQUEST)
                 .body(axum::body::Body::from("Requested method is not allowed"))
-                .unwrap();
+                .expect("a constant status always builds a response");
         }
         let mut response = StatusCode::OK.into_response();
         let headers = response.headers_mut();
@@ -309,180 +320,6 @@ pub(crate) async fn cors(
         }
     }
     headers.append(header::VARY, vary);
-    response
-}
-
-const METRIC_BUCKETS: [f64; 14] = [
-    0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0, 20.0, 30.0, 60.0,
-];
-
-#[derive(Default)]
-struct Samples {
-    count: u64,
-    seconds: f64,
-    buckets: [u64; 14],
-}
-
-/// The reel's counters are scoped to this router, independently of other services.
-type MetricSeries = std::collections::BTreeMap<(String, String, u16), Samples>;
-
-#[derive(Default)]
-pub(crate) struct Metrics(std::sync::Mutex<MetricSeries>);
-
-impl Metrics {
-    fn record(&self, method: String, handler: String, status: u16, seconds: f64) {
-        let mut values = self
-            .0
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let sample = values.entry((method, handler, status)).or_default();
-        sample.count += 1;
-        sample.seconds += seconds;
-        for (bucket, limit) in sample.buckets.iter_mut().zip(METRIC_BUCKETS) {
-            if seconds <= limit {
-                *bucket += 1;
-            }
-        }
-    }
-
-    fn render(&self) -> String {
-        use std::fmt::Write;
-        let values = self
-            .0
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        if values.is_empty() {
-            return String::new();
-        }
-        let mut output = String::from(
-            "# HELP http_request_duration_seconds HTTP request duration in seconds for all requests\n# TYPE http_request_duration_seconds histogram\n",
-        );
-        let labels = |method: &str, handler: &str, code| {
-            let escaped = handler
-                .replace('\\', "\\\\")
-                .replace('\n', "\\n")
-                .replace('"', "\\\"");
-            format!("code=\"{code}\",handler=\"{escaped}\",method=\"{method}\"")
-        };
-        for ((method, handler, code), sample) in values.iter() {
-            let labels = labels(method, handler, code);
-            for (limit, count) in METRIC_BUCKETS.iter().zip(sample.buckets) {
-                writeln!(
-                    output,
-                    "http_request_duration_seconds_bucket{{{labels},le=\"{limit}\"}} {count}"
-                )
-                .unwrap();
-            }
-            writeln!(
-                output,
-                "http_request_duration_seconds_bucket{{{labels},le=\"+Inf\"}} {}",
-                sample.count
-            )
-            .unwrap();
-            writeln!(
-                output,
-                "http_request_duration_seconds_sum{{{labels}}} {}",
-                sample.seconds
-            )
-            .unwrap();
-            writeln!(
-                output,
-                "http_request_duration_seconds_count{{{labels}}} {}",
-                sample.count
-            )
-            .unwrap();
-        }
-        output.push_str("# HELP http_requests_total Total number of HTTP requests\n# TYPE http_requests_total counter\n");
-        for ((method, handler, code), sample) in values.iter() {
-            writeln!(
-                output,
-                "http_requests_total{{{}}} {}",
-                labels(method, handler, code),
-                sample.count
-            )
-            .unwrap();
-        }
-        output
-    }
-}
-
-pub(crate) async fn metrics(
-    axum::extract::State(state): axum::extract::State<crate::SharedState>,
-) -> String {
-    state.metrics.render()
-}
-
-fn metric_method(method: &axum::http::Method) -> String {
-    match method.as_str() {
-        "GET" | "POST" | "PUT" | "DELETE" | "OPTIONS" | "HEAD" | "PATCH" | "TRACE" | "CONNECT" => {
-            method.as_str().to_owned()
-        }
-        _ => "other".to_owned(),
-    }
-}
-
-pub(crate) async fn observe(
-    axum::extract::State(state): axum::extract::State<crate::SharedState>,
-    request: axum::extract::Request,
-    next: axum::middleware::Next,
-) -> Response {
-    if request.uri().path() == "/metrics" {
-        let Some(expected) = state
-            .settings
-            .metrics_bearer_token
-            .as_deref()
-            .filter(|token| !token.is_empty())
-        else {
-            return (StatusCode::INTERNAL_SERVER_ERROR, "").into_response();
-        };
-        let supplied = request
-            .headers()
-            .get(header::AUTHORIZATION)
-            .and_then(|value| value.to_str().ok())
-            .filter(|value| value.len() > 7);
-        let error = match supplied {
-            None => Some("Token not present"),
-            Some(value) => match value.split_once(' ') {
-                Some(("Bearer", token))
-                    if crate::auth::admin_bearer::timing_safe_eq(
-                        token.as_bytes(),
-                        expected.as_bytes(),
-                    ) =>
-                {
-                    None
-                }
-                Some(("Bearer", _)) => Some("Invalid token"),
-                _ => Some("Wrong schema"),
-            },
-        };
-        if let Some(error) = error {
-            return (StatusCode::UNAUTHORIZED, error).into_response();
-        }
-    }
-    let started = std::time::Instant::now();
-    let method = metric_method(request.method());
-    let handler = if request.uri().path() == "/metrics" {
-        "*".to_owned()
-    } else {
-        request
-            .extensions()
-            .get::<axum::extract::MatchedPath>()
-            .map(|matched| {
-                matched
-                    .as_str()
-                    .strip_prefix("/camera-reel-service")
-                    .unwrap_or(matched.as_str())
-                    .to_owned()
-            })
-            .unwrap_or_else(|| "*".to_owned())
-    };
-    let response = next.run(request).await;
-    state.metrics.record(
-        method,
-        handler,
-        response.status().as_u16(),
-        started.elapsed().as_secs_f64(),
-    );
     response
 }
 

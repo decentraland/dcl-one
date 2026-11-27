@@ -22,7 +22,7 @@ use bevy::{
     render::{view::window::prepare_windows, Render, RenderApp, RenderSet},
 };
 use common::{
-    gpu_time::GPU_FRAME_TIME,
+    gpu_time::{GpuFrameTimeUnreliable, GPU_FRAME_TIME},
     perf::{
         classify_frame_bottleneck, FrameTimeBreakdown, PERF_FRAME_LIMITER_SLEEP_MS,
         PERF_MAIN_WORLD_SCHEDULES_MS, PERF_RENDER_WORLD_CPU_MS, PERF_SCENE_RUNTIME_LOOP_MS,
@@ -183,6 +183,7 @@ pub fn publish_frame_time_breakdown_system(
     mut last_seen_render_sequence: Local<u32>,
     mut last_render_world_timings: Local<Option<(f32, f32)>>,
     store: Res<DiagnosticsStore>,
+    gpu_frame_time_unreliable: Option<Res<GpuFrameTimeUnreliable>>,
     mut diagnostics: Diagnostics,
     mut breakdown: ResMut<FrameTimeBreakdown>,
 ) {
@@ -228,7 +229,9 @@ pub fn publish_frame_time_breakdown_system(
             .and_then(Diagnostic::smoothed)
             .map(|ms| ms as f32)
     };
-    let gpu_frame_time_ms = smoothed(&GPU_FRAME_TIME);
+    // no GPU time, and so no bottleneck, where the readings are unreliable
+    let gpu_frame_time_ms =
+        smoothed(&GPU_FRAME_TIME).filter(|_| gpu_frame_time_unreliable.is_none());
     let smoothed_frame =
         smoothed(&FrameTimeDiagnosticsPlugin::FRAME_TIME).unwrap_or(whole_frame_wall_ms);
     // what the frame-rate cap held the frame for, and the frame without the waits that pace it

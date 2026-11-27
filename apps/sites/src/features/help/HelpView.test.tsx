@@ -94,7 +94,7 @@ describe("HelpView tabs", () => {
   });
 
   describe("when navigating with the keyboard", () => {
-    it("should move and select with the arrow keys, Home and End, wrapping at the ends", async () => {
+    it("should move and select with the left and right arrows, Home and End, wrapping at the ends", async () => {
       renderView();
       await user.click(screen.getByRole("tab", { name: "FAQ" }));
 
@@ -108,6 +108,9 @@ describe("HelpView tabs", () => {
       expect(document.activeElement).toBe(screen.getByRole("tab", { name: "SUPPORT UPDATES" }));
 
       await user.keyboard("{ArrowDown}");
+      expect(document.activeElement).toBe(screen.getByRole("tab", { name: "SUPPORT UPDATES" }));
+
+      await user.keyboard("{ArrowRight}");
       expect(document.activeElement).toBe(screen.getByRole("tab", { name: "FAQ" }));
 
       await user.keyboard("{ArrowLeft}");

@@ -16,7 +16,7 @@ type ToggleProps = {
 
 // A host that is not built by Vite has no `import.meta.env`.
 function isDev(): boolean {
-  return typeof import.meta.env !== "undefined" && import.meta.env.DEV;
+  return import.meta.env?.DEV === true;
 }
 
 export default function Toggle({ checked, defaultChecked = false, onChange, ariaLabel, ariaLabelledBy, disabled = false, id, className, size = "medium" }: ToggleProps) {

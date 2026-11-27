@@ -21,7 +21,9 @@ fn shard_dir_of(storage: &Storage, hash: &str) -> PathBuf {
 }
 
 #[cfg(unix)]
+#[allow(unsafe_code, reason = "reads the effective uid through libc")]
 fn running_as_root() -> bool {
+    // SAFETY: geteuid(2) takes no arguments and cannot fail.
     unsafe { libc::geteuid() == 0 }
 }
 
@@ -72,6 +74,7 @@ async fn a_symlinked_content_file_is_enumerated_like_the_file_it_points_at() {
 /// a GC sweep an id whose `exist()` throws -- a batch that fails again on every retry.
 #[cfg(unix)]
 #[tokio::test]
+#[allow(unsafe_code, reason = "makes a FIFO through libc")]
 async fn foreign_occupants_of_a_content_path_are_never_enumerated() {
     let tmp = std::env::temp_dir().join(format!("catalyst-ids-foreign-{}", std::process::id()));
     let _ = tokio::fs::remove_dir_all(&tmp).await;
@@ -91,6 +94,7 @@ async fn foreign_occupants_of_a_content_path_are_never_enumerated() {
         .unwrap();
     let c_path = std::ffi::CString::new(fifo_path.as_os_str().as_encoded_bytes()).unwrap();
     assert_eq!(
+        // SAFETY: `c_path` is a valid NUL-terminated string that outlives the call.
         unsafe { libc::mkfifo(c_path.as_ptr(), 0o644) },
         0,
         "failed to create the test FIFO"

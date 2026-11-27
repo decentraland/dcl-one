@@ -254,6 +254,15 @@ pub struct ChatReactionData {
     pub remove: bool,
 }
 
+/// A situational reaction as it plays: an emoji shown for `from`, the local user or a peer.
+#[derive(Clone, Serialize, Deserialize, ts_rs::TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct ReactionData {
+    pub from: String,
+    pub emoji: String,
+}
+
 #[derive(Clone, Serialize, Deserialize, ts_rs::TS)]
 #[ts(export)]
 pub struct VoiceMessage {
@@ -655,6 +664,7 @@ pub struct AvatarModifierState {
     pub user_id: String,
     pub hide_avatar: bool,
     pub hide_profile: bool,
+    pub pulse_absent: bool,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -1016,14 +1026,14 @@ pub struct SetPermanentPermission {
     pub allow: Option<PermissionValue>,
 }
 
-#[derive(Serialize, Deserialize, Clone, ts_rs::TS)]
+#[derive(Serialize, Deserialize, Clone, PartialEq, ts_rs::TS)]
 #[ts(export)]
 pub struct NamedVariant {
     pub name: String,
     pub description: String,
 }
 
-#[derive(Serialize, Deserialize, Clone)]
+#[derive(Serialize, Deserialize, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
 #[derive(ts_rs::TS)]
 #[ts(export)]

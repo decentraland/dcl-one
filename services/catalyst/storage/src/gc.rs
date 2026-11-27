@@ -44,6 +44,14 @@ pub const STORE_LOCK_KEY: i64 = 0x5354_4f52_455f_4743;
 /// Advisory lock key held for the length of one collector run.
 pub const GC_RUN_LOCK_KEY: i64 = 0x5354_4f52_455f_5255;
 
+/// Exclusive store-lock waits that gave up because publishes kept the shared side busy.
+pub const LOCK_WRITER_TIMEOUTS: dcl_metrics::CounterFamily<0> = dcl_metrics::CounterFamily::new(
+    "dcl_content_lock_writer_timeouts_total",
+    "Garbage collection or cleanup runs deferred because deployments kept the content lock busy",
+    None,
+    &[],
+);
+
 /// How long an unlink batch waits for in-flight publishes before deferring.
 pub const STORE_LOCK_TIMEOUT: Duration = Duration::from_secs(30);
 
@@ -137,6 +145,7 @@ pub async fn lock_store_exclusive_within(
     {
         Ok(_) => Ok(tx),
         Err(sqlx::Error::Database(e)) if e.code().as_deref() == Some("55P03") => {
+            LOCK_WRITER_TIMEOUTS.handle([]).increment(1);
             Err(GcError::LockTimeout)
         }
         Err(e) => Err(e.into()),
@@ -298,13 +307,33 @@ pub const NOT_STORE_KEYS: &[(&str, &str)] = &[
     ("shop.disputes.trade_hash", "an order digest"),
     ("shop.admin_audit.target_hash", "an order digest"),
     ("shop.chain_cursor.last_block_hash", "a block hash"),
+    (
+        "shop.mirror_state.pass_block_hash",
+        "a graph block hash pinned for a catalogue pass",
+    ),
     ("shop.chain_checkpoint.block_hash", "a block hash"),
+    ("shop.legacy_order_cursor.through_hash", "a block hash"),
     ("land_authz.index_cursor.last_block_hash", "a block hash"),
+    ("land_authz.index_cursor.folded_block_hash", "a block hash"),
     ("land_authz.index_cursor.checkpoint_hash", "a block hash"),
     ("shop.trade_event.hashed_signature", "an order digest"),
     ("shop.trade_event.tx_hash", "a transaction hash"),
     ("shop.sale_event.tx_hash", "a transaction hash"),
+    ("shop.sale_execution.tx_hash", "a transaction hash"),
+    ("shop.sale_publication.block_hash", "a block hash"),
+    ("shop.store_sale_line.tx_hash", "a transaction hash"),
+    (
+        "shop.verified_store_sale_line.tx_hash",
+        "a transaction hash",
+    ),
+    ("shop.name_purchase.tx_hash", "a transaction hash"),
     ("shop.nft_event.tx_hash", "a transaction hash"),
+    (
+        "shop.collection_event.content_hash",
+        "the content hash a collection's item records on chain; the item's deployment references its blobs",
+    ),
+    ("shop.collection_hint.read_hash", "a block hash"),
+    ("shop.collection_seed.read_hash", "a block hash"),
     ("shop.mana_transfer.transaction_hash", "a transaction hash"),
     ("shop.tip_claim.transaction_hash", "a transaction hash"),
     ("shop.coupons.hashed_signature", "an order digest"),
@@ -355,6 +384,11 @@ pub const NOT_STORE_KEYS: &[(&str, &str)] = &[
         "a CreditsManager credit digest",
     ),
     ("credits.revocations.tx_hash", "a transaction hash"),
+    ("land_authz.authz_event.tx_hash", "a transaction hash"),
+    (
+        "credits.studio_budget_entries.request_hash",
+        "the digest of a budget request's body, which an idempotent retry must repeat",
+    ),
     (
         "social.community_signed_actions.signature_hash",
         "an envelope digest",
@@ -1133,7 +1167,7 @@ mod tests {
         .unwrap();
         let keys = ["imported", "current", "expired", "world-thumbnail"].map(String::from);
         assert_eq!(
-            referenced_rows_among_on(&mut *pool.acquire().await.unwrap(), &keys)
+            referenced_rows_among_on(&mut pool.acquire().await.unwrap(), &keys)
                 .await
                 .unwrap(),
             ["imported", "current", "world-thumbnail"]

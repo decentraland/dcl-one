@@ -25,6 +25,7 @@ fn options(case: &str) -> ReportOptions {
         pr: None,
         change: None,
         base: None,
+        release: None,
         run_url: None,
         expected_runs: 3,
         expected_labels: Vec::new(),
@@ -86,8 +87,8 @@ fn ok_two_sections_named_by_their_machine_and_chrome_the_change_faster_on_cpu() 
         "| CPU average | 23.0 ms (22.9–23.1) | 21.0 ms (20.9–21.1) | -2.0 ms | 🟢 9% faster |",
         "| CPU 1% worst | 32.0 ms (31.4–32.6) | 30.0 ms (29.0–31.0) | -2.0 ms | 🟢 6% faster |",
         "| CPU 0.1% worst | 32.0 ms (31.4–32.6) | 30.0 ms (29.0–31.0) | -2.0 ms | — informational |",
-        "| GPU average | 6.4 ms (6.3–6.5) | 6.4 ms (6.3–6.5) | 0.0 ms | ⚪ within noise |",
-        "| GPU 1% worst | 10.0 ms (9.0–11.0) | 10.0 ms (9.0–11.0) | 0.0 ms | ⚪ within noise |",
+        "| GPU average | 6.4 ms (6.3–6.5) | 6.4 ms (6.3–6.5) | 0.0 ms | ⚠️ no verdict — GPU timing unreliable on Metal |",
+        "| GPU 1% worst | 10.0 ms (9.0–11.0) | 10.0 ms (9.0–11.0) | 0.0 ms | ⚠️ no verdict — GPU timing unreliable on Metal |",
         "| GPU 0.1% worst | 10.0 ms (9.0–11.0) | 10.0 ms (9.0–11.0) | 0.0 ms | — informational |",
         "| Exceptions per run | 0 | 0 | 0 | ⚪ no significant change |",
     ] {
@@ -125,6 +126,176 @@ fn ok_the_whole_report_with_its_header() {
 
     let expected = std::fs::read_to_string(fixture("ok.md")).unwrap();
     assert_eq!(report.markdown, expected.replace("\r\n", "\n"));
+}
+
+#[test]
+fn release_each_machine_also_compares_the_change_with_the_latest_release() {
+    let mut options = options("release");
+    options.release = Some("`0.1.0-80.commit-9999999`".into());
+    let report = build(&options);
+    assert!(report.has_data);
+    has_line(
+        &report,
+        "**Overall: 🟢 CPU average improved on Apple M1 (Chrome), Intel Core i5 (Chrome)**",
+    );
+    // the release is 4 ms slower on CPU than the baseline, so it has verdicts of its own, and
+    // the Overall line above stays the baseline's
+    has_line(
+        &report,
+        "**Against the latest release: 🟢 CPU average improved on Apple M1 (Chrome), Intel Core i5 (Chrome); CPU 1% worst improved on Apple M1 (Chrome), Intel Core i5 (Chrome)**",
+    );
+    assert!(report
+        .markdown
+        .contains("latest release: `0.1.0-80.commit-9999999`"));
+
+    // the release runs are the baseline's with 4 ms more CPU time a frame
+    let apple = section(&report, "Apple M1 (Chrome)");
+    let table = apple
+        .iter()
+        .position(|l| *l == "**Against the latest release**")
+        .unwrap_or_else(|| panic!("no release table\n{apple:#?}"));
+    assert_eq!(
+        &apple[table + 2..table + 11],
+        &[
+            "| Metric | Release | Change | Δ | Result |",
+            "| --- | ---: | ---: | ---: | :--- |",
+            "| Samples | 10 (×3) | 10 (×3) | | |",
+            "| CPU average | 27.0 ms (26.9–27.1) | 21.0 ms (20.9–21.1) | -6.0 ms | 🟢 22% faster |",
+            "| CPU 1% worst | 36.0 ms (35.4–36.6) | 30.0 ms (29.0–31.0) | -6.0 ms | 🟢 17% faster |",
+            "| CPU 0.1% worst | 36.0 ms (35.4–36.6) | 30.0 ms (29.0–31.0) | -6.0 ms | — informational |",
+            "| GPU average | 6.4 ms (6.3–6.5) | 6.4 ms (6.3–6.5) | 0.0 ms | ⚠️ no verdict — GPU timing unreliable on Metal |",
+            "| GPU 1% worst | 10.0 ms (9.0–11.0) | 10.0 ms (9.0–11.0) | 0.0 ms | ⚠️ no verdict — GPU timing unreliable on Metal |",
+            "| GPU 0.1% worst | 10.0 ms (9.0–11.0) | 10.0 ms (9.0–11.0) | 0.0 ms | — informational |",
+        ]
+    );
+    // the baseline table keeps the baseline's numbers
+    assert!(apple.contains(
+        &"| CPU average | 23.0 ms (22.9–23.1) | 21.0 ms (20.9–21.1) | -2.0 ms | 🟢 9% faster |"
+    ));
+}
+
+#[test]
+fn release_a_machine_without_release_runs_says_so_beside_one_with_some() {
+    let mut options = options("release-partial");
+    options.release = Some("`0.1.0-80.commit-9999999`".into());
+    let report = build(&options);
+    let note =
+        "> ⚠️ No Release run produced data — the change is not compared with the latest release here.";
+
+    // two of three release runs: compared, with the missing run noted
+    let apple = section(&report, "Apple M1 (Chrome)");
+    assert!(
+        apple.contains(&"**Against the latest release**"),
+        "{apple:#?}"
+    );
+    assert!(
+        apple.contains(&"| Samples | 10 (×2) | 10 (×3) | | |"),
+        "{apple:#?}"
+    );
+    assert!(
+        apple.contains(
+            &"> ⚠️ Only 2 of 3 Release runs produced data — the app may have crashed in the missing runs."
+        ),
+        "{apple:#?}"
+    );
+    assert!(!apple.contains(&note), "{apple:#?}");
+
+    let intel = section(&report, "Intel Core i5 (Chrome)");
+    assert!(
+        !intel.contains(&"**Against the latest release**"),
+        "{intel:#?}"
+    );
+    assert!(intel.contains(&note), "{intel:#?}");
+
+    // one machine, but by more than 10%: named
+    assert!(
+        report.markdown.lines().any(|line| line.starts_with(
+            "**Against the latest release: 🟢 CPU average improved on Apple M1 (Chrome)"
+        )),
+        "{}",
+        report.markdown
+    );
+    assert!(report
+        .markdown
+        .contains("interleaved with the other builds (change, baseline, release"));
+}
+
+#[test]
+fn release_a_leg_that_could_not_run_the_release_says_so_instead_of_no_data() {
+    // the release-partial results, with the Intel leg's marker that its release never ran
+    let dir = scratch("report-release-not-measured");
+    for entry in std::fs::read_dir(fixture("release-partial")).unwrap() {
+        let leg = entry.unwrap().path();
+        let to = dir.join(leg.file_name().unwrap());
+        std::fs::create_dir_all(&to).unwrap();
+        for file in std::fs::read_dir(&leg).unwrap() {
+            let file = file.unwrap().path();
+            std::fs::copy(&file, to.join(file.file_name().unwrap())).unwrap();
+        }
+    }
+    std::fs::write(
+        dir.join("benchmark-result-intel-i5-chrome")
+            .join("release_not_measured.txt"),
+        "",
+    )
+    .unwrap();
+
+    let mut options = options("release-partial");
+    options.dir = dir;
+    options.release = Some("`0.1.0-80.commit-9999999`".into());
+    let report = build(&options);
+    let intel = section(&report, "Intel Core i5 (Chrome)");
+    assert!(
+        intel.contains(
+            &"> ⚠️ The latest release was not measured on this laptop: its download or warm-up failed."
+        ),
+        "{intel:#?}"
+    );
+    assert!(
+        !intel.iter().any(|line| line.contains("No Release run")),
+        "{intel:#?}"
+    );
+
+    // no laptop ran it: the headline says so, rather than that its runs produced no data
+    let dir = scratch("report-release-not-measured-anywhere");
+    for leg in ["apple-m1", "intel-i5"] {
+        let from = fixture("ok").join(format!("benchmark-result-{leg}-chrome"));
+        let to = dir.join(format!("benchmark-result-{leg}-chrome"));
+        std::fs::create_dir_all(&to).unwrap();
+        for file in std::fs::read_dir(&from).unwrap() {
+            let file = file.unwrap().path();
+            std::fs::copy(&file, to.join(file.file_name().unwrap())).unwrap();
+        }
+        std::fs::write(to.join("release_not_measured.txt"), "").unwrap();
+    }
+    options.dir = dir;
+    let report = build(&options);
+    has_line(
+        &report,
+        "**Against the latest release: ⚠️ not measured on any laptop — its download or warm-up failed**",
+    );
+    assert!(!report.markdown.contains("no Release run produced data"));
+}
+
+#[test]
+fn release_a_release_without_runs_is_said_and_the_base_comparison_stays() {
+    let mut options = options("ok");
+    options.release = Some("`0.1.0-80.commit-9999999`".into());
+    let report = build(&options);
+    has_line(
+        &report,
+        "**Overall: 🟢 CPU average improved on Apple M1 (Chrome), Intel Core i5 (Chrome)**",
+    );
+    has_line(
+        &report,
+        "**Against the latest release: ⚠️ nothing was compared — no Release run produced data**",
+    );
+    assert!(!report.markdown.contains("| Metric | Release | Change |"));
+
+    // without a release, no release line, note or legend bullet at all
+    let report = report_of("ok");
+    assert!(!report.markdown.contains("Against the latest release"));
+    assert!(!report.markdown.contains("No Release run"));
 }
 
 #[test]
@@ -393,27 +564,100 @@ fn the_command_refuses_a_pr_that_is_not_a_number() {
     assert!(!out.exists());
 }
 
+/// An explorer source file, by its path under `rendering/bevy-explorer/source`.
+fn explorer_source(file: &str) -> String {
+    let source = PathBuf::from(env!("DCL_ONE_ROOT")).join("rendering/bevy-explorer/source");
+    std::fs::read_to_string(source.join(file)).unwrap_or_else(|error| panic!("{file}: {error}"))
+}
+
+/// The value of `pub const <name>: &str = "...";` in an explorer source file.
+fn explorer_constant(file: &str, name: &str) -> String {
+    let source = explorer_source(file);
+    let line = source
+        .lines()
+        .find(|l| l.starts_with(&format!("pub const {name}: &str = \"")))
+        .unwrap_or_else(|| panic!("{name} in {file}"));
+    line.split('"').nth(1).unwrap().to_string()
+}
+
 /// The two markers the log parser counts by are the ones the explorer writes
 /// (`perf_output::format`, which takes the exit marker from `common::autopilot`). `benchmark`
 /// cannot depend on `perf_output` without building the engine, so the sources are compared.
 #[test]
 fn the_log_markers_are_the_explorers() {
-    let crates = PathBuf::from(env!("DCL_ONE_ROOT")).join("rendering/bevy-explorer/source/crates");
-    let constant = |file: &str, name: &str| {
-        let source = std::fs::read_to_string(crates.join(file)).unwrap();
-        let line = source
-            .lines()
-            .find(|l| l.starts_with(&format!("pub const {name}: &str = \"")))
-            .unwrap_or_else(|| panic!("{name} in {file}"));
-        line.split('"').nth(1).unwrap().to_string()
-    };
     assert_eq!(
         report::EXIT_MARKER,
-        constant("common/src/autopilot.rs", "EXIT_MARKER")
+        explorer_constant("crates/common/src/autopilot.rs", "EXIT_MARKER")
     );
     assert_eq!(
         report::EXCEPTION_MARKER,
-        constant("perf_output/src/format.rs", "EXCEPTION_MARKER")
+        explorer_constant("crates/perf_output/src/format.rs", "EXCEPTION_MARKER")
+    );
+}
+
+#[test]
+fn load_time_lines_add_rows_with_verdicts() {
+    let report = report_of("load-times");
+    let intel = section(&report, "Intel Core i5 (Chrome)");
+    for row in [
+        "| Time to world | 12.1 s (12.0–12.3) | 10.2 s (10.0–10.4) | -1.9 s | 🟢 16% faster |",
+        "| First ring ready | 4.2 s (4.0–4.3) | 4.1 s (4.0–4.2) | -0.1 s | ⚪ within noise |",
+    ] {
+        assert!(intel.contains(&row), "{row}\n{intel:#?}");
+    }
+    has_line(
+        &report,
+        "**Overall: 🟢 Time to world improved on Intel Core i5 (Chrome)**",
+    );
+
+    // a section whose logs hold no load times keeps its table as it was
+    let ok = report_of("ok");
+    assert!(
+        !ok.markdown.contains("| Time to world |"),
+        "{}",
+        ok.markdown
+    );
+}
+
+/// The load-time entries the log parser reads are the ones the explorer writes: the autopilot's
+/// phase line (the derived `Debug` of the unit variant `AutopilotPhase::Measuring` prints
+/// `Measuring`) and the scene load timing's arrival line, under their log targets.
+#[test]
+fn the_load_time_lines_are_the_explorers() {
+    let read = explorer_source;
+    let constant = explorer_constant;
+    let load_timing = "crates/scene_runner/src/load_timing.rs";
+    assert_eq!(
+        report::AUTOPILOT_CATEGORY,
+        constant("crates/common/src/autopilot.rs", "LOG_TARGET")
+    );
+    assert_eq!(
+        report::SCENE_TIMING_CATEGORY,
+        constant(load_timing, "LOG_TARGET")
+    );
+    assert_eq!(
+        report::FIRST_RING_READY_PREFIX,
+        format!("{} ", constant(load_timing, "FIRST_RING_READY"))
+    );
+    assert!(read(load_timing).contains(r#""{FIRST_RING_READY} {} ms after the scene spawned""#));
+
+    assert_eq!(report::ARRIVED_IN_WORLD_PREFIX, "phase Measuring at ");
+    assert!(
+        read("src/autopilot.rs").contains(r#"info!(target: LOG_TARGET, "phase {:?} at {:.1} s""#)
+    );
+    let phase = read("crates/common/src/autopilot.rs");
+    let variants = phase
+        .split_once("pub enum AutopilotPhase {")
+        .and_then(|(derives, variants)| {
+            let derive = derives.lines().rev().find(|l| l.starts_with("#[derive("))?;
+            derive
+                .contains("Debug")
+                .then_some(variants.split_once("\n}")?.0)
+        })
+        .expect("AutopilotPhase derives Debug in common/src/autopilot.rs");
+    assert!(
+        variants.lines().any(|l| l.trim() == "Measuring,"),
+        "{variants}"
     );
 }
 

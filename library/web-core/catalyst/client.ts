@@ -88,18 +88,24 @@ const SERVICE_PATHS: Record<ServiceName, string> = {
   market: "/market",
 };
 
-const SERVICE_ENV_KEYS = {
-  places: "VITE_PLACES_URL",
-  events: "VITE_EVENTS_URL",
-  communities: "VITE_COMMUNITIES_URL",
-  communitiesCdn: "VITE_COMMUNITIES_CDN_URL",
-  notifications: "VITE_NOTIFICATIONS_URL",
-  badges: "VITE_BADGES_URL",
-  cameraReel: "VITE_CAMERA_REEL_URL",
-  map: "VITE_MAP_URL",
-  satellite: "VITE_SATELLITE_URL",
-  market: "VITE_MARKET_URL",
-} as const satisfies Record<ServiceName, `VITE_${string}_URL`>;
+// One static read per key: Vite inlines `import.meta.env.X` as that value alone, but a computed
+// `import.meta.env[key]` as the whole env object, every build-time `VITE_*` value, into the bundle.
+function serviceEnv(service: ServiceName): string | undefined {
+  if (typeof import.meta === "undefined") return undefined;
+  const env: Record<ServiceName, string | undefined> = {
+    places: import.meta.env?.VITE_PLACES_URL,
+    events: import.meta.env?.VITE_EVENTS_URL,
+    communities: import.meta.env?.VITE_COMMUNITIES_URL,
+    communitiesCdn: import.meta.env?.VITE_COMMUNITIES_CDN_URL,
+    notifications: import.meta.env?.VITE_NOTIFICATIONS_URL,
+    badges: import.meta.env?.VITE_BADGES_URL,
+    cameraReel: import.meta.env?.VITE_CAMERA_REEL_URL,
+    map: import.meta.env?.VITE_MAP_URL,
+    satellite: import.meta.env?.VITE_SATELLITE_URL,
+    market: import.meta.env?.VITE_MARKET_URL,
+  };
+  return env[service];
+}
 
 type ServicesWindow = Window &
   typeof globalThis & {
@@ -108,10 +114,7 @@ type ServicesWindow = Window &
   };
 
 export function serviceBase(service: ServiceName, override?: string): string {
-  const fromEnv: string | undefined =
-    typeof import.meta !== "undefined"
-      ? (import.meta.env?.[SERVICE_ENV_KEYS[service]] as string | undefined)
-      : undefined;
+  const fromEnv = serviceEnv(service);
   const fromWindow =
     typeof window !== "undefined"
       ? (window as ServicesWindow).__SERVICE_BASES__?.[service]
@@ -123,10 +126,7 @@ export function serviceBase(service: ServiceName, override?: string): string {
 }
 
 export function serviceHref(service: ServiceName, override?: string): string {
-  const fromEnv: string | undefined =
-    typeof import.meta !== "undefined"
-      ? (import.meta.env?.[SERVICE_ENV_KEYS[service]] as string | undefined)
-      : undefined;
+  const fromEnv = serviceEnv(service);
   const fromWindow =
     typeof window !== "undefined"
       ? (window as ServicesWindow).__SERVICE_BASES__?.[service]
@@ -138,10 +138,7 @@ export function serviceHref(service: ServiceName, override?: string): string {
 }
 
 export function servicePath(service: ServiceName, override?: string): string {
-  const fromEnv: string | undefined =
-    typeof import.meta !== "undefined"
-      ? (import.meta.env?.[SERVICE_ENV_KEYS[service]] as string | undefined)
-      : undefined;
+  const fromEnv = serviceEnv(service);
   const base = override ?? fromEnv ?? SERVICE_PATHS[service];
   return base.replace(/\/$/, "");
 }

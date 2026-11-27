@@ -20,6 +20,7 @@ use bevy::{
     },
 };
 use common::{
+    dynamics::{landed, PLAYER_LANDED_THRESHOLD},
     sets::{PostUpdateSets, SetupSets},
     structs::{AvatarDynamicState, PrimaryUser},
 };
@@ -27,9 +28,9 @@ use common::{
 /// the marker's footprint on the ground at full scale, in metres
 pub const MARKER_SIZE: Vec2 = Vec2::new(2.0, 1.5);
 /// the opacity range and the ground distances it follows: it rises over the first pair of
-/// distances, so the blob fades in just above the grounded height, and falls over the second
+/// distances, so the blob fades in just above the landed height, and falls over the second
 pub const OPACITY_RANGE: Vec2 = Vec2::new(0.0, 0.9);
-pub const OPACITY_DISTANCES: Vec4 = Vec4::new(GROUNDED_HEIGHT, 0.4, 6.0, 10.0);
+pub const OPACITY_DISTANCES: Vec4 = Vec4::new(PLAYER_LANDED_THRESHOLD, 0.4, 6.0, 10.0);
 /// scales the whole opacity range, keeping the blob a light cue rather than a hole in the ground
 pub const FADE_FACTOR: f32 = 0.5;
 /// the blob's scale range and the distances it follows: small near the ground, reaching full
@@ -38,15 +39,11 @@ pub const HEIGHT_SCALE_RANGE: Vec2 = Vec2::new(0.4, 1.0);
 pub const HEIGHT_SCALE_DISTANCES: Vec4 = Vec4::new(0.0, 0.0, 4.0, 8.0);
 /// the ground probe's range: farther from the ground there is no marker
 pub const MAX_GROUND_DISTANCE: f32 = 10.0;
-/// at or below this distance to the ground the player is standing, not airborne: the threshold
-/// the animation, position broadcast and analytics use, so the blob shows exactly when the jump
-/// or fall animation plays and stepping down stairs does not flash it
-pub const GROUNDED_HEIGHT: f32 = 0.2;
 /// how far below the ground under the player's centre the box reaches, so the blob still lands
 /// on ground that falls away within the footprint: a 45 degree slope at full size
 pub const PROJECTION_DEPTH: f32 = 1.0;
 /// the gap between the player's feet and the top of the box, so the blob never darkens the
-/// avatar; below the grounded height, so the box always has a height while shown
+/// avatar; below the landed height, so the box always has a height while shown
 const FEET_CLEARANCE: f32 = 0.1;
 
 /// smoothstep over `[from, to]`; a degenerate range is a step at `from`
@@ -196,7 +193,9 @@ fn update_jump_marker(
     let (mut transform, mut visibility, material) = marker.into_inner();
 
     let ground_distance = state.ground_height;
-    let airborne = ground_distance > GROUNDED_HEIGHT && ground_distance < MAX_GROUND_DISTANCE;
+    // the landed test the animation uses, so the blob shows exactly when the jump or fall animation
+    // plays and stepping down stairs does not flash it
+    let airborne = !landed(ground_distance) && ground_distance < MAX_GROUND_DISTANCE;
     let shown = enabled.0 && airborne;
     visibility.set_if_neq(if shown {
         Visibility::Inherited
@@ -238,8 +237,8 @@ mod tests {
         // the footprint across, scaled with the blob
         let footprint = MARKER_SIZE * marker_scale(distance);
         assert_eq!(transform.scale.xz(), footprint);
-        // just above the grounded height the box still has a height
-        assert!(marker_transform(GROUNDED_HEIGHT).scale.y > 0.0);
+        // just above the landed height the box still has a height
+        assert!(marker_transform(PLAYER_LANDED_THRESHOLD).scale.y > 0.0);
     }
 
     #[test]
@@ -247,7 +246,7 @@ mod tests {
         // opacity rises 0 to 0.9 over 0.2..0.4 m and falls to 0 over 6..10 m, halved by the
         // fade factor
         assert_eq!(marker_opacity(0.0), 0.0);
-        assert_eq!(marker_opacity(GROUNDED_HEIGHT), 0.0);
+        assert_eq!(marker_opacity(PLAYER_LANDED_THRESHOLD), 0.0);
         assert!(marker_opacity(0.3) > 0.0 && marker_opacity(0.3) < 0.45);
         assert!((marker_opacity(0.4) - 0.45).abs() < 1e-6);
         assert!((marker_opacity(1.0) - 0.45).abs() < 1e-6);
@@ -344,7 +343,7 @@ mod tests {
         set_ground_distance(&mut app, MAX_GROUND_DISTANCE + 2.0);
         assert_eq!(marker_state(&mut app).0, Visibility::Hidden);
 
-        // stepping down a stair: within the grounded height the walk animation keeps playing
+        // stepping down a stair: within the landed height the walk animation keeps playing
         set_ground_distance(&mut app, 0.15);
         assert_eq!(marker_state(&mut app).0, Visibility::Hidden);
 

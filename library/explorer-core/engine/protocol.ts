@@ -18,6 +18,7 @@ import type {
   OutfitsData,
   PlatformBanNotice,
   PortableInfo,
+  ReactionData,
   SatelliteView,
   SceneLoadingUi,
   TextureOptimizationStatus,
@@ -107,6 +108,14 @@ export interface SendChatReactionRequest {
   remove: boolean
 }
 
+/** React with an emoji, shown over the local user's avatar (page → engine via the scene's
+ *  BevyApi.sendReaction). An emoji the wire does not carry does nothing. One that plays comes back
+ *  as a ReactionMessage while the "Chat Reactions" setting is on. */
+export interface SendReactionRequest {
+  kind: 'sendReaction'
+  emoji: string
+}
+
 /** Redraw a chat bubble (nearby, community or direct message) with other words (its translation,
  *  or the original back), if that message is still the sender's bubble. Its time up is kept. */
 export interface ChatBubbleTextRequest {
@@ -186,6 +195,7 @@ export type PageToScene =
   | RpcRequest
   | SendChatRequest
   | SendChatReactionRequest
+  | SendReactionRequest
   | ChatBubbleTextRequest
   | ReloadSceneRequest
   | ConsoleCommandRequest
@@ -229,6 +239,8 @@ export type PageToScene =
   | SaveOutfitRequest
   | DeleteOutfitRequest
   | EquipOutfitRequest
+  | PreviewOutfitRequest
+  | RestoreOutfitPreviewRequest
   | RandomizeOutfitRequest
   | UndoOutfitRequest
   | RedoOutfitRequest
@@ -299,6 +311,7 @@ export type PageToScene =
   | GetPlaceRequest
   | GetWorldAccessRequest
   | WatchMapPlayersRequest
+  | WatchSkyTimeRequest
   | SetPhotoModeRequest
   | TakePhotoRequest
   | GetGalleryPhotoRequest
@@ -379,6 +392,17 @@ export interface ChatReactionMessage {
   reaction: ChatReaction
 }
 
+/** A situational reaction as it plays: an emoji shown for `from`, the local user or a peer. The
+ *  engine's own type, so a field it gains is here too. */
+export type SituationalReaction = ReactionData
+
+/** Streamed situational reactions (scene → page): one for each that plays, the local user's
+ *  included, and none while the "Chat Reactions" setting is off. */
+export interface ReactionMessage {
+  kind: 'reaction'
+  reaction: SituationalReaction
+}
+
 /** Streamed incoming chat messages (scene → page). */
 export interface ChatRelayMessage {
   kind: 'chat'
@@ -397,7 +421,7 @@ export interface FocusChatMessage {
   kind: 'focusChat'
 }
 
-/** A nearby player (from the scene's PlayerIdentityData set). */
+/** A player from the scene's PlayerIdentityData set. The roster filters remote players by last known Pulse membership. */
 export interface NearbyMember {
   address: string
   name: string
@@ -663,7 +687,7 @@ export interface DmDeleteRequest {
 
 /** Mirrors the engine's ExplorerSetting (BevyApi.getSettings). A setting is a
  *  Select when it has namedVariants, otherwise a numeric Slider; a 2-variant or
- *  0..1 setting renders as a Toggle. */
+ *  0..1 setting renders as a switch. */
 import type { SettingInfo as Setting, NamedVariant as SettingVariant } from './generated/index'
 export type { Setting, SettingVariant }
 
@@ -862,6 +886,8 @@ export interface Emote {
   slot?: number
   urn: string
   name: string
+  /** The creator's description, from the catalog entity. Base emotes have none. */
+  description?: string
   thumbnail?: string
   rarity?: string
   /** Marketplace deep link (…/shop/item/<contract>/<itemId>) — set only for on-chain collectibles;
@@ -885,7 +911,8 @@ export interface MicMessage {
   kind: 'mic'
   enabled: boolean
   available: boolean
-  /** The scene the player stands in turns nearby voice off. */
+  /** Nearby voice is off where the player stands: the scene turns it off with the player's
+   *  `DisableVoice` permission, or its room refused the player as banned. */
   sceneBlocked?: boolean
   /** Counts the mic opens the scene refused. */
   refusals?: number
@@ -1171,6 +1198,9 @@ export interface PermissionUsedMessage {
   scene: string
   realm: string
   allowed: boolean
+  /** Absent for a use. Present when what the permission allows starts (true) or stops (false)
+   *  acting on the player, such as a camera the scene holds; `allowed` is then true. */
+  inForce?: boolean
 }
 
 /** The portable experiences the player can see and stop (scene → page, from getPortablesStream):
@@ -2088,13 +2118,32 @@ export interface MapPlayer {
   z: number
 }
 
+/** The Skybox menu opens or closes; while it is open the scene reports the time of day, at once
+ *  and then once a second. */
+export interface WatchSkyTimeRequest {
+  kind: 'watchSkyTime'
+  on: boolean
+}
+
+/** The time of day as `~system/Runtime.getWorldTime` reports it. */
+export interface SkyTime {
+  /** The hour the sky shows, 0 to 24. */
+  hours: number
+  /** The scene the player stands in holds the time of day and the player may not change it. */
+  locked: boolean
+  /** The speed of the player's clock; 0 when it is stopped. */
+  speed: number
+  /** The player's clock sets the sky: no scene's time does. */
+  followsClock: boolean
+}
+
 /** The page's map starts or stops showing the other players; while it does the scene reports them. */
 export interface WatchMapPlayersRequest {
   kind: 'watchMapPlayers'
   on: boolean
 }
 
-/** The players near enough for the engine to hold (scene → page), while the page watches. */
+/** Nearby scene players filtered by last known Pulse membership, while the page watches. */
 export interface MapPlayersMessage {
   kind: 'mapPlayers'
   players: MapPlayer[]
@@ -2122,6 +2171,8 @@ export interface GalleryWriteMessage {
 export interface Wearable {
   urn: string
   name: string
+  /** The creator's description, from the catalog entity. Set on the owned catalog's items only. */
+  description?: string
   rarity: string
   category: string
   thumbnail?: string
@@ -2283,11 +2334,17 @@ export interface PreviewFocusRequest {
 /** The Shop's stage around the preview avatar: where the page draws its stage image on screen, in CSS
  *  pixels like engineViewport's rect. The scene draws the same image (its images/shop-stage.jpg, the in-world Shop's
  *  library/ui/apps/shop/assets/stage.jpg) there behind the avatar, so the avatar's window shows no seam, and drops the
- *  Backpack's podium: the stage's floor is in the image. `null` gives the preview its own backdrop back. */
+ *  Backpack's podium: the stage's floor is in the image. `null` gives the preview its own backdrop back.
+ *  `framing` is how the Shop's page draws the avatar in its window: the catalogue's, unless given. */
 export interface PreviewStageRequest {
   kind: 'previewStage'
   rect: { x: number; y: number; width: number; height: number } | null
+  framing?: PreviewStageFraming
 }
+
+/** How the Shop's page draws its avatar: the catalogue's whole body, or Names' (smaller and lower, with room
+ *  over the head for the nametag). */
+export type PreviewStageFraming = 'catalog' | 'names'
 
 /** Play an emote on the preview avatar once (the Shop trying one on); asked again, it plays again.
  *  `null` stops it. */
@@ -2348,6 +2405,16 @@ export interface OutfitSaveFailedMessage {
   message: string
 }
 
+/** A save, a delete, a preview or an equip of the saved outfit in `slot` runs in the scene from
+ *  `busy: true` until `busy: false`, which follows every outcome (scene → page). A preview's and an
+ *  equip's ends once the Backpack's avatar has loaded the outfit. */
+export interface OutfitBusyMessage {
+  kind: 'outfitBusy'
+  slot: number
+  action: 'save' | 'delete' | 'preview' | 'equip'
+  busy: boolean
+}
+
 export interface GetOutfitsRequest {
   kind: 'getOutfits'
 }
@@ -2368,6 +2435,18 @@ export interface DeleteOutfitRequest {
 export interface EquipOutfitRequest {
   kind: 'equipOutfit'
   slot: number
+}
+
+/** Show a saved outfit on the Backpack's avatar: its body shape, colors and wearables go on the
+ *  Backpack's look until `restoreOutfitPreview`, unless an `equipOutfit` keeps them. */
+export interface PreviewOutfitRequest {
+  kind: 'previewOutfit'
+  slot: number
+}
+
+/** Put back the look from before the first outfit preview, unless an outfit was equipped since. */
+export interface RestoreOutfitPreviewRequest {
+  kind: 'restoreOutfitPreview'
 }
 
 /** Put a random look from the owned and base wearables on the Backpack's look, keeping the body
@@ -2591,6 +2670,8 @@ export type SceneToPage =
   | PlaceMessage
   | WorldAccessMessage
   | { kind: 'connectivity'; state: ConnectivitySnapshot }
+  /** The time of day for the Skybox menu, while the page watches it (`watchSkyTime`). */
+  | { kind: 'skyTime'; state: SkyTime }
   | { kind: 'connectivityRetry'; requestId: string; error?: string }
   | BridgeUnavailableMessage
   | VoiceChatStateMessage
@@ -2610,6 +2691,7 @@ export type SceneToPage =
   | TextureOptimizationMessage
   | ChatRelayMessage
   | ChatReactionMessage
+  | ReactionMessage
   | ConsoleReplyMessage
   | ChatVisibilityMessage
   | FocusChatMessage
@@ -2639,6 +2721,7 @@ export type SceneToPage =
   | GiftingPageMessage
   | OutfitsMessage
   | OutfitSaveFailedMessage
+  | OutfitBusyMessage
   | OutfitHistoryMessage
   | CommunitiesMessage
   | CommunityBrowseMessage

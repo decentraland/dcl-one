@@ -1,8 +1,9 @@
 import { useId, useState, type ReactNode } from 'react'
 import { CheckboxLabel } from '../../../components/CheckboxLabel/CheckboxLabel'
-import { Button } from '../shared/Button/Button'
+import { Button } from '../../../components/Button/Button'
+import { WebTextarea } from '../../../components/InputField/InputFieldWebControls'
+import { Modal } from '../../../components/Modal/Modal'
 import { adminCopy, REJECT_REASONS, rejectionNoteLimit, type RejectReasonId } from './admin-copy'
-import { Dialog } from './Dialog'
 import { Notice } from './Notice'
 import styles from './AdminModal.module.css'
 
@@ -20,7 +21,6 @@ export type RejectEventModalProps = {
  * the chosen reasons' titles, with a counter; a note made too long by choosing more reasons blocks Submit.
  */
 export function RejectEventModal({ busy, feedback, onClose, onSubmit }: RejectEventModalProps) {
-  const titleId = useId()
   const notesId = useId()
   const counterId = useId()
   const [selected, setSelected] = useState<RejectReasonId[]>([])
@@ -28,15 +28,35 @@ export function RejectEventModal({ busy, feedback, onClose, onSubmit }: RejectEv
   const [missing, setMissing] = useState(false)
   const limit = rejectionNoteLimit(selected)
   const tooLong = notes.length > limit
-  const close = () => {
-    if (!busy) onClose()
-  }
   return (
-    <Dialog labelledBy={titleId} onClose={close} maxWidth={682}>
-      <div className={styles.panel}>
-        <h2 id={titleId} className={styles.title}>
-          {adminCopy.reject.title}
-        </h2>
+    <Modal
+      title={adminCopy.reject.title}
+      closeButton={false}
+      dismissible={!busy}
+      onClose={onClose}
+      divider
+      actions={
+        <>
+          <Button size="lg" variant="secondary" disabled={busy} onClick={onClose}>
+            {adminCopy.reject.cancel}
+          </Button>
+          <Button
+            size="lg"
+            disabled={busy || tooLong}
+            onClick={() => {
+              if (selected.length === 0) {
+                setMissing(true)
+                return
+              }
+              onSubmit({ reasons: selected, notes: notes.trim() })
+            }}
+          >
+            {adminCopy.reject.submit}
+          </Button>
+        </>
+      }
+    >
+      <div className={styles.form}>
         <ul className={styles.reasons}>
           {REJECT_REASONS.map((reason) => (
             <li key={reason.id} className={styles.reason}>
@@ -65,9 +85,8 @@ export function RejectEventModal({ busy, feedback, onClose, onSubmit }: RejectEv
           <label className={styles.notesLabel} htmlFor={notesId}>
             {adminCopy.reject.otherLabel}
           </label>
-          <textarea
+          <WebTextarea
             id={notesId}
-            className={styles.textarea}
             placeholder={adminCopy.reject.otherPlaceholder}
             maxLength={limit}
             rows={3}
@@ -83,24 +102,7 @@ export function RejectEventModal({ busy, feedback, onClose, onSubmit }: RejectEv
         </div>
         {tooLong ? <Notice tone="error">{adminCopy.reject.noteTooLong(limit)}</Notice> : null}
         {feedback}
-        <div className={styles.footer}>
-          <Button variant="secondary" disabled={busy} onClick={close}>
-            {adminCopy.reject.cancel}
-          </Button>
-          <Button
-            disabled={busy || tooLong}
-            onClick={() => {
-              if (selected.length === 0) {
-                setMissing(true)
-                return
-              }
-              onSubmit({ reasons: selected, notes: notes.trim() })
-            }}
-          >
-            {adminCopy.reject.submit}
-          </Button>
-        </div>
       </div>
-    </Dialog>
+    </Modal>
   )
 }

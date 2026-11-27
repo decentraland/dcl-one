@@ -124,6 +124,8 @@ pub enum SystemApi {
     ForgetLogin,
     GetSettings(RpcResultSender<Vec<SettingInfo>>),
     SetSetting(String, f32),
+    /// The settings list now, then again whenever a setting's value or choices change.
+    GetSettingsStream(RpcStreamSender<Vec<SettingInfo>>),
     /// Sign a request with the engine wallet, with caller-supplied metadata. Scene-originated
     /// signing goes through `RpcCall::SignRequest`, whose metadata the engine builds.
     SignRequest {
@@ -212,6 +214,10 @@ pub enum SystemApi {
         remove: bool,
     },
     GetChatReactionStream(RpcStreamSender<ChatReactionData>),
+    /// The local user reacts with an emoji, shown over their avatar.
+    SendReaction(String),
+    /// Situational reactions as they play, the local user's included.
+    GetReactionStream(RpcStreamSender<ReactionData>),
     Quit,
     GetPermissionRequestStream(RpcStreamSender<PermissionRequestEvent>),
     SetSinglePermission(SetSinglePermission),

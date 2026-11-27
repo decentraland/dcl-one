@@ -1292,7 +1292,6 @@ async fn catalog_reads_carry_as_of_and_prices_answer_503_past_their_budget() {
 
     mark("collections", 300).await.unwrap();
     mark("items", 5).await.unwrap();
-    state.mirror_ready.clear();
     let interval = state.settings.market.mirror_interval.as_secs();
     let (status, body) = get_json(app(), "/v1/catalog?first=1").await;
     assert_eq!(status, StatusCode::OK, "{body}");
@@ -1324,7 +1323,6 @@ async fn catalog_reads_carry_as_of_and_prices_answer_503_past_their_budget() {
     }
 
     mark("items", 120).await.unwrap();
-    state.mirror_ready.clear();
     for uri in [
         "/v1/catalog?first=1",
         "/v2/catalog?first=1",
@@ -1355,7 +1353,6 @@ async fn catalog_reads_carry_as_of_and_prices_answer_503_past_their_budget() {
         "the job off, the copy past its budget: {body}"
     );
     mark("items", 5).await.unwrap();
-    frozen.mirror_ready.clear();
     let (status, body) = get_json(super::market_router(frozen), "/v1/catalog?first=1").await;
     assert_eq!(status, StatusCode::OK, "the job off, a fresh copy: {body}");
     assert_eq!(body["as_of"], marker("items").await.as_str());
@@ -1387,7 +1384,6 @@ async fn without_a_subgraph_descriptive_reads_serve_the_recorded_copy() {
         .await
         .unwrap();
     let app = || super::market_router(state.clone());
-    state.mirror_ready.clear();
     for uri in DESCRIPTIVE {
         let (status, body) = get_json(app(), uri).await;
         assert_eq!(
@@ -1409,7 +1405,6 @@ async fn without_a_subgraph_descriptive_reads_serve_the_recorded_copy() {
     .execute(pool)
     .await
     .unwrap();
-    state.mirror_ready.clear();
     for uri in DESCRIPTIVE {
         let (status, body) = get_json(app(), uri).await;
         assert_eq!(status, StatusCode::OK, "{uri}: {body}");
@@ -1485,6 +1480,7 @@ async fn mirrored_rows_never_overwrite_a_local_trade_and_the_routes_serve_them()
             ..Settings::for_tests()
         },
     ));
+    super::trade_events::tests::publish_cursors(pool).await;
     assert_eq!(
         trades::ready(&local_only).await.unwrap(),
         trades::Readiness::LocalAuthority,
@@ -1616,7 +1612,7 @@ async fn a_development_stack_reads_a_partial_order_book_only_when_asked() {
     };
     let state = support::state_without_db_settings(settings);
     assert_eq!(
-        trades::ready(&state).await.unwrap(),
+        trades::readiness(&state).await.unwrap(),
         trades::Readiness::Mirrored
     );
     assert!(
@@ -1638,6 +1634,7 @@ async fn a_leftover_mirrored_trade_counts_under_local_authority_only_within_the_
     let Some(state) = state_with_db(settings.clone()).await else {
         return;
     };
+    super::trade_events::tests::publish_cursors(&state.pool).await;
     assert_eq!(
         trades::ready(&state).await.unwrap(),
         trades::Readiness::LocalAuthority
@@ -1698,6 +1695,28 @@ async fn a_leftover_mirrored_trade_counts_under_local_authority_only_within_the_
         let (status, body) = get_json(router(state.clone()), &format!("/v1/trades/{id}")).await;
         assert_eq!(status, want, "{id}: {body}");
     }
+
+    for id in &ids {
+        crate::test_db::open_trade_verdict(pool, id).await;
+    }
+    super::owned_items::test_support::publish(
+        pool,
+        &[super::chain_walk::ChainNet::Matic],
+        false,
+        std::time::Duration::ZERO,
+    )
+    .await;
+    sqlx::query(
+        "INSERT INTO shop.nft (network, contract_address, token_id, owner, minted_block, minted_at, transferred_block, transferred_log, transferred_at)
+         SELECT lower(t.network), a.contract_address, n.token_id::numeric, t.signer, 1, 1, 1, 0, 1
+         FROM shop.trades t JOIN shop.trade_assets a ON a.trade_id = t.id
+         JOIN shop.trade_assets_erc721 n ON n.asset_id = a.id
+         WHERE t.id = $1::uuid AND a.direction = 'sent' ON CONFLICT DO NOTHING",
+    )
+    .bind(fresh)
+    .execute(pool)
+    .await
+    .unwrap();
 
     let book = |since: Option<chrono::NaiveDateTime>| {
         let ids = ids.clone();
@@ -2062,7 +2081,7 @@ async fn a_whole_list_upstream_is_walked_every_tick_within_the_detail_budget() {
     assert!(!m.in_progress() && m.completed_at.is_some());
     assert_eq!(mirrored_count(pool, &upstream).await, 205);
     assert!(
-        state.trades_list.lock().unwrap().is_none(),
+        state.trades_list.lock().is_none(),
         "a complete pass holds nothing"
     );
     visible.trades_ready.clear();

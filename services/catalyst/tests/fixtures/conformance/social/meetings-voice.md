@@ -54,29 +54,34 @@ Cast publishes into the scene's own LiveKit room, the one `/get-scene-adapter` h
 | `POST /cast/streamer-token` | `routes.ts:241`; `cast.ts:242-304` | `G/streaming_cast.rs` `streamer_token` | DIVERGENCE: identity names the credential, display name cleaned (below) | `a_streaming_key_admits_a_streamer_who_becomes_a_presenter` |
 | `GET /cast/generate-stream-link` | `routes.ts:252`; `cast.ts:185-233` | `G/streaming_cast.rs` `generate_stream_link` over `issue_access` | MATCH | `a_scene_admin_gets_a_stream_link_that_is_reused_until_it_expires` |
 | `GET /cast/stream-info/:streamingKey` | `routes.ts:253`; `get-stream-info-handler.ts:30-93` | `G/streaming_cast.rs` `stream_info` | MATCH | `stream_info_answers_the_place_behind_a_live_key`; capture `cast-stream-info-invalid-key` replayed by `the_gatekeeper_answers_its_stateless_captures_as_production` |
-| `POST /cast/watcher-token` | `routes.ts:246`; `cast.ts:368-443` | `G/streaming_cast.rs` `watcher_token` | DIVERGENCE: a world's access policy is checked, and the token carries the wallet and the world authorization proof (below) | `a_viewer_watches_a_parcel_or_world_stream_unless_banned`; `a_private_worlds_cast_refuses_watchers_the_world_does_not_admit` |
+| `POST /cast/watcher-token` | `routes.ts:246`; `cast.ts:368-443` | `G/streaming_cast.rs` `watcher_token` | DIVERGENCE: a world's access policy is checked, and the token carries the wallet and the world authorization proof (below). Sites signs with the viewer's session or a temporary browser identity when signed out | `a_viewer_watches_a_parcel_or_world_stream_unless_banned`; `a_private_worlds_cast_refuses_watchers_the_world_does_not_admit` |
 | `GET/PUT/DELETE /cast/presenters[/:id]` | `routes.ts:291-293`; `cast.ts:512-614` | `G/streaming_cast.rs` `list_presenters`, `promote_presenter`, `demote_presenter` | MATCH | `scene_admins_list_promote_and_demote_presenters`; capture `cast-presenters-unauth` replayed by `the_gatekeeper_answers_its_stateless_captures_as_production` |
 | `POST /cast/presentation-bot-token` | `routes.ts:286`; `cast.ts:455-500` | `G/streaming_cast.rs` `presentation_bot_token` | DIVERGENCE: identity names the credential | `a_streaming_key_admits_the_presentation_bot` |
-| `GET /scene-stream-access` | `list-scene-stream-access-handler.ts:62-80` | `G/streaming.rs:185-192` | MATCH: the stored expiry is answered, and a credential past it answers 404 `Streaming access has expired` | `C/tests/gatekeeper_policy.rs` (PostgreSQL) |
-| `POST /scene-stream-access` | `add-…:80-130` | `G/streaming.rs:193-216,295-371` | MATCH | `C/tests/gatekeeper_policy.rs`; `canonical_rooms_tests.rs` |
-| `PUT /scene-stream-access` | `reset-…:86-150` | `G/streaming.rs:373-398` | MATCH for 404 (no active credential); a concurrent change inside the reset answers 500, not compared with upstream (MV-9) | `C/tests/gatekeeper_policy.rs` |
-| `DELETE /scene-stream-access` | `remove-…:42-65` | `G/streaming.rs:400-413` | MATCH | `C/tests/gatekeeper_policy.rs` |
-| Platform bans on stream access (0a6b095) | `add-…:51-59` | `G/streaming.rs:131-136,225-247` | MATCH | `C/comms/src/gatekeeper/streaming.rs` tests |
-| Ingress webhooks, 4 h TTL, stale-flag reconcile (cdd006c), key expiry deadline (1e7d0f2), notifications | `adapters/streaming-ttl-checker.ts`, `streaming-key-ttl-checker.ts` | `G/streaming.rs:914-942`; `G/streaming_jobs.rs:28-60,150-152,272-325` (leased jobs, durable cleanup queue); `G/streaming_notifications.rs` `recipients` | MATCH: an expired key is kept while the broadcast live at its deadline runs and retired by the first key pass after it ends; a broadcast started after the deadline is cut; notices: each notice goes to the place's owner, its active scene admins and LAND owner, operators and managers (Genesis), or the world owner, the deployment/streaming grantees of its parcels and the scene admins of the key's scene whose granter holds the world-wide authority (with per-scene world keys, #1948, exactly the admins who hold the key; before it, an admin of another scene of the world may also hold it and is not told), deduplicated, as `GK/adapters/scene-admins.ts:14-84`; a place removal also tells the grants its cleanup revoked, on every scene of the world; a key revoked because its scene was undeployed tells no world scene admin | `G/streaming_jobs.rs` tests; `an_expired_key_is_retired_after_its_broadcast_ends`; `a_broadcast_restarted_after_the_deadline_loses_the_expired_key`; `a_broadcast_live_at_the_deadline_is_still_capped_at_four_hours`; `G/streaming_jobs.rs` and `G/streaming_notifications.rs` tests; `removing_a_scene_admin_revokes_the_key_it_generated` |
+| `GET /scene-stream-access` | `list-scene-stream-access-handler.ts:62-80` | `G/streaming.rs` `scene_stream_access` (GET), `active_access` | MATCH: the stored expiry is answered, and a credential past it answers 404 `Streaming access has expired` | `C/tests/gatekeeper_policy.rs` (PostgreSQL) |
+| `POST /scene-stream-access` | `add-…:80-130` | `G/streaming.rs` `issue_access` | MATCH | `C/tests/gatekeeper_policy.rs`; `canonical_rooms_tests.rs` |
+| `PUT /scene-stream-access` | `reset-…:86-150` | `G/streaming.rs` `reset_access` | MATCH for 404 (no active credential); a concurrent change inside the reset answers 500, not compared with upstream (MV-9) | `C/tests/gatekeeper_policy.rs` |
+| `DELETE /scene-stream-access` | `remove-…:42-65` | `G/streaming.rs` `remove_access`, `revocation_target` | MATCH | `C/tests/gatekeeper_policy.rs` |
+| Platform bans on stream access (0a6b095) | `add-…:51-59` | `G/streaming.rs` `barred`, `refuse_barred` | MATCH | `C/comms/src/gatekeeper/streaming.rs` tests |
+| Ingress webhooks, 4 h TTL, stale-flag reconcile (cdd006c), key expiry deadline (1e7d0f2), notifications | `adapters/streaming-ttl-checker.ts`, `streaming-key-ttl-checker.ts` | `G/streaming.rs` `ingress_event`; `G/streaming_jobs.rs` `spawn_jobs`, `expire_keys`, `enqueue_prepared` (leased jobs, durable cleanup queue); `G/streaming_notifications.rs` `recipients` | MATCH: an expired key is kept while the broadcast live at its deadline runs and retired by the first key pass after it ends; a broadcast started after the deadline is cut; notices: each notice goes to the place's owner, its active scene admins and LAND owner, operators and managers (Genesis), or the world owner, the deployment/streaming grantees of its parcels and the scene admins of the key's scene whose granter holds the world-wide authority (exactly the admins who hold the key, each scene having its own), deduplicated, as `GK/adapters/scene-admins.ts:14-84`; a place removal also tells the grants its cleanup revoked, on every scene of the world; a key revoked because its scene was undeployed tells no world scene admin | `G/streaming_jobs.rs` tests; `an_expired_key_is_retired_after_its_broadcast_ends`; `a_broadcast_restarted_after_the_deadline_loses_the_expired_key`; `a_broadcast_live_at_the_deadline_is_still_capped_at_four_hours`; `G/streaming_jobs.rs` and `G/streaming_notifications.rs` tests; `removing_a_scene_admin_revokes_the_key_it_generated` |
 
 Cast differences from upstream (each pinned by a test in `G/cast_tests.rs`):
 
-- A world has one stream credential for all its scenes. `/scene-stream-access` and
-  `/cast/generate-stream-link` admit there its owner, an admin of the world place, a deployment or
-  streaming grantee without a parcel restriction, and an admin granted through `/scene-admin` on the
-  scene the request is signed from, while the wallet that granted it still holds one of those
-  world-wide authorities (the grant is keyed on the scene's place, its world-scene identity, kept
-  across a redeploy; upstream keys it on the world's place). A grantee of some parcels, an admin it or another scene admin granted, and an
-  admin of a scene that is not the world's current deployment are refused (403); on a Genesis place
-  a parcel grantee is admitted. So in a multi-scene world an admin the owner adds on one scene can
-  read, reset and revoke the stream of every scene. Pinned by
-  `a_world_published_here_answers_every_scene_route_under_its_stripped_realm_name`
-  (`C/tests/gatekeeper_policy.rs`).
+- Each world scene has its own stream credential, stored under its place (its world-scene identity,
+  kept across a redeploy), as upstream keys it on the world scene's place. `/scene-stream-access` and
+  `/cast/generate-stream-link` admit there the world's owner, a deployment or streaming grantee whose
+  grant has no parcel restriction or overlaps the scene's parcels, and an admin granted through
+  `/scene-admin` on that scene while the wallet that granted it holds world-wide authority (the
+  owner, a grantee without a parcel restriction). Upstream admits any admin of the world scene's
+  place; here an admin that a parcel-scoped grantee or another scene admin granted is refused (403),
+  and so is an admin of another scene. A revocation takes the signed scene when it is current, else
+  the scene on the signed parcel. A key stored under the world's catalogue place by an earlier
+  version is the key of the scene whose room it streams into until it is replaced or expires. Pinned
+  by `a_world_published_here_answers_every_scene_route_under_its_stripped_realm_name`
+  (`C/tests/gatekeeper_policy.rs`) and `scene_key_tests` (`G/streaming.rs`).
+- A watcher names a world scene by the body's `parcel`, else the world's only scene; a world with
+  several scenes and no parcel answers 400, as upstream. In such a world the stream link's watcher
+  link is `/w/<world>/parcel/<base parcel>` (upstream: `/w/<world>`), the route the Cast page reads
+  the parcel from. Pinned by `a_multi_scene_world_needs_the_parcel_to_watch_a_scene`.
 - Publisher identities name the credential that minted them (`stream:<place>:<access id>:<uuid>`,
   `presentation-bot:<room>:<access id>:<uuid>`). Revoking or replacing a key removes its WebRTC
   publishers from the room, and the `participant_joined` webhook removes one that joins later with a
@@ -136,7 +141,15 @@ the mic, hanging up, raising a hand, promoting, demoting, kicking and ending a s
 - `apps/sites` serves the streamer at `/cast/s/:token` and the watcher at `/cast/w/:location`
   (`apps/sites/src/features/social/cast-live`), which join the room with `livekit-client` through
   `GET /cast/stream-info/{streamingKey}`, `POST /cast/streamer-token` and the signed
-  `POST /cast/watcher-token` (`apps/sites/src/data/lib/catalyst/cast.ts`).
+  `POST /cast/watcher-token` (`apps/sites/src/data/lib/catalyst/cast.ts`). The watcher uses the
+  viewer's signed-in identity, or a throwaway browser key held only in tab memory for signed-out
+  viewers. It never saves that key as an account session. Address bans apply to the signing wallet;
+  signing out therefore lets a banned account watch with a different address. Private-world access
+  checks still apply to that address. A world link without a parcel selects its only scene or asks
+  the viewer to choose among the first 100 scenes; a failed scene lookup keeps the parcel absent.
+  The pinned `decentraland/sites` (66e95db) sends an unsigned watcher request, which
+  `decentraland/comms-gatekeeper` refuses through `authWatcher` since #284. Sites here retains
+  the signed request contract.
 - The Creator Hub Admin Toolkit (Cast, live stream, scene admins and bans) calls the realm's own
   deployment: under a non-Decentraland realm's origin, `<origin>/comms-gatekeeper/...` and
   `<origin>/cast-presenter-service/presentations`; on a `decentraland.org`, `.zone` or `.today`

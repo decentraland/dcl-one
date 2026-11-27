@@ -57,8 +57,7 @@ rustls-native-certs = { workspace = true, optional = true }
 rustls-pemfile.workspace = true
 rustls-pki-types.workspace = true
 async-nats.workspace = true
-metrics.workspace = true
-metrics-exporter-prometheus.workspace = true
+dcl-metrics.workspace = true
 hayro.workspace = true
 tiny-skia.workspace = true
 regex.workspace = true
@@ -87,3 +86,6 @@ alloy = { version = "2", default-features = false, features = ["std", "signer-lo
 tokio-tungstenite.workspace = true
 proptest = "1.11.0"
 rcgen = "0.14.10"
+
+[lints]
+workspace = true

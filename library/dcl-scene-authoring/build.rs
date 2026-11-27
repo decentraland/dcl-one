@@ -173,7 +173,10 @@ fn generate_component_schema(include: &Path) -> Result<()> {
             );
             continue;
         };
-        let stem = proto.file_stem().unwrap().to_string_lossy();
+        let stem = proto
+            .file_stem()
+            .expect("a *.proto path names a file")
+            .to_string_lossy();
         let pascal = pascal_case(&stem);
         let full = format!("decentraland.sdk.components.PB{pascal}");
         let Some(idx) = msg_pos(&full) else {

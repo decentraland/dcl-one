@@ -29,8 +29,8 @@
 //! | [`Policy::can_deploy`] (world, actor, footprint) | 1. personal world: the actor is its owner and the realm cap admits it (a world already published here is always admitted; otherwise the count of personal worlds published here, mirrored copies excluded, must be below the cap). 2. else the name authority names the actor as the label's holder; **no names reader denies outright** (the old squid-less node denied every non-personal publish). 3. else a `deployment` grant covering the footprint **and** every parcel of every already-deployed scene it overlaps. | 1/2: `Deploy::Owner` (replaces every overlapping scene, and the publish rewrites `worlds.owner` from this answer, so a NAME transfer flips ownership on the new holder's next publish); 3: `Deploy::Scoped(overlapping ids)` (may replace exactly those); a lookup fault is undetermined (the old route rendered it 403 "could not verify", fail-closed) |
 //! | [`Policy::can_stream`] (world, actor, parcels) | the owner, else a `streaming` grant covering the parcels (world-wide when none are given) | `Allowed` / refused |
 //! | [`Policy::can_access`] (world, actor, secret, scene) | 1. `worlds.blocked_wallets` or an in-force `social.user_bans` row (address or recorded device) → banned from the platform. 2. a `social.scene_bans` row for the resolved scene → banned from the world. 3. the access setting: `unrestricted` → allowed; `allow-list` → the actor holds an `access` grant, else is a member of a listed active community (`social.community_members`, not banned); `shared-secret` → bcrypt-verify the presented secret; `nft-ownership` → refused (the old code never checked ownership). 4. only when the setting refuses: the current holder ([`Policy::current_owner`]: the personal rule, else the name authority by name, memoized briefly and waited on at most 3 s; `worlds.owner` only without a reader) → allowed. An authority fault there is undetermined for the stored `worlds.owner` and for a connected client admitted as owner ([`Policy::readmit`]), and the setting's refusal for anyone else. An unknown world is unrestricted with no owner (the old lookup's default). | [`Access`] |
-//! | [`Policy::is_admin`] (scene, actor) | 1. an active `social.scene_admins` row keyed by the scene's place (`SceneRef::place`: the world scene's identity or the Genesis base parcel, which a redeploy of the same place keeps; comms' write). 2. world scene: the world's owner ([`Policy::is_owner`], never the stored `worlds.owner`). Genesis scene: LAND ownership at any of its parcels (directly or through the estate) through the marketplace reader. | `Allowed` / refused; a reader fault is undetermined; no reader configured refuses non-admins (the old degrade) |
-//! | [`Policy::may_manage_land_storage`] (parcel, actor): the storage routes' Genesis cell | never a scene admin: the LAND manager document of `parcel` ([`LandOperatorsReader`], the lambdas `/parcels/{x}/{y}/operators` comms reads for its protected set): owner (the estate's owner when the parcel sits in one), operator, updateOperator, an updateManager or an approvedForAll operator (the old world-storage `has_any()` matrix); with no document source, LAND ownership at `parcel` through the marketplace reader. | `Allowed` / refused; a reader fault is undetermined; no source configured refuses |
+//! | [`Policy::is_admin`] (scene, actor) | 1. an active `social.scene_admins` row keyed by the scene's place (`SceneRef::place`: the world scene's identity or the Genesis base parcel, which a redeploy of the same place keeps; comms' write). 2. world scene: the world's owner ([`Policy::is_owner`], never the stored `worlds.owner`). Genesis scene: LAND ownership at any of its parcels (directly or through the estate) from the land-authz index. | `Allowed` / refused; an index fault or an index without a fresh published fold is undetermined (503); no index attached refuses non-admins (the old degrade) |
+//! | [`Policy::may_manage_land_storage`] (parcel, actor): the storage routes' Genesis cell | never a scene admin: the LAND manager document of `parcel` ([`LandOperatorsReader`], the lambdas `/parcels/{x}/{y}/operators` comms reads for its protected set): owner (the estate's owner when the parcel sits in one), operator, updateOperator, an updateManager or an approvedForAll operator (the old world-storage `has_any()` matrix), from the land-authz index when attached (undetermined until it has a fresh published fold), else `COMMS_LAND_OPERATORS_URL`; with no document source, LAND ownership at `parcel`. | `Allowed` / refused; a source fault is undetermined; no source configured refuses |
 //! | [`Policy::is_banned`] (actor, scene, device, now) | worlds `blocked_wallets`, then the comms-owned `BanStatus` answer for platform/device and scene bans | the first [`Ban`] in that order, or none |
 //! | [`Policy::protected_addresses`] (world, parcels) | the current holder ([`Policy::current_owner`]) plus every `deployment`/`streaming` grantee whose grant is world-wide or touches one of the parcels | the set (the old extra addresses; the name authority's owner is covered by `is_owner` on the target) |
 //!
@@ -388,18 +388,20 @@ pub struct Policy {
     pool: PgPool,
     personal_worlds: PersonalWorldsPolicy,
     bans: Arc<dyn BanStatus>,
-    /// The LAND authority's subgraph reader (and the subgraph NAME cache
-    /// [`Policy::note_owner`] seeds when the NAME source is that subgraph).
+    /// The marketplace subgraph reader the NAME cache [`Policy::note_owner`]
+    /// seeds when the NAME source is that subgraph; no LAND reads.
     marketplace: Option<Arc<ChainIndex>>,
     /// The node's DCL NAME source ([`Policy::with_name_authority`]); `None`
     /// refuses every NAME ownership question the row itself cannot answer.
     /// Every read here is an authorization.
     name_authority: Option<Arc<dyn NameAuthority>>,
-    /// The LAND manager document reader; `None` admits no LAND operator.
+    /// The LAND manager document reader (`COMMS_LAND_OPERATORS_URL`), read
+    /// only without an attached `land_authz` index; `None` admits no LAND
+    /// operator there.
     land_operators: Option<Arc<LandOperatorsReader>>,
-    /// The LAND authorization index (`land_authz`): the owner and operator
-    /// legs once its fold is published, the marketplace reader's owner leg
-    /// before that; `None` keeps the two readers above as the only sources.
+    /// The LAND authorization index (`land_authz`): the only LAND authority
+    /// when attached, undetermined until its fold is published; `None`
+    /// leaves the manager document reader above as the only source.
     land_authz: Option<Arc<LandAuthzState>>,
     /// `MAX_PARCELS`: a scene's parcel cap where no override row says otherwise.
     max_parcels: u32,
@@ -542,23 +544,28 @@ impl Policy {
     }
 
     /// The LAND manager document of a Genesis parcel (the shape of
-    /// `/lambdas/parcels/{x}/{y}/operators`): from the `land_authz` index
-    /// when its fold is published, else through `COMMS_LAND_OPERATORS_URL`.
-    /// `Ok(None)` means no source can answer (neither is configured or
-    /// ready), which every caller treats as "no LAND evidence", never as an
-    /// empty document; `Ok(Some(None))` is a parcel the source does not know.
+    /// `/lambdas/parcels/{x}/{y}/operators`). With a `land_authz` index
+    /// attached, its published fold is the only authority: before it has a
+    /// fresh one the answer is undetermined
+    /// ([`AuthorityNotEstablished::land_index_not_ready`]), and
+    /// `COMMS_LAND_OPERATORS_URL` does not stand in. Only a policy built
+    /// without the index reads that URL. `Ok(None)` means no source can
+    /// answer (no index attached, no URL), which every caller treats as "no
+    /// LAND evidence", never as an empty document; `Ok(Some(None))` is a
+    /// parcel the source does not know.
     pub async fn land_document(
         &self,
         parcel: Parcel,
     ) -> Result<Option<Arc<Option<LandOperators>>>, AuthorityNotEstablished> {
-        if let Some(land) = self.land_authz.as_ref()
-            && let Some(mut snapshot) = land.ready_snapshot().await
-        {
+        if let Some(land) = self.land_authz.as_ref() {
+            let Some(mut snapshot) = land.ready_snapshot().await else {
+                return Err(AuthorityNotEstablished::land_index_not_ready());
+            };
             let rights = land
                 .store()
                 .rights_on(&mut snapshot.tx, parcel.x, parcel.y)
                 .await
-                .map_err(|e| store_unavailable("land-authz index", &e))?;
+                .map_err(|e| store_unavailable("land_authz store", &e))?;
             // The deploy column: a parcel's cleared update-operator leg (the
             // zero address lamb2's `/operators` answers) falls back to its
             // estate's, so storage management and the comms protected set
@@ -1348,7 +1355,7 @@ impl Policy {
             PermissionDecision::Refused(undetermined) => return Err(undetermined),
         }
         let mut acquired;
-        let conn: &mut sqlx::PgConnection = match conn.as_deref_mut() {
+        let conn: &mut sqlx::PgConnection = match conn {
             Some(conn) => conn,
             None => {
                 acquired = self
@@ -1641,38 +1648,29 @@ impl Policy {
         }
     }
 
-    /// LAND ownership at any of `coords`, directly or through the estate.
+    /// LAND ownership at any of `coords`, directly or through the estate,
+    /// from the land-authz index: undetermined
+    /// ([`AuthorityNotEstablished::land_index_not_ready`]) while
+    /// it has no fresh published fold, refused with no index attached. No
+    /// subgraph stands in.
     async fn owns_land_at(&self, coords: &[(i32, i32)], actor: &Address) -> PermissionDecision {
         if coords.is_empty() {
             return PermissionDecision::refused(NOT_OWNER_OR_ADMIN_MSG);
         }
-        if let Some(land) = self.land_authz.as_ref() {
-            return match land_authz::owns_land_at(land, actor.as_str(), coords).await {
-                Ok(true) => PermissionDecision::Allowed,
-                Ok(false) => PermissionDecision::refused(NOT_OWNER_OR_ADMIN_MSG),
-                Err(land_authz::Unavailable::NoSource) => {
-                    tracing::warn!(
-                        "scene authz: no LAND rights source (index not ready, no marketplace subgraph); refusing without LAND ownership evidence"
-                    );
-                    PermissionDecision::refused(NOT_OWNER_OR_ADMIN_MSG)
-                }
-                Err(e) => PermissionDecision::Refused(reader_unavailable(
-                    "LAND rights source",
-                    &e.to_string(),
-                )),
-            };
-        }
-        let Some(market) = self.marketplace.as_ref() else {
+        let Some(land) = self.land_authz.as_ref() else {
             tracing::warn!(
-                "scene authz: no marketplace LAND reader; refusing without LAND ownership evidence"
+                "scene authz: no LAND rights source attached; refusing without LAND ownership evidence"
             );
             return PermissionDecision::refused(NOT_OWNER_OR_ADMIN_MSG);
         };
-        match crate::chain_index::graph::owns_land_at(market, actor.as_str(), coords).await {
+        match land_authz::owns_land_at(land, actor.as_str(), coords).await {
             Ok(true) => PermissionDecision::Allowed,
             Ok(false) => PermissionDecision::refused(NOT_OWNER_OR_ADMIN_MSG),
+            Err(land_authz::Unavailable::NotReady) => {
+                PermissionDecision::Refused(AuthorityNotEstablished::land_index_not_ready())
+            }
             Err(e) => {
-                PermissionDecision::Refused(reader_unavailable("marketplace LAND reader", &e))
+                PermissionDecision::Refused(reader_unavailable("land_authz store", &e.to_string()))
             }
         }
     }
@@ -1680,8 +1678,9 @@ impl Policy {
     /// Whether `actor` may manage the storage of the Genesis scene standing
     /// on `parcel`: LAND authority at that parcel only (the old world-storage
     /// lambdas matrix): owner, operator, updateOperator, updateManager or
-    /// approvedForAll in its manager document; with no document source, LAND
-    /// ownership there. Scene admins get nothing here.
+    /// approvedForAll in its manager document ([`Self::land_document`]: an
+    /// attached index that is not ready leaves it undetermined); with no
+    /// document source, LAND ownership there. Scene admins get nothing here.
     pub async fn may_manage_land_storage(
         &self,
         parcel: Parcel,

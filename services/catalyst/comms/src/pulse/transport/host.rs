@@ -221,7 +221,7 @@ impl WarningThrottle {
 /// test produces what the operating system reports without making the network misbehave.
 #[cfg(test)]
 #[derive(Clone, Default)]
-pub(crate) struct SocketFaults(std::sync::Arc<std::sync::Mutex<FaultQueues>>);
+pub(crate) struct SocketFaults(std::sync::Arc<parking_lot::Mutex<FaultQueues>>);
 
 #[cfg(test)]
 #[derive(Default)]
@@ -233,16 +233,16 @@ struct FaultQueues {
 #[cfg(test)]
 impl SocketFaults {
     pub(crate) fn fail_next_send(&self, error: std::io::Error) {
-        self.0.lock().unwrap().send.push_back(error);
+        self.0.lock().send.push_back(error);
     }
 
     pub(crate) fn fail_next_receive(&self, error: std::io::Error) {
-        self.0.lock().unwrap().receive.push_back(error);
+        self.0.lock().receive.push_back(error);
     }
 
     /// Faults no socket call has returned yet.
     pub(crate) fn pending(&self) -> usize {
-        let queues = self.0.lock().unwrap();
+        let queues = self.0.lock();
         queues.send.len() + queues.receive.len()
     }
 
@@ -250,7 +250,7 @@ impl SocketFaults {
         &self,
         queue: impl FnOnce(&mut FaultQueues) -> &mut std::collections::VecDeque<std::io::Error>,
     ) -> Option<std::io::Error> {
-        queue(&mut self.0.lock().unwrap()).pop_front()
+        queue(&mut self.0.lock()).pop_front()
     }
 }
 

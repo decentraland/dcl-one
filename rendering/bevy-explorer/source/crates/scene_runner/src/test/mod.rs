@@ -151,6 +151,7 @@ fn init_test_app(entity_json: &str) -> App {
     app.init_resource::<SceneGlobalLight>();
     app.insert_resource(TimeOfDay {
         time: 10.0 * 3600.0,
+        ..Default::default()
     });
     app.add_event::<RpcCallEvent>();
     app.add_event::<ScrollTargetEvent>();
@@ -531,6 +532,124 @@ fn cyclic_recovery() {
         let graph = make_graph(&mut app);
         check_or_write!(graph, "expected/cyclic_recovery.dot");
     }
+}
+
+/// One scene tick: writes each `(entity, parent)` as a transform, then runs the lifecycle and
+/// parenting systems.
+fn set_parents(app: &mut App, store: &mut CrdtStore, tick: u32, parents: &[(u16, u16)]) {
+    let (scene, mut context) = app
+        .world_mut()
+        .query::<(Entity, &mut RendererSceneContext)>()
+        .single_mut(app.world_mut())
+        .unwrap();
+    for &(id, parent) in parents {
+        let entity = SceneEntityId { id, generation: 0 };
+        if context.bevy_entity(entity).is_none() {
+            context.nascent.insert(entity);
+        }
+        store.try_update(
+            SceneComponentId::TRANSFORM,
+            CrdtType::LWW_ENT,
+            entity,
+            SceneCrdtTimestamp(tick),
+            Some(&mut DclReader::new(&make_reparent_buffer(parent))),
+        );
+    }
+    let updates = store
+        .take_updates()
+        .lww
+        .get(&SceneComponentId::TRANSFORM)
+        .cloned()
+        .unwrap_or_default();
+    app.world_mut()
+        .entity_mut(scene)
+        .insert(CrdtStateComponent::<CrdtLWWState, DclTransformAndParent>::new(updates));
+    Schedule::new(SceneLoopLabel)
+        .add_systems(
+            (
+                process_scene_entity_lifecycle,
+                process_transform_and_parent_updates,
+            )
+                .chain(),
+        )
+        .run(app.world_mut());
+}
+
+/// The scene id of the parent of every scene entity below the root.
+fn parents(app: &mut App) -> BTreeMap<u16, u16> {
+    let world = app.world_mut();
+    let mut entities = world.query::<(&SceneEntity, &ChildOf)>();
+    entities
+        .iter(world)
+        .filter_map(|(entity, parent)| {
+            let parent = world.get::<SceneEntity>(parent.parent())?;
+            Some((entity.id.id, parent.id.id))
+        })
+        .collect()
+}
+
+#[test]
+fn flat_hierarchy() {
+    let mut app = init_test_app("empty_scene.entity_definition");
+    let cubes = (512..528).map(|id| (id, 0)).collect::<Vec<_>>();
+    set_parents(&mut app, &mut CrdtStore::default(), 0, &cubes);
+    assert_eq!(parents(&mut app), BTreeMap::from_iter(cubes));
+}
+
+#[test]
+fn reparenting() {
+    let mut app = init_test_app("empty_scene.entity_definition");
+    let mut store = CrdtStore::default();
+    let mut chain = [
+        (512, 0),
+        (513, 512),
+        (514, 513),
+        (515, 514),
+        (516, 515),
+        (517, 516),
+    ];
+    set_parents(&mut app, &mut store, 0, &chain);
+    assert_eq!(parents(&mut app), BTreeMap::from(chain));
+
+    chain[2] = (514, 0);
+    set_parents(&mut app, &mut store, 1, &chain[2..3]);
+    assert_eq!(parents(&mut app), BTreeMap::from(chain));
+}
+
+#[test]
+fn late_entities() {
+    let mut app = init_test_app("empty_scene.entity_definition");
+    let mut store = CrdtStore::default();
+    // a parent the scene has not sent yet is created below the root
+    set_parents(
+        &mut app,
+        &mut store,
+        0,
+        &[(515, 514), (516, 515), (517, 516)],
+    );
+    assert_eq!(
+        parents(&mut app),
+        BTreeMap::from([(514, 0), (515, 514), (516, 515), (517, 516)])
+    );
+
+    set_parents(&mut app, &mut store, 1, &[(514, 513)]);
+    assert_eq!(
+        parents(&mut app),
+        BTreeMap::from([(513, 0), (514, 513), (515, 514), (516, 515), (517, 516)])
+    );
+
+    set_parents(&mut app, &mut store, 2, &[(513, 512), (512, 0)]);
+    assert_eq!(
+        parents(&mut app),
+        BTreeMap::from([
+            (512, 0),
+            (513, 512),
+            (514, 513),
+            (515, 514),
+            (516, 515),
+            (517, 516)
+        ])
+    );
 }
 
 #[test]
