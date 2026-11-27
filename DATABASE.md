@@ -4170,20 +4170,64 @@ items pass within its money budget.
    a published `folded_block` and `folded_at`, and no quarantine or detected
    divergence. Ethereum's first walk takes about 37 minutes of back-to-back
    passes. See [the measured replay](METRICS.md#ethereum-collections-v1-first-walk).
-3. During the cutover window, stop the catalogue writers sharing the
-   database. Use the same ownership list on each replacement writer.
-   Set `MARKETPLACE_COLLECTIONS_INDEX_OWNS=matic,ethereum`, or let the
+3. Pause automatic releases of the catalogue writers for the cutover
+   window. Stop the catalogue writers sharing the database and use the
+   same ownership list on each replacement writer. Set
+   `MARKETPLACE_COLLECTIONS_INDEX_OWNS=matic,ethereum`, or let the
    mainnet mirror posture choose it. Keep both collections subgraph URLs
-   for direct reads. The first publication replaces the network's
-   catalogue rows and takes ownership in the same transaction. Ethereum
-   publishes its v1 royalty catalogue with those rows.
-4. Check `SELECT network, owned_at, projected_through, pending, generation
-   FROM shop.collection_projection ORDER BY network`. Each handed-over
-   network should have `owned_at` and `projected_through` set, with no
-   unresolved collections. Compare the chain-bound collection counts
-   against the warmed catalogue at a common height and confirm normal
-   catalogue and royalty reads. Confirm NFT and Polygon sales cursors
-   advance, badge sales runs, and owned mirrors make no requests.
+   for direct reads. Keep the replacement writers running through the
+   first publication on every network being handed over.
+4. Check the ownership and publication in one query.
+
+   ```sql
+   SELECT p.network, c.chain_id, p.owned_at, p.projected_through,
+          c.folded_block, c.folded_at, c.full_history,
+          c.quarantined_at, c.diverged_at, p.pending, p.generation
+   FROM shop.collection_projection p
+   JOIN shop.chain_cursor c ON c.network = p.network AND c.indexer = 'collections'
+   ORDER BY p.network;
+   ```
+
+   Resume automatic releases once each handed-over network has
+   `owned_at` set, `chain_id` 137 on Polygon or 1 on Ethereum, full
+   history, and no quarantine or divergence. Check that `folded_at` is
+   within the last 30 minutes, `projected_through = folded_block`, and
+   `pending = 0`. Compare the chain-bound collection
+   counts at a common height, check catalogue and royalty reads, and
+   confirm the NFT and Polygon sales cursors advance. Check that badge
+   sales runs and the mirrors skip the owned networks.
+
+**While the first projection runs**
+
+The publishing transaction locks the collections cursor row and takes
+the network's exclusive catalogue advisory lock. On Ethereum's first
+publication in a process or lease, it also invalidates any existing
+projection row before taking the advisory lock. The replacement rows,
+ownership and publication commit together with Ethereum's v1 royalties.
+A mirror-sized fixture took 1.270–1.314 s on Polygon (6,196 collections
+and 11,986 items) and 22–25 ms on Ethereum (42 collections and 438 items).
+The cursor and mirror probes waited 1.267–1.311 s and 18–21 ms,
+respectively. A heavier Polygon history took 2.180–3.261 s, with waits of
+2.175–3.257 s.
+[Mainnet projection benchmark and lock measurements](METRICS.md#mainnet-first-catalogue-projection)
+
+Before commit, readers still see the previous committed ownership and
+rows. Catalogue reads can serve the proven mirror copy while mirror
+writes to that network wait for the lock. Without the mirror proof the
+catalogue answers `503 collections-index`. The NFT and Polygon sales
+walkers still use the collections mirror gate while ownership is unset.
+They wait when it cannot admit their address read, then use the standing
+projection once ownership commits. Catalogue readiness also checks the
+published fold and unresolved collections.
+
+An interruption before commit rolls back the entire projection, including
+ownership and the cursor publication. The committed event log and
+`fold_through` stay. On the next publishable pass the new owner starts
+the projection again from that log. The heavier Polygon retry took
+2.167 s. If a publication is still running after two minutes, leave
+automatic releases paused and inspect the writer's query and blocking
+locks before deciding whether to let it finish or hand back the network. Restarting the writer before commit discards
+that attempt's projection work.
 
 **Handing a network back to the mirror**
 
