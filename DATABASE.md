@@ -4206,8 +4206,8 @@ projection row before taking the advisory lock. The replacement rows,
 ownership and publication commit together with Ethereum's v1 royalties.
 A mirror-sized fixture took 1.270–1.314 s on Polygon (6,196 collections
 and 11,986 items) and 22–25 ms on Ethereum (42 collections and 438 items).
-The cursor and mirror probes waited 1.267–1.311 s and 18–21 ms,
-respectively. A heavier Polygon history took 2.180–3.261 s, with waits of
+Both probes waited about 1.27–1.31 s on Polygon and 18–21 ms on
+Ethereum. A heavier Polygon history took 2.180–3.261 s, with waits of
 2.175–3.257 s.
 [Mainnet projection benchmark and lock measurements](METRICS.md#mainnet-first-catalogue-projection)
 
