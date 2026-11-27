@@ -214,13 +214,13 @@ fn init_test_app(entity_json: &str) -> App {
     app.world_mut()
         .remove_resource::<SceneLoopSchedule>()
         .unwrap();
-    let mut skip_loop_schedule = Schedule::new(SceneLoopLabel);
-    skip_loop_schedule.add_systems(|mut updates: ResMut<SceneUpdates>| {
-        updates.eligible_jobs = 0;
-    });
-    app.world_mut().insert_resource(SceneLoopSchedule {
-        schedule: skip_loop_schedule,
-    });
+    let mut skip_loop = SceneLoopSchedule::default();
+    skip_loop
+        .schedule
+        .add_systems(|mut updates: ResMut<SceneUpdates>| {
+            updates.eligible_jobs = 0;
+        });
+    app.world_mut().insert_resource(skip_loop);
 
     // run app once to get the scene initialized
     let mut q = app
@@ -236,9 +236,7 @@ fn init_test_app(entity_json: &str) -> App {
         // }
     }
 
-    app.world_mut().insert_resource(SceneLoopSchedule {
-        schedule: Schedule::new(SceneLoopLabel),
-    });
+    app.world_mut().init_resource::<SceneLoopSchedule>();
 
     app
 }

@@ -4,8 +4,8 @@ mod coast;
 mod day_night;
 mod debug_panel;
 mod environment;
+mod landscape_trees;
 mod lens_flare;
-mod props;
 pub mod shell_texturing;
 mod sky_envmap;
 pub use common::sky_preset;
@@ -13,7 +13,6 @@ mod solids;
 mod stars;
 mod stylized_sky;
 pub mod terrain;
-mod trees;
 pub mod upscale;
 
 use bevy::{
@@ -51,7 +50,7 @@ use console::DoAddConsoleCommand;
 use crate::{
     coast::CoastPlugin,
     day_night::{day_fraction, DayNightPlugin},
-    props::PropsPlugin,
+    landscape_trees::LandscapeTreesPlugin,
     shell_texturing::ShellTexturingPlugin,
     sky_envmap::{SkyAmbient, SkyEnvmapPlugin, SkyEnvmapSettings},
     sky_preset::{
@@ -59,7 +58,6 @@ use crate::{
     },
     solids::SolidsPlugin,
     terrain::TerrainPlugin,
-    trees::TreesPlugin,
 };
 
 pub struct VisualsPlugin {
@@ -80,7 +78,7 @@ impl Plugin for VisualsPlugin {
             .add_plugins(ShellTexturingPlugin)
             .add_plugins(TerrainPlugin)
             .add_plugins(CoastPlugin)
-            .add_plugins((TreesPlugin, PropsPlugin, SolidsPlugin))
+            .add_plugins((LandscapeTreesPlugin, SolidsPlugin))
             .add_systems(
                 Update,
                 apply_global_light

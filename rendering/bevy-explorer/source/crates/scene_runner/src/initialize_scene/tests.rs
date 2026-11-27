@@ -1166,3 +1166,15 @@ fn a_realm_change_refused_in_a_preview_leaves_no_landing_for_the_next_one() {
     assert_eq!(landing_spawn_point(&app, player), Some(None));
     assert_eq!(landing_position(&app, player), None);
 }
+
+#[test]
+fn an_unresolved_parcel_is_unknown_until_its_pointer_resolves() {
+    let mut pointers = ScenePointers::default();
+    pointers.set_realm(IVec2::splat(-10), IVec2::splat(10));
+
+    assert_eq!(pointers.occupancy(IVec2::new(0, 0)), Occupancy::Unknown);
+    pointers.insert(IVec2::new(0, 0), PointerResult::Nothing);
+    assert_eq!(pointers.occupancy(IVec2::new(0, 0)), Occupancy::Empty);
+    // outside the realm
+    assert_eq!(pointers.occupancy(IVec2::new(20, 0)), Occupancy::Empty);
+}

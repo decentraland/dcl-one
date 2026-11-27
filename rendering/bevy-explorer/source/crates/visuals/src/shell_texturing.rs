@@ -735,9 +735,10 @@ mod test {
     use super::*;
 
     /// The softened sun shadow overrides compile on this machine's adapter, in a renderer with no
-    /// window: a grass shell (`shell_texturing.wgsl`), a rock (`soft_shadows.wgsl`), the flat
-    /// ground (`terrain_flat.wgsl`), a cliff (`coast_cliff.wgsl`) and the ocean
-    /// (`coast_water.wgsl`) in front of an HDR camera with the prepasses and a shadowing light.
+    /// window: a grass shell (`shell_texturing.wgsl`), the flat ground (`terrain_flat.wgsl`), a
+    /// cliff (`coast_cliff.wgsl`) and the ocean (`coast_water.wgsl`) in front of an HDR camera
+    /// with the prepasses and a shadowing light. The landscape trees' and stones' surfaces have
+    /// their own test (`landscape_tree_shader_compiles`).
     /// Needs a GPU, so `#[ignore]`d and skipped by CI:
     ///
     /// ```text
@@ -761,16 +762,14 @@ mod test {
         use crate::{
             coast::{CliffExtension, CliffMaterial, WaterExtension, WaterMaterial},
             terrain::NO_COAST,
-            trees::{SoftShadowMaterial, SoftShadows},
         };
 
         let mut app = headless_app();
-        // the shaders as `ShellTexturingPlugin`, `TreesPlugin`, `TerrainPlugin` and `CoastPlugin`
-        // embed them; those plugins need the scene runner and the terrain
+        // the shaders as `ShellTexturingPlugin`, `TerrainPlugin` and `CoastPlugin` embed them;
+        // those plugins need the scene runner and the terrain
         let registry = app.world().resource::<EmbeddedAssetRegistry>();
         for (name, source) in [
             ("shell_texturing.wgsl", include_str!("shell_texturing.wgsl")),
-            ("soft_shadows.wgsl", include_str!("soft_shadows.wgsl")),
             ("terrain_vertex.wgsl", include_str!("terrain_vertex.wgsl")),
             ("terrain_params.wgsl", include_str!("terrain_params.wgsl")),
             ("terrain_flat.wgsl", include_str!("terrain_flat.wgsl")),
@@ -784,7 +783,6 @@ mod test {
         }
         app.add_plugins((
             MaterialPlugin::<ShellTexture>::default(),
-            MaterialPlugin::<SoftShadowMaterial>::default(),
             MaterialPlugin::<TerrainFlatMaterial>::default(),
             MaterialPlugin::<CliffMaterial>::default(),
             MaterialPlugin::<WaterMaterial>::default(),
@@ -810,7 +808,7 @@ mod test {
         let ripples = images.add(Image::default());
         let mut meshes = world.resource_mut::<Assets<Mesh>>();
         let grass_mesh = meshes.add(parcel_mesh(grid_segments(HIGH_LOD)));
-        let rock_mesh = meshes.add(Cuboid::new(1.0, 1.0, 1.0));
+        let cliff_mesh = meshes.add(Cuboid::new(1.0, 1.0, 1.0));
         let plane_mesh = meshes.add(Plane3d::default().mesh().size(4.0, 4.0));
         let grass = world
             .resource_mut::<Assets<ShellTexture>>()
@@ -822,12 +820,6 @@ mod test {
                 tip_color: LinearRgba::GREEN,
                 terrain_steps: TERRAIN_TEXTURE,
                 terrain: TerrainParams::default(),
-            });
-        let rock = world
-            .resource_mut::<Assets<SoftShadowMaterial>>()
-            .add(SoftShadowMaterial {
-                base: StandardMaterial::default(),
-                extension: SoftShadows {},
             });
         let ground = world
             .resource_mut::<Assets<TerrainFlatMaterial>>()
@@ -901,17 +893,12 @@ mod test {
             Transform::default(),
         ));
         world.spawn((
-            Mesh3d(rock_mesh.clone()),
-            MeshMaterial3d(rock),
-            Transform::from_xyz(1.0, 0.5, 0.0),
-        ));
-        world.spawn((
             Mesh3d(plane_mesh.clone()),
             MeshMaterial3d(ground),
             Transform::from_xyz(-1.0, 0.0, 0.0),
         ));
         world.spawn((
-            Mesh3d(rock_mesh),
+            Mesh3d(cliff_mesh),
             MeshMaterial3d(cliff),
             Transform::from_xyz(-1.0, 0.5, 1.0),
         ));
@@ -928,8 +915,6 @@ mod test {
         for (name, at_least) in [
             // the main pass and the prepass
             ("shell_texturing.wgsl", 2),
-            // the main pass
-            ("soft_shadows.wgsl", 1),
             // the main pass and the prepass
             ("terrain_flat.wgsl", 2),
             // the main pass

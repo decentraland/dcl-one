@@ -284,6 +284,15 @@ pub struct SceneLoopSchedule {
     schedule: Schedule,
 }
 
+/// An empty scene loop, labelled `SceneLoopLabel`.
+impl Default for SceneLoopSchedule {
+    fn default() -> Self {
+        Self {
+            schedule: Schedule::new(SceneLoopLabel),
+        }
+    }
+}
+
 /// The time from the start of one scene loop pass to the start of the next while the loop
 /// can only wait for replies.
 const SCENE_REPLY_POLL: Duration = Duration::from_micros(250);
@@ -446,7 +455,8 @@ impl Plugin for SceneRunnerPlugin {
         );
         app.add_plugins(loop_pacing::LoopPacingPlugin);
 
-        let mut scene_schedule = Schedule::new(SceneLoopLabel);
+        let mut scene_loop = SceneLoopSchedule::default();
+        let scene_schedule = &mut scene_loop.schedule;
         // most passes find nothing to do, so handing each system to a worker costs more
         // than running it
         scene_schedule.set_executor_kind(ExecutorKind::SingleThreaded);
@@ -465,9 +475,7 @@ impl Plugin for SceneRunnerPlugin {
         scene_schedule.add_systems(receive_scene_updates.in_set(SceneLoopSets::ReceiveFromScene));
         scene_schedule.add_systems(process_scene_entity_lifecycle.in_set(SceneLoopSets::Lifecycle));
 
-        app.insert_resource(SceneLoopSchedule {
-            schedule: scene_schedule,
-        });
+        app.insert_resource(scene_loop);
 
         app.add_plugins(SceneInputPlugin);
         app.add_plugins(SceneOutputPlugin);

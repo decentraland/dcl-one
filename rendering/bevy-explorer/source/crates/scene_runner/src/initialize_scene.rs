@@ -1008,6 +1008,28 @@ impl Default for ScenePointers {
     }
 }
 
+/// A parcel's occupancy for the landscape: outside the realm's bounds empty, then its resolved
+/// pointer, then empty when every scene is known, else unknown.
+fn landscape_occupancy(
+    pointers: &HashMap<IVec2, PointerResult>,
+    realm_bounds: (IVec2, IVec2),
+    all_scenes_known: bool,
+    parcel: IVec2,
+) -> Occupancy {
+    if realm_bounds.0.cmpgt(realm_bounds.1).any() {
+        return Occupancy::Unknown;
+    }
+    if parcel.cmplt(realm_bounds.0).any() || parcel.cmpgt(realm_bounds.1).any() {
+        return Occupancy::Empty;
+    }
+    match pointers.get(&parcel) {
+        Some(PointerResult::Exists { .. }) => Occupancy::Occupied,
+        Some(PointerResult::Nothing) => Occupancy::Empty,
+        None if all_scenes_known => Occupancy::Empty,
+        None => Occupancy::Unknown,
+    }
+}
+
 impl ScenePointers {
     pub fn is_full(&self) -> bool {
         if self.realm_bounds.0.cmpgt(self.realm_bounds.1).any() {
@@ -1030,6 +1052,17 @@ impl ScenePointers {
         self.pointers
             .get(parcel)
             .or_else(|| self.all_scenes_known.then_some(&PointerResult::NOTHING))
+    }
+
+    /// A parcel's occupancy for the landscape (terrain and trees): its resolved pointer when there
+    /// is one, else unknown.
+    pub fn occupancy(&self, parcel: IVec2) -> Occupancy {
+        landscape_occupancy(
+            &self.pointers,
+            self.realm_bounds,
+            self.all_scenes_known,
+            parcel,
+        )
     }
 
     /// The realm's listed scenes are placed: parcels none of them covers are empty from now on.
@@ -1088,22 +1121,10 @@ impl ScenePointers {
             all_scenes_known,
             ..
         } = self;
-        let (realm_bounds, all_scenes_known) = (*realm_bounds, *all_scenes_known);
+        let (pointers, realm_bounds, all_scenes_known) =
+            (&*pointers, *realm_bounds, *all_scenes_known);
         terrain.resolve(
-            |parcel| {
-                if realm_bounds.0.cmpgt(realm_bounds.1).any() {
-                    return Occupancy::Unknown;
-                }
-                if parcel.cmplt(realm_bounds.0).any() || parcel.cmpgt(realm_bounds.1).any() {
-                    return Occupancy::Empty;
-                }
-                match pointers.get(&parcel) {
-                    Some(PointerResult::Exists { .. }) => Occupancy::Occupied,
-                    Some(PointerResult::Nothing) => Occupancy::Empty,
-                    None if all_scenes_known => Occupancy::Empty,
-                    None => Occupancy::Unknown,
-                }
-            },
+            |parcel| landscape_occupancy(pointers, realm_bounds, all_scenes_known, parcel),
             pointers.iter().filter_map(|(parcel, result)| {
                 matches!(result, PointerResult::Exists { .. }).then_some(*parcel)
             }),
@@ -1165,7 +1186,7 @@ impl ScenePointers {
     /// Changes whenever what `get` answers may have changed, so a reader can keep what it worked
     /// out from the pointers until then. Change detection on the resource cannot tell, since
     /// `crc` and the terrain take it mutably.
-    pub(crate) fn generation(&self) -> u64 {
+    pub fn generation(&self) -> u64 {
         self.generation
     }
 

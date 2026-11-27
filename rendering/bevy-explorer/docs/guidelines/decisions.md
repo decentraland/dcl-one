@@ -1147,6 +1147,31 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
 - **No satellite floor.** unity-explorer lays the minimap's satellite images flat at 0.205 m under the
   terrain in Genesis City; here the ground covers that plane everywhere, so the floor would never be
   seen and is not shipped.
+- **The baked trees, bushes and stones** keep unity-explorer's layouts (Genesis City's and the
+  Worlds'), prototypes, scale ranges, footprints, first level of detail, the trees' and bushes'
+  collider shapes, material values and occupancy rule, and differ in these ways.
+  - Each instance is an entity, spawned when it is within 150 m of the player (horizontally) and
+    checked again when the player changes parcel; bevy batches the shared meshes. Unity hands the
+    whole layout to a GPU instancing package that draws a prototype's full mesh only while it
+    covers enough of the screen (out to about 15 m for the bushes, 70 to 85 m for the stones and
+    90 to 140 m for the trees, at scale 1), then an impostor or nothing; 150 m covers its farthest
+    full mesh, and the Landscape Distance does not drive the trees.
+  - Bevy's lit material replaces the trees' and bushes' simple Blinn-Phong one. Colour, texture,
+    cut-off, culling and normal maps carry over; the trunk takes a roughness of one minus its
+    smoothness. The leaves are fully rough: their Unity smoothness of 1 is a pin-point
+    highlight there, and a mirror of the sky under bevy's image-based light.
+  - The ground colour texture the stones take their foot's colour from is 512x512 (2048x2048 in
+    Unity). Otherwise they keep Unity's ground colour at their foot and moss on their upward faces,
+    on bevy's lit material as in Unity, with a roughness of one minus their smoothness.
+  - The wind moves the leaves in the depth and shadow passes too. Unity's moves the colour pass
+    only; here the depth prepass has to match it.
+  - The textures are 512x512 (1024x1024 in Unity), uncompressed RGBA8 with their mips built when
+    they load.
+  - Their colliders are built over the ground collider's 64 m patch around the player, like the
+    ground's, rather than parcel by parcel around each character.
+  - The stones collide with their own mesh, at their scale rounded to 0.05. Unity's stone collider
+    is one upright capsule as wide as the rock's widest side, which left the player standing up to
+    a metre above a big stone's top.
 - **Spring bones skip avatars the avatar limit hides.** Unity ranks every avatar in front of the
   camera for its ten simulated places. Here an avatar hidden for being beyond the `max_avatars`
   nearest to the player takes no place: its bones stay at rest and the place goes to the next

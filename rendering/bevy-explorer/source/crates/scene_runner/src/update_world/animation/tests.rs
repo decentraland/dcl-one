@@ -15,7 +15,7 @@ use crate::{
     update_world::{
         gltf_container::GltfProcessed, CrdtExtractors, CrdtStateComponent, TrackComponents,
     },
-    DeletedSceneEntities, RendererSceneContext, SceneLoopLabel, SceneLoopSchedule,
+    DeletedSceneEntities, RendererSceneContext, SceneLoopSchedule,
 };
 
 /// The timestamp of the Animator in the scene's store.
@@ -104,9 +104,7 @@ fn scene_fixture() -> (App, Entity, SceneEntityId, Entity) {
     .init_resource::<CrdtExtractors>()
     .init_resource::<ComponentNameRegistry>()
     .init_resource::<TrackComponents>()
-    .insert_resource(SceneLoopSchedule {
-        schedule: Schedule::new(SceneLoopLabel),
-    })
+    .init_resource::<SceneLoopSchedule>()
     .add_plugins(AnimatorPlugin)
     .insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_millis(
         100,
