@@ -11,8 +11,7 @@ const mocks = vi.hoisted(() => ({
   stat: vi.fn(),
   openExternal: vi.fn(),
   startMobileDebugServer: vi.fn(),
-  dynamicImport: vi.fn(),
-  runSdkCommand: vi.fn(),
+  ensureWorkerPackage: vi.fn(async () => undefined),
   realmProvidesServer: vi.fn(),
   ensureEditorFilesNotDeployed: vi.fn(),
   addDependencyOverrides: vi.fn(),
@@ -41,7 +40,9 @@ vi.mock('../src/modules/bevy-realm', () => ({
   realmProvidesServer: mocks.realmProvidesServer,
 }));
 vi.mock('../src/modules/network', () => ({ getLanIp: vi.fn(() => '192.168.0.10') }));
-vi.mock('/shared/dynamic-import', () => ({ dynamicImport: mocks.dynamicImport }));
+vi.mock('../src/modules/downloaded-tools', () => ({
+  ensureWorkerPackage: mocks.ensureWorkerPackage,
+}));
 vi.mock('../src/modules/project-config-files', () => ({
   ensureEditorFilesNotDeployed: mocks.ensureEditorFilesNotDeployed,
   addDependencyOverrides: mocks.addDependencyOverrides,
@@ -59,6 +60,10 @@ import {
   init,
 } from '../src/modules/cli';
 import { previewRunsServer } from '../src/modules/realm-server-logs';
+import {
+  formatDeployRunnerFailure,
+  formatDeployRunnerReady,
+} from '../src/modules/deploy-runner-protocol';
 
 const BASE_OPTS: PreviewOptions = {
   debugger: false,
@@ -1156,10 +1161,42 @@ describe('getDeployCommandSupport', () => {
   });
 });
 
+// Fake deploy runner (src/deploy-runner.ts): prints the given stdout chunks once cli.ts listens,
+// then exits with `exitCode` when `exitAfter` is set. Without it, it runs until killed.
+function createFakeRunner(chunks: string[], opts: { exitAfter?: boolean; exitCode?: number } = {}) {
+  let alive = true;
+  let settle!: (error?: Error) => void;
+  const waitPromise = new Promise<Buffer>((resolve, reject) => {
+    settle = error => (error ? reject(error) : resolve(Buffer.from('')));
+  });
+  waitPromise.catch(() => {});
+  const exit = (code = 0) => {
+    if (!alive) return;
+    alive = false;
+    settle(code === 0 ? undefined : new Error(`exited with code=${code}`));
+  };
+  const child = {
+    on: vi.fn((_pattern: RegExp, handler: (data?: string) => void) => {
+      void Promise.resolve().then(() => {
+        for (const chunk of chunks) handler(chunk);
+        if (opts.exitAfter) exit(opts.exitCode ?? 1);
+      });
+      return 0;
+    }),
+    wait: () => waitPromise,
+    kill: vi.fn(async () => exit(0)),
+    alive: () => alive,
+  } as unknown as Child;
+  return child;
+}
+
+const RUNNER_READY = formatDeployRunnerReady();
+
 describe('deploy', () => {
   let files: Record<string, string>;
   let result: Awaited<ReturnType<typeof deploy>>;
   let args: string[];
+  let path: string;
 
   beforeEach(() => {
     vi.clearAllMocks();
@@ -1174,21 +1211,13 @@ describe('deploy', () => {
       find(file);
       return { mtimeMs: 1 };
     });
-    mocks.runSdkCommand.mockResolvedValue({ stop: vi.fn() });
-    mocks.dynamicImport.mockImplementation(async (file: string) =>
-      file.endsWith('run-command.js')
-        ? { runSdkCommand: mocks.runSdkCommand }
-        : { initComponents: vi.fn(async () => ({})) },
-    );
+    mocks.run.mockImplementation(() => createFakeRunner([RUNNER_READY]));
   });
 
   const run = async () => {
-    result = await deploy({
-      path: `/scenes/scene-${++sceneCount}`,
-      chainId: 1,
-      wallet: '0xabc',
-    });
-    args = mocks.runSdkCommand.mock.calls[0][2];
+    path = `/scenes/scene-${++sceneCount}`;
+    result = await deploy({ path, chainId: 1, wallet: '0xabc' });
+    args = mocks.run.mock.calls[0][2].args;
   };
 
   describe('when the CLI serves the deploy resource and takes a deploy token', () => {
@@ -1229,6 +1258,103 @@ describe('deploy', () => {
     });
   });
 
+  describe('when the deploy starts', () => {
+    beforeEach(async () => {
+      await run();
+    });
+
+    it('should run the deploy runner in a process of its own, in the scene folder', () => {
+      expect(mocks.run).toHaveBeenCalledWith(
+        '@dcl-creator-hub/deploy-runner',
+        'deploy-runner',
+        expect.objectContaining({ cwd: path }),
+      );
+    });
+
+    it('should copy the runner bundle where the process can run it', () => {
+      expect(mocks.ensureWorkerPackage).toHaveBeenCalledWith(
+        expect.objectContaining({
+          pkg: '@dcl-creator-hub/deploy-runner',
+          bundle: 'deploy-runner.js',
+        }),
+      );
+    });
+
+    it('should run the CLI in programmatic mode', () => {
+      expect(args).toContain('--programmatic');
+    });
+  });
+
+  describe('when the scene is published twice', () => {
+    beforeEach(async () => {
+      await run();
+      await run();
+    });
+
+    it('should start a new process for each publish, so each one reads node_modules as it is now', () => {
+      expect(mocks.run).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  describe('when the ready line arrives split across two chunks', () => {
+    beforeEach(async () => {
+      mocks.run.mockImplementation(() =>
+        createFakeRunner(['building…\n[deploy-run', 'ner] ready\n']),
+      );
+      await run();
+    });
+
+    it('should resolve once the line is complete', () => {
+      expect(result.port).toBe(4000);
+    });
+  });
+
+  describe('when the CLI fails before its server listens', () => {
+    let runner: Child;
+    let error: Error;
+
+    beforeEach(async () => {
+      runner = createFakeRunner(
+        [
+          formatDeployRunnerFailure(
+            Object.assign(new Error('Could not rebuild bundle'), { name: 'BUNDLE_REBUILD_FAILED' }),
+          ),
+        ],
+        { exitAfter: true },
+      );
+      mocks.run.mockReturnValue(runner);
+      error = await deploy({ path: `/scenes/scene-${++sceneCount}`, chainId: 1, wallet: '0xabc' })
+        .then(() => {
+          throw new Error('deploy resolved');
+        })
+        .catch(e => e);
+    });
+
+    it('should reject with the CLI error name and message', () => {
+      expect({ name: error.name, message: error.message }).toEqual({
+        name: 'BUNDLE_REBUILD_FAILED',
+        message: 'Could not rebuild bundle',
+      });
+    });
+  });
+
+  describe('when the runner exits without saying why', () => {
+    let error: Error;
+
+    beforeEach(async () => {
+      mocks.run.mockImplementation(() => createFakeRunner([], { exitAfter: true, exitCode: 0 }));
+      error = await deploy({ path: `/scenes/scene-${++sceneCount}`, chainId: 1, wallet: '0xabc' })
+        .then(() => {
+          throw new Error('deploy resolved');
+        })
+        .catch(e => e);
+    });
+
+    it('should reject instead of waiting forever', () => {
+      expect(error.message).toBe('The deploy stopped before it was ready.');
+    });
+  });
+
   describe('when the CLI serves the deploy resource but takes no deploy token', () => {
     beforeEach(async () => {
       files['deploy/routes.js'] = "router.delete('/api/deploy')";
@@ -1245,34 +1371,33 @@ describe('deploy', () => {
   });
 
   describe('when a deploy starts while the previous one is still starting', () => {
-    let stopFirst: ReturnType<typeof vi.fn>;
-    let stopSecond: ReturnType<typeof vi.fn>;
+    let first: Child;
+    let second: Child;
+    let releaseFirst: () => void;
 
     beforeEach(async () => {
-      stopFirst = vi.fn();
-      stopSecond = vi.fn();
-      let releaseFirst: () => void = () => undefined;
-      mocks.runSdkCommand
-        .mockImplementationOnce(
-          () =>
-            new Promise(resolve => {
-              releaseFirst = () => resolve({ stop: stopFirst });
-            }),
-        )
-        .mockResolvedValueOnce({ stop: stopSecond });
+      let handler: (data?: string) => void = () => undefined;
+      first = createFakeRunner([]);
+      vi.mocked(first.on).mockImplementation((_pattern, onData) => {
+        handler = onData;
+        return 0;
+      });
+      releaseFirst = () => handler(RUNNER_READY);
+      second = createFakeRunner([RUNNER_READY]);
+      mocks.run.mockReturnValueOnce(first).mockReturnValueOnce(second);
       const options = { path: `/scenes/scene-${++sceneCount}`, chainId: 1, wallet: '0xabc' };
-      const first = deploy(options);
-      const second = deploy(options);
-      await vi.waitFor(() => expect(mocks.runSdkCommand).toHaveBeenCalledTimes(1));
+      const firstDeploy = deploy(options);
+      const secondDeploy = deploy(options);
+      await vi.waitFor(() => expect(mocks.run).toHaveBeenCalledTimes(1));
       releaseFirst();
-      await Promise.all([first, second]);
+      await Promise.all([firstDeploy, secondDeploy]);
     });
 
     it('should stop the first CLI before starting the second, leaving none untracked', () => {
       expect({
-        firstStops: stopFirst.mock.calls.length,
-        secondStops: stopSecond.mock.calls.length,
-        starts: mocks.runSdkCommand.mock.calls.length,
+        firstStops: vi.mocked(first.kill).mock.calls.length,
+        secondStops: vi.mocked(second.kill).mock.calls.length,
+        starts: mocks.run.mock.calls.length,
       }).toEqual({ firstStops: 1, secondStops: 0, starts: 2 });
     });
   });

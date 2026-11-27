@@ -2,7 +2,7 @@ import { randomUUID } from 'crypto';
 import { join } from 'path';
 import fs from 'fs/promises';
 import log from 'electron-log/main';
-import { shell } from 'electron';
+import { app, shell } from 'electron';
 
 import type { PreviewOptions } from '/shared/types/settings';
 import { PREVIEW_CLIENT } from '/shared/types/settings';
@@ -12,7 +12,6 @@ import {
   isClientNotInstalledError,
 } from '/shared/types/client';
 import type { DeployOptions, DeployServer } from '/shared/types/deploy';
-import { dynamicImport } from '/shared/dynamic-import';
 
 import { dclDeepLink, run, type Child } from './bin';
 import { getAvailablePort } from './port';
@@ -23,6 +22,9 @@ import { startMobileDebugServer } from './mobile-debug-server';
 import { qrCodeDataUrl } from './qr-code';
 import { getLanIp } from './network';
 import { realmProvidesServer } from './bevy-realm';
+import { createLineBuffer } from './bevy-realm-build-events';
+import { ensureWorkerPackage } from './downloaded-tools';
+import { parseDeployRunnerLine, type DeployRunnerFailure } from './deploy-runner-protocol';
 import {
   NO_SERVER_FLAG,
   setPreviewServer,
@@ -655,18 +657,75 @@ export async function getDeployCommandSupport(path: string): Promise<DeployComma
   };
 }
 
-async function getComponents(path: string) {
-  const filePath = join(path, 'node_modules', '@dcl/sdk-commands/dist/components/index.js');
-  const { initComponents } = await dynamicImport(filePath);
-  const components = await initComponents();
-  return components;
+const DEPLOY_RUNNER_PKG = '@dcl-creator-hub/deploy-runner';
+const DEPLOY_RUNNER_BIN = 'deploy-runner';
+// How long a runner that exited may still deliver its failure line. A child's exit event can
+// arrive before the last of its stdout, and that line carries the error name the publish
+// dialog matches on.
+const DEPLOY_RUNNER_EXIT_GRACE_MS = 250;
+
+function deployRunnerError({ name, message }: DeployRunnerFailure): Error {
+  const error = new Error(message);
+  error.name = name;
+  return error;
 }
 
-async function runCommand(path: string, command: string, args: string[]) {
-  const components = await getComponents(path);
-  const filePath = join(path, 'node_modules', '@dcl/sdk-commands/dist/run-command.js');
-  const { runSdkCommand } = await dynamicImport(filePath);
-  return runSdkCommand(components, command, args);
+/**
+ * Starts `sdk-commands deploy --programmatic` for the scene in a fresh process (src/deploy-runner.ts)
+ * and resolves once its deploy server listens, or rejects with the CLI's error, name included.
+ *
+ * It must not run in this process. Node caches every module it loads and every path it resolves
+ * for the life of the process, so the first publish fixed where the scene's `sdk-commands` and
+ * its `@dcl/ecs` live until the app quit: after the scene's dependencies changed on disk, every
+ * later publish failed with "Could not resolve …/@dcl/sdk/node_modules/@dcl/ecs", and closing
+ * the scene did not help.
+ */
+async function runDeployCommand(
+  path: string,
+  args: string[],
+): Promise<{ stop: () => Promise<void> }> {
+  const workspace = join(app.getPath('userData'), 'deploy-runner');
+  await ensureWorkerPackage({
+    toolsDir: workspace,
+    pkg: DEPLOY_RUNNER_PKG,
+    bin: DEPLOY_RUNNER_BIN,
+    bundle: 'deploy-runner.js',
+  });
+  const child = run(DEPLOY_RUNNER_PKG, DEPLOY_RUNNER_BIN, {
+    args,
+    cwd: path,
+    workspace,
+    env: await getEnv(path),
+  });
+
+  const started = new Promise<void>((resolve, reject) => {
+    const lines = createLineBuffer();
+    child.on(
+      /(.*)/,
+      data => {
+        if (!data) return;
+        for (const line of lines.push(data)) {
+          const event = parseDeployRunnerLine(line);
+          if (event?.kind === 'ready') resolve();
+          else if (event?.kind === 'failed') reject(deployRunnerError(event.error));
+        }
+      },
+      { type: 'stdout' },
+    );
+    const exited = (error: Error) => setTimeout(() => reject(error), DEPLOY_RUNNER_EXIT_GRACE_MS);
+    child.wait().then(
+      () => exited(new Error('The deploy stopped before it was ready.')),
+      error => exited(error instanceof Error ? error : new Error(String(error))),
+    );
+  });
+
+  try {
+    await started;
+  } catch (error) {
+    await child.kill().catch(() => {});
+    throw error;
+  }
+  return { stop: () => child.kill() };
 }
 
 // The deploy start in flight. The next one waits for it, so it stops that CLI once it's tracked in
@@ -704,7 +763,7 @@ async function startDeploy({
   const port = await getAvailablePort();
   const deployToken = support.deployResource && support.deployToken ? randomUUID() : undefined;
 
-  const { stop } = await runCommand(path, 'deploy', [
+  const { stop } = await runDeployCommand(path, [
     '--dir',
     path,
     '--no-browser',

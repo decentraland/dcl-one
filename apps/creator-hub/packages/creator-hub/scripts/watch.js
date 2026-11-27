@@ -163,3 +163,4 @@ await setupPreloadPackageWatcher(rendererWatchServer);
 await setupMainPackageWatcher(rendererWatchServer);
 await setupWorkerWatcher('main/vite.worker.config.js');
 await setupWorkerWatcher('main/vite.transcribe-worker.config.js');
+await setupWorkerWatcher('main/vite.deploy-runner.config.js');
