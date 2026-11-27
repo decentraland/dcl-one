@@ -2155,15 +2155,29 @@ async fn a_testnet_graph_page_proves_its_block_even_when_the_page_is_empty() {
             .to_string()
             .contains("no block hash")
     );
-    // The graph holds the chain's block, but at another height.
+    // The graph holds the chain's block, but at another height: a rejection.
     *meta.lock() = json!({"number":91,"hash":good});
-    assert!(
-        prove()
-            .await
-            .unwrap_err()
-            .to_string()
-            .contains("differs from the configured chain")
-    );
+    assert!(matches!(
+        prove().await.unwrap_err(),
+        super::mirrors::CatalogueProofError::Disagreement(_)
+    ));
+    // The right hash without a usable height is incomplete data, not a rejection.
+    for number in [Value::Null, json!("90")] {
+        *meta.lock() = json!({"number":number,"hash":good});
+        let error = prove().await.unwrap_err();
+        assert!(
+            matches!(
+                error,
+                super::mirrors::CatalogueProofError::GraphUnavailable(_)
+            ),
+            "{error}"
+        );
+    }
+    *meta.lock() = json!({"hash":good});
+    assert!(matches!(
+        prove().await.unwrap_err(),
+        super::mirrors::CatalogueProofError::GraphUnavailable(_)
+    ));
     *meta.lock() = json!({"number":90,"hash":good});
     chain.fail_chain_id.store(true, Ordering::SeqCst);
     assert!(prove().await.is_err());
