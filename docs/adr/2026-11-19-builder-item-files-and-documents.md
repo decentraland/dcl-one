@@ -179,8 +179,14 @@ The builder answers items as `github.com/decentraland/builder-server` at
   from its first bytes, never from its upload; a type that isn't a media
   type is sent as an attachment, and every answer carries
   `X-Content-Type-Options: nosniff` and `Content-Security-Policy: sandbox`.
-  An unsigned answer is cached publicly for a year, since a hash names its
-  bytes for good; a signed answer is `private, no-store`.
+  An unsigned answer is cached publicly for a year and marked immutable,
+  since a hash names its bytes for good, as the node's `/contents/{hash}`
+  answers are and as builder-server's storage route answers; a signed
+  answer is `private, no-store`. A hash the content denylist withholds, or
+  one no published item names any more, answers 404 at the node from then
+  on, while a copy a browser or a CDN kept of an earlier unsigned answer
+  stays until its year runs out: the node purges no cache, for item files
+  as for content.
 
 ## Consequences
 
@@ -190,8 +196,9 @@ The builder answers items as `github.com/decentraland/builder-server` at
   published one, makes it readable only when the wallet that wrote the name
   uploaded the bytes.
 - A save or a delete that leaves no item naming a hash removes its upload
-  records, so the file is refused at once and the collector may take the
-  bytes. A record that no item names, such as an imported record whose
+  records, so the node refuses the file at once and the collector may take
+  the bytes; a copy cached from an unsigned answer while a published item
+  named it stays where it was cached. A record that no item names, such as an imported record whose
   item is gone or a blob of a retired scene project, stays readable by its
   uploader alone.
 - The decision reads no committee and no fresh chain fact. The chain copy
