@@ -6,15 +6,18 @@ import {
   Busy,
   Notice,
   type NoticeTone,
+  GeneralAdd,
+  GeneralCamera,
+  GeneralDelete,
+  GeneralInfoButton,
   InputWebCreatorTools,
   Switch,
   WebSelect,
   WebTextarea,
 } from "@dcl/one-ui";
-import { Button as OneButton, GeneralAdd, GeneralCamera, GeneralDelete, GeneralInfoButton } from "@dcl/one-ui";
 import { useEffect, useRef, useState, type DragEvent } from "react";
 import { useMachine } from "@xstate/react";
-import { Link, useSearchParams } from "react-router";
+import { Link, useHref, useLinkClickHandler, useSearchParams } from "react-router";
 
 
 import type { TrackContext } from "@/core/lib/telemetry/track";
@@ -285,9 +288,9 @@ function SubmitHangoutInner({
 
       <div className={`submit-hangout__controls ${inline ? styles.editorControls : ""}`} role="group" aria-label={text(inline ? "Event editor" : "Hangout wizard")}>
         {(value === "signinGate" || needsSignIn) && (
-          <OneButton size="md" className={styles.signIn} onClick={() => onSignIn ? onSignIn() : send({ type: "SIGN_IN", inline })}>
+          <Button size="md" className={styles.signIn} onClick={() => onSignIn ? onSignIn() : send({ type: "SIGN_IN", inline })}>
             {text("Sign In to continue")}
-          </OneButton>
+          </Button>
         )}
 
         {isForm && (
@@ -339,39 +342,17 @@ function SubmitHangoutInner({
             )}
             {!editingInline && uploadFeedback}
             {!editingInline && <div className="submit-hangout__nav">
-              {value === "cover" ? <Link className="submit-hangout__btn" to="/events">{text("Back")}</Link> : <button
-                type="button"
-                className="submit-hangout__btn"
-                onClick={() => send({ type: "BACK" })}
-              >
-                {text("Back")}
-              </button>}
+              {value === "cover" ? <BackToEvents /> : (
+                <Button size="md" variant="tertiary" onClick={() => send({ type: "BACK" })}>{text("Back")}</Button>
+              )}
 
               {value === "review" ? (
                 <>
-                  <button
-                    type="button"
-                    className="submit-hangout__btn"
-                    onClick={() => send({ type: "PREVIEW" })}
-                  >
-                    {text("Preview")}
-                  </button>
-                  <button
-                    type="button"
-                    className="submit-hangout__btn submit-hangout__btn--primary"
-                    onClick={() => send({ type: "SUBMIT" })}
-                  >
-                    {text("Submit Hangout")}
-                  </button>
+                  <Button size="md" variant="tertiary" onClick={() => send({ type: "PREVIEW" })}>{text("Preview")}</Button>
+                  <Button size="md" onClick={() => send({ type: "SUBMIT" })}>{text("Submit Hangout")}</Button>
                 </>
               ) : value === "preview" ? (
-                <button
-                  type="button"
-                  className="submit-hangout__btn submit-hangout__btn--primary"
-                  onClick={() => send({ type: "SUBMIT" })}
-                >
-                  {text("Confirm & Submit")}
-                </button>
+                <Button size="md" onClick={() => send({ type: "SUBMIT" })}>{text("Confirm & Submit")}</Button>
               ) : (
                 <ForwardButton
                   from={value}
@@ -447,9 +428,8 @@ function ForwardButton({
 }) {
   const { text } = useEventsCopy();
   return (
-    <button
-      type="button"
-      className="submit-hangout__btn submit-hangout__btn--primary"
+    <Button
+      size="md"
       disabled={!enabled}
       onClick={() => {
         if (!enabled) return;
@@ -458,8 +438,16 @@ function ForwardButton({
       }}
     >
       {text("Continue")}
-    </button>
+    </Button>
   );
+}
+
+/** The wizard's first step goes back to the events page: a link, with the router's navigation. */
+function BackToEvents() {
+  const { text } = useEventsCopy();
+  const href = useHref("/events");
+  const navigate = useLinkClickHandler<HTMLAnchorElement>("/events");
+  return <Button size="md" variant="tertiary" href={href} onClick={navigate}>{text("Back")}</Button>;
 }
 
 function StepFields({
@@ -682,9 +670,9 @@ function CoverField({
       {image && (
         <figure className={styles.cover} onDragOver={(event) => event.preventDefault()} onDrop={dropCover}>
           <img className={styles.coverImage} src={image} alt={text(vertical ? "Vertical hangout cover" : "Hangout cover")} width={vertical ? 120 : 240} height={vertical ? 180 : 120} />
-          <button type="button" className="submit-hangout__btn" disabled={uploading} onClick={onRemove}>
+          <Button size="md" variant="tertiary" disabled={uploading} onClick={onRemove}>
             {text(vertical ? "Remove vertical cover" : "Remove cover image")}
-          </button>
+          </Button>
         </figure>
       )}
       {onUpload && (!inline || !image) && (

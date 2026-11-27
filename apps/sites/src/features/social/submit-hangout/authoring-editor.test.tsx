@@ -12,6 +12,8 @@ vi.hoisted(() => {
   Object.assign(window, { __vite_plugin_react_preamble_installed__: true });
 });
 
+// The form passes variant="tertiary"; Button draws it with its outline look and reports data-variant="outline".
+
 describe("when a signed-in creator opens the single-page Events editor", () => {
   let user: ReturnType<typeof userEvent.setup>;
   let submit: ReturnType<typeof vi.fn<SubmitFn>>;
@@ -100,6 +102,31 @@ describe("when a signed-in creator opens the single-page Events editor", () => {
     expect(summary.parentElement).toHaveProperty("open", true);
     await user.upload(screen.getByLabelText("Upload vertical cover"), image);
     expect(await screen.findByRole("img", { name: "Vertical hangout cover" })).toBeTruthy();
+  });
+
+  it("should draw Remove cover image as an outlined button that removes the cover", async () => {
+    await user.upload(screen.getByLabelText("Upload cover image"), image);
+    const remove = await screen.findByRole("button", { name: "Remove cover image" });
+    expect(remove.dataset).toMatchObject({ variant: "outline", size: "md" });
+    await user.click(remove);
+    expect(screen.queryByRole("img", { name: "Hangout cover" })).toBeNull();
+  });
+
+  describe("and a cover is replaced while the new one uploads", () => {
+    beforeEach(async () => {
+      await user.click(screen.getByText("Add Vertical Cover").closest("summary")!);
+      await user.upload(screen.getByLabelText("Upload vertical cover"), image);
+      await screen.findByRole("img", { name: "Vertical hangout cover" });
+      upload.mockImplementationOnce(() => new Promise<string>(() => {}));
+      await user.upload(screen.getByLabelText("Upload cover image"), image);
+    });
+
+    it("should keep Remove vertical cover disabled until the upload ends", async () => {
+      const remove = screen.getByRole<HTMLButtonElement>("button", { name: "Remove vertical cover" });
+      expect(remove.disabled).toBe(true);
+      await user.click(remove);
+      expect(screen.getByRole("img", { name: "Vertical hangout cover" })).toBeTruthy();
+    });
   });
 
   describe("and the first cover upload fails", () => {
