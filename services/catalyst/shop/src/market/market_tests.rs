@@ -12014,7 +12014,7 @@ async fn a_names_page_by_latest_sale_reads_the_admitted_index() {
 }
 
 #[tokio::test]
-async fn v3_catalogue_statement_errors_use_the_read_bound() {
+async fn catalogue_statement_errors_use_the_read_bound() {
     let graph = FakeGraph::new();
     let url = serve_graph(graph.clone()).await;
     let Some((state, own)) = state_over_own(&url, true).await else {
@@ -12022,20 +12022,58 @@ async fn v3_catalogue_statement_errors_use_the_read_bound() {
     };
     let pool = &state.pool;
     let contract = contract_of(&tag(), 1);
-    for item in ["1", "2"] {
+    for item in ["1", "2", "3"] {
         seed_item_row(pool, &contract, item, CREATOR).await;
     }
     sqlx::raw_sql(
-        "UPDATE shop.items SET search_is_collection_approved=true, search_is_store_minter=true, price=1e18;
+        "UPDATE shop.items SET search_is_collection_approved=true, search_is_store_minter=(item_id<>3), price=1e18;
          INSERT INTO shop.mirror_state (mirror,network,source_url,last_complete_pass_at)
          SELECT m,n,'test',timezone('UTC',now())
          FROM unnest(ARRAY['collections','items']) m CROSS JOIN unnest(ARRAY['ethereum','matic']) n;
          INSERT INTO economy.price_snapshots (source,mana_usd,taken_at)
-         VALUES ('coingecko',0.02,timezone('UTC',now()));",
+         VALUES ('coingecko',0.02,timezone('UTC',now()));
+         INSERT INTO shop.item_neighbors_meta (id,built_at,algorithm,wallets,items,rows_written)
+         VALUES (1,now(),'test',1,1,0);",
     )
     .execute(pool)
     .await
     .unwrap();
+    let resale_token =
+        ((alloy_primitives::U256::from(3u64) << 216u32) + alloy_primitives::U256::ONE).to_string();
+    sqlx::query(
+        "INSERT INTO shop.nft (network,contract_address,token_id,owner,item_id,
+            minted_block,minted_at,transferred_block,transferred_log,transferred_at)
+         VALUES ('matic',$1,$2::numeric,$3,3,1,1,1,0,1)",
+    )
+    .bind(&contract)
+    .bind(&resale_token)
+    .bind(WALLET_A)
+    .execute(pool)
+    .await
+    .unwrap();
+    let (resale, _) = insert_trade(
+        pool,
+        "public_nft_order",
+        WALLET_A,
+        Asset {
+            asset_type: 3,
+            contract: contract.clone(),
+            value: resale_token,
+        },
+        Asset {
+            asset_type: 2,
+            contract: listings::mana_token(137).unwrap().into(),
+            value: "1000000000000000000".into(),
+        },
+    )
+    .await;
+    sqlx::query("INSERT INTO shop.picks (item_id,user_address,list_id) VALUES ($1,$2,$3::uuid)")
+        .bind(format!("{contract}-2"))
+        .bind(sf::address())
+        .bind(lists::DEFAULT_LIST_ID)
+        .execute(pool)
+        .await
+        .unwrap();
     super::owned_items::test_support::publish(
         pool,
         &super::chain_walk::ChainNet::ALL,
@@ -12076,11 +12114,16 @@ async fn v3_catalogue_statement_errors_use_the_read_bound() {
             .collect(),
     );
     let app = || market_router(state.clone());
-    let related =
-        format!("/v3/catalog/related?contractAddress={contract}&itemId=1&listingType=primary");
+    let related_base = format!("/v3/catalog/related?contractAddress={contract}&itemId=1");
+    let related = format!("{related_base}&listingType=primary");
+    let related_secondary = format!("{related_base}&listingType=secondary");
+    let v1_items = format!("/v1/items?contractAddress={contract}&itemId=2");
+    let v1_trending = "/v1/trendings?size=1";
     let importable = format!("/v3/catalog/importable?seller={CREATOR}");
     let trades_routes = [
         related.as_str(),
+        v1_items.as_str(),
+        v1_trending,
         importable.as_str(),
         "/v3/catalog/shop?first=1",
         "/v3/catalog/legacy?first=1",
@@ -12097,6 +12140,20 @@ async fn v3_catalogue_statement_errors_use_the_read_bound() {
     let (code, body) = get(app(), &related).await;
     assert_eq!(code, StatusCode::OK, "{body}");
     assert_eq!(body["data"][0]["itemId"], "2", "{body}");
+    assert_eq!(body["data"].as_array().unwrap().len(), 1, "{body}");
+    let (code, secondary) = get(app(), &related_secondary).await;
+    assert_eq!(code, StatusCode::OK, "{secondary}");
+    let rows = secondary["data"].as_array().unwrap();
+    assert_eq!(rows.len(), 1, "{secondary}");
+    assert_eq!(rows[0]["itemId"], "3", "{secondary}");
+    assert_eq!(rows[0]["tradeId"], resale, "{secondary}");
+    assert_eq!(rows[0]["listingCount"], 1, "{secondary}");
+    let (code, mixed) = get(app(), &related_base).await;
+    assert_eq!(code, StatusCode::OK, "{mixed}");
+    let rows = mixed["data"].as_array().unwrap();
+    assert_eq!(rows.len(), 2, "{mixed}");
+    assert!(rows.contains(&secondary["data"][0]), "{mixed}");
+    assert!(rows.contains(&body["data"][0]), "{mixed}");
     sqlx::raw_sql(
         "CREATE FUNCTION shop.catalog_test_bound() RETURNS boolean LANGUAGE plpgsql AS $$
          BEGIN RAISE EXCEPTION 'private fixture detail' USING ERRCODE = '57014'; END;
@@ -12122,6 +12179,25 @@ async fn v3_catalogue_statement_errors_use_the_read_bound() {
     sqlx::raw_sql(
         "DROP VIEW shop.trades;
          ALTER TABLE shop.catalog_test_trades RENAME TO trades;
+         ALTER TABLE shop.picks RENAME TO catalog_test_picks;
+         CREATE VIEW shop.picks AS SELECT * FROM shop.catalog_test_picks WHERE shop.catalog_test_bound();",
+    )
+    .execute(pool)
+    .await
+    .unwrap();
+    let suggestions = "/v3/catalog/suggested";
+    let signed = signed_headers("get", suggestions, "{}", true).await;
+    assert_eq!(get(app(), suggestions).await.0, StatusCode::OK);
+    let (code, body) = call(app(), "GET", suggestions, signed, None).await;
+    assert_eq!(code, StatusCode::SERVICE_UNAVAILABLE, "{body}");
+    assert_eq!(body, expected);
+    let (code, body) = get(app(), &v1_items).await;
+    assert_eq!(code, StatusCode::SERVICE_UNAVAILABLE, "{body}");
+    assert_eq!(body, expected);
+
+    sqlx::raw_sql(
+        "DROP VIEW shop.picks;
+         ALTER TABLE shop.catalog_test_picks RENAME TO picks;
          ALTER TABLE shop.items RENAME TO catalog_test_items;
          CREATE VIEW shop.items AS SELECT * FROM shop.catalog_test_items WHERE shop.catalog_test_bound();",
     )

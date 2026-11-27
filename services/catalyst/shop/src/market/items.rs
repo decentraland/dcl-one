@@ -995,7 +995,7 @@ pub async fn get_items(
     };
     let (mut data, total) = match list_items(&state, &mut read, &filters).await {
         Ok(page) => page,
-        Err(e) => return e.into_response(),
+        Err(e) => return readers::index_api_error(e),
     };
     // The picks are no catalogue rows: the read's connection goes back first,
     // so their pool read never waits on the one this request holds.
@@ -1006,7 +1006,7 @@ pub async fn get_items(
             .into_iter()
             .map(|s| (s.item_id, s.count))
             .collect::<HashMap<_, _>>(),
-        Err(e) => return e.into_response(),
+        Err(e) => return readers::index_api_error(e),
     };
     for item in &mut data {
         item.picks.count = counts.get(&item.id).copied().unwrap_or_default();
@@ -1265,7 +1265,7 @@ pub async fn get_trendings(
     };
     let got = match list_items(&state, &mut read, &filters).await {
         Ok((items, _)) => items,
-        Err(e) => return e.into_response(),
+        Err(e) => return readers::index_api_error(e),
     };
     let fetched: HashMap<(String, String), Item> = got
         .into_iter()
