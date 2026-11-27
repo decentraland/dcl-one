@@ -1,5 +1,5 @@
 // The passport's live avatar: what it tells the scene, what the column shows while the scene loads it,
-// once it is drawn and when it cannot be, and how a drag and the keyboard turn it.
+// once it is drawn and when it cannot be, and how a drag turns it.
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { act, fireEvent, render, screen } from '@testing-library/react'
 import type { AvatarLook } from '@explorer-core/engine/avatarEquip'
@@ -34,19 +34,21 @@ function setup(): {
   session: EngineSession
   show: (state?: EngineSession['passportPreview']['state'], props?: Partial<React.ComponentProps<typeof PassportAvatar>>) => void
   onLive: ReturnType<typeof vi.fn>
+  onReady: ReturnType<typeof vi.fn>
   unmount: () => void
 } {
   const sent: Sent[] = []
   const session = { ...fakeSession(), passportPreview: { send: (msg: Sent) => void sent.push(msg), state: null } } as EngineSession
   const onLive = vi.fn()
+  const onReady = vi.fn()
   const tree = (state: EngineSession['passportPreview']['state'], props: Partial<React.ComponentProps<typeof PassportAvatar>>): React.JSX.Element => (
     <SessionProvider value={{ ...session, passportPreview: { ...session.passportPreview, state } }}>
-      <PassportAvatar look={LOOK} name="kurd" background="overview" wave picture={<img alt="kurd" src="body.png" />} onLive={onLive} {...props} />
+      <PassportAvatar look={LOOK} name="kurd" background="overview" wave picture={<img alt="kurd" src="body.png" />} onLive={onLive} onReady={onReady} {...props} />
       <Window />
     </SessionProvider>
   )
   const view = render(tree(null, {}))
-  return { sent, session, onLive, show: (state = null, props = {}) => view.rerender(tree(state, props)), unmount: view.unmount }
+  return { sent, session, onLive, onReady, show: (state = null, props = {}) => view.rerender(tree(state, props)), unmount: view.unmount }
 }
 
 const settle = async (): Promise<void> => {
@@ -84,6 +86,16 @@ describe('when the passport shows its live avatar', () => {
     show({ id: lastOpen(sent)!.id, state: 'ready' })
     expect(screen.queryByRole('status')).not.toBeInTheDocument()
     expect(screen.queryByRole('img', { name: 'kurd' })).not.toBeInTheDocument()
+  })
+
+  it('should say it is ready only once the scene has drawn it, and no longer when it goes', async () => {
+    const { sent, show, onReady, unmount } = setup()
+    await settle()
+    expect(onReady).not.toHaveBeenCalled()
+    show({ id: lastOpen(sent)!.id, state: 'ready' })
+    expect(onReady).toHaveBeenLastCalledWith(true)
+    unmount()
+    expect(onReady).toHaveBeenLastCalledWith(false)
   })
 
   it('should send the same avatar again when the panel background changes', async () => {
@@ -160,13 +172,14 @@ describe('when the avatar is turned', () => {
     expect(sent.some((m) => m.kind === 'passportPreviewDrag')).toBe(false)
   })
 
-  it('should turn a step with the arrow keys', async () => {
+  it('should leave the arrow keys alone and take no keyboard focus', async () => {
     const { sent } = setup()
     await settle()
     const surface = screen.getByRole('img', { name: /kurd's avatar/ })
+    const before = sent.length
     fireEvent.keyDown(surface, { key: 'ArrowRight' })
-    fireEvent.keyDown(surface, { key: 'ArrowLeft' })
-    expect(sent.filter((m) => m.kind === 'passportPreviewTurn').map((m) => (m.kind === 'passportPreviewTurn' ? m.degrees : 0))).toEqual([-15, 15])
+    expect(sent).toHaveLength(before)
+    expect(surface).not.toHaveAttribute('tabindex')
   })
 
   it('should play an emote on it', async () => {
@@ -184,7 +197,7 @@ describe('when another passport opens over it', () => {
     const first = lastOpen(sent)!
     const over = render(
       <SessionProvider value={session}>
-        <PassportAvatar look={LOOK} name="ana" background="overview" wave picture={<img alt="ana" src="ana.png" />} onLive={vi.fn()} />
+        <PassportAvatar look={LOOK} name="ana" background="overview" wave picture={<img alt="ana" src="ana.png" />} onLive={vi.fn()} onReady={vi.fn()} />
       </SessionProvider>
     )
     await settle()

@@ -664,14 +664,19 @@
   border-radius: 12px;
   background: rgba(20, 2, 34, 0.38);
 }
-.equippedRow > div > div:first-child {
+.equippedRow > div > :first-child {
   border-radius: 12px;
   box-shadow: inset 0 0 0 2px rgba(255, 255, 255, 0.55);
 }
-.equippedRow > div[data-rarity='base'] > div:first-child {
+/* The picture as a button (an emote's): its focus ring goes outside the picture, where the bevel and the
+   base tile's white would hide it. */
+.equippedRow > div > button:first-child:focus-visible {
+  outline-offset: 2px;
+}
+.equippedRow > div[data-rarity='base'] > :first-child {
   background: linear-gradient(180deg, #ffffff 0%, #ece3f6 45%, #b99fd6 100%);
 }
-.equippedRow > div[data-rarity='base'] > div:first-child > span:last-child {
+.equippedRow > div[data-rarity='base'] > :first-child > span:last-child {
   background: linear-gradient(135deg, #d9d2e0 0%, #a9a0b3 49.8%, transparent 50%);
   color: #fff;
 }

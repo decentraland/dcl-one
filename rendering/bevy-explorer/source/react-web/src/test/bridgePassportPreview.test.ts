@@ -160,8 +160,18 @@ describe('when the page opens the passport avatar', () => {
     s.frames(1)
     expect(s.states()).toEqual([{ kind: 'passportPreviewState', id: 1, state: 'failed' }])
     s.open(2)
-    s.frames(600)
+    s.frames(19, 0.5)
+    expect(s.states()).toHaveLength(1)
+    s.frames(2, 0.5)
     expect(s.states().at(-1)).toEqual({ kind: 'passportPreviewState', id: 2, state: 'failed' })
+  })
+
+  it('should give up on a load after the same time at a low frame rate', () => {
+    s.open(1)
+    s.frames(290, 1 / 30)
+    expect(s.states()).toEqual([])
+    s.frames(20, 1 / 30)
+    expect(s.states()).toEqual([{ kind: 'passportPreviewState', id: 1, state: 'failed' }])
   })
 
   it('should keep the avatar and resize its picture when the column moves', () => {
@@ -175,8 +185,9 @@ describe('when the page opens the passport avatar', () => {
 
   it('should start another passport over, facing front', () => {
     s.open(1)
-    s.emit({ kind: 'passportPreviewTurn', id: 1, degrees: 90 } as PageToScene)
-    expect(s.yaw()).toBe(270)
+    s.emit({ kind: 'passportPreviewDrag', id: 1, dx: -10, seconds: 1 / 60 } as PageToScene)
+    s.frames(1)
+    expect(s.yaw()).not.toBe(180)
     s.open(2)
     expect(s.avatars()).toHaveLength(1)
     expect(s.yaw()).toBe(180)
@@ -208,10 +219,11 @@ describe('when the passport avatar is turned and played', () => {
     expect(s.yaw()).toBe(rest)
   })
 
-  it('should ignore a drag, a turn or an emote meant for another avatar', async () => {
+  it('should ignore a drag or an emote meant for another avatar', async () => {
     const s = await stage()
     s.open(2)
-    s.emit({ kind: 'passportPreviewTurn', id: 1, degrees: 90 } as PageToScene)
+    s.emit({ kind: 'passportPreviewDrag', id: 1, dx: -10, seconds: 1 / 60 } as PageToScene)
+    s.frames(1)
     s.emit({ kind: 'passportPreviewEmote', id: 1, urn: 'urn:x' } as PageToScene)
     expect(s.yaw()).toBe(180)
     expect(s.avatars()[0][1].expressionTriggerId).toBeUndefined()
@@ -237,5 +249,39 @@ describe('when the passport opens over another preview', () => {
     expect(s.cameras().map(([, c]) => c.layer)).toEqual([14])
     s.emit({ kind: 'passportPreview', open: null } as PageToScene)
     expect(s.cameras().map(([, c]) => c.layer)).toEqual([12])
+  })
+
+  const STAGE = { x: 0, y: 0, width: 960, height: 960 }
+  const viewport = (s: Awaited<ReturnType<typeof stage>>, region: 'lobby' | 'avatarPreview', rect: typeof STAGE | null): void =>
+    s.emit({ kind: 'engineViewport', region, rect, dpr: 1 } as PageToScene)
+  const layers = (s: Awaited<ReturnType<typeof stage>>): number[] => s.cameras().map(([, c]) => c.layer).sort((a, b) => a - b)
+
+  it("should hold the Backpack's camera when it opens over the lobby under the passport, and give the lobby its own back", async () => {
+    const s = await stage()
+    viewport(s, 'lobby', STAGE)
+    expect(layers(s)).toEqual([10])
+    s.open(1)
+    expect(layers(s)).toEqual([14])
+    viewport(s, 'avatarPreview', STAGE)
+    s.frames(1)
+    expect(layers(s)).toEqual([14])
+    s.emit({ kind: 'passportPreview', open: null } as PageToScene)
+    expect(layers(s)).toEqual([12])
+    viewport(s, 'avatarPreview', null)
+    expect(layers(s)).toEqual([10])
+  })
+
+  it("should hold the lobby's camera when the Backpack closes under the passport, and put only that one back", async () => {
+    const s = await stage()
+    viewport(s, 'lobby', STAGE)
+    viewport(s, 'avatarPreview', STAGE)
+    expect(layers(s)).toEqual([12])
+    s.open(1)
+    expect(layers(s)).toEqual([14])
+    viewport(s, 'avatarPreview', null)
+    s.frames(1)
+    expect(layers(s)).toEqual([14])
+    s.emit({ kind: 'passportPreview', open: null } as PageToScene)
+    expect(layers(s)).toEqual([10])
   })
 })

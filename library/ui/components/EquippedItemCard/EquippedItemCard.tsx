@@ -3,7 +3,7 @@ import { Button } from '../Button/Button'
 import rarityStyles from '../WearableCard/rarity.module.css'
 import styles from './EquippedItemCard.module.css'
 
-export type EquippedItemCardProps = {
+type EquippedItemCardBase = {
   thumbnail?: string
   name?: string
   /**
@@ -24,16 +24,23 @@ export type EquippedItemCardProps = {
    * hovered, over whatever sits below.
    */
   pinShop?: boolean
-  /** What a click on the card does (an emote's card plays it): the picture is then a button. */
-  onAction?: () => void
-  /** The button's name; needed with `onAction`. */
-  actionLabel?: string
 }
 
+export type EquippedItemCardProps = EquippedItemCardBase &
+  (
+    | {
+        /** What a click on the card does (an emote's card plays it): the picture is then a button. */
+        onAction: () => void
+        actionLabel: string
+      }
+    | { onAction?: undefined; actionLabel?: undefined }
+  )
+
 /**
- * An item a profile shows, for display only: the thumbnail on its rarity's colour with a corner flap,
- * then the name on one line, the rarity tag and an optional price. With `shopUrl`, hovering frames
- * and lifts the card and shows a link to the item's sale.
+ * An item a profile shows: the thumbnail on its rarity's colour with a corner flap, then the name on
+ * one line, the rarity tag and an optional price. With `shopUrl`, hovering frames and lifts the card
+ * and shows a link to the item's sale. With `onAction` the picture is a button named by `actionLabel`,
+ * and a click anywhere on the card but its link runs the action.
  */
 export function EquippedItemCard({
   thumbnail,

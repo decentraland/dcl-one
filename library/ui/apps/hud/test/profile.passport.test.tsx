@@ -512,9 +512,16 @@ describe('passport photos', () => {
 })
 
 describe('when the passport can play an equipped emote on its avatar', () => {
+  const show = (onPlayEmote: (urn: string) => void, ready = true) => {
+    const slot = vi.fn((_: PassportAvatarSlot) => <div data-testid="live-avatar" />)
+    const view = render(<ProfilePassport profile={equippedProfile} avatar={slot} onPlayEmote={onPlayEmote} onClose={vi.fn()} />)
+    if (ready) act(() => slot.mock.calls[0][0].onReady(true))
+    return { ...view, slot }
+  }
+
   it('should play the emote of the tile that is clicked, by its picture button or anywhere on the tile', async () => {
     const onPlayEmote = vi.fn()
-    render(<ProfilePassport profile={equippedProfile} onPlayEmote={onPlayEmote} onClose={vi.fn()} />)
+    show(onPlayEmote)
     await userEvent.click(screen.getByRole('button', { name: 'Play Disco' }))
     expect(onPlayEmote).toHaveBeenLastCalledWith(DISCO.urn)
     await userEvent.click(screen.getByText('Wave'))
@@ -523,15 +530,27 @@ describe('when the passport can play an equipped emote on its avatar', () => {
 
   it('should leave the tile\'s shop link to open the shop alone', async () => {
     const onPlayEmote = vi.fn()
-    render(<ProfilePassport profile={equippedProfile} onPlayEmote={onPlayEmote} onClose={vi.fn()} />)
+    show(onPlayEmote)
     const shop = screen.getAllByRole('link', { name: /shop/i }).find((link) => link.getAttribute('href') === SHOP_DISCO)!
     shop.addEventListener('click', (e) => e.preventDefault())
     await userEvent.click(shop)
     expect(onPlayEmote).not.toHaveBeenCalled()
   })
 
+  it('should give the emote tiles no button until the avatar is drawn, nor once it is gone', async () => {
+    const onPlayEmote = vi.fn()
+    const { slot } = show(onPlayEmote, false)
+    expect(screen.queryByRole('button', { name: 'Play Disco' })).toBeNull()
+    await userEvent.click(screen.getByText('Wave'))
+    expect(onPlayEmote).not.toHaveBeenCalled()
+    act(() => slot.mock.calls[0][0].onReady(true))
+    expect(screen.getByRole('button', { name: 'Play Disco' })).toBeInTheDocument()
+    act(() => slot.mock.calls[0][0].onReady(false))
+    expect(screen.queryByRole('button', { name: 'Play Disco' })).toBeNull()
+  })
+
   it('should give the wearable tiles and, without it, the emote tiles no button', () => {
-    const { unmount } = render(<ProfilePassport profile={equippedProfile} onPlayEmote={vi.fn()} onClose={vi.fn()} />)
+    const { unmount } = show(vi.fn())
     expect(screen.queryByRole('button', { name: /Play Neon Tiara/ })).toBeNull()
     unmount()
     render(<ProfilePassport profile={equippedProfile} onClose={vi.fn()} />)

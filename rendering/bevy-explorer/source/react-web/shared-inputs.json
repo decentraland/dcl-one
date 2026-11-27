@@ -10096,7 +10096,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/avatarPreview.tsx",
-      "sha256": "e713f28bb30c460f5a625f46d54f2d031a32c386ba915056a06f1d898c719b74"
+      "sha256": "d7c86d4fbfc6d679ab889a948b08f7a8bb2999c2968a760388579213886125d2"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/chat.ts",
@@ -10176,7 +10176,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/passportPreview.tsx",
-      "sha256": "f1a6ad87a697be54449d15f8813c9d0e78f0b22707df37ca6923181018b903f3"
+      "sha256": "69c916e74f8586ff2470ba1894247e0343502c997b1fe0b01cf0f37d8feaf668"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/passportTurn.ts",
@@ -10460,7 +10460,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/bridgePassportPreview.test.ts",
-      "sha256": "5e5d1d3adadbb3304523ab43ecf8437e56dca91e7f52379bdef19ce996a70c86"
+      "sha256": "bda9b0f1a77f11f756671a89c511a160621b0a5b046d7fc6f205a9c3b6eb36ff"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/bridgePassportTurn.test.ts",
@@ -10827,7 +10827,7 @@
     },
     {
       "path": "library/explorer-core/engine/mockBridge.ts",
-      "sha256": "105a47e30f2d68d3dcea802c1e70e957d84d48b765bf2c7149121340c3ec3c02"
+      "sha256": "95a5e2f8b0c9eeec370305ccaae5df070662271da717d0c0954e961c2f325593"
     },
     {
       "path": "library/explorer-core/engine/mockEvents.ts",
@@ -10867,7 +10867,7 @@
     },
     {
       "path": "library/explorer-core/engine/protocol.ts",
-      "sha256": "f2af7079ece7951f8c08793e1a2a2243705d4413fddcfc42161dce96707fac61"
+      "sha256": "d41d4e81ec893699f409cb749aa9364d8c876944781e74adebe2e757e03906d9"
     },
     {
       "path": "library/explorer-core/engine/requestIds.ts",
@@ -14163,7 +14163,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/profile/PassportAvatar.tsx",
-      "sha256": "eda898d0c70ef7567f225aad27fc0c0588b5b8b7eda03ee8c63e56a3d201e5b2"
+      "sha256": "79f8260b8d25756bac74a50c590cffa2a20255579000229f475148a74dbdbed5"
     },
     {
       "path": "library/ui/apps/hud/features/profile/ProfileEditForm.module.css",
@@ -14183,11 +14183,11 @@
     },
     {
       "path": "library/ui/apps/hud/features/profile/ProfilePassport.module.css",
-      "sha256": "78feb41bbb8acf7b350a6785e7da235a0fc73d78956312ca23cafe30e2f1a3fc"
+      "sha256": "f559d6e69f62e44e3a465218e3c4c09e297746425f2ec2111222d0a72a19a902"
     },
     {
       "path": "library/ui/apps/hud/features/profile/ProfilePassport.tsx",
-      "sha256": "c97e53f8ed4376cb71d3d10c8f9ed4628e12b46f89caa1055bd34c42d905663a"
+      "sha256": "75f7fca8a9489b5bb1886ddbce7b50883c103371455d7f45525468fa126178ae"
     },
     {
       "path": "library/ui/apps/hud/features/profileCard/ProfileCard.tsx",
@@ -14515,7 +14515,7 @@
     },
     {
       "path": "library/ui/apps/hud/styles/tokens.css",
-      "sha256": "b867fa167ecc03810b57ffa53d48b8410569cc6c17da7c034eefc8d425e67045"
+      "sha256": "ffecb066082f14e01b8dc05d2b08c7399e17f9ee391508e3dc4c657130cdbf4a"
     },
     {
       "path": "library/ui/apps/hud/test/armedButton.test.tsx",
@@ -14955,7 +14955,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/hosted/passportAvatar.test.tsx",
-      "sha256": "779302f68eda38b904c12eff8ad0384b3fc4661b236ded590b81b0ebfcbd3b2b"
+      "sha256": "d55e703f674f1485e2632a2a2df918a0cce5f4c5793f83c86abbe524dd24a417"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/permissions.test.tsx",
@@ -15135,7 +15135,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/profile.passport.test.tsx",
-      "sha256": "54a30beaa973c8e32e5b29d8b826ed61556754c65f6fd38f4641d2e399ecd704"
+      "sha256": "b14c3792158ca380e49524db8f302396adafecca936ab046a4e777650e18ae1f"
     },
     {
       "path": "library/ui/apps/hud/test/profile.passportCreations.test.tsx",
@@ -17175,7 +17175,7 @@
     },
     {
       "path": "library/ui/components/EquippedItemCard/EquippedItemCard.tsx",
-      "sha256": "0251fa7dc02b06491d5a8da2cec22e803afe5344aee7502b0c7163f6a0ab13c1"
+      "sha256": "4f797207c2707aa043561caa981f1887cb307d4e869ccf729b25330d60d8de8e"
     },
     {
       "path": "library/ui/components/EventCard/EventCard.module.css",

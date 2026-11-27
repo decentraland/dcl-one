@@ -456,6 +456,8 @@ let parkedCamera: TextureCameraValue | null = null
 let heldCamera: { entity: Entity; value: TextureCameraValue } | null = null
 
 export function holdPreview(): void {
+  // its stage was dropped, replaced or set aside meanwhile: that camera is never put back from here
+  if (heldCamera != null && heldCamera.entity !== cameraEntity) heldCamera = null
   if (heldCamera != null || cameraEntity == null) return
   const camera = TextureCamera.getOrNull(cameraEntity)
   if (camera == null) return
@@ -486,6 +488,10 @@ function parkLobby(): void {
   if (cameraEntity != null && camera != null) {
     parkedCamera = JSON.parse(JSON.stringify(camera)) as TextureCameraValue
     TextureCamera.deleteFrom(cameraEntity)
+  } else if (heldCamera != null && heldCamera.entity === cameraEntity) {
+    // an open passport took the camera off already: the lobby keeps it for its return
+    parkedCamera = heldCamera.value
+    heldCamera = null
   }
   clearPreview()
   rect = null

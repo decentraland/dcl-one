@@ -19,11 +19,11 @@ import { setEngineWindow } from '../../lib/engineWindow'
 import cursorRotate from '../../assets/passport/cursor-rotate.png'
 import styles from './PassportAvatar.module.css'
 
-/** Longer than the scene waits for an avatar's load: a scene that never answers leaves the picture. */
+/** Longer than the scene takes to answer (passportPreview's LOAD_SECONDS, then DRAWN_FRAMES): a scene that
+ *  never answers leaves the picture. */
 const ANSWER_TIMEOUT_MS = 15000
 /** Screen pixels the opening under the panel runs past the column's right edge. */
 const WINDOW_BLEED = 8
-const KEY_TURN_DEGREES = 15
 
 // The avatars asking to be shown, oldest first: the last one is live.
 let claims: number[] = []
@@ -66,7 +66,8 @@ export function PassportAvatar({
   background,
   wave,
   picture,
-  onLive
+  onLive,
+  onReady
 }: {
   look: AvatarLook
   name: string
@@ -77,6 +78,8 @@ export function PassportAvatar({
   picture: ReactNode
   /** Whether the engine's avatar is in the column: the panel leaves its background open over it. */
   onLive: (live: boolean) => void
+  /** Whether the avatar is drawn and on show: an emote can play on it. */
+  onReady: (ready: boolean) => void
 }): React.JSX.Element {
   const { passportPreview } = useSession()
   const popup = useContext(PopupIdContext)
@@ -92,6 +95,8 @@ export function PassportAvatar({
   send.current = passportPreview.send
   const onLiveRef = useRef(onLive)
   onLiveRef.current = onLive
+  const onReadyRef = useRef(onReady)
+  onReadyRef.current = onReady
   const waveRef = useRef(wave)
 
   useLayoutEffect(() => {
@@ -107,6 +112,12 @@ export function PassportAvatar({
     if (!on || shown) return
     const timer = setTimeout(() => setTimedOut(true), ANSWER_TIMEOUT_MS)
     return () => clearTimeout(timer)
+  }, [on, shown])
+
+  useEffect(() => {
+    if (!on || !shown) return
+    onReadyRef.current(true)
+    return () => onReadyRef.current(false)
   }, [on, shown])
 
   // The look and the background are read when the scene is told, not depended on: telling it again must
@@ -223,13 +234,7 @@ function TurnSurface({ id, name, send }: { id: number; name: string; send: (msg:
       className={styles.surface}
       data-dragging={dragging ? '' : undefined}
       role="img"
-      aria-label={`${name}'s avatar. Drag it, or use the left and right arrow keys, to turn it.`}
-      tabIndex={0}
-      onKeyDown={(e) => {
-        if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return
-        e.preventDefault()
-        send({ kind: 'passportPreviewTurn', id, degrees: e.key === 'ArrowLeft' ? KEY_TURN_DEGREES : -KEY_TURN_DEGREES })
-      }}
+      aria-label={`${name}'s avatar. Drag it to turn it.`}
       onPointerDown={(e) => {
         if (e.button !== 0) return
         drag.current = { pointer: e.pointerId, x: e.clientX }

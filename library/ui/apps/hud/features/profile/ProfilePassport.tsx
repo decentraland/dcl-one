@@ -30,7 +30,13 @@ export type PassportTab = 'overview' | 'badges' | 'photos' | 'creations'
 /** What the live avatar is given: the panel's background behind it, whether it waves once loaded (the
  *  first time the passport shows it), what the column shows in its place when it cannot be drawn, and
  *  where to say that it is being drawn, so the panel opens its background over the column. */
-export type PassportAvatarSlot = { background: PassportBackground; wave: boolean; picture: React.ReactNode; onLive: (live: boolean) => void }
+export type PassportAvatarSlot = {
+  background: PassportBackground
+  wave: boolean
+  picture: React.ReactNode
+  onLive: (live: boolean) => void
+  onReady: (ready: boolean) => void
+}
 type Tab = PassportTab
 const PASSPORT_TABS: TabItem<Tab>[] = (['overview', 'badges', 'photos', 'creations'] as const).map((t) => ({ id: t, label: t.toUpperCase() }))
 // A single selected-but-disabled tab: the same bar, holding the same height, with nothing to switch to.
@@ -238,18 +244,19 @@ const wearableTile = (w: Wearable): EquippedTile => ({
   categoryIcon: <CategoryIcon category={w.category} size={15} />
 })
 
-const emoteTile = (e: Emote, onPlay?: (urn: string) => void): EquippedTile => ({
-  // Keyed by slot too: the same emote can sit in more than one wheel slot (the equipped set is
-  // deduped, the wheel isn't), and a duplicate key drops the second tile.
-  key: `${e.urn}:${e.slot}`,
-  thumbnail: e.thumbnail ?? catalystThumbUrl(e.urn),
-  name: e.name,
-  rarity: e.rarity,
-  shopUrl: e.shopUrl,
-  categoryIcon: <Icon name="emotes" size={15} />,
-  onAction: onPlay != null ? () => onPlay(e.urn) : undefined,
-  actionLabel: `Play ${e.name}`
-})
+const emoteTile = (e: Emote, onPlay?: (urn: string) => void): EquippedTile => {
+  const tile = {
+    // Keyed by slot too: the same emote can sit in more than one wheel slot (the equipped set is
+    // deduped, the wheel isn't), and a duplicate key drops the second tile.
+    key: `${e.urn}:${e.slot}`,
+    thumbnail: e.thumbnail ?? catalystThumbUrl(e.urn),
+    name: e.name,
+    rarity: e.rarity,
+    shopUrl: e.shopUrl,
+    categoryIcon: <Icon name="emotes" size={15} />
+  }
+  return onPlay != null ? { ...tile, onAction: () => onPlay(e.urn), actionLabel: `Play ${e.name}` } : tile
+}
 
 function EquippedRow({ tiles }: { tiles: EquippedTile[] }): React.JSX.Element {
   return (
@@ -448,6 +455,7 @@ export function ProfilePassport({
   const selectedTier = selectedBadge?.tiers?.some((t) => t.id === picked.tier) ? picked.tier : selectedBadge != null ? defaultTier(selectedBadge) : undefined
   const [editMode, setEditMode] = useState(false)
   const [liveAvatar, setLiveAvatar] = useState(false)
+  const [avatarReady, setAvatarReady] = useState(false)
   // It waves the first time this passport shows it, not when it comes back from the Badges tab.
   const waved = useRef(false)
   const firstShow = !waved.current
@@ -589,7 +597,7 @@ export function ProfilePassport({
             ) : avatar == null ? (
               picture
             ) : showsAvatar ? (
-              avatar({ background: tab === 'photos' || tab === 'creations' ? tab : 'overview', wave: firstShow, picture, onLive: setLiveAvatar })
+              avatar({ background: tab === 'photos' || tab === 'creations' ? tab : 'overview', wave: firstShow, picture, onLive: setLiveAvatar, onReady: setAvatarReady })
             ) : null}
           </div>
 
@@ -814,7 +822,7 @@ export function ProfilePassport({
                   <section className={styles.card}>
                     {/* One grid, wearables then emotes. */}
                     <h2 className={styles.cardTitle}>Equipped Items</h2>
-                    <EquippedRow tiles={[...wearables.map(wearableTile), ...(profile.equippedEmotes ?? []).map((e) => emoteTile(e, onPlayEmote))]} />
+                    <EquippedRow tiles={[...wearables.map(wearableTile), ...(profile.equippedEmotes ?? []).map((e) => emoteTile(e, avatarReady && showsAvatar ? onPlayEmote : undefined))]} />
                   </section>
                 )}
                 {hasBadges && (

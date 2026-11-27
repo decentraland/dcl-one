@@ -54,9 +54,9 @@ const INTRO_EMOTE = 'wave'
 const LOADING_NOT_FOUND = 2
 const LOADING_FINISHED_WITH_ERROR = 3
 const LOADING_FINISHED = 4
-// Frames to wait for an avatar's load at all, and for a loaded avatar's parts to be drawn in (see
+// Seconds to wait for an avatar's load at all, and frames for a loaded avatar's parts to be drawn in (see
 // ./avatarPreview's LOOK_DRAWN_FRAMES).
-const LOAD_FRAMES = 600
+const LOAD_SECONDS = 10
 const DRAWN_FRAMES = 45
 
 let open: Open | null = null
@@ -66,9 +66,9 @@ let lookKey = ''
 let yaw = YAW_FRONT
 let turn = restingTurn()
 let emoteTrigger = 0
-// The avatar's load: the newest report before the look was given, the frames waited since, and, once the
+// The avatar's load: the newest report before the look was given, the seconds waited since, and, once the
 // engine says it loaded, the frames left for its parts to be drawn.
-let load: { since: number; frames: number; drawnIn: number | null } | null = null
+let load: { since: number; seconds: number; drawnIn: number | null } | null = null
 
 function latestLoad(entity: Entity): { timestamp: number; state: number } | null {
   if (!AssetLoadLoadingState.has(entity)) return null
@@ -151,7 +151,7 @@ function wear(o: Open): void {
   if (mut != null) Object.assign(mut, shape)
   else AvatarShape.create(avatarEntity, { ...shape, id: '', name: undefined, talking: false })
   // the page was told about the first look only: a later one changes in place
-  if (first) load = { since: latestLoad(avatarEntity)?.timestamp ?? 0, frames: 0, drawnIn: null }
+  if (first) load = { since: latestLoad(avatarEntity)?.timestamp ?? 0, seconds: 0, drawnIn: null }
 }
 
 function fit(o: Open): void {
@@ -178,7 +178,7 @@ function turnBy(degrees: number): void {
   Transform.getMutable(avatarEntity).rotation = Quaternion.fromEulerDegrees(0, yaw, 0)
 }
 
-function pollLoad(ctx: Ctx): void {
+function pollLoad(ctx: Ctx, dt: number): void {
   if (load == null || open == null || avatarEntity == null) return
   const { id, wave } = open
   if (load.drawnIn != null) {
@@ -194,7 +194,8 @@ function pollLoad(ctx: Ctx): void {
     load.drawnIn = DRAWN_FRAMES
     return
   }
-  if (state === LOADING_FINISHED_WITH_ERROR || state === LOADING_NOT_FOUND || ++load.frames >= LOAD_FRAMES) {
+  load.seconds += dt
+  if (state === LOADING_FINISHED_WITH_ERROR || state === LOADING_NOT_FOUND || load.seconds >= LOAD_SECONDS) {
     load = null
     ctx.send({ kind: 'passportPreviewState', id, state: 'failed' })
   }
@@ -222,9 +223,6 @@ export function registerPassportPreview(ctx: Ctx): void {
   ctx.on('passportPreviewDrag', (msg) => {
     if (open?.id === msg.id) turn = dragTurn(turn, msg.dx, msg.seconds)
   })
-  ctx.on('passportPreviewTurn', (msg) => {
-    if (open?.id === msg.id) turnBy(msg.degrees)
-  })
   ctx.on('passportPreviewEmote', (msg) => {
     if (open?.id === msg.id) playEmote(msg.urn)
   })
@@ -232,7 +230,7 @@ export function registerPassportPreview(ctx: Ctx): void {
     if (open == null) return
     // a stage that came up under the passport since
     holdPreview()
-    pollLoad(ctx)
+    pollLoad(ctx, dt)
     const stepped = stepTurn(turn, dt)
     turn = stepped.turn
     turnBy(stepped.degrees)

@@ -237,7 +237,6 @@ export type PageToScene =
   | PreviewZoomRequest
   | PassportPreviewRequest
   | PassportPreviewDragRequest
-  | PassportPreviewTurnRequest
   | PassportPreviewEmoteRequest
   | GetOutfitsRequest
   | SaveOutfitRequest
@@ -2414,13 +2413,6 @@ export interface PassportPreviewDragRequest {
   seconds: number
 }
 
-/** The keyboard's turn: at once, with no coasting. */
-export interface PassportPreviewTurnRequest {
-  kind: 'passportPreviewTurn'
-  id: number
-  degrees: number
-}
-
 /** Play an emote on the passport's avatar once; asked again, it plays again. */
 export interface PassportPreviewEmoteRequest {
   kind: 'passportPreviewEmote'
@@ -2428,7 +2420,7 @@ export interface PassportPreviewEmoteRequest {
   urn: string
 }
 
-export type PassportPreviewMessage = PassportPreviewRequest | PassportPreviewDragRequest | PassportPreviewTurnRequest | PassportPreviewEmoteRequest
+export type PassportPreviewMessage = PassportPreviewRequest | PassportPreviewDragRequest | PassportPreviewEmoteRequest
 
 /** The passport's avatar has loaded and been drawn (`ready`), or cannot be (`failed`: its load ended in an
  *  error or never ended), so the page shows the picture it has instead. */
