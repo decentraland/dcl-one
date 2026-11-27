@@ -371,20 +371,28 @@ describe('when Events cards reveal their controls', () => {
             configurable: true,
             value: { writeText: async (text) => { url = text; throw new DOMException('Denied', 'NotAllowedError') } }
           })
+          const feedback = async (expected) => {
+            for (let i = 0; i < 40; i++) {
+              const tip = document.getElementById(copy.getAttribute('aria-describedby'))
+              if (tip?.textContent === expected && notice.textContent === expected &&
+                  getComputedStyle(tip).visibility === 'visible') {
+                const box = tip.getBoundingClientRect()
+                const anchor = copy.getBoundingClientRect()
+                return box.height > 1 && box.bottom <= anchor.top &&
+                  Math.abs(box.left + box.width / 2 - anchor.left - anchor.width / 2) < 2
+              }
+              await new Promise(resolve => setTimeout(resolve, 25))
+            }
+            return false
+          }
           copy.click()
-          await new Promise(requestAnimationFrame)
-          const failure = notice.textContent
+          const failure = await feedback("Couldn't copy the link. Try again.")
           navigator.clipboard.writeText = async (text) => { url = text }
           copy.click()
-          await new Promise(requestAnimationFrame)
-          return { failure, url: new URL(url).pathname + new URL(url).search, success: notice.textContent, visible: notice.getBoundingClientRect().height > 1 }
+          const success = await feedback('Copied')
+          return { failure, success, url: new URL(url).pathname + new URL(url).search }
         })()`)
-      ).toEqual({
-        failure: "Couldn't copy the link. Try again.",
-        url: '/events?id=event',
-        success: 'Copied',
-        visible: true
-      })
+      ).toEqual({ failure: true, success: true, url: '/events?id=event' })
     })
   })
 
