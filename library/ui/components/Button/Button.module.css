@@ -225,6 +225,16 @@
   .label {
     white-space: nowrap;
   }
+  /* An icon child laid out on the label's text line sits on its baseline, above the box's centre; as a
+     flex item it is centred. An empty label (the icon passed as `startIcon`) would still take the gap. */
+  .root[data-icon-only='true'] .label {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .root[data-icon-only='true'] .label:empty {
+    display: none;
+  }
   .icon {
     display: inline-flex;
     flex: none;
