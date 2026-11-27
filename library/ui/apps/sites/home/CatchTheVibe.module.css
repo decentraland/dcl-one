@@ -257,6 +257,10 @@ a.creator:focus-visible {
     display: flex;
   }
 
+  .cards > .card {
+    margin: 0;
+  }
+
   .carousel {
     display: none;
   }
