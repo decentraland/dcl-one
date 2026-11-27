@@ -1,6 +1,6 @@
 import { useId, type ReactNode } from 'react'
 import { JumpInCTA } from '../../../components/JumpInCTA/JumpInCTA'
-import { Button } from '../shared/Button/Button'
+import { Button } from '../../../components/Button/Button'
 import { Carousel, type CarouselLabels } from '../shared/Carousel'
 import { cssUrl } from '../shared/cssUrl'
 import dclLogo from '../assets/dcl-logo.svg'
@@ -218,13 +218,13 @@ function WhatsOn({
         )}
       />
       <Button
-        variant="tertiary"
-        className={styles.viewAll}
+        variant="outline"
+        size="md"
         href={viewAll.href}
         onClick={viewAll.onClick}
+        trailingIcon={<Icon d={CHEVRON} name="ChevronRight" />}
       >
         {viewAll.label}
-        <Icon className={styles.viewAllIcon} d={CHEVRON} name="ChevronRight" />
       </Button>
     </section>
   )

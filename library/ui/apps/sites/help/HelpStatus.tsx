@@ -1,4 +1,5 @@
 import { useEffect, useId, useRef, useState } from 'react'
+import { Button } from '../../../components/Button/Button'
 import { GeneralCheck, GeneralWarningError } from '../../../foundations/icons'
 import styles from './HelpStatus.module.css'
 
@@ -72,16 +73,16 @@ function HelpStatus({ label, report, detailsLabel, detailsHref }: HelpStatusProp
       {report ? (
         <>
           <StatusMark state={report.overall} />
-          <button
+          <Button
             ref={toggleRef}
-            type="button"
-            className={styles.toggle}
+            variant="text"
+            size="sm"
             aria-expanded={open}
             aria-controls={listId}
             onClick={() => setOpen((value) => !value)}
           >
             {label}
-          </button>
+          </Button>
           <div id={listId} className={styles.popover} hidden={!open}>
             <p className={[styles.header, STATE_CLASS[report.overall]].join(' ')}>
               {report.overallText}

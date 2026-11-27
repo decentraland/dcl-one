@@ -79,6 +79,39 @@ describe('AllEvents', () => {
     })
   })
 
+  describe('when moving between days', () => {
+    it('should keep the previous days arrow disabled on the first day and move forward', async () => {
+      const onPrevious = vi.fn()
+      const onNext = vi.fn()
+      mount({ canGoBack: false, onPrevious, onNext })
+      const days = screen.getByRole('navigation', { name: 'Event days' })
+      const previous = within(days).getByRole<HTMLButtonElement>('button', {
+        name: 'Navigate to previous dates'
+      })
+      const next = within(days).getByRole<HTMLButtonElement>('button', {
+        name: 'Navigate to next dates'
+      })
+      expect(previous.disabled).toBe(true)
+      expect(previous.getAttribute('data-icon-only')).toBe('true')
+      await userEvent.click(previous)
+      expect(onPrevious).not.toHaveBeenCalled()
+      await userEvent.click(next)
+      expect(onNext).toHaveBeenCalledTimes(1)
+    })
+
+    it('should keep the next days arrow disabled at the last day the page offers', async () => {
+      const onPrevious = vi.fn()
+      const onNext = vi.fn()
+      mount({ canGoBack: true, canGoForward: false, onPrevious, onNext })
+      const next = screen.getByRole<HTMLButtonElement>('button', { name: 'Navigate to next dates' })
+      expect(next.disabled).toBe(true)
+      await userEvent.click(next)
+      expect(onNext).not.toHaveBeenCalled()
+      await userEvent.click(screen.getByRole('button', { name: 'Navigate to previous dates' }))
+      expect(onPrevious).toHaveBeenCalledTimes(1)
+    })
+  })
+
   describe('when the days could not be read', () => {
     it('should report the failure with a Retry instead of a spinner', async () => {
       const onRetry = vi.fn()

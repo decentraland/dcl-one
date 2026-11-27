@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { GeneralLeftArrow, GeneralRightArrow } from '../../../foundations/icons'
+import { Button } from '../../../components/Button/Button'
 import { useEventsCopy } from './locale'
 import styles from './Rail.module.css'
 
@@ -106,27 +107,33 @@ function Rail({
     <div className={className}>
       <div className={styles.layer}>
         {active > 0 ? (
-          <button
-            type="button"
-            className={`${styles.chevron} ${styles.previous}`}
-            aria-label={previousLabel}
-            onClick={() => goTo(active - 1)}
-          >
-            <GeneralLeftArrow size={24} aria-hidden="true" />
-          </button>
+          <div className={`${styles.chevron} ${styles.previous}`}>
+            <Button
+              variant="dark"
+              size="md"
+              iconOnly
+              aria-label={previousLabel}
+              onClick={() => goTo(active - 1)}
+            >
+              <GeneralLeftArrow className={styles.chevronIcon} size={24} aria-hidden="true" />
+            </Button>
+          </div>
         ) : null}
         <div ref={ref} className={`${styles.track} ${trackClassName ?? ''}`} onScroll={sync}>
           {children}
         </div>
         {active < pages - 1 ? (
-          <button
-            type="button"
-            className={`${styles.chevron} ${styles.next}`}
-            aria-label={nextLabel}
-            onClick={() => goTo(active + 1)}
-          >
-            <GeneralRightArrow size={24} aria-hidden="true" />
-          </button>
+          <div className={`${styles.chevron} ${styles.next}`}>
+            <Button
+              variant="dark"
+              size="md"
+              iconOnly
+              aria-label={nextLabel}
+              onClick={() => goTo(active + 1)}
+            >
+              <GeneralRightArrow className={styles.chevronIcon} size={24} aria-hidden="true" />
+            </Button>
+          </div>
         ) : null}
       </div>
       <PageDots pages={pages} active={active} label={label} onSelect={goTo} />

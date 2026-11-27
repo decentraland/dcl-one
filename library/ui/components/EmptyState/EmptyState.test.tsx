@@ -1,5 +1,6 @@
 import '@testing-library/jest-dom/vitest'
 import { fireEvent, render, screen } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 import { EmptyState } from './EmptyState'
 
@@ -13,6 +14,27 @@ describe('EmptyState', () => {
       expect(root).not.toHaveAttribute('data-variant')
       expect(root).not.toHaveAttribute('data-tone')
       expect(root).not.toHaveAttribute('style')
+    })
+  })
+
+  describe('when a Shop page supplies its own heading and region', () => {
+    it('exposes the heading level and forwards the region attributes', () => {
+      render(
+        <EmptyState
+          appearance="shop"
+          titleAs="h2"
+          variant="inline"
+          title="No listings"
+          role="region"
+          aria-label="Listings"
+          data-variant="custom"
+        />
+      )
+      const region = screen.getByRole('region', { name: 'Listings' })
+      expect(region).toHaveAttribute('data-variant', 'custom')
+      expect(region).toContainElement(
+        screen.getByRole('heading', { level: 2, name: 'No listings' })
+      )
     })
   })
 
@@ -63,7 +85,12 @@ describe('EmptyState', () => {
         <EmptyState
           title="Nothing on sale"
           actions={[
-            { label: 'Open the Shop', href: '/shop', variant: 'outline', icon: <i data-testid="icon" /> }
+            {
+              label: 'Open the Shop',
+              href: '/shop',
+              variant: 'outline',
+              icon: <i data-testid="icon" />
+            }
           ]}
         />
       )
@@ -71,6 +98,16 @@ describe('EmptyState', () => {
       expect(link).toHaveAttribute('href', '/shop')
       expect(link).toHaveAttribute('data-variant', 'outline')
       expect(screen.getByTestId('icon').parentElement).toHaveAttribute('aria-hidden', 'true')
+    })
+
+    it('keeps a navigation handler on a link action', async () => {
+      const onClick = vi.fn()
+      const user = userEvent.setup()
+      render(<EmptyState title="Shop" actions={[{ label: 'Browse', href: '#browse', onClick }]} />)
+      await user.tab()
+      expect(screen.getByRole('link', { name: 'Browse' })).toHaveFocus()
+      await user.keyboard('{Enter}')
+      expect(onClick).toHaveBeenCalledOnce()
     })
 
     it('renders no actions row for an empty list', () => {

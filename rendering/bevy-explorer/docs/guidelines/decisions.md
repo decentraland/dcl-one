@@ -672,6 +672,32 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   what both servers allow for them, and keeps only the latest teleport and the latest emote command
   while that is spent. Overrunning the servers' budget ends the session for good, and a scene that
   repositions the player every frame would do it; unity-explorer has no limiter (`pacing.rs`).
+  The native driver also holds teleports and emotes while 8 reliable messages are
+  unacknowledged, and holds inputs once traffic has been in flight for 600 ms with no
+  acknowledgement arriving, so what a stall delivers at once stays within the servers' bursts.
+  The count is ENet's, so resyncs, a fragmented handshake and announcements count too: a burst of
+  them holds a teleport or emote for a round trip, which ENet's acknowledgements, not tracked per
+  message, cannot tell apart. A realm change withdraws a held teleport, as it does the pacer's.
+  WebTransport exposes no acknowledgements, so the web build has no such gate (`native.rs`).
+- **The native uplink is probed every 250 ms, and inputs are spaced on a long round trip.**
+  ENet's own ping waits 500 ms after the last acknowledgement and only while nothing reliable is
+  in flight; probing only then as well keeps one probe out and an acknowledgement once per round
+  trip. Above a 600 ms round trip a working link then reads as stalled every cycle (inputs held
+  22% of the time at 800 ms, 48% at 1.2 s, 68% at 2 s, in the simulation), and at 300 ± 100 ms
+  one lost probe holds inputs for up to 300 ms, which 2% loss does about every 10 s. A ping every
+  250 ms whatever is in flight removes both (no hold up to a 2 s round trip, none in two minutes
+  of that loss), but the gate then closes about a round trip and 600 ms after a stall begins
+  rather than within a second, and a stall that queues what was sent meanwhile delivers it at
+  once: 18 inputs at a 1.2 s round trip and 36 at 3 s against the servers' burst of 16. So from a
+  smoothed round trip of 600 ms inputs are spaced so that a round trip and 600 ms hold at most 8
+  (6.7 a second at 600 ms, 3.1 at 2 s, at most 12 delivered at once up to 3 s). Holding inputs
+  whenever the uplink is unconfirmed on such links, the other way to stay within the burst, stops
+  movement for most of each round trip; spacing keeps updates regular, which observers smooth.
+  A teleport that goes drops an input queued before it and still waiting for its spacing: sent
+  after it, that pose would snap observers back before the next input. The input is newer than
+  the teleport when the teleport waited in the pacer; Pulse then keeps the facing from before the
+  teleport until the next input, about a second at most. An emote leaves the input waiting.
+  The rules run over simulated ENet links in `native/link_sim_tests.rs`.
 - **The client never sends what the Pulse server refuses for good.** A one-shot emote longer than
   60 s goes out without a duration and ends with an explicit stop, and inputs and teleports from
   outside the parcel grid are not sent (`lib.rs`, `pulse/mod.rs`).
@@ -717,6 +743,22 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   better than a late answer. A share of the target frame, not a fixed time, keeps the cap the same
   part of the main thread at any frame rate. See [Interaction](interaction.md#scene-raycasts).
 
+- **The player camera's look speed is the engine's own.** The three zoom levels, their orbit
+  rings, fields of view, shoulder offsets and the 0.5 s blend between them are unity-explorer's.
+  The pointer still turns the camera through this engine's sensitivity and smoothing settings, so
+  the vertical travel across an orbit and the easing of a turn differ from unity-explorer's, which
+  runs each level's axes with their own gain, acceleration and deceleration.
+- **The camera's field of view does not widen while running.** unity-explorer adds up to 15
+  degrees in first and third person while the avatar runs.
+- **The zoom levels have no gamepad D-pad or stick binding.** unity-explorer steps the level with
+  D-pad up and down and cycles it with the right stick pressed down. Here the D-pad is the scene's
+  actions 1 and 3 and the right stick turns the camera, so the bumpers step the level, as they
+  zoomed before, and the cycle is the V key only.
+- **A scene that forces first person on a drone camera keeps the player's aim.** unity-explorer's
+  first-person camera then comes back with the aim it had when the player last left first person.
+  Here the camera has one aim, so first person looks along the heading and pitch the drone had.
+- **The Camera Zoom sensitivity setting scales photo mode only.** The player camera reads which
+  way the wheel turned, not how far, so the setting has nothing to scale there.
 - **Photo mode follows the engine's cursor convention.** unity-explorer's in-world camera has its
   own Lock/Unlock cursor actions. Here right-click toggles the lock as everywhere else, left-drag
   looks while the cursor is free (Unity's drag), and Escape closes photo mode. The gallery key (G,
@@ -741,8 +783,8 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   unity-explorer disables. Jump In treats a photo as taken in a World when the HUD's `worldOfRealm`
   accepts its realm, so hyphenated ENS names and Worlds-server realm URLs count, where
   unity-explorer's test is `^[a-zA-Z0-9.]+\.eth$` and sends those photos to a Genesis City parcel.
-- **The third-person camera collides with scene geometry.** It is pulled in front of the scene
-  colliders on both `CL_PHYSICS` and `CL_POINTER` and of the terrain, with unity-explorer's
+- **The third-person and drone cameras collide with scene geometry.** Each is pulled in front of
+  the scene colliders on both `CL_PHYSICS` and `CL_POINTER` and of the terrain, with unity-explorer's
   camera radius, distances and easing times. The layer rule is unity-explorer's, kept so a scene
   behaves the same in both clients: a physics-only collider, often an invisible wall, lets the
   camera through, where the avatar and the photo camera stop at any `CL_PHYSICS` collider. A

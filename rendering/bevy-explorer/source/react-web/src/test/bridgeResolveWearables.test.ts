@@ -61,3 +61,34 @@ describe('resolveWearables when the lambdas request fails', () => {
     expect((await resolveEquippedSet(['urn:a'])).map((w) => w.urn)).toEqual(['urn:a'])
   })
 })
+
+describe('fetchWearablesPage', () => {
+  beforeEach(() => {
+    getJson.mockReset()
+  })
+
+  const element = (urn: string, metadata: Record<string, unknown>) => ({
+    urn,
+    name: urn,
+    rarity: 'epic',
+    category: 'hat',
+    entity: { metadata, content: [] }
+  })
+
+  it("carries each item's description from its entity", async () => {
+    const { fetchWearablesPage } = await load()
+    getJson.mockResolvedValueOnce({
+      elements: [element('urn:a', { description: 'Keeps the sun off.' }), element('urn:b', {})],
+      totalAmount: 2
+    })
+    const page = await fetchWearablesPage('0xabc', { page: 0, pageSize: 16 })
+    expect(page.items.map((w) => [w.urn, w.description])).toEqual([['urn:a', 'Keeps the sun off.'], ['urn:b', undefined]])
+  })
+
+  it.each([42, null, { text: 'Hat' }, ['Hat']])('leaves out a description that is not text (%j)', async (description) => {
+    const { fetchWearablesPage } = await load()
+    getJson.mockResolvedValueOnce({ elements: [element('urn:a', { description })], totalAmount: 1 })
+    const page = await fetchWearablesPage('0xabc', { page: 0, pageSize: 16 })
+    expect(page.items[0].description).toBeUndefined()
+  })
+})

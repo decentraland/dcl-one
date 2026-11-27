@@ -989,6 +989,35 @@ mod tests {
             "urn:decentraland:ethereum:collections-v1:xmash_up_2020:xmash_up_cap_hat".into(),
             owner.into()
         )));
+
+        let markers: i64 =
+            sqlx::query_scalar("SELECT count(*) FROM shop.mirror_state WHERE network = 'ethereum'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(markers, 0);
+        let counts = || {
+            sqlx::query_as::<_, (i64, i64)>(
+                "SELECT (SELECT count(*) FROM shop.v1_royalty_collection), \
+                        (SELECT count(*) FROM shop.v1_royalty_item)",
+            )
+            .fetch_one(&pool)
+        };
+        let hand_back =
+            || super::super::collections_projection::hand_back(&pool, ChainNet::Ethereum);
+        assert!(hand_back().await.unwrap());
+        assert_eq!(counts().await.unwrap(), (0, 0));
+        sqlx::raw_sql(
+            "INSERT INTO shop.v1_royalty_collection (contract_address, urn, creator)
+                 VALUES ('0x1', 'urn:collection', '0x2');
+             INSERT INTO shop.v1_royalty_item (urn, contract_address, creator)
+                 VALUES ('urn:item', '0x1', '0x2');",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        assert!(!hand_back().await.unwrap());
+        assert_eq!(counts().await.unwrap(), (1, 1));
     }
 
     /// A walk rebuilds the rows at each publication until one that rebuilt

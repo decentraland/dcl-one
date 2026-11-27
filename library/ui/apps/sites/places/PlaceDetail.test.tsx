@@ -1,6 +1,6 @@
 import type { ReactElement } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vitest'
-import { fireEvent, render, screen, within } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 
 import { PlaceDetail } from './PlaceDetail'
 
@@ -55,6 +55,14 @@ describe('PlaceDetail', () => {
       expect(within(viewer).getByText('MetaDoge')).toBeInTheDocument()
     })
 
+    it('should draw Explore the scene as the shared inverse Button beside a Jump in link', () => {
+      const explore = screen.getByRole('button', { name: 'Explore the scene' })
+      expect(explore).toHaveAttribute('data-variant', 'inverse')
+      expect(explore).toHaveAttribute('data-size', 'md')
+      expect(explore).toBeEnabled()
+      expect(screen.getByRole('link', { name: 'Jump in' })).toHaveAttribute('href', JUMP)
+    })
+
     it('should link both jump-in actions to the scene', () => {
       expect(
         screen.getByRole('link', { name: 'Jump into 1,95 (opens in a new tab)' })
@@ -93,6 +101,25 @@ describe('PlaceDetail', () => {
           expect(screen.queryByTitle('Meta GamiMall')).toBeNull()
         })
       })
+    })
+  })
+
+  describe('when the scene has players but no jump link yet', () => {
+    let onJumpIn: Mock<() => void>
+
+    beforeEach(() => {
+      onJumpIn = vi.fn()
+      mount({ jumpHref: undefined, onJumpIn })
+    })
+
+    it('should not let the visitor explore the scene', () => {
+      expect(screen.getByRole('button', { name: 'Explore the scene' })).toBeDisabled()
+    })
+
+    it('should make Jump in a button that hands the press to the host', () => {
+      expect(screen.queryByRole('link', { name: 'Jump in' })).toBeNull()
+      fireEvent.click(screen.getByRole('button', { name: 'Jump in' }))
+      expect(onJumpIn).toHaveBeenCalledOnce()
     })
   })
 
@@ -303,9 +330,68 @@ describe('PlaceDetail', () => {
       expect(within(dialog).getByRole('link', { name: 'Jump in' })).toHaveAttribute('href', JUMP)
     })
 
+    it('should draw the close button and the copy button as shared controls', () => {
+      expect(within(dialog).getByRole('button', { name: 'Close' })).toHaveAttribute(
+        'data-variant',
+        'filled'
+      )
+      const copy = within(dialog).getByRole('button', { name: 'Copy link' })
+      expect(copy).toHaveAttribute('data-variant', 'outline')
+      expect(copy).toHaveAttribute('data-icon-only', 'true')
+      expect(copy).toHaveAttribute('data-size', 'lg')
+    })
+
     it('should not show the live badges', () => {
       expect(screen.queryByTestId('SensorsRoundedIcon')).toBeNull()
       expect(screen.queryByText('In-World Chat')).toBeNull()
+    })
+  })
+
+  describe('when the visitor closes the jump-in dialog', () => {
+    let onClose: Mock<() => void>
+
+    beforeEach(() => {
+      onClose = vi.fn()
+      mount({ livePlayers: 0, onClose })
+      fireEvent.click(screen.getByRole('button', { name: 'Close' }))
+    })
+
+    it('should ask the host to close it', () => {
+      expect(onClose).toHaveBeenCalledOnce()
+    })
+  })
+
+  describe('when the visitor copies the link from the jump-in dialog', () => {
+    let writeText: Mock<(text: string) => Promise<void>>
+    let original: PropertyDescriptor | undefined
+
+    beforeEach(() => {
+      original = Object.getOwnPropertyDescriptor(navigator, 'clipboard')
+      writeText = vi
+        .fn<(text: string) => Promise<void>>()
+        .mockRejectedValueOnce(new Error('denied'))
+        .mockResolvedValueOnce(undefined)
+      Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true })
+      mount({ livePlayers: 0 })
+    })
+
+    afterEach(() => {
+      if (original) Object.defineProperty(navigator, 'clipboard', original)
+      else Reflect.deleteProperty(navigator, 'clipboard')
+    })
+
+    it('should stay silent when the clipboard refuses and confirm once it accepts', async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Copy link' }))
+      await waitFor(() => expect(writeText).toHaveBeenCalledOnce())
+      expect(screen.queryByText('Copied!')).toBeNull()
+      fireEvent.click(screen.getByRole('button', { name: 'Copy link' }))
+      await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('Copied!'))
+    })
+
+    it('should keep the empty live region outside the copy button before the first copy', () => {
+      const status = screen.getByRole('status')
+      expect(status).toHaveTextContent('')
+      expect(screen.getByRole('button', { name: 'Copy link' })).not.toContainElement(status)
     })
   })
 

@@ -222,6 +222,11 @@ pub async fn hand_back(pool: &PgPool, net: ChainNet) -> anyhow::Result<bool> {
     if !owned(&mut tx, net).await? {
         return Ok(false);
     }
+    if net == ChainNet::Ethereum {
+        sqlx::raw_sql("DELETE FROM shop.v1_royalty_item; DELETE FROM shop.v1_royalty_collection")
+            .execute(&mut *tx)
+            .await?;
+    }
     for sql in [
         "DELETE FROM shop.items WHERE network = $1",
         "DELETE FROM shop.collections WHERE network = $1",
