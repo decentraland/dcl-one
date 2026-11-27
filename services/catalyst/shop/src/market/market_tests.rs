@@ -804,6 +804,13 @@ async fn the_mirrors_walk_the_subgraph_and_every_market_route_answers_over_them(
     )
     .await;
 
+    super::owned_items::test_support::publish(
+        &pool,
+        &super::chain_walk::ChainNet::ALL,
+        false,
+        Duration::ZERO,
+    )
+    .await;
     let app = || market_router(state.clone());
 
     // The catalog, its v1 shape and the picks join.
@@ -4883,6 +4890,18 @@ async fn listing_routes_stop_serving_a_trade_as_soon_as_its_proof_is_withdrawn()
     .await
     .unwrap();
 
+    super::owned_items::test_support::publish(
+        &pool,
+        &[super::chain_walk::ChainNet::Matic],
+        false,
+        Duration::ZERO,
+    )
+    .await;
+    let catalog_state = Arc::new(super::MarketplaceState::new(
+        pool.clone(),
+        crate::http::Outbound::for_tests(),
+        super::owned_items::test_support::walking(state.settings.clone()),
+    ));
     let routes = [
         format!(
             "/v3/catalog/unified?contractAddress={contract}&includeLegacySecondary=true&listingType=secondary"
@@ -4911,7 +4930,7 @@ async fn listing_routes_stop_serving_a_trade_as_soon_as_its_proof_is_withdrawn()
             }
         }
         let (status, catalogue) = get(
-            market_router(state.clone()),
+            market_router(catalog_state.clone()),
             &format!("/v2/catalog?contractAddress={contract}"),
         )
         .await;
@@ -11435,5 +11454,702 @@ async fn a_names_page_by_latest_sale_reads_the_admitted_index() {
     assert_eq!(body["data"][0]["nft"]["tokenId"], "1001", "{body}");
     assert_eq!(sold_at(&body, "1001"), Some(2_000_000));
     assert!(graph_reads() > 0);
+    own.drop().await;
+}
+
+#[tokio::test]
+async fn catalog_resales_read_the_published_legacy_book_and_v3_listings() {
+    use super::chain_walk::ChainNet;
+
+    let graph = FakeGraph::new();
+    let url = serve_graph(graph.clone()).await;
+    let Some((state, own)) = state_over_own(&url, true).await else {
+        return;
+    };
+    let pool = &state.pool;
+    let contract = contract_of(&tag(), 1);
+    for id in ["1", "2", "3", "4"] {
+        seed_item_row(pool, &contract, id, CREATOR).await;
+    }
+    sqlx::query(
+        "UPDATE shop.items SET search_is_collection_approved = true,
+         search_is_store_minter = item_id = 3,
+         price = CASE WHEN item_id = 3 THEN 5000000000000000000 ELSE 100000000000000000000 END,
+         first_listed_at = 1 WHERE contract_address=$1",
+    )
+    .bind(&contract)
+    .execute(pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO shop.mirror_state (mirror, network, source_url, last_complete_pass_at)
+         SELECT m, n, 'test', timezone('UTC', now())
+         FROM unnest(ARRAY['collections', 'items']) m CROSS JOIN unnest(ARRAY['ethereum', 'matic']) n",
+    )
+    .execute(pool)
+    .await
+    .unwrap();
+
+    let token = |item: u64, serial: u64| {
+        ((alloy_primitives::U256::from(item) << 216u32) | alloy_primitives::U256::from(serial))
+            .to_string()
+    };
+    let venue = super::nft_index::deployments::Deployments::mainnet(ChainNet::Matic).markets[1].0;
+    let clock = chrono::Utc::now().timestamp() as u128;
+    for (item, serial, owner, price, expiry, status) in [
+        (1, 1, WALLET_A, 20_i64, clock + 3600, "open"),
+        (1, 2, WALLET_B, 1, clock + 3600, "open"),
+        (1, 3, WALLET_A, 2, clock - 3600, "open"),
+        (1, 4, WALLET_A, 3, clock + 3600, "cancelled"),
+        (2, 1, WALLET_A, 40, (clock + 3600) * 1000, "open"),
+        (2, 2, WALLET_A, 30, (clock + 3600) * 1000, "open"),
+        (4, 1, WALLET_A, 1, (clock - 3600) * 1000, "open"),
+    ] {
+        let token = token(item, serial);
+        sqlx::query(
+            "INSERT INTO shop.nft (network, contract_address, token_id, owner, item_id,
+             minted_block, minted_at, transferred_block, transferred_log, transferred_at)
+             VALUES ('matic', $1, $2::numeric, $3, $4, 1, 1, 1, 0, 1)",
+        )
+        .bind(&contract)
+        .bind(&token)
+        .bind(owner)
+        .bind(item as i64)
+        .execute(pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO shop.legacy_order (network, marketplace_address, order_id, contract_address,
+             token_id, seller, price, expires_at, status, created_block, created_log, created_at,
+             updated_block, updated_log, updated_at)
+             VALUES ('matic', $1, $2, $3, $2::numeric, $4, $5::bigint * 1000000000000000000::numeric,
+             $6, $7, $5, 0, $5, $5, 0, $5)",
+        )
+        .bind(venue)
+        .bind(&token)
+        .bind(&contract)
+        .bind(WALLET_A)
+        .bind(price)
+        .bind(super::nft_index::expires_ms(expiry))
+        .bind(status)
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+    let v3_token = token(2, 3);
+    sqlx::query(
+        "INSERT INTO shop.nft (network, contract_address, token_id, owner, item_id,
+         minted_block, minted_at, transferred_block, transferred_log, transferred_at)
+         VALUES ('matic', $1, $2::numeric, $3, 2, 1, 1, 1, 0, 1)",
+    )
+    .bind(&contract)
+    .bind(&v3_token)
+    .bind(WALLET_A)
+    .execute(pool)
+    .await
+    .unwrap();
+    super::owned_items::test_support::publish(pool, &ChainNet::ALL, false, Duration::ZERO).await;
+    super::trade_events::tests::publish_cursors(pool).await;
+    insert_trade(
+        pool,
+        "public_nft_order",
+        WALLET_A,
+        Asset {
+            asset_type: 3,
+            contract: contract.clone(),
+            value: v3_token.clone(),
+        },
+        Asset {
+            asset_type: 1,
+            contract: listings::mana_token(137).unwrap().to_owned(),
+            value: "10000000000000000000".into(),
+        },
+    )
+    .await;
+
+    // An unrelated Ethereum publication is withheld. Contract scope comes
+    // from admitted items, and every result comes from the scoped snapshot.
+    sqlx::query("UPDATE shop.chain_cursor SET folded_at=NULL, folded_block=NULL WHERE network='ethereum' AND indexer IN ('nft','trade_events')")
+        .execute(pool)
+        .await
+        .unwrap();
+    let app = || market_router(state.clone());
+    for version in [1, 2] {
+        let uri = format!("/v{version}/catalog?contractAddress={contract}");
+        let (code, page) = get(
+            app(),
+            &format!("{uri}&isOnSale=true&onlyListing=true&sortBy=cheapest"),
+        )
+        .await;
+        assert_eq!(code, StatusCode::OK, "{page}");
+        assert_eq!(page["total"], 2, "{page}");
+        let (first, next, count, minimum) = if version == 1 {
+            ("1", "2", 2, "30000000000000000000")
+        } else {
+            ("2", "1", 3, "10000000000000000000")
+        };
+        assert_eq!(page["data"][0]["itemId"], first);
+        assert_eq!(page["data"][1]["itemId"], next);
+        let second_item = page["data"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|item| item["itemId"] == "2")
+            .unwrap();
+        assert_eq!(second_item["listings"], count);
+        assert_eq!(second_item["minListingPrice"], minimum);
+        assert_eq!(second_item["minPrice"], minimum);
+        assert_eq!(second_item["maxListingPrice"], "40000000000000000000");
+        assert_eq!(second_item["price"], "0");
+        assert!(second_item.get("tradeId").is_none_or(Value::is_null));
+        let (code, last) = get(
+            app(),
+            &format!("{uri}&isOnSale=true&onlyListing=true&first=1&skip=20"),
+        )
+        .await;
+        assert_eq!(code, StatusCode::OK, "{last}");
+        assert_eq!(last["data"], json!([]));
+        assert_eq!(last["total"], 2);
+        let (code, inactive) = get(app(), &format!("{uri}&isOnSale=false")).await;
+        assert_eq!(code, StatusCode::OK, "{inactive}");
+        assert_eq!(inactive["total"], 1);
+        assert_eq!(inactive["data"][0]["itemId"], "4");
+        let (code, priced) = get(
+            app(),
+            &format!("{uri}&onlyListing=true&minPrice=25&maxPrice=35"),
+        )
+        .await;
+        assert_eq!(code, StatusCode::OK, "{priced}");
+        assert_eq!(priced["total"], 1);
+        assert_eq!(priced["data"][0]["listings"], 1);
+        assert_eq!(priced["data"][0]["minListingPrice"], "30000000000000000000");
+        let (code, recent) = get(
+            app(),
+            &format!("{uri}&onlyListing=true&sortBy=recently_listed"),
+        )
+        .await;
+        assert_eq!(code, StatusCode::OK, "{recent}");
+        assert_eq!(recent["data"][0]["itemId"], "2");
+        let (code, expensive) = get(
+            app(),
+            &format!("{uri}&onlyListing=true&sortBy=most_expensive"),
+        )
+        .await;
+        assert_eq!(code, StatusCode::OK, "{expensive}");
+        assert_eq!(expensive["data"][0]["itemId"], "2");
+    }
+    let mut memo_settings = state.settings.clone();
+    memo_settings.market.catalog_cache_ttl = Duration::from_secs(30);
+    let memo = market_router(Arc::new(super::MarketplaceState::new(
+        pool.clone(),
+        crate::http::Outbound::for_tests(),
+        memo_settings,
+    )));
+    let default_page = format!("/v1/catalog?contractAddress={contract}");
+    let (code, cached) = get(memo.clone(), &default_page).await;
+    assert_eq!(code, StatusCode::OK, "{cached}");
+    let ids = cached["data"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|item| item["itemId"].as_str().unwrap())
+        .collect::<Vec<_>>();
+    assert_eq!(ids, ["3", "1", "2", "4"]);
+    let (code, v2) = get(app(), &format!("/v2/catalog?contractAddress={contract}")).await;
+    assert_eq!(code, StatusCode::OK, "{v2}");
+    let ids = v2["data"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|item| item["itemId"].as_str().unwrap())
+        .collect::<Vec<_>>();
+    assert_eq!(ids, ["3", "2", "1", "4"]);
+    let (code, v2) = get(
+        app(),
+        &format!("/v2/catalog?contractAddress={contract}&sortBy=newest&first=1&skip=1"),
+    )
+    .await;
+    assert_eq!(code, StatusCode::OK, "{v2}");
+    assert_eq!(v2["total"], 4);
+    assert_eq!(v2["data"][0]["itemId"], "2");
+    assert_eq!(v2["data"][0]["listings"], 3);
+
+    // Ordinary pagination retains its total but enriches only the chosen item.
+    let ordinary = format!("/v1/catalog?contractAddress={contract}&sortBy=newest&first=1&skip=1");
+    let (code, page) = get(app(), &ordinary).await;
+    assert_eq!(code, StatusCode::OK, "{page}");
+    assert_eq!(page["total"], 4);
+    assert_eq!(page["data"][0]["itemId"], "2");
+    assert_eq!(page["data"][0]["listings"], 2);
+
+    for version in [1, 2] {
+        let (code, page) = get(
+            app(),
+            &format!(
+                "/v{version}/catalog?contractAddress={contract}&sortBy=newest&first=1&skip=12"
+            ),
+        )
+        .await;
+        assert_eq!(code, StatusCode::OK, "{page}");
+        assert_eq!(page["total"], 4);
+        assert_eq!(page["data"], json!([]));
+    }
+
+    // Exact wire id and itemId scope intersect with concrete contracts.
+    // A sibling on Ethereum does not introduce an Ethereum readiness dependency.
+    let clone_to_eth = |id: i64| {
+        sqlx::query(
+            "INSERT INTO shop.items
+             SELECT (jsonb_populate_record(NULL::shop.items,to_jsonb(i) || jsonb_build_object(
+                        'network','ethereum','chain_id',1,'item_id',$2::bigint,'urn','urn:fixture:'||$2::text
+                    ))).* FROM shop.items i
+             WHERE network='matic' AND contract_address=$1 AND item_id=1"
+        ).bind(&contract).bind(id).execute(pool)
+    };
+    clone_to_eth(999).await.unwrap();
+    for filters in [
+        format!("id={contract}-1"),
+        format!("contractAddress={contract}&itemId=1"),
+        format!("id={contract}-1&contractAddress={contract}&itemId=1"),
+    ] {
+        let (code, page) = get(app(), &format!("/v1/catalog?{filters}&onlyListing=true")).await;
+        assert_eq!(code, StatusCode::OK, "{page}");
+        assert_eq!(page["total"], 1);
+        assert_eq!(page["data"][0]["network"], "MATIC");
+    }
+    clone_to_eth(1).await.unwrap();
+    let (code, page) = get(
+        app(),
+        &format!("/v1/catalog?id={contract}-1&onlyListing=true"),
+    )
+    .await;
+    assert_eq!(code, StatusCode::SERVICE_UNAVAILABLE, "{page}");
+    assert_eq!(page["source"], "nft-index");
+    for (skip, network) in [(0, "ETHEREUM"), (1, "MATIC")] {
+        let (code, page) = get(
+            app(),
+            &format!("/v1/catalog?id={contract}-1&sortBy=newest&first=1&skip={skip}"),
+        )
+        .await;
+        assert_eq!(code, StatusCode::OK, "{page}");
+        assert_eq!(page["total"], 2);
+        assert_eq!(page["data"][0]["network"], network);
+        assert_eq!(page["data"][0]["listings"], 0);
+    }
+    let (code, page) = get(app(), "/v2/catalog?id=x&isOnSale=true").await;
+    assert_eq!(code, StatusCode::OK, "{page}");
+    assert_eq!(page["total"], 0);
+    sqlx::query("DELETE FROM shop.items WHERE network='ethereum' AND contract_address=$1")
+        .bind(&contract)
+        .execute(pool)
+        .await
+        .unwrap();
+
+    // A sell-out leaves the mint offer in the trade table. Only a priced,
+    // available offer or a backed resale can satisfy a price filter.
+    sqlx::query("UPDATE shop.items SET available=0 WHERE network='matic' AND contract_address=$1 AND item_id=4")
+        .bind(&contract).execute(pool).await.unwrap();
+    for item in ["2", "4"] {
+        insert_trade(
+            pool,
+            "public_item_order",
+            CREATOR,
+            Asset {
+                asset_type: 4,
+                contract: contract.clone(),
+                value: item.into(),
+            },
+            Asset {
+                asset_type: 1,
+                contract: listings::mana_token(137).unwrap().into(),
+                value: "500000000000000000".into(),
+            },
+        )
+        .await;
+    }
+    let v2_exact = |item: &str| format!("/v2/catalog?network=MATIC&id={contract}-{item}");
+    let (code, sold_out) = get(app(), &format!("{}&maxPrice=6", v2_exact("4"))).await;
+    assert_eq!(code, StatusCode::OK, "{sold_out}");
+    assert_eq!(sold_out["total"], 0);
+    let (code, resale) = get(app(), &format!("{}&minPrice=25&maxPrice=35", v2_exact("2"))).await;
+    assert_eq!(code, StatusCode::OK, "{resale}");
+    assert_eq!(resale["total"], 1);
+    assert_eq!(resale["data"][0]["minPrice"], "30000000000000000000");
+    let (code, no_offer) = get(
+        app(),
+        &format!("{}&onlyMinting=true&minPrice=3", v2_exact("2")),
+    )
+    .await;
+    assert_eq!(code, StatusCode::OK, "{no_offer}");
+    assert_eq!(no_offer["total"], 0);
+    for suffix in ["", "&onlyMinting=true"] {
+        let (code, offered) = get(app(), &format!("{}{suffix}", v2_exact("2"))).await;
+        assert_eq!(code, StatusCode::OK, "{offered}");
+        assert_eq!(offered["data"][0]["minPrice"], "500000000000000000");
+    }
+    // The v3 quote uses the published owner even when the book is withheld.
+    let change_v3_owner = |owner: &'static str| {
+        sqlx::query("UPDATE shop.nft SET owner=$1 WHERE network='matic' AND token_id=$2::numeric")
+            .bind(owner)
+            .bind(&v3_token)
+            .execute(pool)
+    };
+    change_v3_owner(WALLET_B).await.unwrap();
+    super::owned_items::test_support::publish(pool, &[ChainNet::Matic], false, Duration::ZERO)
+        .await;
+    let (code, page) = get(app(), &v2_exact("2")).await;
+    assert_eq!(code, StatusCode::OK, "{page}");
+    assert_eq!(page["data"][0]["listings"], 2);
+    change_v3_owner(WALLET_A).await.unwrap();
+    let (code, page) = get(app(), &v2_exact("2")).await;
+    assert_eq!(code, StatusCode::OK, "{page}");
+    assert_eq!(page["data"][0]["listings"], 0);
+    super::owned_items::test_support::publish(pool, &[ChainNet::Matic], false, Duration::ZERO)
+        .await;
+    sqlx::query("DELETE FROM shop.legacy_order_cursor WHERE network='matic'")
+        .execute(pool)
+        .await
+        .unwrap();
+    let (code, page) = get(app(), &v2_exact("2")).await;
+    assert_eq!(code, StatusCode::OK, "{page}");
+    assert_eq!(page["data"][0]["listings"], 1);
+    assert_eq!(page["data"][0]["minListingPrice"], "10000000000000000000");
+    super::owned_items::test_support::publish(pool, &[ChainNet::Matic], false, Duration::ZERO)
+        .await;
+
+    let fold: chrono::NaiveDateTime = sqlx::query_scalar(
+        "UPDATE shop.chain_cursor SET folded_at=timezone('UTC',now()) - interval '2 minutes'
+         WHERE indexer='nft' AND network='matic' RETURNING folded_at",
+    )
+    .fetch_one(pool)
+    .await
+    .unwrap();
+    let stamp_uri = format!("/v1/catalog?network=MATIC&id={contract}-2");
+    for (reader, uri) in [
+        (memo.clone(), stamp_uri.clone()),
+        (app(), stamp_uri),
+        (app(), v2_exact("2")),
+    ] {
+        let (code, page) = get(reader, &uri).await;
+        assert_eq!(code, StatusCode::OK, "{page}");
+        let at = chrono::DateTime::parse_from_rfc3339(page["as_of"].as_str().unwrap()).unwrap();
+        assert_eq!(
+            at.timestamp_millis(),
+            fold.and_utc().timestamp_millis(),
+            "{page}"
+        );
+    }
+    let mint_path = format!("{}&onlyMinting=true&maxPrice=1", v2_exact("2"));
+    sqlx::query("UPDATE shop.mirror_state SET last_complete_pass_at=NULL WHERE mirror='collections' AND network='matic'")
+        .execute(pool).await.unwrap();
+    let (code, page) = get(app(), &mint_path).await;
+    assert_eq!(code, StatusCode::SERVICE_UNAVAILABLE, "{page}");
+    assert_eq!(page["source"], "collections-mirror");
+    let (code, page) = get(app(), &v2_exact("2")).await;
+    assert_eq!(code, StatusCode::OK, "{page}");
+    assert!(
+        page["data"][0].get("tradeId").is_none_or(Value::is_null),
+        "{page}"
+    );
+    assert_eq!(page["data"][0]["listings"], 1, "{page}");
+    assert_eq!(page["data"][0]["minListingPrice"], "10000000000000000000");
+    let at = chrono::DateTime::parse_from_rfc3339(page["as_of"].as_str().unwrap()).unwrap();
+    assert_eq!(
+        at.timestamp_millis(),
+        fold.and_utc().timestamp_millis(),
+        "{page}"
+    );
+    sqlx::query("UPDATE shop.mirror_state SET last_complete_pass_at=timezone('UTC',now()) WHERE mirror='collections' AND network='matic'")
+        .execute(pool).await.unwrap();
+    let (code, page) = get(app(), &mint_path).await;
+    assert_eq!(code, StatusCode::OK, "{page}");
+    assert_eq!(page["data"][0]["price"], "500000000000000000");
+
+    sqlx::query("UPDATE shop.nft SET owner=$1 WHERE network='matic' AND token_id=$2::numeric")
+        .bind(WALLET_B)
+        .bind(token(1, 1))
+        .execute(pool)
+        .await
+        .unwrap();
+    let (code, fallback) = get(memo.clone(), &default_page).await;
+    assert_eq!(code, StatusCode::OK, "{fallback}");
+    assert!(
+        fallback["data"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|item| item["listings"] == 0)
+    );
+    let uri = format!("/v1/catalog?contractAddress={contract}&onlyListing=true");
+    let (code, unavailable) = get(app(), &uri).await;
+    assert_eq!(
+        (code, unavailable["source"].as_str()),
+        (StatusCode::SERVICE_UNAVAILABLE, Some("nft-index"))
+    );
+    super::owned_items::test_support::publish(pool, &[ChainNet::Matic], false, Duration::ZERO)
+        .await;
+    let (code, reduced) = get(app(), &uri).await;
+    assert_eq!(code, StatusCode::OK, "{reduced}");
+    assert_eq!(reduced["total"], 1);
+    assert_eq!(reduced["data"][0]["itemId"], "2");
+    let (code, republished) = get(memo, &default_page).await;
+    assert_eq!(code, StatusCode::OK, "{republished}");
+    let entry = republished["data"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|item| item["itemId"] == "1")
+        .unwrap();
+    assert_eq!(entry["listings"], 0);
+    super::trade_events::tests::publish_cursors(pool).await;
+    let mut mirror_settings = state.settings.clone();
+    mirror_settings.market.indexes.nft_enabled = false;
+    let mirror = || {
+        market_router(Arc::new(super::MarketplaceState::new(
+            pool.clone(),
+            crate::http::Outbound::for_tests(),
+            mirror_settings.clone(),
+        )))
+    };
+    for route in ["v1", "v2"] {
+        let (code, browse) = get(mirror(), &format!("/{route}/catalog?id={contract}-1")).await;
+        assert_eq!(code, StatusCode::OK, "{browse}");
+        assert_eq!(browse["total"], 1);
+        let (code, unavailable) = get(
+            mirror(),
+            &format!("/{route}/catalog?contractAddress={contract}&onlyListing=true"),
+        )
+        .await;
+        assert_eq!(
+            (code, unavailable["source"].as_str()),
+            (StatusCode::SERVICE_UNAVAILABLE, Some("nft-index"))
+        );
+        let (code, minted) = get(
+            mirror(),
+            &format!("/{route}/catalog?network=MATIC&contractAddress={contract}&onlyMinting=true"),
+        )
+        .await;
+        assert_eq!(code, StatusCode::OK, "{minted}");
+        let items = minted["data"].as_array().unwrap();
+        let ids: Vec<_> = items
+            .iter()
+            .map(|item| item["itemId"].as_str().unwrap())
+            .collect();
+        let expected: &[&str] = if route == "v1" { &["3"] } else { &["2", "3"] };
+        assert_eq!(ids, expected, "{minted}");
+        assert!(items.iter().all(|item| item["listings"] == 0));
+    }
+    own.drop().await;
+}
+
+#[tokio::test]
+async fn catalog_serves_the_verified_amoy_rows_with_their_chain_id() {
+    use super::chain_walk::ChainNet;
+
+    // Install the process-wide served pair without changing the mainnet tests.
+    const CHILD: &str = "CATALYST_AMOY_CATALOG_TEST_CHILD";
+    if std::env::var_os(CHILD).is_none() {
+        let result = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                concat!(
+                    module_path!(),
+                    "::catalog_serves_the_verified_amoy_rows_with_their_chain_id"
+                )
+                .trim_start_matches(concat!(env!("CARGO_CRATE_NAME"), "::")),
+                "--nocapture",
+            ])
+            .env(CHILD, "1")
+            .env_remove("ETH_NETWORK")
+            .env_remove("POLYGON_CHAIN_ID")
+            .output()
+            .unwrap();
+        assert!(
+            result.status.success(),
+            "{}",
+            String::from_utf8_lossy(&result.stdout)
+        );
+        assert!(String::from_utf8_lossy(&result.stdout).contains("1 passed"));
+        return;
+    }
+    let url = serve_empty_graph().await;
+    let Some((state, own)) = state_over_own(&url, true).await else {
+        return;
+    };
+    let pool = &state.pool;
+    let contract = contract_of(&tag(), 1);
+    for item in ["1", "3"] {
+        seed_item_row(pool, &contract, item, CREATOR).await;
+    }
+    sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
+        "UPDATE shop.items SET search_is_collection_approved=true, search_is_store_minter=(item_id=3);
+         INSERT INTO shop.mirror_state (mirror,network,source_url,last_complete_pass_at)
+         SELECT m,n,'test',timezone('UTC',now())
+         FROM unnest(ARRAY['collections','items']) m CROSS JOIN unnest(ARRAY['ethereum','matic']) n;
+         INSERT INTO shop.nft (network,contract_address,token_id,owner,item_id,
+           minted_block,minted_at,transferred_block,transferred_log,transferred_at)
+         VALUES ('matic','{contract}',1,'{WALLET_A}',1,1,1,1,0,1);
+         INSERT INTO shop.legacy_order (network,marketplace_address,order_id,
+           contract_address,token_id,seller,price,expires_at,status,created_block,
+           created_log,created_at,updated_block,updated_log,updated_at)
+         VALUES ('matic','{CREATOR}','legacy-1','{contract}',1,'{WALLET_A}',20,
+           4102444800000,'open',1,0,1,1,0,1)"
+    ))).execute(pool).await.unwrap();
+    super::owned_items::test_support::publish(pool, &[ChainNet::Matic], false, Duration::ZERO)
+        .await;
+    super::trade_events::tests::publish_cursors(pool).await;
+    let mut settings = state.settings.clone();
+    settings.eth_network = "sepolia".into();
+    settings.market.indexes.chain_id_ethereum = 11_155_111;
+    settings.market.indexes.chain_id_matic = 80_002;
+    super::catalog::install_served_chains(&settings.market.indexes);
+    let testnet = market_router(Arc::new(super::MarketplaceState::new(
+        pool.clone(),
+        crate::http::Outbound::for_tests(),
+        settings,
+    )));
+    for statement in [
+        "UPDATE shop.mirror_state SET chain_id=CASE network WHEN 'matic' THEN 80002 ELSE 11155111 END, marks_item_rows=true",
+        "UPDATE shop.items SET chain_id=80002,testnet_verified=(item_id<>3) WHERE network='matic'",
+        "UPDATE shop.collections SET chain_id=80002,testnet_verified=true WHERE network='matic'",
+        "UPDATE shop.chain_cursor SET chain_id=CASE network WHEN 'matic' THEN 80002 ELSE 11155111 END,
+          sepolia_trade_v1=(network='ethereum' AND indexer='trade_events')",
+    ] {
+        sqlx::query(statement).execute(pool).await.unwrap();
+    }
+    for route in ["v1", "v2"] {
+        let path = format!("/{route}/catalog?network=MATIC&contractAddress={contract}");
+        let (code, listings) = get(testnet.clone(), &format!("{path}&onlyListing=true")).await;
+        assert_eq!(code, StatusCode::OK, "{listings}");
+        assert_eq!(listings["total"], 1);
+        assert_eq!(listings["data"][0]["chainId"], 80002);
+        let (code, mint) = get(testnet.clone(), &format!("{path}&onlyMinting=true")).await;
+        assert_eq!(code, StatusCode::OK, "{mint}");
+        assert_eq!(mint["total"], 0, "the unverified item cannot mint");
+    }
+
+    own.drop().await;
+}
+
+#[tokio::test]
+async fn catalog_ethereum_resales_resolve_v1_issues_on_the_served_chain() {
+    use super::chain_walk::ChainNet;
+
+    let graph = FakeGraph::new();
+    let url = serve_graph(graph).await;
+    let Some((state, own)) = state_over_own(&url, true).await else {
+        return;
+    };
+    let pool = &state.pool;
+    let contract = contract_of(&tag(), 1);
+    seed_item_row(pool, &contract, "42", CREATOR).await;
+    seed_item_row(pool, &contract, "0", CREATOR).await;
+    sqlx::query(
+        "UPDATE shop.collections SET network='ethereum', chain_id=1, urn='urn:decentraland:ethereum:collections-v1:test'
+         WHERE contract_address=$1",
+    )
+    .bind(&contract)
+    .execute(pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "UPDATE shop.items SET network='ethereum', chain_id=1, item_type='wearable_v1',
+         urn='urn:decentraland:ethereum:collections-v1:test:' || CASE WHEN item_id=42 THEN 'hat' ELSE 'shoes' END,
+         search_is_collection_approved=true WHERE contract_address=$1",
+    )
+    .bind(&contract)
+    .execute(pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO shop.mirror_state (mirror, network, source_url, last_complete_pass_at)
+         SELECT m, n, 'test', timezone('UTC', now())
+         FROM unnest(ARRAY['collections','items']) m CROSS JOIN unnest(ARRAY['ethereum','matic']) n",
+    )
+    .execute(pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO shop.nft (network, contract_address, token_id, owner, wearable_id,
+         minted_block, minted_at, transferred_block, transferred_log, transferred_at)
+         VALUES ('ethereum',$1,7,$2,'hat',1,1,1,0,1),('ethereum',$1,8,$2,'hat',1,1,1,0,1)",
+    )
+    .bind(&contract)
+    .bind(WALLET_A)
+    .execute(pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO shop.legacy_order (network, marketplace_address, order_id, contract_address,
+         token_id, seller, price, expires_at, status, created_block, created_log, created_at,
+         updated_block, updated_log, updated_at)
+         VALUES ('ethereum',$1,'legacy',$2,7,$3,4000000000000000000,4102444800000,'open',1,0,1,1,0,1)",
+    )
+    .bind(super::nft_index::deployments::Deployments::mainnet(ChainNet::Ethereum).markets[0].0)
+    .bind(&contract)
+    .bind(WALLET_A)
+    .execute(pool)
+    .await
+    .unwrap();
+    super::owned_items::test_support::publish(pool, &[ChainNet::Ethereum], false, Duration::ZERO)
+        .await;
+    super::trade_events::tests::publish_cursors(pool).await;
+    insert_trade_on(
+        pool,
+        "ETHEREUM",
+        1,
+        "public_nft_order",
+        WALLET_A,
+        Asset {
+            asset_type: 3,
+            contract: contract.clone(),
+            value: "8".into(),
+        },
+        Asset {
+            asset_type: 1,
+            contract: listings::mana_token(1).unwrap().to_owned(),
+            value: "2000000000000000000".into(),
+        },
+    )
+    .await;
+
+    for version in [1, 2] {
+        let (code, data) = get(
+            market_router(state.clone()),
+            &format!("/v{version}/catalog?contractAddress={contract}&network=ETHEREUM&isOnSale=true&onlyListing=true"),
+        ).await;
+        assert_eq!(code, StatusCode::OK, "{data}");
+        assert_eq!(data["total"], 1, "{data}");
+        assert_eq!(data["data"][0]["itemId"], "42");
+        assert_eq!(data["data"][0]["listings"], version);
+    }
+    for relation in ["shop.items", "shop.collections"] {
+        sqlx::query(sqlx::AssertSqlSafe(format!(
+            "UPDATE {relation} SET chain_id=11155111 WHERE contract_address=$1"
+        )))
+        .bind(&contract)
+        .execute(pool)
+        .await
+        .unwrap();
+        for version in [1, 2] {
+            let (code, data) = get(
+                market_router(state.clone()),
+                &format!(
+                    "/v{version}/catalog?contractAddress={contract}&network=ETHEREUM&isOnSale=true"
+                ),
+            )
+            .await;
+            assert_eq!(code, StatusCode::OK, "{data}");
+            assert_eq!(data["data"], json!([]));
+            assert_eq!(data["total"], 0);
+        }
+        sqlx::query(sqlx::AssertSqlSafe(format!(
+            "UPDATE {relation} SET chain_id=1 WHERE contract_address=$1"
+        )))
+        .bind(&contract)
+        .execute(pool)
+        .await
+        .unwrap();
+    }
     own.drop().await;
 }

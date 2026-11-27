@@ -3938,11 +3938,48 @@ meanwhile never splits an answer. A reader that joins the open trades
 snapshot, at the read's instant. That instant also decides the rows' open
 trades, trade floor and coupon window, on every page of the read.
 
-The statement is uncached and probes primary keys only:
+The shared catalogue admission statement is uncached and probes:
 `collection_projection (network)`, `chain_cursor (indexer, network)`,
 `mirror_state (mirror, network)`, the first row of `collections` and of
 `items` by their `(network, …)` keys, and the first `collection_event` past
 the publication by `(network, block_number, log_index)`.
+
+Catalog v1 and v2 read resale listings from the legacy order book on the
+catalogue snapshot. The book must stand at the published NFT fold and have
+no queued refold or unacknowledged writes to orders or ownership. The request
+clock decides which orders have expired. Open orders must still belong to
+the seller. The item is the NFT's folded item ID on Polygon and the
+collection URN plus the Issue's wearable ID on Ethereum v1. The item and
+collection must belong to the served chain. The route admits the collection
+publication on each network used by the legacy leg, including its mirror
+pass when that network is mirrored.
+
+Listing filters, price bounds and explicit listing-dependent sorts need a published
+local book and return the required source's 503 while it is unavailable.
+Exact item and contract filters scope which networks the book must cover.
+An ordinary page can still use the admitted item catalogue when the book
+is unavailable. It leaves out the legacy listing contributions until that
+book can answer. When a sort does not depend on listings, the read selects
+the page and its count first and aggregates legacy listings for those items.
+The default cheapest sort uses the admitted listings to order the whole
+candidate set by the same price the page displays.
+V2 combines the legacy counts and prices with backed v3 resales. A v3
+resale needs published NFT ownership even when the legacy book is withheld.
+Polygon mainnet uses the folded item ID without the collection publication.
+Ethereum v1 and testnet attribution also use the served collection copy.
+V3 mint offers need a collection publication for the minter permission.
+Explicit mint-only V2 reads require this proof. Ordinary pages omit an
+unavailable contribution and keep the item page.
+
+V1 shares a short memo under `MARKETPLACE_CATALOG_CACHE_TTL_SECS`. Before
+using it the route admits the book on its read snapshot and keys the result
+by the catalogue copies, each NFT publication and the next legacy order
+expiry on its network. A withdrawal, republication or crossing an expiry
+changes the key before reading prices. Open orders outside the page can
+shorten the interval and trigger a fresh read. The partial
+`legacy_order_open_expiry_idx (network, expires_at)` supplies the first
+future expiry per network. A request waiting for a fetch of the same key
+releases its database connection.
 
 The transaction holds a pooled connection, so a reader never waits on
 anything else while it holds it:
@@ -5535,8 +5572,9 @@ they took 48 ms and 46 ms respectively.
 ## Legacy Marketplace orders
 
 `shop.legacy_order` is the legacy on-chain order book of `/v1/orders`,
-`/v1/orders/open-by-items` (and credits pricing through it) and the activity
-feed's orders leg on a node that walks the nft index. It is one row per
+`/v1/orders/open-by-items` (and credits pricing through it), the activity
+feed's orders leg and the legacy listings of both catalog versions on a
+node that walks the NFT index. It is one row per
 `OrderCreated` of the Marketplace contracts the nft walk takes in, folded
 from `shop.nft_event` by `services/catalyst/shop/src/market/legacy_orders.rs`
 in the nft fold's transaction, so it is published with the ownership it is
@@ -5642,8 +5680,10 @@ at whatever height. Reads refused that way are counted by
 between a fold's commit and its publication. The denominator is
 `catalyst_shop_order_book_fold_read_checks_total`, incremented once for each
 attempted network's publication check. Both counters use `network` and
-`route` labels. The route is `orders`, `open_by_items` or `activity`.
+`route` labels. The route is `orders`, `open_by_items`, `activity` or `catalog`.
 Each activity page takes its own book snapshot and counts its checks.
+For the catalog label this also counts a withheld book leg on an
+ordinary page that can still serve item metadata.
 
 ### Fold-written projections and their publication
 
@@ -5678,7 +5718,9 @@ no network), `legacy_order_seller_idx` (an owner's orders newest first),
 `legacy_order_created_idx` and `legacy_order_updated_idx` (the newest-first
 and recently-updated windows with no filter), `legacy_order_open_idx` (a
 contract's open orders by price) and `legacy_order_open_price_idx` (every
-open order by price). `legacy_order_issued_idx` supports unscoped token
+open order by price). `legacy_order_open_expiry_idx` reads the next open
+order expiry on each network for the v1 catalog memo.
+`legacy_order_issued_idx` supports unscoped token
 ID sorts in either direction, with an incremental sort for order ID ties.
 `legacy_order_price_idx` sorts unscoped orders by price and order ID
 when the caller asks for every status. See the
