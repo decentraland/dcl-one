@@ -37,13 +37,10 @@ const webDefaults = (): Setting[] => [
   setting('Fog', 1, OFF_ON),
   setting('Sky Reflections', 1, ['Low', 'High']),
   setting('Distant Scene Rendering', 1, ['Off', 'Normal', 'Ultra']),
-  setting('Scene Load Distance', 10),
-  setting('Scene Unload Distance', 10),
   setting('Live Scene Ring', 1),
   setting('Near LOD Ring', 3),
-  setting('Max Near LODs', 12),
   setting('Far LOD Ring', 20),
-  setting('Max Far LODs', 200)
+  setting('Imposter Ring', 150)
 ]
 const nativeDefaults = (): Setting[] => [
   ...webDefaults().filter((s) => s.name !== 'Anti-aliasing'),
@@ -95,36 +92,18 @@ describe('graphics presets', () => {
     })
   })
 
-  it('presets include the LOD settings, leave load distance to the player, and skip what the engine does not publish', () => {
+  it('presets include the scene loading rings, and skip what the engine does not publish', () => {
     const names = presetTargets(nativeDefaults(), 2).map((t) => t.name)
-    expect(names).toEqual(expect.arrayContaining(['Distant Scene Rendering', 'Near LOD Ring', 'Max Far LODs']))
-    expect(names).not.toContain('Scene Load Distance')
-    expect(names).not.toContain('Scene Unload Distance')
+    expect(names).toEqual(expect.arrayContaining(['Distant Scene Rendering', 'Live Scene Ring', 'Near LOD Ring', 'Far LOD Ring', 'Imposter Ring']))
     expect(presetTargets(webDefaults(), 0).map((t) => t.name)).not.toContain('SSAO')
     expect(presetTargets(nativeDefaults(), 0).map((t) => t.name)).toContain('SSAO')
   })
 
   it('Low and High load scenes differently: Low keeps far scenes cheap, High reaches further', () => {
     const scene = (preset: number): Record<string, number | undefined> =>
-      Object.fromEntries(
-        ['Distant Scene Rendering', 'Live Scene Ring', 'Near LOD Ring', 'Max Near LODs', 'Far LOD Ring', 'Max Far LODs'].map((n) => [n, target(webDefaults(), preset, n)])
-      )
-    expect(scene(0)).toEqual({
-      'Distant Scene Rendering': 1,
-      'Live Scene Ring': 1,
-      'Near LOD Ring': 2,
-      'Max Near LODs': 6,
-      'Far LOD Ring': 12,
-      'Max Far LODs': 100
-    })
-    expect(scene(2)).toEqual({
-      'Distant Scene Rendering': 2,
-      'Live Scene Ring': 1,
-      'Near LOD Ring': 4,
-      'Max Near LODs': 20,
-      'Far LOD Ring': 30,
-      'Max Far LODs': 400
-    })
+      Object.fromEntries(['Distant Scene Rendering', 'Live Scene Ring', 'Near LOD Ring', 'Far LOD Ring', 'Imposter Ring'].map((n) => [n, target(webDefaults(), preset, n)]))
+    expect(scene(0)).toEqual({ 'Distant Scene Rendering': 1, 'Live Scene Ring': 1, 'Near LOD Ring': 2, 'Far LOD Ring': 12, 'Imposter Ring': 50 })
+    expect(scene(2)).toEqual({ 'Distant Scene Rendering': 2, 'Live Scene Ring': 2, 'Near LOD Ring': 4, 'Far LOD Ring': 30, 'Imposter Ring': 150 })
   })
 
   it('reads as Custom once a preset setting differs', () => {

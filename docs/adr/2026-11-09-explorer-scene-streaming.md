@@ -6,10 +6,10 @@
 ## Context
 
 `process_scene_lifecycle` decides which scenes are live. A scene is live when the nearest point
-of one of its parcels is within the load distance ("Scene Load Distance", 10 m by default). Two
+of one of its parcels is within the load distance (10 m by default). Two
 problems made that set unstable and its growth uncontrolled:
 
-- **No margin at the edge.** "Scene Unload Distance" is described as the additional distance,
+- **No margin at the edge.** The unload distance is described as the additional distance,
   above the load distance, at which a live scene is despawned. The keep band compared a parcel's
   distance against that extra distance alone, so at the defaults (10 m and 10 m), and whenever the
   load distance was at least the extra distance, a live scene was despawned the moment the player
@@ -34,7 +34,9 @@ the spawn order was left to this decision.
   the live ring ("Live Scene Ring", default 1) of the player's parcel, at 1 the Chebyshev ring of
   the eight parcels around it, is required, and a live scene is kept while a parcel is within one
   ring further (2 by default). At ring 1 and a run that leaves about 1.5 s before the player
-  reaches the scene's edge. A larger load distance still widens the live area.
+  reaches the scene's edge. The ring is the player's control ("Live Scene Ring"): no setting
+  changes the load distance, which preview mode, the server and `/scene_distance` set, and a
+  larger one still widens the live area.
 - **Waves.** Beyond the player's own scene, portables, system scenes and the scene an imposter is
   being baked from, which spawn at once, at most `SCENES_PER_WAVE` (6) scenes are loading at a
   time. The limit is on scenes loading, not on
@@ -69,8 +71,8 @@ the GPU.
   colliders part, whatever the facing, so a player backing into a loading scene is stopped like
   one walking in; the ring bounds how many. Once started, it goes only when the scene leaves the
   keep ring or its live content shows.
-- **Visuals: by view, one cap.** At most "Max Near LODs" stand-ins draw at once (a Performance
-  setting, 0 to 40, default 12), in view and behind the camera together. Scenes in view whose
+- **Visuals: by view, one cap.** At most the near LOD count of stand-ins draw at once (the near
+  ring gives it, 12 at the default ring; see Settings), in view and behind the camera together. Scenes in view whose
   models are known start nearest first, by the download key (ring, then distance), while a place
   is free. With none free, a drawn stand-in behind the camera makes way for one in view, the
   farthest first; one in view never does. So with every place taken, turning the camera stops
@@ -192,7 +194,7 @@ the same kind.
   (`FarLodSource::Unavailable`): leaving and re-entering the band sends no request. A scene with
   no mesh costs one request per session.
   The set is separate from `failed_remotes`: it is asked before the url is named, so a scene with
-  no mesh takes no container and no "Max Far LODs" place, while `failed_remotes` answers a read
+  no mesh takes no container and no far LOD place, while `failed_remotes` answers a read
   only when it is made and keeps a session status only for content reads. Only urls the client
   named count: a download of any other url that looks like a far LOD changes nothing. A name
   stays until its download answers; answered names are kept up to the bound `failed_remotes`
@@ -217,7 +219,7 @@ the same kind.
 - **Range in parcel rings.** It draws where the near LOD's keep band ends: its scene's nearest
   parcel past the near keep ring (4 by default, about 64 m) and within the far ring ("Far LOD
   Ring", default 20, about 320 m), the scene not wholly behind the camera. Nearer, it draws only
-  to stand in for near visuals that find no place under "Max Near LODs", were stopped, or have
+  to stand in for near visuals that find no place under the near LOD count, were stopped, or have
   nothing to show; past the near start ring, where near visuals cannot start, that is whenever
   they are not already shown, so a scene there (after a teleport, or once the count stopped its
   far LOD) is never left to its imposters. A far LOD stays, its visuals stopped, while its
@@ -225,8 +227,8 @@ the same kind.
   out) its mesh starts loading again at once, with no new far LOD to spawn and name; the scene
   shows its imposters only while that mesh loads. Beyond the far ring only the imposters remain.
   It has visuals only: no colliders part.
-- **A count.** At most "Max Far LODs" far LODs (0 to 600, default 200; none while Distant Scene
-  Rendering is off)
+- **A count.** At most the far LOD count of far LODs (the far ring gives it, 200 at the default
+  ring; none while Distant Scene Rendering is off)
   load or show at once, in view and behind the camera together, by the near LODs' visuals rule:
   nearest in view first while a place is free, then one behind the camera making way for each in
   view; the rest show their imposter tiles. Lowering it stops the farthest over it, those behind
@@ -269,7 +271,7 @@ the same kind.
   only the stand-ins against what is on screen.
 - **Memory.** The mesh keeps its CPU copy, like every mesh the container path loads: about
   0.5 MB per far LOD on average (sampled over 99 scenes within ring 20 of 0,0; the largest mesh
-  holds 515k vertices), up to "Max Far LODs" of them. No collision shape is built for it: the
+  holds 515k vertices), up to the far LOD count of them. No collision shape is built for it: the
   container path builds one only for a part that may make colliders.
 - **Quantized meshes.** The meshes require `KHR_mesh_quantization` (16-bit positions, 8-bit
   normals, 16-bit texture coordinates). The vendored glTF loader reads them through a backport of
@@ -293,38 +295,45 @@ nodes, or on the floor where it has none.
 
 ### Settings
 
-One Graphics setting and the HUD's Graphics Preset set the LOD bands and counts; the
-Performance tab's "Scene LODs" section tunes them further. The bands and counts are read each frame, so a change
-applies on the next one. All of them are hidden in preview mode.
-
-"Distant Scene Rendering" (Graphics; Off, Normal, Ultra) is the one switch for what draws past
-the scenes around the player. Normal and Ultra set the imposter distances, Ultra's tiles finer
-nearby. Off removes the imposters and turns far LODs off: the engine reads the far LOD count
-through `AppConfig::far_lods_cap`, which is 0 while there are no imposter distances, and at 0
-(Off, or "Max Far LODs" at 0) spawns and keeps no far LOD. It keeps the
-"Max Far LODs" and "Far LOD Ring" values, which the panel shows disabled until it is turned on
-again, as "Unlimited Avatars" does to "Max Avatars". Live scenes and near LODs are unchanged.
-
-Each Graphics Preset sets every LOD value, so a preset is one profile (Medium is the engine
-default). "Scene Load Distance" and "Scene Unload Distance" stay the player's, as before:
+Scene loading is four bands around the player, each with one ring setting in parcels, under
+"Scene Loading" in the Performance tab: live scenes, near LODs, far LODs and imposters. They are
+read each frame, so a change applies on the next one, and are hidden in preview mode. The HUD's
+Graphics Preset sets all four with "Distant Scene Rendering", so a preset is one profile (Medium
+is the engine default); changing one shows the preset as Custom.
 
 | Setting | Range | Low | Medium | High | What it sets |
 | --- | --- | --- | --- | --- | --- |
-| Distant Scene Rendering | Off to Ultra | Normal | Normal | Ultra | imposters; Off also turns far LODs off |
-| Live Scene Ring | 0 to 3 | 1 | 1 | 1 | scenes within it go live; kept one ring further |
+| Live Scene Ring | 0 to 5 | 1 | 1 | 2 | scenes within it go live; kept one ring further |
 | Near LOD Ring | 1 to 8 | 2 | 3 | 4 | near LODs start within it; kept one ring further |
-| Max Near LODs | 0 to 40 | 6 | 12 | 20 | near LODs drawn at once, in view and behind the camera; their colliders take no place |
 | Far LOD Ring | 5 to 40 | 12 | 20 | 30 | far LODs' outer bound; the imposter tiles may end them sooner (about 25 to 30 parcels on Ultra) |
-| Max Far LODs | 0 to 600 | 100 | 200 | 400 | far LODs that load or show at once, in view and behind the camera |
+| Imposter Ring | 20 to 150 | 50 | 150 | 150 | where the imposter tiles end; 150 is no limit |
+| Distant Scene Rendering (Graphics) | Off, Normal, Ultra | Normal | Normal | Ultra | the imposter tile distances; Off removes imposters and far LODs |
 
-Changing one of them in the Performance tab shows the preset as Custom. Saved configs keep their
-values: no migration moves them, and a config on the defaults reads as Medium.
+- **One control per band.** The ring is the only setting of its band. The counts follow it, so
+  a wider ring never draws fewer: `AppConfig::near_lods_cap` is ring × (ring + 1), at most 40
+  (6, 12 and 20 at rings 2, 3 and 4), and `AppConfig::far_lods_cap` is 100, 200 and 400 at rings
+  12, 20 and 30, linear between and 600 at ring 40. They bound memory where scenes are dense,
+  nearest in view first. The config's `near_lods_budget` and `far_lods_budget` replace them when
+  set, for tests and measurements; no setting writes them.
+- **The live ring replaces the load distance settings.** The live ring and its one-ring keep
+  margin do what the load and unload distance sliders did, in the unit of the other bands. A
+  saved config with a raised load distance moves once to the live ring that covers it (64 m to
+  ring 4, at most 5), and both distances go back to their defaults.
+- **The imposter ring ends the tile distances.** "Distant Scene Rendering" chooses the tile
+  distances (Normal 100, 200, 400, 800, 1600 m and beyond; Ultra from 200 m) and the ring cuts
+  the list at its distance (`AppConfig::set_imposters`), keeping the first so the level still
+  reads back. At 150 nothing is cut.
+- **Off.** "Distant Scene Rendering" Off removes the imposters and turns far LODs off: the far
+  LOD count is 0 while there are no imposter distances, and at 0 no far LOD is spawned or kept.
+  "Far LOD Ring" and "Imposter Ring" keep their values, which the panel shows disabled until it
+  is turned on again, as "Unlimited Avatars" does to "Max Avatars". Live scenes and near LODs
+  are unchanged.
 
 The rings stay ordered whatever the values. A config value outside a range is clamped to it.
 Far LODs start one ring past the near keep ring, or past the live keep ring when the live ring
 reaches further. A near ring at or inside the live ring leaves near LODs only to live scenes
 still loading. A far ring inside the near keep ring leaves no normal far-start band; far LODs
-may still stand in for near LODs that wait over the "Max Near LODs" count or have nothing to
+may still stand in for near LODs that wait over the near LOD count or have nothing to
 show. The Scene stand-ins debug section and `/scene_lod_state` report the active rings.
 
 ## Rejected
@@ -358,8 +367,8 @@ show. The Scene stand-ins debug section and `/scene_lod_state` report the active
 
 ## Consequences
 
-- A live scene no longer respawns at the load edge, and "Scene Unload Distance" does what its
-  description says.
+- A live scene no longer respawns at the load edge: the unload distance and the keep ring are
+  real margins.
 - Entering a dense area with a large load distance spawns six scenes, nearest ring and in front
   first, then one more as each comes up, instead of every scene in range in one frame.
 - At the default 10 m the live ring decides: up to 9 scenes among one-parcel scenes, 25 inside

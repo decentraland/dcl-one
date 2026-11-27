@@ -42,15 +42,13 @@ use common::{
 use constrain_ui::ConstrainUiSetting;
 use frame_rate::FpsTargetSetting;
 use language_setting::LanguageSetting;
-use load_distance::{LoadDistanceSetting, UnloadDistanceSetting};
 use max_avatars::MaxAvatarsSetting;
 use max_avatars_unlimited::UnlimitedAvatarsSetting;
 use max_downloads::MaxDownloadsSetting;
-use max_lods::{MaxFarLodsSetting, MaxNearLodsSetting};
 use mute_mic_in_background_setting::MuteMicInBackgroundSetting;
 use oob_setting::OobSetting;
 use player_settings::{JumpSetting, RunSpeedSetting, WalkSpeedSetting};
-use rings::{FarLodRingSetting, LiveSceneRingSetting, NearLodRingSetting};
+use rings::{FarLodRingSetting, ImposterRingSetting, LiveSceneRingSetting, NearLodRingSetting};
 use scene_threads::SceneThreadsSetting;
 use shadow_settings::{LightCountSetting, ShadowCasterCountSetting, ShadowDistanceSetting};
 use spring_bones_setting::SpringBonesSetting;
@@ -78,11 +76,9 @@ pub mod frame_rate;
 pub mod imposter_settings;
 pub mod language_setting;
 pub mod lens_flare_setting;
-pub mod load_distance;
 pub mod max_avatars;
 pub mod max_avatars_unlimited;
 pub mod max_downloads;
-pub mod max_lods;
 // only the web host reports microphones
 #[cfg(any(target_arch = "wasm32", test))]
 mod microphone_setting;
@@ -229,13 +225,11 @@ impl Plugin for SettingBridgePlugin {
         }
 
         if !is_preview {
-            add_int_setting::<LoadDistanceSetting>(app, &mut settings, &mut schedule, &config);
-            add_int_setting::<UnloadDistanceSetting>(app, &mut settings, &mut schedule, &config);
-            add_int_setting::<MaxNearLodsSetting>(app, &mut settings, &mut schedule, &config);
-            add_int_setting::<MaxFarLodsSetting>(app, &mut settings, &mut schedule, &config);
+            // the four bands, nearest first
             add_int_setting::<LiveSceneRingSetting>(app, &mut settings, &mut schedule, &config);
             add_int_setting::<NearLodRingSetting>(app, &mut settings, &mut schedule, &config);
             add_int_setting::<FarLodRingSetting>(app, &mut settings, &mut schedule, &config);
+            add_int_setting::<ImposterRingSetting>(app, &mut settings, &mut schedule, &config);
         }
 
         add_enum_setting::<FpsTargetSetting>(app, &mut settings, &mut schedule, &config);

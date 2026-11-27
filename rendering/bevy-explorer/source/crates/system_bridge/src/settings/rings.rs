@@ -1,7 +1,11 @@
 use std::ops::RangeInclusive;
 
+use bevy::ecs::system::lifetimeless::{SRes, SResMut};
 use bevy::prelude::*;
-use common::structs::{AppConfig, FAR_LOD_RINGS, LIVE_SCENE_RINGS, NEAR_LOD_RINGS};
+use common::structs::{
+    AppConfig, SceneLoadDistance, FAR_LOD_RINGS, IMPOSTER_DISTANCES_NORMAL,
+    IMPOSTER_DISTANCES_ULTRA, IMPOSTER_RINGS, LIVE_SCENE_RINGS, NEAR_LOD_RINGS,
+};
 
 use super::{AppSetting, IntAppSetting};
 
@@ -48,7 +52,7 @@ impl AppSetting for LiveSceneRingSetting {
     }
 
     fn description(&self) -> String {
-        "Live Scene Ring\n\nAdvanced: the Graphics Preset sets this with the other Scene LODs settings; changing it shows the preset as Custom.\n\nScenes this many parcels from yours always run, whatever the Scene Load Distance, and keep running until they are one parcel further. At 0 only the Scene Load Distance decides which nearby scenes run; a larger value starts nearby scenes earlier and uses more memory.".to_string()
+        "Live Scene Ring\n\nHow many parcels around yours run their scenes in full, scripts included: 1 is your parcel and the eight around it. A scene keeps running until it is one parcel further. The Graphics Preset sets it; a larger value runs more scenes at once and uses more memory and CPU.".to_string()
     }
 
     fn save(&self, config: &mut AppConfig) {
@@ -93,7 +97,7 @@ impl AppSetting for NearLodRingSetting {
     }
 
     fn description(&self) -> String {
-        "Near LOD Ring\n\nAdvanced: the Graphics Preset sets this with the other Scene LODs settings; changing it shows the preset as Custom.\n\nScenes up to this many parcels away that are not running show their own models, without scripts, until one parcel further. Far LODs start past that. At or inside the Live Scene Ring, only scenes still loading show them.".to_string()
+        "Near LOD Ring\n\nHow many parcels away scenes that are not running show their own models, without scripts, and block you with their colliders. They are kept one parcel further. A wider ring draws more of them at once (6, 12 and 20 at 2, 3 and 4), the nearest in view first. The Graphics Preset sets it.".to_string()
     }
 
     fn save(&self, config: &mut AppConfig) {
@@ -138,7 +142,7 @@ impl AppSetting for FarLodRingSetting {
     }
 
     fn description(&self) -> String {
-        "Far LOD Ring\n\nAdvanced: the Graphics Preset sets this with the other Scene LODs settings; changing it shows the preset as Custom.\n\nHow many parcels away distant scenes may show a simplified mesh before they load. Distant Scene Rendering can end them sooner: about 13 to 18 parcels away at its default distances, about 25 to 30 on Ultra. Beyond, only the distant scene tiles remain. While Distant Scene Rendering is off, far LODs are off and this value is kept for when it is turned on.".to_string()
+        "Far LOD Ring\n\nHow many parcels away distant scenes show a simplified mesh. The imposter tiles can end them sooner: about 13 to 18 parcels away on Normal, about 25 to 30 on Ultra. A wider ring shows more of them at once (100, 200 and 400 at 12, 20 and 30), the nearest in view first. The Graphics Preset sets it. While Distant Scene Rendering is off there are no far LODs and this value is kept.".to_string()
     }
 
     fn save(&self, config: &mut AppConfig) {
@@ -151,6 +155,75 @@ impl AppSetting for FarLodRingSetting {
 
     fn is_disabled(config: &AppConfig) -> bool {
         config.distant_scenes_off()
+    }
+
+    fn category() -> super::SettingCategory {
+        super::SettingCategory::Performance
+    }
+}
+
+/// The imposter distances Distant Scene Rendering's level gives, or none while it is off.
+pub(super) fn imposter_base(config: &AppConfig) -> &'static [f32] {
+    match config.scene_imposter_distances.first() {
+        None => &[],
+        Some(200.0) => &IMPOSTER_DISTANCES_ULTRA,
+        _ => &IMPOSTER_DISTANCES_NORMAL,
+    }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) struct ImposterRingSetting(i32);
+
+impl IntAppSetting for ImposterRingSetting {
+    fn from_int(value: i32) -> Self {
+        Self(value)
+    }
+
+    fn value(&self) -> i32 {
+        self.0
+    }
+
+    fn min() -> i32 {
+        ring_min(IMPOSTER_RINGS)
+    }
+
+    fn max() -> i32 {
+        ring_max(IMPOSTER_RINGS)
+    }
+}
+
+impl AppSetting for ImposterRingSetting {
+    type Param = (SResMut<SceneLoadDistance>, SRes<AppConfig>);
+
+    fn title() -> String {
+        "Imposter Ring".to_owned()
+    }
+
+    fn description(&self) -> String {
+        "Imposter Ring\n\nHow many parcels away the imposter tiles (flat pictures of the scenes past the far LODs) are drawn. The highest value has no limit: they reach the horizon. The Graphics Preset sets it. While Distant Scene Rendering is off there are no imposters and this value is kept.".to_string()
+    }
+
+    fn save(&self, config: &mut AppConfig) {
+        config.imposter_ring = clamp_ring(self.0, IMPOSTER_RINGS) as u16;
+        let base = imposter_base(config);
+        config.set_imposters(base);
+    }
+
+    fn load(config: &AppConfig) -> Self {
+        Self(clamp_ring(config.imposter_ring as i32, IMPOSTER_RINGS))
+    }
+
+    fn is_disabled(config: &AppConfig) -> bool {
+        config.distant_scenes_off()
+    }
+
+    fn apply(
+        &self,
+        (mut distance, config): bevy::ecs::system::SystemParamItem<Self::Param>,
+        _: Commands,
+        _: &bevy::platform::collections::HashSet<Entity>,
+    ) {
+        distance.load_imposter = config.imposter_range();
     }
 
     fn category() -> super::SettingCategory {
