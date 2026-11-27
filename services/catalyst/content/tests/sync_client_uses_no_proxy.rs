@@ -6,6 +6,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering::SeqCst};
 
 #[tokio::test]
+#[allow(unsafe_code, reason = "the test sets the proxy environment")]
 async fn the_sync_client_ignores_the_proxy_environment() {
     let proxy = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let proxy_addr = proxy.local_addr().unwrap();

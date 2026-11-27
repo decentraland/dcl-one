@@ -6,7 +6,7 @@
 // features import them: that test watches the entry. Sections use local data only: no network,
 // wallet or engine call.
 
-import { BrowseControl, BrowseLoading, BrowsePanel, BrowseToolbar, Button, CharCounter, CodeInput, CountBadge, DateField, DclLogo, EmptyState, FieldLabel, KeyCap, MaskIcon, MenuDivider, MenuList, MenuPanel, MenuRow, Panel, Slider, Spinner, SubmitField, Switch } from '@dcl/one-ui'
+import { BrowseControl, BrowseLoading, BrowsePanel, BrowseToolbar, Button, CharCounter, CodeInput, CountBadge, DateField, DclLogo, EmptyState, EquippedItemCard, FieldLabel, KeyCap, MaskIcon, MenuDivider, MenuList, MenuPanel, MenuRow, Panel, Slider, Spinner, SubmitField, Switch } from '@dcl/one-ui'
 import { useId, useState, useSyncExternalStore } from 'react'
 import { getHudScale, subscribeHudScale } from '@explorer-core/lib/hudScale'
 import {
@@ -21,7 +21,6 @@ import {
   ContextMenu,
   ControlButton,
   Dropdown,
-  EquippedItemCard,
   HeaderButton,
   HintsButton,
   Icon,

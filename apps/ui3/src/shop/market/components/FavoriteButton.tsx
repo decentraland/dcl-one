@@ -3,7 +3,8 @@
 //       marketplace@784c4af4:webapp/src/components/FavoritesCounter/FavoritesCounter.tsx (the heart toggles; the count,
 //       once above zero, opens who saved the item). The pill keeps the Shop's look, holding the two as separate buttons.
 
-import { useCallback, useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 
 import Icon from "../../discovery/components/Icon";
 import { pdpText } from "../../detail/copy";
@@ -31,8 +32,7 @@ export default function FavoriteButton({
   const [failed, setFailed] = useState(false);
   const [delta, setDelta] = useState(0);
   const [showSavedBy, setShowSavedBy] = useState(false);
-  // Stable, so the open dialog keeps its focus when this button re-renders (useDialogKeys depends on onClose).
-  const closeSavedBy = useCallback(() => setShowSavedBy(false), []);
+  const countRef = useRef<HTMLButtonElement>(null);
   const key = `${contractAddress.toLowerCase()}-${itemId}`;
   const saved = !!favorites.items[key];
   useEffect(() => {
@@ -83,6 +83,7 @@ export default function FavoriteButton({
         {count !== undefined && count > 0 ? (
           <button
             type="button"
+            ref={countRef}
             className="shop-fav__count"
             title={pdpText("itemDetail.savedCount", { count })}
             aria-label={`${pdpText("itemDetail.savedCount", { count })}. ${pdpText("savedBy.open", { name })}`}
@@ -102,7 +103,10 @@ export default function FavoriteButton({
           </button>
         </span>
       ) : null}
-      {showSavedBy ? <SavedBy itemKey={key} name={name} onClose={closeSavedBy} /> : null}
+      {showSavedBy && createPortal(
+        <SavedBy itemKey={key} name={name} onClose={() => setShowSavedBy(false)} returnFocusRef={countRef} />,
+        document.body,
+      )}
     </span>
   );
 }

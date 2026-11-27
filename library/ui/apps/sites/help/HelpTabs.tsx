@@ -1,4 +1,5 @@
-import { useRef, type KeyboardEvent } from 'react'
+import { Tabs } from '../../../components/Tabs/Tabs'
+import { TabsBar } from '../../../components/TabsBar/TabsBar'
 import { GeneralHelp, GeneralSupport, ShopCredits } from '../../../foundations/icons'
 import styles from './HelpTabs.module.css'
 
@@ -23,9 +24,8 @@ const ICONS = {
 } as const
 
 /**
- * The help center's section switcher: a tab list with automatic activation. The arrow keys of either axis (the
- * list is a column on wide screens and wrapping rows on phones), Home and End move focus and select.
- * TODO(figma-ds): replace with the design system's Tabs once it exists.
+ * The help center's section switcher: the shared pill tabs, which wrap onto rows. The arrow keys, Home and End
+ * move focus and select (TabsBar).
  */
 function HelpTabs<Id extends string>({
   tabs,
@@ -35,65 +35,28 @@ function HelpTabs<Id extends string>({
   tabId,
   panelId
 }: HelpTabsProps<Id>) {
-  const refs = useRef(new Map<Id, HTMLButtonElement>())
-
-  const select = (index: number) => {
-    const tab = tabs[(index + tabs.length) % tabs.length]
-    if (!tab) return
-    onChange(tab.id)
-    refs.current.get(tab.id)?.focus()
-  }
-
-  const onKeyDown = (event: KeyboardEvent<HTMLButtonElement>, index: number) => {
-    switch (event.key) {
-      case 'ArrowRight':
-      case 'ArrowDown':
-        select(index + 1)
-        break
-      case 'ArrowLeft':
-      case 'ArrowUp':
-        select(index - 1)
-        break
-      case 'Home':
-        select(0)
-        break
-      case 'End':
-        select(tabs.length - 1)
-        break
-      default:
-        return
-    }
-    event.preventDefault()
-  }
-
   return (
-    <div className={styles.root} role="tablist" aria-label={label}>
-      {tabs.map((tab, index) => {
-        const selected = tab.id === active
+    <TabsBar label={label} variant="pill">
+      {tabs.map((tab) => {
         const Icon = ICONS[tab.icon]
         return (
-          <button
+          <Tabs
             key={tab.id}
-            ref={(node) => {
-              if (node) refs.current.set(tab.id, node)
-              else refs.current.delete(tab.id)
-            }}
-            type="button"
-            role="tab"
             id={tabId(tab.id)}
-            aria-selected={selected}
+            variant="pill"
+            selected={tab.id === active}
             aria-controls={panelId}
-            tabIndex={selected ? 0 : -1}
-            className={[styles.tab, selected && styles.selected].filter(Boolean).join(' ')}
             onClick={() => onChange(tab.id)}
-            onKeyDown={(event) => onKeyDown(event, index)}
-          >
-            <Icon size={20} aria-hidden="true" focusable="false" />
-            {tab.label}
-          </button>
+            label={
+              <span className={styles.label}>
+                <Icon size={20} aria-hidden="true" focusable="false" />
+                {tab.label}
+              </span>
+            }
+          />
         )
       })}
-    </div>
+    </TabsBar>
   )
 }
 

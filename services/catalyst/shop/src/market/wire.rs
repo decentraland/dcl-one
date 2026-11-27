@@ -52,6 +52,16 @@ impl<'a> Params<'a> {
         }
     }
 
+    /// [`Self::get_number`] as an integer: the fraction dropped, out-of-range
+    /// values saturated, NaN as 0.
+    #[allow(
+        clippy::cast_possible_truncation,
+        reason = "float-to-int `as` saturates; the page readers clamp the result"
+    )]
+    pub fn get_integer(&self, key: &str) -> Option<i64> {
+        self.get_number(key, None).map(|n| n as i64)
+    }
+
     /// Presence, not truth: upstream reads its boolean flags as "the key is there".
     pub fn get_boolean(&self, key: &str) -> bool {
         self.pairs.iter().any(|(k, _)| k == key)
@@ -469,6 +479,15 @@ impl From<super::graph::Network> for Network {
             super::graph::Network::Matic => Network::Matic,
         }
     }
+}
+
+/// `chain` as the wire's `ChainId`. The index settings admit only the
+/// supported chains, so the network's default never stands in for a served one.
+pub(super) fn wire_chain(chain: i64, network: Network) -> ChainId {
+    u64::try_from(chain)
+        .ok()
+        .and_then(|c| ChainId::try_from(c).ok())
+        .unwrap_or_else(|| network.chain_id())
 }
 
 pub const NETWORK_VALUES: &[&str] = &["ETHEREUM", "MATIC"];

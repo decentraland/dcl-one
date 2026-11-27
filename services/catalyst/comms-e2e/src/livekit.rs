@@ -1033,8 +1033,10 @@ mod tests {
     /// A stand-in client: a shell running `script`.
     fn stand_in(script: &str) -> Command {
         if cfg!(windows) {
-            // Only the Windows build sets a raw argument.
-            #[cfg_attr(not(windows), allow(unused_mut))]
+            #[cfg_attr(
+                not(windows),
+                allow(unused_mut, reason = "only the Windows build sets a raw argument")
+            )]
             let mut command = Command::new("cmd");
             #[cfg(windows)]
             command.as_std_mut().raw_arg(format!("/C \"{script}\""));

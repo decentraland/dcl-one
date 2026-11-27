@@ -59,27 +59,9 @@
   background: var(--dcl-transparencies-black-60);
 }
 
-.dateArrow {
-  display: grid;
-  flex: none;
-  place-items: center;
-  width: var(--dcl-space-32);
-  height: var(--dcl-space-32);
-  padding: 0;
-  border: 0;
-  border-radius: var(--dcl-radius-full);
-  background: none;
-  color: var(--dcl-text-primary);
-  cursor: pointer;
-}
-
-.dateArrow:disabled {
-  color: var(--dcl-text-disabled);
-  cursor: default;
-}
-
-.dateArrow:focus-visible {
-  outline: 2px solid var(--dcl-neutrals-snow);
+/* A date arrow is its button's only content: as a block it sits in the middle, not on a text baseline. */
+.dateIcon {
+  display: block;
 }
 
 .dateLabels {
