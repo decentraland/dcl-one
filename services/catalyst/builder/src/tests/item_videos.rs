@@ -1192,7 +1192,7 @@ async fn a_small_video_on_a_slow_link_finishes_while_the_node_has_places() {
 #[tokio::test]
 async fn an_upload_whose_budget_checks_wait_still_has_its_idle_bound_for_its_first_bytes() {
     let Some(node) =
-        isolated_node(|state| state.videos.idle_timeout = Duration::from_secs(2)).await
+        isolated_node(|state| state.videos.idle_timeout = Duration::from_secs(4)).await
     else {
         return;
     };
@@ -1217,19 +1217,8 @@ async fn an_upload_whose_budget_checks_wait_still_has_its_idle_bound_for_its_fir
         }
     });
     until("the upload's place", || node.state.videos.in_flight() == 1).await;
-    let waiting = || async {
-        sqlx::query_scalar::<_, bool>(
-            "SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE wait_event_type = 'Lock' \
-             AND query LIKE '%builder.uploaded_contents%' AND datname = current_database())",
-        )
-        .fetch_one(&node.pool)
-        .await
-        .unwrap()
-    };
-    while !waiting().await {
-        tokio::task::yield_now().await;
-    }
-    tokio::time::sleep(Duration::from_secs(3)).await;
+    super::collection_writes::until_waiting(&node.pool, 1).await;
+    tokio::time::sleep(Duration::from_secs(5)).await;
     lock.commit().await.unwrap();
     tokio::time::sleep(Duration::from_secs(1)).await;
     let _ = tx.send(Bytes::from(video_form(&video)));
@@ -2451,7 +2440,8 @@ async fn a_newcomer_that_sends_nothing_cuts_no_running_upload() {
 }
 
 /// A fresh wallet that takes a place, sends one byte of its video and
-/// stalls cuts nothing: the creator's upload behind the pace finishes.
+/// stalls cuts nothing: the creator's upload behind the pace finishes, and
+/// the newcomer gives way with 429 and `Retry-After` at its idle bound.
 #[tokio::test]
 async fn a_newcomer_that_sends_one_byte_and_stalls_cuts_no_running_upload() {
     let Some(held) = one_place_held(|_| {}, 0).await else {
@@ -2483,8 +2473,21 @@ async fn a_newcomer_that_sends_one_byte_and_stalls_cuts_no_running_upload() {
     );
     let (node, collection, video, (status, answer, _)) = held.finish().await;
     assert_eq!(status, 200, "{answer}");
-    newcomer.abort();
-    let _ = newcomer.await;
+    tokio::time::pause();
+    tokio::time::advance(crate::items::places::IDLE_TIMEOUT).await;
+    tokio::time::resume();
+    let (status, answer, retry) = tokio::time::timeout(Duration::from_secs(10), newcomer)
+        .await
+        .expect("the newcomer ended at its idle bound")
+        .unwrap();
+    assert_eq!(
+        (status, answer["error"].as_str(), retry.as_deref()),
+        (
+            429,
+            Some("Too many video uploads in progress, try again later"),
+            Some("30")
+        )
+    );
     until("every place back", || node.state.videos.idle()).await;
     cleanup(&node.pool, &[collection, other], &[hash(&video)]).await;
 }

@@ -337,13 +337,10 @@ impl Admission {
             .reading
             .iter()
             .filter(|p| !Arc::ptr_eq(p, &self.progress) && p.behind(now))
-            .min_by(|a, b| {
-                a.rate(now)
-                    .unwrap_or(0.0)
-                    .total_cmp(&b.rate(now).unwrap_or(0.0))
-            });
+            .filter_map(|p| Some((p, p.rate(now)?)))
+            .min_by(|(_, a), (_, b)| a.total_cmp(b));
         match slowest {
-            Some(slowest) => {
+            Some((slowest, _)) => {
                 slowest.cut.store(true, Ordering::SeqCst);
                 slowest.cut_now.notify_one();
                 Ok(())
@@ -356,6 +353,9 @@ impl Admission {
     }
 
     /// The whole body arrived: no newcomer takes its place while it stores.
+    /// Its place counts in the node's total until it drops, so a newcomer
+    /// whose body arrived on an extra place keeps the node one over its
+    /// places until its store ends.
     pub fn body_arrived(&self) {
         self.in_flight
             .lock()
