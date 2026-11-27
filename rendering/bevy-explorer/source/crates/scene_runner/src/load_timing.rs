@@ -9,7 +9,8 @@ use web_time::Instant;
 
 use crate::{
     initialize_scene::{SceneHash, SceneLoading},
-    renderer_context::{RendererSceneContext, FROZEN_BLOCK},
+    renderer_context::{RendererSceneContext, FROZEN_BLOCK, STARTUP_TICKS},
+    update_world::gltf_container::GLTF_LOADING,
     vec3_to_parcel, ContainingScene,
 };
 
@@ -45,10 +46,28 @@ pub fn ring_of(parcel: IVec2, parcels: impl IntoIterator<Item = IVec2>) -> u16 {
         .unwrap_or(u16::MAX)
 }
 
-/// The scene has loaded as far as it ever will: five ticks (when `animate_ready_scene` raises
-/// it), or a terminal state.
+/// The scene will load no further on its own: it is broken, or frozen (`/freeze_scene`, the
+/// editor's freeze) with none of its glTFs still loading. A frozen scene never advances its tick,
+/// but its glTFs keep loading renderer-side, and with them the colliders the player lands on. The
+/// load timing, the teleport's release of the player and the settling commands (`util::settle`)
+/// all stop waiting for such a scene.
+pub(crate) fn scene_is_halted(context: &RendererSceneContext) -> bool {
+    context.broken()
+        || (context.blocked.contains(FROZEN_BLOCK) && !context.blocked.contains(GLTF_LOADING))
+}
+
+/// The scene has loaded as far as it will: it has started
+/// ([`RendererSceneContext::started`]: past its [`STARTUP_TICKS`], nothing blocking it), or it is
+/// halted. The teleport releases the player onto the scene on this, and a settling command stops
+/// waiting for it.
+pub fn scene_has_loaded(context: &RendererSceneContext) -> bool {
+    context.started() || scene_is_halted(context)
+}
+
+/// What the load timing logs a scene as ready on: its last startup tick ([`STARTUP_TICKS`], when
+/// `animate_ready_scene` raises it), or a halted scene.
 pub fn scene_is_ready(context: &RendererSceneContext) -> bool {
-    context.tick_number >= 5 || context.broken() || context.blocked.contains(FROZEN_BLOCK)
+    context.tick_number >= STARTUP_TICKS || scene_is_halted(context)
 }
 
 pub fn report_scene_load_times(

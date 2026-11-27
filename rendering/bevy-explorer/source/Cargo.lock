@@ -3542,6 +3542,7 @@ dependencies = [
  "dcl_component",
  "futures-lite",
  "hex",
+ "image",
  "itertools 0.14.0",
  "pin-project",
  "platform",
@@ -11011,7 +11012,6 @@ dependencies = [
  "console 0.1.0",
  "dcl_component",
  "dcl_types",
- "image",
  "ipfs",
  "platform",
  "prost 0.11.9",
@@ -11019,6 +11019,8 @@ dependencies = [
  "serde_json",
  "texture_camera",
  "tokio",
+ "tween",
+ "web-time",
 ]
 
 [[package]]

@@ -59,12 +59,12 @@ fn masked_projection_reads_content_files_and_metadata_only_when_kept() {
     assert!(sql.contains("dep.entity_metadata,"), "{sql}");
 }
 
-struct Seed {
-    id: String,
-    pointers: Vec<String>,
+pub(super) struct Seed {
+    pub(super) id: String,
+    pub(super) pointers: Vec<String>,
 }
 
-async fn seed(
+pub(super) async fn seed(
     pool: &sqlx::PgPool,
     tag: &str,
     n: u32,
@@ -115,7 +115,7 @@ async fn seed(
     Seed { id, pointers }
 }
 
-async fn unseed(pool: &sqlx::PgPool, tag: &str) {
+pub(super) async fn unseed(pool: &sqlx::PgPool, tag: &str) {
     let like = format!("test-{tag}-%");
     for sql in [
         "DELETE FROM content.content_files WHERE content_hash LIKE $1",

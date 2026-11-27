@@ -6966,7 +6966,7 @@
           "kind": "regular"
         },
         {
-          "name": "DownloadActions.test.ts",
+          "name": "DownloadActions.test.tsx",
           "kind": "regular"
         },
         {
@@ -7719,10 +7719,6 @@
       "path": "library/ui/apps/sites/shared",
       "entries": [
         {
-          "name": "Button",
-          "kind": "directory"
-        },
-        {
           "name": "Carousel.module.css",
           "kind": "regular"
         },
@@ -7740,19 +7736,6 @@
         },
         {
           "name": "cssUrl.ts",
-          "kind": "regular"
-        }
-      ]
-    },
-    {
-      "path": "library/ui/apps/sites/shared/Button",
-      "entries": [
-        {
-          "name": "Button.module.css",
-          "kind": "regular"
-        },
-        {
-          "name": "Button.tsx",
           "kind": "regular"
         }
       ]
@@ -8562,6 +8545,10 @@
           "kind": "regular"
         },
         {
+          "name": "ContextMenu.figma.ts",
+          "kind": "regular"
+        },
+        {
           "name": "ContextMenu.module.css",
           "kind": "regular"
         },
@@ -8579,6 +8566,14 @@
         },
         {
           "name": "KebabMenu.tsx",
+          "kind": "regular"
+        },
+        {
+          "name": "Menu.figma.ts",
+          "kind": "regular"
+        },
+        {
+          "name": "MenuItem.figma.ts",
           "kind": "regular"
         }
       ]
@@ -13129,11 +13124,11 @@
     },
     {
       "path": "library/ui/apps/hud/design/Showcase.tsx",
-      "sha256": "0be03b233e50b54c3b00ce728685ccfa454bfad0367730c7bc820fecf6cbd348"
+      "sha256": "4cd429d1c858ef846d480ba3676f666c9560f5f5bafdba2126299c8889d73832"
     },
     {
       "path": "library/ui/apps/hud/design/ShowcaseIndex.ts",
-      "sha256": "16e474884dfda787a84dfab9c40d69dd1c8b9eabd15d7aadb28592ec48d0ed8f"
+      "sha256": "793853052bb70a49eeb63de2dbf6abf5e6758ca7572692bd41dc8ce01ab63af1"
     },
     {
       "path": "library/ui/apps/hud/design/Submenu.tsx",
@@ -13213,11 +13208,11 @@
     },
     {
       "path": "library/ui/apps/hud/features/chat/ChatIcons.tsx",
-      "sha256": "b6e47f23d173e7b314b655df6f8c151245bd30999b6b1f7d63b634ce95067409"
+      "sha256": "bb605ccb5b6ea56b2109f3ca6604700f239ad7a633d345035e795749598f181c"
     },
     {
       "path": "library/ui/apps/hud/features/chat/CommunityHeader.tsx",
-      "sha256": "cb5a03477f8c4ca905a99562642b1d8c7ee41ffe01081ce5eaf919302640c1f5"
+      "sha256": "29b86ae97610d25c02a52766a101cada6eab0ac45f6a5fb9cc831b64180cb4ab"
     },
     {
       "path": "library/ui/apps/hud/features/chat/CommunityStreamBanner.tsx",
@@ -13225,7 +13220,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/chat/ConversationMenu.tsx",
-      "sha256": "bfa5594abae4426274539a5434258d1eb3d54367671d0742f41f2296f15246a5"
+      "sha256": "cf82e04220b8465d1e403e309fe11b731f0c9bc75a68c9dfe14b33af9b999cd4"
     },
     {
       "path": "library/ui/apps/hud/features/chat/ConversationRail.tsx",
@@ -16201,11 +16196,11 @@
     },
     {
       "path": "library/ui/apps/sites/download/DownloadActions.module.css",
-      "sha256": "ef57b2a0762374b1996e8b7420fef59e73ed4fb0b20b92d9189a789e1e485a74"
+      "sha256": "f246e8ecd276b71be9fc7623ba2a317c67f1b5bff1fcc9c984635bd5be077915"
     },
     {
       "path": "library/ui/apps/sites/download/DownloadActions.tsx",
-      "sha256": "62ba8bc9771c7808b4cc972ada9bdad040e703784dcb9a2897f0ec1f04db4791"
+      "sha256": "8b5cbc536d35e039264f5ac11fa1680aae379160dd6f5797bb00f0692466d160"
     },
     {
       "path": "library/ui/apps/sites/download/DownloadPage.module.css",
@@ -16792,14 +16787,6 @@
       "sha256": "b11c4d0a6cbb6d49d91eb7cceced3cc6ed7a7bf591d67088a9099a96e71e3e5c"
     },
     {
-      "path": "library/ui/apps/sites/shared/Button/Button.module.css",
-      "sha256": "9fe1bc3a808232a38988ab330decd84ce1c6fce658b6dc9582cccff1dd8c7767"
-    },
-    {
-      "path": "library/ui/apps/sites/shared/Button/Button.tsx",
-      "sha256": "aa2125f1ef1f015e14291e59fb709746f10ccf0d43151abcae950366f7e128a9"
-    },
-    {
       "path": "library/ui/apps/sites/shared/Carousel.module.css",
       "sha256": "b8aed4447fcda89b7043e744b752c6df122c06b34523266c260485e9a474d04c"
     },
@@ -16989,7 +16976,7 @@
     },
     {
       "path": "library/ui/components/Button/Button.module.css",
-      "sha256": "e2474ac8f72e9fff864724973ceeae8dd1a57aae849214e0f8bac31ba2d138f1"
+      "sha256": "16dc4e6cebd3478e15eb7310e80c325018beda9d71c30e1888f2377ed965d019"
     },
     {
       "path": "library/ui/components/Button/Button.module.css.d.ts",
@@ -17093,11 +17080,11 @@
     },
     {
       "path": "library/ui/components/ContextMenu/ContextMenu.module.css",
-      "sha256": "ed2265932b624c97a40f9eca3cf6e6a349e1154d4508906f0ea9e207f951a862"
+      "sha256": "e19b86a421c762054e379f84ac3007ddbbd22381312e58fabd3f7d7086583570"
     },
     {
       "path": "library/ui/components/ContextMenu/ContextMenu.tsx",
-      "sha256": "0a343fff27d062cb2c52e6ce8fabc8ea4d29c13c6a5aed7db7e2030881c1b7c8"
+      "sha256": "73595bc5fe53a395615762090b7948b747b6f22213d994fb3050145e0349e10d"
     },
     {
       "path": "library/ui/components/ContextMenu/KebabMenu.tsx",
@@ -17205,7 +17192,7 @@
     },
     {
       "path": "library/ui/components/InputField/InputField.module.css",
-      "sha256": "21e6e2b16729b03ef670a52b8079c5b682628cdecf3b4a9930d9391549928761"
+      "sha256": "8d1c720749464d4cbbe7fe77f5a6c7241c0845dc955017cc2c87b6c49b2ee2cd"
     },
     {
       "path": "library/ui/components/InputField/InputField.module.css.d.ts",
@@ -25630,6 +25617,21 @@
       "kind": "test:runtime"
     },
     {
+      "from": "library/ui/apps/hud/features/chat/ConversationMenu.tsx",
+      "to": "library/ui/index.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/chat/ConversationMenu.tsx",
+      "to": "library/ui/index.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/chat/ConversationMenu.tsx",
+      "to": "library/ui/index.ts",
+      "kind": "test:runtime"
+    },
+    {
       "from": "library/ui/apps/hud/features/chat/ConversationRail.tsx",
       "to": "library/ui/apps/hud/assets/chat/close-thin.png",
       "kind": "native:runtime"
@@ -55616,17 +55618,17 @@
     },
     {
       "from": "library/ui/apps/sites/download/DownloadActions.tsx",
-      "to": "library/ui/apps/sites/shared/Button/Button.tsx",
+      "to": "library/ui/components/Button/Button.tsx",
       "kind": "native:runtime"
     },
     {
       "from": "library/ui/apps/sites/download/DownloadActions.tsx",
-      "to": "library/ui/apps/sites/shared/Button/Button.tsx",
+      "to": "library/ui/components/Button/Button.tsx",
       "kind": "production:runtime"
     },
     {
       "from": "library/ui/apps/sites/download/DownloadActions.tsx",
-      "to": "library/ui/apps/sites/shared/Button/Button.tsx",
+      "to": "library/ui/components/Button/Button.tsx",
       "kind": "test:runtime"
     },
     {
@@ -62455,21 +62457,6 @@
       "kind": "test:runtime"
     },
     {
-      "from": "library/ui/apps/sites/shared/Button/Button.tsx",
-      "to": "library/ui/apps/sites/shared/Button/Button.module.css",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/sites/shared/Button/Button.tsx",
-      "to": "library/ui/apps/sites/shared/Button/Button.module.css",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/sites/shared/Button/Button.tsx",
-      "to": "library/ui/apps/sites/shared/Button/Button.module.css",
-      "kind": "test:runtime"
-    },
-    {
       "from": "library/ui/apps/sites/shared/Carousel.tsx",
       "to": "library/ui/apps/sites/shared/Carousel.module.css",
       "kind": "native:runtime"
@@ -63622,6 +63609,21 @@
     {
       "from": "library/ui/components/ContextMenu/ContextMenu.tsx",
       "to": "library/ui/components/Switch/Switch.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/components/ContextMenu/ContextMenu.tsx",
+      "to": "library/ui/foundations/icons/general.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/components/ContextMenu/ContextMenu.tsx",
+      "to": "library/ui/foundations/icons/general.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/components/ContextMenu/ContextMenu.tsx",
+      "to": "library/ui/foundations/icons/general.tsx",
       "kind": "test:runtime"
     },
     {
@@ -71372,11 +71374,6 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/ui/apps/sites/reels/ReelsPage.tsx",
-      "kind": "type"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
-      "to": "library/ui/apps/sites/shared/Button/Button.tsx",
       "kind": "type"
     },
     {
