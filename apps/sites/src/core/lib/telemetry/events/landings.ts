@@ -86,17 +86,6 @@ export type LandingsEvents = {
   lp_blog_viewed: {
     post_count: number;
   };
-  lp_community_created: {
-    community_id?: string;
-    stub?: true;
-  };
-  lp_community_submit_attempted: {
-    privacy: "private" | "public";
-    visibility: "all" | "unlisted";
-  };
-  lp_community_submit_failed: {
-    error?: string;
-  };
   lp_creatorhub_docs_clicked: Record<string, never>;
   lp_creatorhub_download_clicked: {
     arch: "amd64" | "arm64";

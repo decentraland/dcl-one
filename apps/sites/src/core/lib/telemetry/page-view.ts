@@ -31,7 +31,7 @@ export function isPageTrackingExempt(path: string): boolean {
  * Marketplace (the Shop reports its own views to its own source), the Builder, the Explorer, the docs
  * (docs.decentraland.org was its own site, and its responses here carry no session) and auth or
  * internal endpoints. Their pages send no Sites page view. A page new to this site outside these
- * (`/communities/new`) follows the legacy Layout's rule instead: `page(pathname)`.
+ * follows the legacy Layout's rule instead: `page(pathname)`.
  */
 const OUTSIDE_LEGACY_SITES = [
   "/shop",

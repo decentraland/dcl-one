@@ -13,7 +13,6 @@ const css = [
   "apps/ui3/src/components/site-navigation.css",
   "library/ui/components/AppChrome/SiteLayout.module.css",
   "apps/ui3/src/shop/discovery/frames/shoptheme.css",
-  "apps/ui3/src/social/social-page.css",
 ]
   .map((file) => readFileSync(fileURLToPath(new URL(file, root)), "utf8"))
   .join("\n");
@@ -64,12 +63,11 @@ type Offsets = {
   child: string;
   shop: string;
   height: number;
-  social: number;
 };
 
 describe("when native and legacy chrome hosts resolve their header offsets", () => {
   for (const width of [390, 992, 1024, 1440]) {
-    for (const host of ["create", "social", "shop"] as const) {
+    for (const host of ["create", "shop"] as const) {
       describe(`and the native header wraps the ${host} host at ${width}px`, () => {
         const height = width < 992 ? 64 : 92;
         let actual: Offsets;
@@ -82,10 +80,10 @@ describe("when native and legacy chrome hosts resolve their header offsets", () 
             mobile: false,
           });
           const child = host === "create" ? "ch" : "cs";
-          const html = `<style>body{margin:0}${css}</style><div class="root ui2" data-site-layout data-header-layout="native"><div class="navigation" data-site-layout-navigation></div><div class="content" data-site-layout-content><div data-site-layout-fill class="${child} ui2 ${host === "shop" ? "shop-chrome" : ""} ${host === "social" ? "social-web" : ""}"><div class="soc"></div></div></div></div>`;
+          const html = `<style>body{margin:0}${css}</style><div class="root ui2" data-site-layout data-header-layout="native"><div class="navigation" data-site-layout-navigation></div><div class="content" data-site-layout-content><div data-site-layout-fill class="${child} ui2 ${host === "shop" ? "shop-chrome" : ""}"></div></div></div>`;
           await session.navigate(`data:text/html,${encodeURIComponent(html)}`);
           const response = await session.send("Runtime.evaluate", {
-            expression: `(() => {const root=document.querySelector('[data-site-layout]'), child=document.querySelector('[data-site-layout-content]>div');return {root:getComputedStyle(root).getPropertyValue('--site-header-h').trim(), child:getComputedStyle(child).getPropertyValue('--site-header-h').trim(), shop:getComputedStyle(child).getPropertyValue('--shop-nav-h').trim(), height:child.getBoundingClientRect().height, social:document.querySelector('.soc').getBoundingClientRect().height}})()`,
+            expression: `(() => {const root=document.querySelector('[data-site-layout]'), child=document.querySelector('[data-site-layout-content]>div');return {root:getComputedStyle(root).getPropertyValue('--site-header-h').trim(), child:getComputedStyle(child).getPropertyValue('--site-header-h').trim(), shop:getComputedStyle(child).getPropertyValue('--shop-nav-h').trim(), height:child.getBoundingClientRect().height}})()`,
             returnByValue: true,
           });
           actual = (response as { result: { value: Offsets } }).result.value;
@@ -108,12 +106,6 @@ describe("when native and legacy chrome hosts resolve their header offsets", () 
         it(`should size the ${host} content to the viewport below the header`, () => {
           expect(actual.height).toBe(900 - height);
         });
-
-        if (host === "social") {
-          it("should size the social page to the viewport below the header", () => {
-            expect(actual.social).toBe(900 - height);
-          });
-        }
       });
     }
   }

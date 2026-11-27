@@ -7740,18 +7740,6 @@
       "path": "library/ui/apps/sites/social",
       "entries": [
         {
-          "name": "CommunityCreate.module.css",
-          "kind": "regular"
-        },
-        {
-          "name": "CommunityCreate.test.tsx",
-          "kind": "regular"
-        },
-        {
-          "name": "CommunityCreate.tsx",
-          "kind": "regular"
-        },
-        {
           "name": "CommunityDetail.module.css",
           "kind": "regular"
         },
@@ -7785,18 +7773,6 @@
         },
         {
           "name": "CommunityLists.tsx",
-          "kind": "regular"
-        },
-        {
-          "name": "LdCreateCommunityView.test.tsx",
-          "kind": "regular"
-        },
-        {
-          "name": "LdCreateCommunityView.tsx",
-          "kind": "regular"
-        },
-        {
-          "name": "ldcreatecommunityview.css",
           "kind": "regular"
         }
       ]
@@ -16496,7 +16472,7 @@
     },
     {
       "path": "library/ui/apps/sites/index.ts",
-      "sha256": "96af375104a21fe3c6b6901fb7d5dd4523e0ccfa478189c9e876167334bad730"
+      "sha256": "86c30e7a71ddaed3c85fb634a6bab32e12645ca950c0e87002c42b383515e88a"
     },
     {
       "path": "library/ui/apps/sites/invite/InviteLanding.module.css",
@@ -16799,14 +16775,6 @@
       "sha256": "787de652c40cde429c9bec8c9b0f42a936783ac2c12587a3bc2e2f193acf7719"
     },
     {
-      "path": "library/ui/apps/sites/social/CommunityCreate.module.css",
-      "sha256": "73984b00d968403223a07fc3ac8aed303d0a291c7aa6934e285bceed1246aa8b"
-    },
-    {
-      "path": "library/ui/apps/sites/social/CommunityCreate.tsx",
-      "sha256": "be2afc26772ed837aa75f5832e7043a68807f6f191a3e7214f80831d69ccda86"
-    },
-    {
       "path": "library/ui/apps/sites/social/CommunityDetail.module.css",
       "sha256": "9233f152b9c2846ac1a4f6f4fab0d49d1b65a4cdef5efd0ccc5cd988464e8d56"
     },
@@ -16829,14 +16797,6 @@
     {
       "path": "library/ui/apps/sites/social/CommunityLists.tsx",
       "sha256": "505d5b73e3adef281bf1ed37fcb45502b03e184ec1318b2e146f51fdb4d46159"
-    },
-    {
-      "path": "library/ui/apps/sites/social/LdCreateCommunityView.tsx",
-      "sha256": "e4154a16a5c7ce3ed1690470690d574b3fca07c39880f52326f48d7e20905c17"
-    },
-    {
-      "path": "library/ui/apps/sites/social/ldcreatecommunityview.css",
-      "sha256": "c44ec1a51c8b616f60c2b753b2c2793821c9d45b93e18483a55ec44ea985475f"
     },
     {
       "path": "library/ui/apps/sites/status/StatusPage.module.css",
@@ -59979,21 +59939,6 @@
     },
     {
       "from": "library/ui/apps/sites/index.ts",
-      "to": "library/ui/apps/sites/social/CommunityCreate.tsx",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/sites/index.ts",
-      "to": "library/ui/apps/sites/social/CommunityCreate.tsx",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/sites/index.ts",
-      "to": "library/ui/apps/sites/social/CommunityCreate.tsx",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/sites/index.ts",
       "to": "library/ui/apps/sites/social/CommunityDetail.tsx",
       "kind": "native:runtime"
     },
@@ -60035,21 +59980,6 @@
     {
       "from": "library/ui/apps/sites/index.ts",
       "to": "library/ui/apps/sites/social/CommunityLists.tsx",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/sites/index.ts",
-      "to": "library/ui/apps/sites/social/LdCreateCommunityView.tsx",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/sites/index.ts",
-      "to": "library/ui/apps/sites/social/LdCreateCommunityView.tsx",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/sites/index.ts",
-      "to": "library/ui/apps/sites/social/LdCreateCommunityView.tsx",
       "kind": "test:runtime"
     },
     {
@@ -62498,96 +62428,6 @@
       "kind": "test:runtime"
     },
     {
-      "from": "library/ui/apps/sites/social/CommunityCreate.tsx",
-      "to": "library/ui/apps/sites/social/CommunityCreate.module.css",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/sites/social/CommunityCreate.tsx",
-      "to": "library/ui/apps/sites/social/CommunityCreate.module.css",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/sites/social/CommunityCreate.tsx",
-      "to": "library/ui/apps/sites/social/CommunityCreate.module.css",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/sites/social/CommunityCreate.tsx",
-      "to": "library/ui/components/Button/Button.tsx",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/sites/social/CommunityCreate.tsx",
-      "to": "library/ui/components/Button/Button.tsx",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/sites/social/CommunityCreate.tsx",
-      "to": "library/ui/components/Button/Button.tsx",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/sites/social/CommunityCreate.tsx",
-      "to": "library/ui/components/Dropdown/Dropdown.tsx",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/sites/social/CommunityCreate.tsx",
-      "to": "library/ui/components/Dropdown/Dropdown.tsx",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/sites/social/CommunityCreate.tsx",
-      "to": "library/ui/components/Dropdown/Dropdown.tsx",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/sites/social/CommunityCreate.tsx",
-      "to": "library/ui/components/InputWebCreatorTools/InputWebCreatorTools.tsx",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/sites/social/CommunityCreate.tsx",
-      "to": "library/ui/components/InputWebCreatorTools/InputWebCreatorTools.tsx",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/sites/social/CommunityCreate.tsx",
-      "to": "library/ui/components/InputWebCreatorTools/InputWebCreatorTools.tsx",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/sites/social/CommunityCreate.tsx",
-      "to": "library/ui/components/Modal/Modal.tsx",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/sites/social/CommunityCreate.tsx",
-      "to": "library/ui/components/Modal/Modal.tsx",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/sites/social/CommunityCreate.tsx",
-      "to": "library/ui/components/Modal/Modal.tsx",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/sites/social/CommunityCreate.tsx",
-      "to": "library/ui/components/Switch/Switch.tsx",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/sites/social/CommunityCreate.tsx",
-      "to": "library/ui/components/Switch/Switch.tsx",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/sites/social/CommunityCreate.tsx",
-      "to": "library/ui/components/Switch/Switch.tsx",
-      "kind": "test:runtime"
-    },
-    {
       "from": "library/ui/apps/sites/social/CommunityDetail.tsx",
       "to": "library/ui/apps/sites/social/CommunityDetail.module.css",
       "kind": "native:runtime"
@@ -62765,21 +62605,6 @@
     {
       "from": "library/ui/apps/sites/social/CommunityLists.tsx",
       "to": "library/ui/index.ts",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/sites/social/LdCreateCommunityView.tsx",
-      "to": "library/ui/apps/sites/social/ldcreatecommunityview.css",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/sites/social/LdCreateCommunityView.tsx",
-      "to": "library/ui/apps/sites/social/ldcreatecommunityview.css",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/sites/social/LdCreateCommunityView.tsx",
-      "to": "library/ui/apps/sites/social/ldcreatecommunityview.css",
       "kind": "test:runtime"
     },
     {
@@ -71384,11 +71209,6 @@
     },
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
-      "to": "library/ui/apps/sites/social/CommunityCreate.tsx",
-      "kind": "type"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/ui/apps/sites/social/CommunityDetail.tsx",
       "kind": "type"
     },
@@ -71400,11 +71220,6 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/ui/apps/sites/social/CommunityLists.tsx",
-      "kind": "type"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
-      "to": "library/ui/apps/sites/social/LdCreateCommunityView.tsx",
       "kind": "type"
     },
     {

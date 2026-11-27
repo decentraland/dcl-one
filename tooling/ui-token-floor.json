@@ -459,10 +459,6 @@
     "primitives": 14,
     "tokens": 0
   },
-  "apps/ui3/src/explorer/pages/social.css": {
-    "primitives": 3,
-    "tokens": 0
-  },
   "apps/ui3/src/web/frames/accountmenu.css": {
     "primitives": 8,
     "tokens": 11
@@ -574,10 +570,6 @@
   "library/ui/apps/sites/profile/collectibles.module.css": {
     "primitives": 0,
     "tokens": 40
-  },
-  "library/ui/apps/sites/social/CommunityCreate.module.css": {
-    "primitives": 0,
-    "tokens": 24
   },
   "library/ui/apps/sites/social/CommunityDetail.module.css": {
     "primitives": 0,

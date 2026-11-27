@@ -44,17 +44,26 @@ describe("Sites paths", () => {
     });
   });
 
-  describe("when a visitor opens a community by id outside /social", () => {
-    it.each(["/communities/c-1", "/communities/427638bd-35c2-4592-bee3-7a33d0883d8a"])(
-      "should serve no route for %s, so it answers 404",
+  describe("when a visitor opens a path under /communities", () => {
+    it.each(["/communities", "/communities/new", "/communities/c-1", "/communities/427638bd-35c2-4592-bee3-7a33d0883d8a"])(
+      "should answer %s with the communities 404, as decentraland.org does, keeping the prefix with Sites",
       (path) => {
-        expect(served(path)).toBeNull();
+        expect(served(path)).toBe("routes/communities.$.tsx");
       },
     );
+  });
 
+  describe("when a visitor opens a community by id outside /social", () => {
     it("should serve the community page at /social/communities/:id", () => {
       expect(served("/social/communities/c-1")).toBe("routes/social_.communities.$id.tsx");
     });
+
+    it.each(["/social", "/social/", "/social/anything"])(
+      "should answer %s with the social 404, as decentraland.org does",
+      (path) => {
+        expect(served(path)).toBe("routes/social_.$.tsx");
+      },
+    );
   });
 
   describe("when a visitor opens a canonical path", () => {
@@ -72,7 +81,6 @@ describe("Sites paths", () => {
       ["/events/ev-1/rsvp", "routes/events_.$id.rsvp.tsx"],
       ["/events/new-event", "routes/events_.new-event.tsx"],
       ["/events/edit-event/ev-1", "routes/events_.edit-event.$id.tsx"],
-      ["/communities/new", "routes/communities.new.tsx"],
     ])("should serve %s from %s", (path, file) => {
       expect(served(path)).toBe(file);
     });
