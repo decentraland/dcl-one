@@ -20,7 +20,7 @@ also drives the Unity Explorer through its MCP server. It names arguments and re
 
 The console's automation commands follow these rules. `crates/console/src/line.rs` and
 `crates/console/src/reply.rs` hold the shared pieces. A rule for a kind of command the console
-does not have yet (durations, waits, entity ids) is added here with its first command.
+does not have yet (durations, entity ids) is added here with its first command.
 
 1. **Quoting.** A line is split into words on whitespace (Unicode's White_Space); a double-quoted
    run is part of a word with its quotes removed, and inside it `\"` and `\\` escape. A backslash
@@ -44,6 +44,10 @@ does not have yet (durations, waits, entity ids) is added here with its first co
    `/screenshot --count` sequence share one capture gate. Frames a command produces in bulk are returned as paths, never inline: files
    natively, and on the web, which cannot write the host's disk, a memory store read one frame
    at a time.
+4. **Waiting.** A command asked to wait for its effect (`--wait`) waits inside the engine, bounded
+   by `--timeout-seconds` from the moment it is run, and replies what it observed. A wait that ends without the effect is
+   still a reply, not a failure: it says so in a field (`settled: false`) and carries a `warning`
+   naming what it waited for, or why the effect will not come.
 
 ## Consequences
 
@@ -64,7 +68,15 @@ does not have yet (durations, waits, entity ids) is added here with its first co
   `caption` naming the screen and frame the image was scaled from.
 - A capture waits before it takes its frame: two frames, then a camera transition for at most
   1.5 s. That wait is part of taking the frame, with a fixed bound the caller does not set and
-  the JSON reply reports (`blendWaitMs`). It is not a wait command, so it adds no rule for those.
+  the JSON reply reports (`blendWaitMs`). It is not a `--wait` command, so rule 4 does not
+  apply to it.
+- `/teleport --wait` and `/reload --wait` reply once the parcel scene has settled. A scene is
+  ready once it has started (`RendererSceneContext::started`: past its startup ticks with nothing
+  blocking it) and is not broken. A scene that will load no further
+  (`load_timing::scene_is_halted`: broken, or frozen with its glTFs loaded) will not get there, so
+  it ends a wait. The teleport releases the player on the same two rules
+  (`load_timing::scene_has_loaded`: started or halted). The teleport request, a realm change
+  included, counts against the same timeout.
 
 ## Alternatives considered
 
