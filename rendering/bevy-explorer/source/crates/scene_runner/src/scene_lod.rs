@@ -1970,6 +1970,15 @@ mod tests {
         );
     }
 
+    /// Near LODs follow the same rule: with every place taken by one in view, a near LOD in view at
+    /// least two rings nearer takes its place.
+    #[test]
+    fn a_nearer_near_lod_in_view_takes_the_place_of_a_farther_one() {
+        let mut world = World::new();
+        let rows = rows(&mut world, &[(3, false, true), (1, false, false)]);
+        assert_eq!(near_changes(&rows, 1), (vec![rows[1].0], vec![rows[0].0]));
+    }
+
     /// Lowering "Max Near LODs" stops the farthest over it, those behind the camera first.
     #[test]
     fn lowering_the_cap_stops_behind_then_in_view() {

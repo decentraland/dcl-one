@@ -360,6 +360,7 @@ async fn a_missing_far_lod_is_remembered_and_failures_pause_far_lods() {
     }
     assert!(io.bevy_variants.disabled().is_some());
     assert!(!io.far_lods_off());
+    assert!(io.far_lod_may_request());
 
     // a 404 is remembered for the scene, by its lower-case id
     let missing = url("bafkreiMissing");
@@ -412,6 +413,10 @@ async fn a_missing_far_lod_is_remembered_and_failures_pause_far_lods() {
         io.bevy_far_lod("bafkreimissing"),
         FarLodSource::Unavailable(_)
     ));
+    // an answer resumes far LODs, the session switch still tripped
+    io.far_lod_fetched(&url("bafkrei0"), Ok(()));
+    assert!(io.far_lod_status().paused_for.is_none());
+    assert!(io.far_lod_may_request());
     std::fs::remove_dir_all(dir).unwrap();
 }
 

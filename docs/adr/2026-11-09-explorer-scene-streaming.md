@@ -76,7 +76,8 @@ the GPU.
   at least two rings farther than the newcomer, the farthest first. So with every place taken,
   turning the camera stops drawn stand-ins left behind as new ones come into view, and a newly
   seen stand-in two or more rings nearer replaces a farther one still in view; they reload from
-  the cache when the player turns back. After a move or teleport the nearest take the places.
+  the cache when the player turns back. After a move or teleport, those two or more rings nearer
+  than a drawn one in view take its place.
   The two-ring margin is the hysteresis: a step across a parcel edge moves each scene's ring by
   at most one, so it never reverses a swap between stand-ins in view. Lowering the setting stops
   the farthest over it, those behind the camera first. The cost of a stand-in is not known
@@ -169,14 +170,14 @@ the same kind.
   It does not follow the variants client's session switch (the manifests' and texture variants'
   breaker, which stays off once tripped): an outage of the LOD service is the far LOD breaker's
   (below), which resumes far LODs once the service answers again. Until the GPU reports its BC
-  support the far LOD waits. The glTF loader hands embedded KTX2 to the host, which unwraps BC to DDS, so they stay compressed in memory. Like a
-  `glb` variant it is asked for at its own path: its Brotli copy exists only when it is smaller,
-  and the server sends it to a browser that accepts `br`. None offered or published, or one the
-  loader refuses, leaves the scene's parcels to the imposters. The content server judged is the
-  realm's (`/about`, or the server a loaded urn registered for the scene); a far LOD loads no
-  urn, so on a realm whose scenes come from another server, such as a local city loader, that
-  server is not judged, and each scene in the band costs one request a session that can only
-  miss.
+  support the far LOD waits. The glTF loader hands embedded KTX2 to the host, which unwraps BC to
+  DDS, so they stay compressed in memory. Like a `glb` variant it is asked for at its own path:
+  its Brotli copy exists only when it is smaller, and the server sends it to a browser that
+  accepts `br`. None offered or published, or one the loader refuses, leaves the scene's parcels
+  to the imposters. The content server judged is the realm's (`/about`, or the server a loaded urn
+  registered for the scene); a far LOD loads no urn, so on a realm whose scenes come from another
+  server, such as a local city loader, that server is not judged, and each scene in the band costs
+  one request a session that can only miss.
 - **From the scene's hash alone.** The far LOD loads no entity definition. The url comes from
   the scene's hash, which the realm's pointers give, and the root goes at the scene's base
   parcel (the mesh is relative to it) as the realm listed it: the active-entities response that

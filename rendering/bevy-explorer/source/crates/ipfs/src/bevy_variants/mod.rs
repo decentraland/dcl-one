@@ -898,8 +898,9 @@ impl IpfsIo {
 
     /// abgen's one simplified mesh for a scene, its far LOD, under the variants base. Offered on
     /// the variants base (variants on, the scene eligible) and only on a GPU with BC textures:
-    /// the mesh's atlases are BC KTX2 only. Like a `glb` variant it is fetched at its own path: its Brotli copy exists only when it is
-    /// smaller, and the server sends it to a browser that accepts `br`.
+    /// the mesh's atlases are BC KTX2 only. Like a `glb` variant it is fetched at its own path:
+    /// its Brotli copy exists only when it is smaller, and the server sends it to a browser that
+    /// accepts `br`.
     ///
     /// Not offered again for a scene the server answered a definitive status for (404) this
     /// session. Naming a url does not spend the breaker's probe: whether its download may start
