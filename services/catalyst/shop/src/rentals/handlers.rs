@@ -17,7 +17,9 @@ use super::db::{
 use super::http::{ApiError, Ok2};
 use super::nft::{LandNft, NftReadError};
 use super::signature::{has_valid_v, rentals_contract, verify_rentals_listing_signature};
-use super::types::{ADDRESS_ZERO, ContractRentalListing, RentalListingCreation};
+use super::types::{
+    ADDRESS_ZERO, ContractRentalListing, RentalListingCreation, RentalListingPeriodInput,
+};
 use super::{SharedState, signed_path};
 use crate::market::{Source, is_valid_eth_address, unavailable};
 
@@ -265,6 +267,11 @@ pub async fn create_rentals_listing(
     if body.periods.is_empty() {
         return Err(ApiError::bad_request(
             "The rental listing needs at least one period",
+        ));
+    }
+    if !period_days_fit(&body.periods) {
+        return Err(ApiError::bad_request(
+            "minDays and maxDays must fit a 32-bit integer",
         ));
     }
 
@@ -536,6 +543,13 @@ pub async fn get_rentals_index(State(state): State<SharedState>) -> Response {
     Ok2(StatusCode::OK, super::index::status(state.db.pool()).await).into_response()
 }
 
+/// Whether every period's day bounds fit their `integer` columns.
+fn period_days_fit(periods: &[RentalListingPeriodInput]) -> bool {
+    periods
+        .iter()
+        .all(|p| i32::try_from(p.min_days).is_ok() && i32::try_from(p.max_days).is_ok())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -548,6 +562,21 @@ mod tests {
         assert_eq!(rental_days(raw), vec![7]);
         assert!(all_values(raw, "missing").is_empty());
         assert_eq!(urldecode("a+b%20c%zz"), "a b c%zz");
+    }
+
+    #[test]
+    fn period_days_beyond_the_integer_columns_do_not_fit() {
+        let period = |min_days, max_days| RentalListingPeriodInput {
+            min_days,
+            max_days,
+            price_per_day: "1".to_string(),
+        };
+        assert!(period_days_fit(&[period(1, 30)]));
+        assert!(!period_days_fit(&[
+            period(1, 30),
+            period(1, i64::from(i32::MAX) + 1)
+        ]));
+        assert!(!period_days_fit(&[period(i64::from(i32::MIN) - 1, 1)]));
     }
 
     #[test]

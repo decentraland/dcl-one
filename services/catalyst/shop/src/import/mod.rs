@@ -557,6 +557,13 @@ async fn check_inner(
         return Err(bad("the listing sends no asset"));
     };
     let item_id = (first.asset_type == TradeAssetType::CollectionItem).then_some(first.value);
+    // An unsupported chain is the caller's error, refused before any read.
+    let Some(trade) = proposed_trade(chain_id, signer, sent) else {
+        return Err(bad(format!(
+            "no off-chain marketplace is deployed on chain {}",
+            chain_id.0
+        )));
+    };
     // Eligibility authorizes a listing: the catalogue's authorize read, whose
     // snapshot the facts are read in. It opens after the listing's own read
     // and closes before the rate's, so no pool work waits on its connection.
@@ -572,12 +579,6 @@ async fn check_inner(
         mirror_facts(&mut read.tx, chain_id, first.contract, item_id)
             .await
             .map_err(IntoResponse::into_response)?
-    };
-    let Some(trade) = proposed_trade(chain_id, signer, sent) else {
-        return Err(bad(format!(
-            "no off-chain marketplace is deployed on chain {}",
-            chain_id.0
-        )));
     };
     let mut check = decide(signer, trade, &facts);
     match current_rate(&state.pool)
