@@ -7192,6 +7192,10 @@
           "kind": "regular"
         },
         {
+          "name": "HelpChatBanner.test.tsx",
+          "kind": "regular"
+        },
+        {
           "name": "HelpChatBanner.tsx",
           "kind": "regular"
         },
@@ -16310,7 +16314,7 @@
     },
     {
       "path": "library/ui/apps/sites/help/HelpChatBanner.tsx",
-      "sha256": "178b3921f0f62ab439a1507b259776771be548df7e85534231e13564adce8981"
+      "sha256": "9ed7d65524925c20545411fe14502c719820cfe892a79c307b1948b6e7e498fc"
     },
     {
       "path": "library/ui/apps/sites/help/HelpPage.module.css",

@@ -1,5 +1,5 @@
 import { Button } from '@dcl/one-ui'
-import { useId, type ReactNode } from 'react'
+import { useCallback, useId, useLayoutEffect, useRef, type ReactNode } from 'react'
 import helpGirl from '../assets/help/help_girl.webp'
 import { AnimatedBackground } from '../../../components/AnimatedBackground/AnimatedBackground'
 import styles from './HelpChatBanner.module.css'
@@ -13,10 +13,6 @@ type HelpChatBannerProps = {
   | { onAction?: () => void; emailAction: { address: string; label: string } }
 )
 
-function focusEmail(link: HTMLAnchorElement | null) {
-  link?.focus()
-}
-
 /** The banner that stays at the bottom of the help center and opens the support chat. */
 function HelpChatBanner({
   title,
@@ -26,6 +22,20 @@ function HelpChatBanner({
   emailAction
 }: HelpChatBannerProps) {
   const titleId = useId()
+  const emailLink = useRef<HTMLAnchorElement>(null)
+  const chatHadFocus = useRef(false)
+  const rememberChatFocus = useCallback((button: HTMLButtonElement | null) => {
+    if (!button) return
+    return () => {
+      chatHadFocus.current = button.ownerDocument.activeElement === button
+    }
+  }, [])
+  const hasChatAction = Boolean(onAction)
+  useLayoutEffect(() => {
+    if (!hasChatAction && chatHadFocus.current) emailLink.current?.focus()
+    chatHadFocus.current = false
+  }, [hasChatAction])
+
   return (
     <aside className={styles.root} aria-labelledby={titleId}>
       {!emailAction && (
@@ -42,7 +52,7 @@ function HelpChatBanner({
         </p>
         {emailAction && (
           <Button
-            ref={focusEmail}
+            ref={emailLink}
             size="lg"
             variant="secondary"
             className={styles.action}
@@ -52,7 +62,7 @@ function HelpChatBanner({
           </Button>
         )}
         {onAction && (
-          <Button size="lg" className={styles.action} onClick={onAction}>
+          <Button ref={rememberChatFocus} size="lg" className={styles.action} onClick={onAction}>
             {actionLabel}
           </Button>
         )}
