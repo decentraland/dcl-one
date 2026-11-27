@@ -20,6 +20,13 @@
   gap: var(--dcl-space-16);
 }
 
+/* A call to action's label and its platform mark, spaced as the Button spaces an icon. */
+.label {
+  display: flex;
+  align-items: center;
+  gap: var(--dcl-space-12);
+}
+
 /* The icon file is light; source darkens it the same way on the white Epic button. */
 .epic {
   width: var(--dcl-space-32);
@@ -53,8 +60,14 @@
 }
 
 .altIcon {
+  display: block;
   width: var(--dcl-space-32);
   height: var(--dcl-space-32);
+}
+
+/* An alternative's mark is its only content: as a block it sits in the middle of the icon-only Button. */
+.altMark {
+  display: block;
 }
 
 /* Source's blank 32px slot where the OS logo would be. */
@@ -72,8 +85,7 @@
   background: rgba(255, 255, 255, 0.3);
 }
 
-/* A full-width primary action at the Button large height: its 12px padding around a 32px badge
-   is 56px. Source's is 64px around a 40px badge; that geometry waits on design (B1). */
+/* The store badge is the primary Button across its column. */
 .store {
   width: 100%;
 }
@@ -83,55 +95,13 @@
   height: var(--dcl-space-32);
 }
 
-/* Opt-in landing treatment, measured from the production site's CTA controls. */
+/* Opt-in landing layout: the reference's CTA row and widths on the shared Button. */
 .sourceActions {
   gap: var(--dcl-space-24);
 }
 
 .sourceAction {
-  color: #fcfcfc; /* reference #fcfcfc (MUI contained contrast text), no token */
   width: 304px;
-  height: var(--dcl-space-64);
-  gap: var(--dcl-space-16);
-  padding: 0;
-  border-radius: var(--dcl-radius-lg);
-  font-size: 19.89px;
-  font-weight: 600;
-  letter-spacing: 0.61px;
-  line-height: 1.5;
-}
-
-@media (hover: hover) and (pointer: fine) {
-  .sourceAction:not(:focus-visible) {
-    outline: 3px solid transparent;
-    outline-offset: 4px;
-    transition: outline-color 150ms ease;
-  }
-
-  .sourceAction:hover:not(:focus-visible) {
-    outline-color: var(--dcl-neutrals-white);
-  }
-}
-
-/* The reference keeps its fill on hover and press: the ring above is its only pointer feedback. */
-.sourceActions .sourceAction:is(:hover, :active):not(:disabled) {
-  background: var(--dcl-action-primary);
-}
-
-.sourceActions .sourceEpic:is(:hover, :active):not(:disabled) {
-  background: var(--dcl-neutrals-white);
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .sourceAction:not(:focus-visible) {
-    transition: none;
-  }
-}
-
-.sourceEpic {
-  color: #242129; /* reference #242129 (sites Hero.styled.ts), no token */
-  gap: var(--dcl-space-24);
-  border: 3px solid var(--dcl-neutrals-white);
 }
 
 .sourceEpicIcon {
@@ -140,17 +110,8 @@
   filter: brightness(0);
 }
 
-.sourceAlternative {
-  min-width: var(--dcl-space-24);
-  min-height: var(--dcl-space-24);
-  width: var(--dcl-space-24);
-  height: var(--dcl-space-24);
-  padding: 0;
-  border-radius: 0;
-  line-height: 0;
-}
-
 .sourceAltIcon {
+  display: block;
   width: var(--dcl-space-24);
   height: var(--dcl-space-24);
   filter: brightness(0) invert(1);
@@ -178,10 +139,6 @@
 .sourceStore {
   width: calc(100% - var(--dcl-space-32));
   max-width: 345px;
-  height: var(--dcl-space-64);
-  padding: 0;
-  border-radius: var(--dcl-radius-md);
-  box-shadow: 0 2px var(--dcl-space-8) var(--dcl-transparencies-black-40);
 }
 
 .sourceBadge {
