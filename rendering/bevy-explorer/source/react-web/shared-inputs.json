@@ -14114,7 +14114,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/session/profileStore.ts",
-      "sha256": "77b9829f7c00dd43376d202e7a29e4fa9991e2477676557f0b5f9ef974edd034"
+      "sha256": "f135bc6c01d3418165840e98b1aab4033c38d0f08a48a94162d1b5f22eb2e7ae"
     },
     {
       "path": "library/ui/apps/hud/features/session/useConnectivity.ts",
@@ -15026,7 +15026,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/profileStore.test.ts",
-      "sha256": "702bb335694208371b1944aa1575db8d9a27bc83312e31033b9d6b3c69af7736"
+      "sha256": "317423da34b727a6e00cb2467299097ace651f982d5431b3753b8fd9aebecdfe"
     },
     {
       "path": "library/ui/apps/hud/test/rail.test.tsx",
