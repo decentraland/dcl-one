@@ -28,7 +28,9 @@
 //! serves, and a complete pass of each mirror the route reads for every
 //! network it may return rows of and every configured network the index does
 //! not own, the items one within its money budget for a priced read
-//! ([`mirrors::price_verdict`]).
+//! ([`mirrors::price_verdict`]). A configured native network awaiting its
+//! first publication requires those mirror passes on the served chain,
+//! even without a configured subgraph or any catalogue rows.
 //!
 //! [`CatalogueRead::key`] names what was read (source, network and copy), so
 //! a memo filed under one read never answers for another: a mirror pass, a
@@ -429,6 +431,57 @@ fn mirror_verdict(
     Ok(copy)
 }
 
+/// Whether this process expects to publish the requested network natively.
+fn expects_projection(state: &MarketplaceState, net: ChainNet) -> bool {
+    let indexes = &state.settings.market.indexes;
+    indexes.collections_enabled
+        && indexes.collections_owned.contains(&net)
+        && indexes.serves_mainnet(net)
+        && state.settings.catalogue_chain(net) == Some(net.chain_id())
+}
+
+fn require_mirror_during_takeover(
+    state: &MarketplaceState,
+    network: Network,
+    snapshot: &NetworkState,
+    needs: &[Mirror],
+    purpose: Purpose,
+    now: DateTime<Utc>,
+) -> Result<MirrorCopy, String> {
+    let chain = ChainNet::from(network).chain_id();
+    let absent = needs.iter().find(|mirror| {
+        let (_, pass, pass_chain) = pass_row(snapshot, **mirror);
+        pass.is_none() || pass_chain != Some(chain)
+    });
+    if let Some(mirror) = absent {
+        return Err(format!(
+            "the collections index has not published {} yet and the {} mirror has no complete pass on chain {chain}",
+            network.db_name(),
+            mirror.name(),
+        ));
+    }
+    mirror_verdict(
+        state,
+        &MirrorScope {
+            unowned: &[snapshot],
+            returnable: &[network],
+            served: &[],
+            // A prior stored pass can serve during takeover after the
+            // posture stops configuring the mirror's URL.
+            configured: true,
+            owned: &[],
+            asked: Some(network),
+        },
+        needs,
+        purpose,
+        now,
+    )
+    .map_err(|(_, reason)| format!(
+        "the collections index has not published {} yet and its mirror cannot serve this read: {reason}",
+        network.db_name(),
+    ))
+}
+
 /// The copy a network's catalogue rows come from: the index's projection,
 /// by its generation (every projection raises it, a same-height repair and a
 /// hand-back too, so it is never reused), or the mirrors' passes.
@@ -516,6 +569,18 @@ pub(super) async fn require_collections_on(
         ChainNet::Ethereum => Network::Ethereum,
         ChainNet::Matic => Network::Matic,
     };
+    if expects_projection(state, net) {
+        return require_mirror_during_takeover(
+            state,
+            network,
+            catalogue,
+            &[Mirror::Collections],
+            Purpose::Describe,
+            now,
+        )
+        .map(|copy| copy.oldest(Some(Mirror::Collections)))
+        .map_err(|why| super::owned_items::ReadError::NotReady(Source::CollectionsIndex, why));
+    }
     let configured = state.settings.collection_networks().contains(&network);
     let served = if configured { &[network][..] } else { &[] };
     mirror_verdict(
@@ -639,11 +704,24 @@ async fn open(
         None
     } else {
         let all_unowned: Vec<&NetworkState> = states.iter().filter(|s| !s.owned).collect();
+        let mut preparing = Vec::new();
+        for &snapshot in &unowned {
+            let network =
+                Network::parse_db(&snapshot.network).expect("every catalogue network is known");
+            let net = ChainNet::from(network);
+            if expects_projection(state, net) {
+                require_mirror_during_takeover(state, network, snapshot, needs, purpose, now)
+                    .map_err(|why| refused(Source::CollectionsIndex, why, true))?;
+                preparing.push(network);
+            }
+        }
         // Polygon first, as a missing subgraph is named.
         let mut returnable: Vec<Network> = unowned
             .iter()
-            .filter(|s| s.has_rows)
-            .filter_map(|s| Network::parse_db(&s.network))
+            .filter_map(|s| {
+                let network = Network::parse_db(&s.network)?;
+                (s.has_rows || preparing.contains(&network)).then_some(network)
+            })
             .collect();
         returnable.sort_by_key(|n| *n != Network::Matic);
         let served: Vec<Network> = configured
@@ -658,7 +736,7 @@ async fn open(
                     unowned: &all_unowned,
                     returnable: &returnable,
                     served: &served,
-                    configured: !configured.is_empty(),
+                    configured: !configured.is_empty() || !preparing.is_empty(),
                     owned: &owned_networks,
                     asked: scope,
                 },

@@ -3635,11 +3635,10 @@ Those events are the items added, rescued and edited, the mints (`Issue`),
 the global and item minters and managers, approval, editability,
 completion, creatorship and ownership. The walk keeps them in
 `shop.collection_event`, appended with each window's cursor advance and
-deleted past a rewind. A process that runs the collections mirror
-(`MARKETPLACE_MIRRORS_ENABLED=true`) keeps the log alone. One that does not
-also projects it into `shop.collections` and `shop.items` (see
-"Projection"). Either way, the publication means everything the fold wrote
-is complete to `folded_block`.
+deleted past a rewind. A process projects the log into `shop.collections`
+and `shop.items` for the networks in `MARKETPLACE_COLLECTIONS_INDEX_OWNS`
+(see "Projection"). The collections and items mirrors may still write
+another network. A publication covers the fold through `folded_block`.
 Account inventory and creator rankings require the Polygon log
 publication. Creatorship transitions are indexed by contract and by both
 wallet roles.
@@ -4132,8 +4131,13 @@ under which source serves each network: an ownership change files it anew.
 On the mainnet mirror posture the collections index owns `matic,ethereum`
 by default. The posture turns off the collections and items mirrors and
 leaves their two subgraph URLs unset. An explicit ownership list can keep
-either network on its mirror. Sepolia and Amoy keep both mirrors. Island
-and journey leave ownership empty and their mirrors off.
+either network on its mirror. A start or stop block override retains the
+mirror for the bounded network. Sepolia and Amoy keep both mirrors.
+Island and journey leave ownership empty and their mirrors off.
+
+Until a configured native network first publishes, a scoped or combined
+read needs the mirror proof for that network. A read without its required
+mirror copy returns `503 collections-index`.
 
 **Before switching an existing database**
 
@@ -4191,9 +4195,19 @@ and journey leave ownership empty and their mirrors off.
    COMMIT;
    ```
 
-   Every statement acts only while the index still owns the network, so
-   running the transaction again (after a commit that went unconfirmed)
-   changes nothing the mirror wrote since.
+   For Ethereum, add the two deletes below inside the same transaction,
+   before the ownership update.
+
+   ```sql
+   DELETE FROM shop.v1_royalty_item
+    WHERE EXISTS (SELECT 1 FROM shop.collection_projection
+                  WHERE network = 'ethereum' AND owned_at IS NOT NULL);
+   DELETE FROM shop.v1_royalty_collection
+    WHERE EXISTS (SELECT 1 FROM shop.collection_projection
+                  WHERE network = 'ethereum' AND owned_at IS NOT NULL);
+   ```
+
+   The ownership guard makes a retry safe after the mirror recovers.
 
 3. Restart the writers with the updated settings. The mirror's first
    complete collections pass admits the NFT and sales address loads again.

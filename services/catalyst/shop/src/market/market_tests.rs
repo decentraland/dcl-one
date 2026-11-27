@@ -7637,7 +7637,7 @@ async fn own_polygon(pool: &PgPool) {
 async fn mirror_passes(pool: &PgPool, network: &str, chain: Option<i64>) {
     sqlx::query(
         "INSERT INTO shop.mirror_state (mirror, network, source_url, last_complete_pass_at, chain_id, marks_item_rows) \
-         SELECT m, $1, 'test', timezone('UTC', now()), $2, m = 'items' AND $2 IN (11155111, 80002) \
+         SELECT m, $1, 'test', timezone('UTC', now()), $2, m = 'items' AND COALESCE($2 IN (11155111, 80002), false) \
          FROM unnest(ARRAY['collections', 'items']) m \
          ON CONFLICT (mirror, network) DO UPDATE SET last_complete_pass_at = EXCLUDED.last_complete_pass_at, \
              chain_id = EXCLUDED.chain_id, marks_item_rows = EXCLUDED.marks_item_rows",
@@ -7659,6 +7659,101 @@ fn collection_contracts(body: &Value) -> Vec<String> {
         .collect();
     out.sort();
     out
+}
+
+#[tokio::test]
+async fn a_cold_native_catalogue_waits_for_each_network() {
+    let Some(own) = super::tests::support::OwnDb::create("catalogue-cutover").await else {
+        return;
+    };
+    let pool = &own.pool;
+    let t = tag();
+    let (polygon, ethereum) = (contract_of(&t, 1), contract_of(&t, 2));
+    let mut both = vec![polygon.clone(), ethereum.clone()];
+    both.sort();
+
+    let mut settings = Settings::for_tests();
+    settings.market.indexes.collections_enabled = true;
+    settings.market.indexes.collections_owned = super::chain_walk::ChainNet::ALL.to_vec();
+    let state = Arc::new(super::MarketplaceState::new(
+        pool.clone(),
+        crate::http::Outbound::for_tests(),
+        settings.clone(),
+    ));
+    let app = || market_router(state.clone());
+    let ethereum_page = "/v1/collections?network=ETHEREUM";
+    let polygon_page = "/v1/collections?network=MATIC";
+    let combined_page = "/v1/collections";
+
+    mirrors::collections::upsert(
+        pool,
+        super::graph::Network::Matic,
+        137,
+        false,
+        &[mirrors::collections::fixture(&polygon, "C", CREATOR, true)],
+    )
+    .await
+    .unwrap();
+    own_polygon(pool).await;
+    for page in [ethereum_page, combined_page] {
+        let (status, body) = get(app(), page).await;
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{page}: {body}");
+        assert_eq!(body["source"], "collections-index", "{page}: {body}");
+    }
+    let (status, body) = get(app(), polygon_page).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(collection_contracts(&body), [polygon.clone()]);
+
+    // A pass for a different chain and a legacy pass with no chain cannot
+    // serve while Ethereum's native catalogue is cold.
+    for chain in [Some(11155111), None] {
+        mirror_passes(pool, "ethereum", chain).await;
+        let (status, body) = get(app(), ethereum_page).await;
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body}");
+        assert_eq!(body["source"], "collections-index", "{body}");
+    }
+    mirror_passes(pool, "ethereum", Some(1)).await;
+    let (status, body) = get(app(), ethereum_page).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert!(collection_contracts(&body).is_empty());
+
+    mirrors::collections::upsert(
+        pool,
+        super::graph::Network::Ethereum,
+        1,
+        false,
+        &[mirrors::collections::fixture(&ethereum, "C", CREATOR, true)],
+    )
+    .await
+    .unwrap();
+    mirror_passes(pool, "ethereum", Some(1)).await;
+    let (status, body) = get(app(), ethereum_page).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(collection_contracts(&body), [ethereum.clone()]);
+    let (status, body) = get(app(), combined_page).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(collection_contracts(&body), both);
+
+    settings.market.indexes.collections_owned = vec![super::chain_walk::ChainNet::Matic];
+    settings.eth_collections_subgraph_url = Some("http://127.0.0.1:9".into());
+    let partial = Arc::new(super::MarketplaceState::new(
+        pool.clone(),
+        crate::http::Outbound::for_tests(),
+        settings,
+    ));
+    let (status, body) = get(market_router(partial), combined_page).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(collection_contracts(&body), both);
+
+    super::catalogue::owning::own(pool, "ethereum", 1, 101, 0).await;
+    sqlx::query("DELETE FROM shop.mirror_state WHERE network = 'ethereum'")
+        .execute(pool)
+        .await
+        .unwrap();
+    let (status, body) = get(app(), combined_page).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(collection_contracts(&body), both);
+    own.drop().await;
 }
 
 /// A read returns rows only of networks the gate checked: a network left by

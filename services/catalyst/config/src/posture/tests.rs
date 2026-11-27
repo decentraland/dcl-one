@@ -32,6 +32,60 @@ fn parsed(pairs: &[(&str, &str)]) -> Config {
 }
 
 #[test]
+fn a_bounded_mainnet_walk_retains_its_mirror() {
+    for (chain, owned, mirrored, projected) in [
+        (
+            "MATIC",
+            "ethereum",
+            "MATIC_COLLECTIONS_SUBGRAPH_URL",
+            "ETH_COLLECTIONS_SUBGRAPH_URL",
+        ),
+        (
+            "ETHEREUM",
+            "matic",
+            "ETH_COLLECTIONS_SUBGRAPH_URL",
+            "MATIC_COLLECTIONS_SUBGRAPH_URL",
+        ),
+    ] {
+        for bound in ["START", "STOP"] {
+            let key = format!("MARKETPLACE_INDEX_{bound}_BLOCK_{chain}");
+            let values = [
+                (ENV, "mirror"),
+                ("DATABASE_URL", "postgres:///catalyst"),
+                (key.as_str(), "26000000"),
+            ];
+            let vars = expanded(Posture::Mirror, &values);
+            assert_eq!(vars["MARKETPLACE_COLLECTIONS_INDEX_OWNS"], owned, "{key}");
+            assert_eq!(vars["MARKETPLACE_MIRRORS_ENABLED"], "true", "{key}");
+            assert!(vars.contains_key(mirrored), "{key}");
+            assert!(!vars.contains_key(projected), "{key}");
+            check(&parsed(&values), &lookup(&env(&values))).unwrap();
+        }
+    }
+}
+
+#[test]
+fn a_parsed_replay_bound_with_ownership_and_no_mirror_is_refused() {
+    let values = [(ENV, "mirror"), ("DATABASE_URL", "postgres:///catalyst")];
+    let mut config = parsed(&values);
+    // CLI options are parsed after the posture expands its defaults.
+    config.marketplace.marketplace_index_stop_block_matic = Some(16_000_000);
+    let error = check(&config, &lookup(&env(&values))).unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("MARKETPLACE_INDEX_STOP_BLOCK_MATIC"),
+        "{error}"
+    );
+    assert!(
+        error
+            .to_string()
+            .contains("MARKETPLACE_COLLECTIONS_INDEX_OWNS"),
+        "{error}"
+    );
+}
+
+#[test]
 fn the_mirror_sources_follow_the_catalogue_chain_pair() {
     let main = expanded(Posture::Mirror, &[]);
     assert_eq!(main["MARKETPLACE_COLLECTIONS_INDEX_OWNS"], "matic,ethereum");

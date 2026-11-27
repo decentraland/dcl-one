@@ -149,8 +149,23 @@ fn sepolia(lookup: &Lookup) -> bool {
         == Some(ChainPair::Testnet)
 }
 
-const ETH_COLLECTION_NAMES: [&str; 2] = ["ethereum", "mainnet"];
-const MATIC_COLLECTION_NAMES: [&str; 2] = ["matic", "polygon"];
+#[derive(Clone, Copy)]
+struct CollectionsNetwork {
+    names: [&'static str; 2],
+    replay_start: &'static str,
+    replay_stop: &'static str,
+}
+
+const ETH_COLLECTIONS: CollectionsNetwork = CollectionsNetwork {
+    names: ["ethereum", "mainnet"],
+    replay_start: "MARKETPLACE_INDEX_START_BLOCK_ETHEREUM",
+    replay_stop: "MARKETPLACE_INDEX_STOP_BLOCK_ETHEREUM",
+};
+const MATIC_COLLECTIONS: CollectionsNetwork = CollectionsNetwork {
+    names: ["matic", "polygon"],
+    replay_start: "MARKETPLACE_INDEX_START_BLOCK_MATIC",
+    replay_stop: "MARKETPLACE_INDEX_STOP_BLOCK_MATIC",
+};
 
 fn owns_collections(raw: &str, names: [&str; 2]) -> bool {
     raw.split(',')
@@ -168,29 +183,38 @@ fn walks_mainnet_collections(lookup: &Lookup) -> bool {
 }
 
 fn default_collections_ownership(lookup: &Lookup) -> Option<String> {
-    Some(if walks_mainnet_collections(lookup) {
-        "matic,ethereum".into()
-    } else {
-        String::new()
-    })
+    Some(
+        [MATIC_COLLECTIONS, ETH_COLLECTIONS]
+            .into_iter()
+            .filter(|network| can_default_to_projection(lookup, *network))
+            .map(|network| network.names[0])
+            .collect::<Vec<_>>()
+            .join(","),
+    )
 }
 
-fn serves_projected_collections(lookup: &Lookup, names: [&str; 2]) -> bool {
+fn can_default_to_projection(lookup: &Lookup, network: CollectionsNetwork) -> bool {
     walks_mainnet_collections(lookup)
+        && set(lookup, network.replay_start).is_none()
+        && set(lookup, network.replay_stop).is_none()
+}
+
+fn serves_projected_collections(lookup: &Lookup, network: CollectionsNetwork) -> bool {
+    can_default_to_projection(lookup, network)
         && set(lookup, "MARKETPLACE_COLLECTIONS_INDEX_OWNS")
-            .is_some_and(|raw| owns_collections(&raw, names))
+            .is_some_and(|raw| owns_collections(&raw, network.names))
 }
 
 fn default_collections_mirrors(lookup: &Lookup) -> Option<String> {
     Some(
-        (!serves_projected_collections(lookup, ETH_COLLECTION_NAMES)
-            || !serves_projected_collections(lookup, MATIC_COLLECTION_NAMES))
+        (!serves_projected_collections(lookup, ETH_COLLECTIONS)
+            || !serves_projected_collections(lookup, MATIC_COLLECTIONS))
         .to_string(),
     )
 }
 
 fn eth_collections_source(lookup: &Lookup) -> Option<String> {
-    if serves_projected_collections(lookup, ETH_COLLECTION_NAMES) {
+    if serves_projected_collections(lookup, ETH_COLLECTIONS) {
         return None;
     }
     Some(
@@ -204,7 +228,7 @@ fn eth_collections_source(lookup: &Lookup) -> Option<String> {
 }
 
 fn matic_collections_source(lookup: &Lookup) -> Option<String> {
-    if serves_projected_collections(lookup, MATIC_COLLECTION_NAMES) {
+    if serves_projected_collections(lookup, MATIC_COLLECTIONS) {
         return None;
     }
     Some(
@@ -963,36 +987,47 @@ fn refuse_unfiltered_profiles(config: &Config, env: &Lookup) -> anyhow::Result<(
              but MARKETPLACE_NFT_INDEX_ENABLED is off: unset it to walk the index"
         );
     }
-    // A live collections projection supplies a network's addresses
-    // without a subgraph. For the rest, a local mirror needs its URL.
-    if config.marketplace.marketplace_mirrors_enabled {
-        let market = &config.marketplace;
-        let projects = market.marketplace_collections_index_enabled
-            && ChainPair::from_eth_network(&config.node.eth_network) == Some(ChainPair::Mainnet)
-            && market.marketplace_index_chain_id_ethereum == 1
-            && market.marketplace_index_chain_id_matic == 137;
-        let owns = &market.marketplace_collections_index_owns;
-        let upstreams = &config.market_upstreams;
-        for (key, url, names) in [
-            (
-                "ETH_COLLECTIONS_SUBGRAPH_URL",
-                &upstreams.eth_collections_subgraph_url,
-                ETH_COLLECTION_NAMES,
-            ),
-            (
-                "MATIC_COLLECTIONS_SUBGRAPH_URL",
-                &upstreams.matic_collections_subgraph_url,
-                MATIC_COLLECTION_NAMES,
-            ),
-        ] {
-            if !(projects && owns_collections(owns, names)) && Config::non_empty(url).is_none() {
-                anyhow::bail!(
-                    "{ENV}=mirror walks the nft index over the contracts its collections mirror finds, \
-                     but {key} is empty: that network's mirror has nothing to read and its ownership \
-                     never publishes. Unset it to read Decentraland's subgraph, or set \
-                     MARKETPLACE_MIRRORS_ENABLED=false on a node whose catalogue another node fills"
-                );
-            }
+    let market = &config.marketplace;
+    let projects = market.marketplace_collections_index_enabled
+        && ChainPair::from_eth_network(&config.node.eth_network) == Some(ChainPair::Mainnet)
+        && market.marketplace_index_chain_id_ethereum == 1
+        && market.marketplace_index_chain_id_matic == 137;
+    let upstreams = &config.market_upstreams;
+    for (key, url, network, bounded) in [
+        (
+            "ETH_COLLECTIONS_SUBGRAPH_URL",
+            &upstreams.eth_collections_subgraph_url,
+            ETH_COLLECTIONS,
+            market.marketplace_index_start_block_ethereum.is_some()
+                || market.marketplace_index_stop_block_ethereum.is_some(),
+        ),
+        (
+            "MATIC_COLLECTIONS_SUBGRAPH_URL",
+            &upstreams.matic_collections_subgraph_url,
+            MATIC_COLLECTIONS,
+            market.marketplace_index_start_block_matic.is_some()
+                || market.marketplace_index_stop_block_matic.is_some(),
+        ),
+    ] {
+        let owns =
+            projects && owns_collections(&market.marketplace_collections_index_owns, network.names);
+        let has_url = Config::non_empty(url).is_some();
+        if owns && bounded && !(market.marketplace_mirrors_enabled && has_url) {
+            let [name, _] = network.names;
+            let (start, stop) = (network.replay_start, network.replay_stop);
+            anyhow::bail!(
+                "{ENV}=mirror cannot rely on a bounded {name} projection without a mirror. \
+                 Remove the {start} or {stop} override, or remove {name} from \
+                 MARKETPLACE_COLLECTIONS_INDEX_OWNS, enable MARKETPLACE_MIRRORS_ENABLED and set {key}"
+            );
+        }
+        if market.marketplace_mirrors_enabled && !owns && !has_url {
+            anyhow::bail!(
+                "{ENV}=mirror walks the nft index over the contracts its collections mirror finds, \
+                 but {key} is empty: that network's mirror has nothing to read and its ownership \
+                 never publishes. Unset it to read Decentraland's subgraph, or set \
+                 MARKETPLACE_MIRRORS_ENABLED=false on a node whose catalogue another node fills"
+            );
         }
     }
     // The list a mirror derives from its own endpoints, or the explicit
