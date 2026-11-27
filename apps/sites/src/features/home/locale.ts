@@ -23,6 +23,10 @@ const en = {
     view_all: "View All",
     by: "by",
     jumpIn: "Jump in",
+    started: "Started {elapsed}",
+    copyLink: "Copy event link",
+    copied: "Copied",
+    copyFailed: "Could not copy the event link",
   },
   media: {
     play: "Play",
@@ -69,6 +73,10 @@ export const homeCopy = {
       view_all: "Ver todo",
       by: "por",
       jumpIn: "Entrar",
+      started: "Empezó {elapsed}",
+      copyLink: "Copiar enlace del evento",
+      copied: "Copiado",
+      copyFailed: "No se pudo copiar el enlace",
     },
     media: {
       play: "Reproducir",
@@ -110,6 +118,10 @@ export const homeCopy = {
       view_all: "Voir tout",
       by: "par",
       jumpIn: "Rejoindre",
+      started: "A commencé {elapsed}",
+      copyLink: "Copier le lien de l’événement",
+      copied: "Copié",
+      copyFailed: "Impossible de copier le lien",
     },
     media: {
       play: "Lire",
@@ -151,6 +163,10 @@ export const homeCopy = {
       view_all: "查看全部",
       by: "作者",
       jumpIn: "进入",
+      started: "{elapsed}开始",
+      copyLink: "复制活动链接",
+      copied: "已复制",
+      copyFailed: "无法复制链接",
     },
     media: {
       play: "播放",
@@ -192,6 +208,10 @@ export const homeCopy = {
       view_all: "모두 보기",
       by: "제작자",
       jumpIn: "입장",
+      started: "{elapsed} 시작",
+      copyLink: "이벤트 링크 복사",
+      copied: "복사됨",
+      copyFailed: "링크를 복사할 수 없습니다",
     },
     media: {
       play: "재생",
@@ -233,6 +253,10 @@ export const homeCopy = {
       view_all: "すべて見る",
       by: "作成者",
       jumpIn: "参加する",
+      started: "{elapsed}に開始",
+      copyLink: "イベントのリンクをコピー",
+      copied: "コピーしました",
+      copyFailed: "リンクをコピーできませんでした",
     },
     media: {
       play: "再生",
@@ -253,3 +277,15 @@ export const homeCopy = {
     },
   },
 } satisfies Record<SitesLocale, HomeCopy>;
+
+
+export function homeLiveActivity(locale: SitesLocale) {
+  const { started, copyLink, copied, copyFailed } = homeCopy[locale].whatsOn;
+  const relative = new Intl.RelativeTimeFormat(locale, { style: "short", numeric: "auto" });
+  return {
+    started: (minutes: number) => started.replace("{elapsed}", relative.format(-minutes, "minute")),
+    copyLink,
+    copied,
+    copyFailed,
+  };
+}

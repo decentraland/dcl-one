@@ -18,6 +18,7 @@ const FOUNDATION_COLOR = "#9d76e3";
 export function whatsOnCards(
   cards: LiveNowCard[],
   profiles: Record<string, Profile>,
+  now = Date.now(),
 ): WhatsOnCardData[] {
   return cards.map((card) => {
     const address = card.creatorAddress?.toLowerCase();
@@ -29,6 +30,25 @@ export function whatsOnCards(
         : getAvatarBackgroundColor(
             getDisplayName(name, profile?.hasClaimedName, card.creatorAddress),
           );
+    const startedAt = card.startedAt ? Date.parse(card.startedAt) : NaN;
+    const started =
+      Number.isFinite(startedAt) && startedAt <= now
+        ? {
+            dateTime: new Date(startedAt).toISOString(),
+            minutes: Math.floor((now - startedAt) / 60_000),
+          }
+        : undefined;
+    const people = card.connectedAddresses?.flatMap((address) => {
+      const person = profiles[address];
+      return person?.face
+        ? [
+            {
+              name: getDisplayName(person.name, person.hasClaimedName, address),
+              avatarUrl: person.face,
+            },
+          ]
+        : [];
+    });
     return {
       id: card.id,
       title: card.title,
@@ -39,6 +59,9 @@ export function whatsOnCards(
       users: card.users,
       usersLabel: `${card.users} online`,
       jumpHref: `/play/?position=${encodeURIComponent(card.coordinates)}`,
+      started,
+      people,
+      share: !card.place,
       creator: name
         ? {
             name,

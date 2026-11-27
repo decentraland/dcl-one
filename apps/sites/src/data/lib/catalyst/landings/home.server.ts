@@ -138,7 +138,10 @@ async function loadHomeLiveNow(opts: GetOptions): Promise<HomeLiveData> {
   await withDeadline(
     async (signal) => {
       const bounded = { ...opts, signal };
-      const { events, scenes } = await readLiveNow(bounded, { world: false });
+      const { events, scenes } = await readLiveNow(bounded, {
+        world: false,
+        with_connected_users: true,
+      });
       signal.throwIfAborted();
       const built = buildHomeLiveCards(events ?? [], scenes ?? []);
       read.cards = built;
@@ -149,11 +152,12 @@ async function loadHomeLiveNow(opts: GetOptions): Promise<HomeLiveData> {
         (await withDeployers(built, bounded).catch(() => null)) ?? built;
       signal.throwIfAborted();
       read.cards = cards;
-      const creators = cards.flatMap((card) =>
-        card.creatorAddress ? [card.creatorAddress] : [],
-      );
+      const people = cards.flatMap((card) => [
+        ...(card.creatorAddress ? [card.creatorAddress] : []),
+        ...(card.connectedAddresses ?? []),
+      ]);
       const profiles =
-        (await loadProfiles([...creators, ...VIBE_ADDRESSES], bounded).catch(
+        (await loadProfiles([...people, ...VIBE_ADDRESSES], bounded).catch(
           () => null,
         )) ?? {};
       signal.throwIfAborted();

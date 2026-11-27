@@ -20,6 +20,9 @@ const LiveEvent = z.object({
   y: z.number(),
   user: z.string().nullish(),
   user_name: z.string().nullish(),
+  start_at: z.string().nullish().catch(undefined),
+  next_start_at: z.string().nullish().catch(undefined),
+  connected_addresses: z.array(z.string()).nullish().catch(undefined),
 });
 export type LiveEvent = z.infer<typeof LiveEvent>;
 const LiveEvents = z.object({ data: z.array(z.unknown()) });
@@ -28,6 +31,8 @@ export type { HotScene };
 
 /** A hot scene with fewer people than this is not live. */
 const MIN_USERS = 5;
+/** A card shows a sample of the connected players. */
+const MAX_CONNECTED_FACES = 3;
 
 const Places = z.object({
   data: z.array(
@@ -76,6 +81,8 @@ export type LiveNowCard = {
   creatorName?: string;
   /** The live event's `user_name`, which the reference's events page shows before any profile name. */
   userName?: string;
+  startedAt?: string;
+  connectedAddresses?: string[];
   isGenesisPlaza: boolean;
   /** A scene card (true) or a live event card (false). */
   place: boolean;
@@ -130,6 +137,11 @@ export function joinLiveNow(liveEvents: LiveEvent[], hotScenes: HotScene[]): Liv
         coordinates: coordsKey(event.x, event.y),
         creatorAddress: event.user ?? undefined,
         userName: event.user_name || undefined,
+        startedAt: event.next_start_at ?? event.start_at ?? undefined,
+        connectedAddresses: event.connected_addresses
+          ? [...new Set(event.connected_addresses.filter(isEthAddress).map((address) => address.toLowerCase()))]
+              .slice(0, MAX_CONNECTED_FACES)
+          : undefined,
         isGenesisPlaza: false,
         place: false,
       });
@@ -173,7 +185,7 @@ export function parsed<T>(schema: z.ZodType<T>, rows: unknown[]): T[] {
  * The live events and the hot scenes; a failed read is null, so a page shows what the other read found, as the
  * reference does. `world: false` keeps Genesis City events only (the home page); the events page reads both.
  */
-export async function readLiveNow(opts: GetOptions, query: { world?: false } = {}): Promise<{ events: LiveEvent[] | null; scenes: HotScene[] | null; copy: CopyStamp | null }> {
+export async function readLiveNow(opts: GetOptions, query: { world?: false; with_connected_users?: true } = {}): Promise<{ events: LiveEvent[] | null; scenes: HotScene[] | null; copy: CopyStamp | null }> {
   let copy: CopyStamp | null = null;
   // 20 is one page of the live list, the page decentraland.org reads: the join needs each live event that can sit
   // in a busy scene, which is more than the cards a rail shows.

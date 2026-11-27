@@ -33,3 +33,48 @@ describe('WhatsOn', () => {
     expect(html).not.toContain('a.png&quot;)')
   })
 })
+
+describe('when the live event has a start and connected players', () => {
+  it('should expose the start, the real profile picture and the copy-link action', () => {
+    const html = renderToStaticMarkup(
+      <WhatsOn
+        title="What's On"
+        cards={[
+          {
+            id: 'ev',
+            title: 'Party',
+            image: null,
+            href: '/events?id=ev',
+            users: 1,
+            usersLabel: '1 online',
+            share: true,
+            started: { dateTime: '2026-11-27T10:00:00.000Z', minutes: 5 },
+            people: [{ name: 'Ada', avatarUrl: '/profile-images/entities/face.png' }]
+          }
+        ]}
+        labels={{
+          live: 'Live',
+          by: 'by',
+          jumpIn: 'Jump In',
+          activity: {
+            started: (minutes) => `Started ${minutes} min ago`,
+            copyLink: 'Copy event link',
+            copied: 'Copied',
+            copyFailed: 'Could not copy'
+          }
+        }}
+        carouselLabels={{
+          previous: 'Previous',
+          next: 'Next',
+          goTo: (n) => `Go to ${n}`,
+          position: (n, total) => `${n} of ${total}`
+        }}
+        viewAll={{ label: 'View All', href: '/events' }}
+      />
+    )
+
+    expect(html).toContain('dateTime="2026-11-27T10:00:00.000Z">Started 5 min ago')
+    expect(html).toContain('src="/profile-images/entities/face.png"')
+    expect(html).toContain('aria-label="Copy event link"')
+  })
+})

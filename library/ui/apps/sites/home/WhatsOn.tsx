@@ -1,6 +1,9 @@
 import { useId, type ReactNode } from 'react'
 import { JumpInCTA } from '../../../components/JumpInCTA/JumpInCTA'
 import { Button } from '../../../components/Button/Button'
+import { CopyFeedback } from '../../../components/CopyFeedback/CopyFeedback'
+import { ProfilePic } from '../../../components/ProfilePic/ProfilePic'
+import { GeneralCopy } from '../../../foundations/icons'
 import { Carousel, type CarouselLabels } from '../shared/Carousel'
 import { cssUrl } from '../shared/cssUrl'
 import dclLogo from '../assets/dcl-logo.svg'
@@ -17,6 +20,9 @@ type WhatsOnCardData = {
   usersLabel?: string
   /** The in-world position the hover call jumps to. */
   jumpHref?: string
+  started?: { dateTime: string; minutes: number }
+  people?: readonly { name: string; avatarUrl: string }[]
+  share?: boolean
   /** `foundation` shows the Decentraland logo as the avatar, as source does for Genesis Plaza;
       `color` is the disc behind the face, source's hash of the display name. */
   creator?: {
@@ -31,7 +37,17 @@ type WhatsOnCardData = {
 type WhatsOnProps = {
   title: string
   cards: readonly WhatsOnCardData[]
-  labels: { live: string; by: string; jumpIn: string }
+  labels: {
+    live: string
+    by: string
+    jumpIn: string
+    activity?: {
+      started: (minutes: number) => string
+      copyLink: string
+      copied: string
+      copyFailed: string
+    }
+  }
   /** The phone carousel's controls. */
   carouselLabels: CarouselLabels
   viewAll: { label: string; href: string; onClick?: () => void }
@@ -102,6 +118,13 @@ function Card({
   onClick?: () => void
   onJumpInClick?: () => void
 }) {
+  const activity = labels.activity
+  const shareHref =
+    card.share && activity
+      ? typeof window === 'undefined'
+        ? card.href
+        : new URL(card.href, window.location.href).href
+      : undefined
   return (
     <Root className={styles.card} data-card={card.title}>
       <div className={styles.paper}>
@@ -116,7 +139,25 @@ function Card({
               <Icon className={styles.usersIcon} d={PERSON} name="PermIdentityRounded" />
               <span aria-hidden="true">{card.users}</span>
               <span className={styles.visuallyHidden}>{card.usersLabel}</span>
+              {card.people?.length ? (
+                <span className={styles.people} aria-hidden="true">
+                  {card.people.map((person, index) => (
+                    <ProfilePic
+                      key={index}
+                      name={person.name}
+                      src={person.avatarUrl}
+                      alt=""
+                      size={20}
+                    />
+                  ))}
+                </span>
+              ) : null}
             </span>
+          ) : null}
+          {card.started && activity ? (
+            <time className={styles.users} dateTime={card.started.dateTime}>
+              {activity.started(card.started.minutes)}
+            </time>
           ) : null}
         </div>
         <div className={styles.mediaBox}>
@@ -147,14 +188,35 @@ function Card({
               </p>
             </div>
           ) : null}
-          {card.jumpHref ? (
+          {card.jumpHref || shareHref ? (
             <div className={styles.jumpBox}>
-              <JumpInCTA
-                className={styles.jump}
-                href={card.jumpHref}
-                label={labels.jumpIn}
-                onClick={onJumpInClick}
-              />
+              {card.jumpHref ? (
+                <JumpInCTA
+                  className={styles.jump}
+                  href={card.jumpHref}
+                  label={labels.jumpIn}
+                  onClick={onJumpInClick}
+                />
+              ) : null}
+              {shareHref && activity ? (
+                <CopyFeedback
+                  value={shareHref}
+                  copiedLabel={activity.copied}
+                  errorAnnouncement={activity.copyFailed}
+                >
+                  {(copy) => (
+                    <Button
+                      variant="quaternary"
+                      iconOnly
+                      size="md"
+                      aria-label={activity.copyLink}
+                      onClick={copy}
+                    >
+                      <GeneralCopy size={24} aria-hidden="true" />
+                    </Button>
+                  )}
+                </CopyFeedback>
+              ) : null}
             </div>
           ) : null}
         </div>

@@ -2,7 +2,7 @@ import { SitesLocaleContext, sitesLanguage, type SitesLocaleHandle, sitesFooterC
 import { useContext, useEffect, useRef } from "react";
 
 import SitesLayout from "@/features/components/chrome/SitesLayout";
-import { homeCopy } from "@/features/home/locale";
+import { homeCopy, homeLiveActivity } from "@/features/home/locale";
 import { parseCookies } from "@/core/lib/telemetry/session";
 import { homeEventHref } from "@/features/home/links";
 import { homeDownloadActions } from "@/features/home/actions";
@@ -119,7 +119,7 @@ export default function Home({ loaderData }: Route.ComponentProps) {
         />
         <WhatsOn
           title={copy.whatsOn.title}
-          labels={copy.whatsOn}
+          labels={{ ...copy.whatsOn, activity: homeLiveActivity(locale) }}
           carouselLabels={labels}
           viewAll={{ label: copy.whatsOn.view_all, href: "/events", onClick: clicks.viewAll }}
           background={<AnimatedBackground />}
