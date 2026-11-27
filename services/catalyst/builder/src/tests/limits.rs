@@ -1299,6 +1299,10 @@ fn the_builder_doc_states_each_bound_the_code_enforces() {
             span(crate::items::places::IDLE_TIMEOUT),
         ),
         (
+            "items::places::DECLARED_GRACE",
+            span(crate::items::places::DECLARED_GRACE),
+        ),
+        (
             "items::video::MAX_UPLOADS",
             count(video::MAX_UPLOADS as u64),
         ),
@@ -1488,6 +1492,7 @@ fn the_builder_doc_states_each_bound_the_code_enforces() {
         "access::FILE_PROVIDERS",
         "access::LOCK_HOLDS",
         "chain_state::STALE_AFTER",
+        "publication_chain::RECHECK",
         "collections::deployment::DEPLOYMENT_TTL",
         "collections::deployment::KEPT_CONTRACTS",
         "kept::FAILURE_TTL",

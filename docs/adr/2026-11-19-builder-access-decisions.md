@@ -28,10 +28,11 @@ source is down.
   registry.
 - **Grants are values.** A decision returns a value with private fields that
   only `access.rs` builds. The store functions that read or change a
-  collection or item take that value, so a route that skips the decision
-  doesn't compile. Only the public search of published collections, the
-  published collections' contract addresses (`GET /v1/addresses`) and the
-  file reads by hash take none, by design. A write decides again inside its own transaction, after
+  collection or item take that value, and the curation status writes take the
+  admin proof, so a route that skips the decision doesn't compile. Only the
+  public search of published collections, the published collections'
+  contract addresses (`GET /v1/addresses`) and the file reads by hash take
+  neither, by design. A write decides again inside its own transaction, after
   it locks its rows.
 - **Deny by default, fail closed.** A decision grants as soon as one role
   answers yes. It refuses only when every source it needs answered no. When
@@ -43,15 +44,23 @@ source is down.
   rows and the chain copy, returns its database connection, and only then
   reads the committee. It reads the registry before it takes a connection,
   and a write decides again inside its transaction from the same registry
-  read.
+  read. A write the committee admitted is the one exception: it reads the
+  committee again inside its transaction, holding its locked rows for at
+  most the read's 10-second bound.
 - **One owner.** A standard collection's owner is its chain creator once the
   copy holds it, and its stored `eth_address` before. The owner is derived on
-  each request and stored nowhere. An item in a collection is decided by its
+  each request, so `POST /v1/collections/{id}/owner/sync` stores nothing and
+  answers the collection's body. An item in a collection is decided by its
   collection: its owner, an on-chain manager or the provider's manager. The
   item row's stored `eth_address` decides only for an item with no
   collection, so after a transfer the chain creator holds the roles on the
   collection's items and the wallet stored before holds none, and the wallet
   that last saved a third-party item decides nothing.
+- **The lifecycle routes.** Only the owner of a standard collection sets its
+  lock. The owner, an on-chain manager or the provider's manager deletes a
+  collection and accepts its terms of service. Those, or a current committee
+  member, publish a standard collection and sync its owner; the committee's
+  admission stands when the publish decides again inside its transaction.
 - **Managers come from the chain.** Only a collection on chain has managers,
   read from the copy. A request body never sets them.
 - **Current committee, from the collections subgraph.** The builder reads
@@ -68,8 +77,9 @@ source is down.
   decision waiting when it started shares it. A setting set empty, a
   read that fails, or an answer with an account that is not an address or
   more than 1,000 members can't tell: that answer lasts 30 seconds, every
-  decision the committee could change answers 503, and so does
-  `GET /v1/committee`, which answers from the same read. The node can't check which chain the subgraph indexes; the
+  decision the committee could change answers 503, and so do
+  `GET /v1/committee` and the console's committee list, which answer from
+  the same read. The node can't check which chain the subgraph indexes; the
   deployment points it at the builder's chain.
 - **Third-party managers.** A third-party collection's provider is the
   provider id of its URN. Its managers, in the order
@@ -83,9 +93,20 @@ source is down.
   - nobody otherwise.
 
   The wallet that created a third-party collection decides nothing; a
-  third-party collection has no owner. A provider's managers read and save
-  every collection and item of the provider, delete its items, and read the
-  files those items name in a name whose writer holds the bytes.
+  third-party collection has no owner. A provider's managers read, save,
+  delete and accept the terms of every collection and item of the provider,
+  and read the files those items name in a name whose writer holds the
+  bytes.
+- **Virtual third parties.** A wallet changes a provider's virtual third
+  party (`PATCH /v1/thirdParties/{id}`) only when the virtual third party
+  lists it and it manages the provider by the rule above
+  (`access::changes_virtual_third_party`), so a change never acts for a
+  wallet the registry leaves out of an approved or unapproved provider. Once
+  the registry has the provider, every manager the registry lists removes
+  the virtual third party (`DELETE`), whether it lists that manager or not
+  (`access::removes_virtual_third_party`). Both answer 404 for a missing one
+  before they read the registry, 503 while the registry can't tell, and
+  decide inside their transaction, with the provider locked.
 - **Third-party creates.** A save that creates a third-party collection
   under a provider the registry or a virtual third party has is a
   provider manager's. Under a provider neither has, any signer creates it,
@@ -165,7 +186,8 @@ source is down.
   reads at most 5 seconds later. A committee decision waits for a subgraph
   read that starts after it arrives, or, for a read, up to 5 seconds before.
 - While the committee can't tell, a request that only the committee could
-  grant answers 503 rather than 401. Published content stays readable as any
+  grant answers 503 rather than 401, and `GET /v1/committee` answers 503
+  rather than an empty list. Published content stays readable as any
   signer reads it, a committee member included.
 - Every by-id read is a decision, so it answers 503 when the chain copy is
   older than its decision bound, as writes do, with one exception: a
@@ -197,6 +219,10 @@ source is down.
   public RPC, close to an hour on Amoy and longer on Polygon mainnet,
   before it could answer any committee decision; the subgraph answers in
   one request.
+- **A committee that can't be read admitting only the configured admin
+  addresses.** It would refuse every member with a 401 as if nobody were on
+  the committee while the source is down, and give the admin addresses a
+  role on the upstream routes, which they don't have.
 - **The committee as every wallet that ever curated.** Past curators would
   keep the role for good.
 - **A registry read kept for a time, or one read per provider.** A kept read

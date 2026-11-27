@@ -902,7 +902,7 @@ impl Slack {
 
 #[tokio::test]
 async fn the_curators_hear_of_each_publish_on_slack_and_in_one_forum_topic() {
-    use crate::tests::forum_fake::FakeForum;
+    use crate::curation::forum::fake::FakeForum;
     let forum = FakeForum::default();
     let origin = forum.start().await;
     let slack = Slack::default();

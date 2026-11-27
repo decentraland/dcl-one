@@ -635,7 +635,7 @@ impl Op {
             Slots => allowed(manages),
             ForumPost => Expect::Status(match (signed, manages) {
                 (false, _) => 401,
-                (true, true) => 503,
+                (true, true) => 409,
                 (true, false) => 401,
             }),
             ThirdParty => {

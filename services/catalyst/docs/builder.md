@@ -269,6 +269,7 @@ step, or a bound of the review, validator or outside-service areas).
 | Bytes of a video | 250,000,000 bytes | `items::video::DEFAULT_MAX_BYTES` |
 | Time for a video's body to arrive | 20 minutes | `items::video::DEFAULT_DEADLINE` |
 | Idle window: time without a byte before a file or video upload ends | 30 seconds | `items::places::IDLE_TIMEOUT` |
+| Time an upload that declares its length is spared past the time its length needs at the pace | 5 seconds | `items::places::DECLARED_GRACE` |
 | Video uploads at once on the node, `BUILDER_VIDEO_UPLOADS_MAX` unset | 32 | `items::video::MAX_UPLOADS` |
 | The most `BUILDER_VIDEO_UPLOADS_MAX` sets, from 1 | 256 | `MAX_VIDEO_UPLOADS_SETTING` |
 | Video uploads at once of a wallet | 1 | `items::video::MAX_UPLOADS_PER_SIGNER` |

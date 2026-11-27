@@ -1475,7 +1475,7 @@ impl Op {
             Op::DeleteCollection | Op::Terms | Op::ForumPost if !owner && !manager => {
                 unauthorized_user(&caller.address(), "collections", &collection)
             }
-            Op::ForumPost if kind.published() || kind.third_party() => ok(),
+            Op::ForumPost if kind.published() => ok(),
             Op::ForumPost => refused(409, "The collection is not published"),
             Op::ApprovalData if !committee => unauthorized(),
             Op::ApprovalData if kind.third_party() => refused(401, NOT_PUBLISHED),
@@ -2779,7 +2779,7 @@ async fn a_posted_collection_answers_its_link_to_its_posters_and_takes_replies_f
             .await;
             let expected = match caller {
                 Anonymous | Validator => (401, json!("Unauthenticated")),
-                Owner | Manager => (409, json!("Forum post already exists")),
+                Owner | Manager => (200, Value::Null),
                 _ => (
                     401,
                     json!(format!(
@@ -2789,7 +2789,7 @@ async fn a_posted_collection_answers_its_link_to_its_posters_and_takes_replies_f
                 ),
             };
             if (status.as_u16(), body["error"].clone()) != expected
-                || (status == StatusCode::CONFLICT && body["data"]["forum_link"] != posted["data"])
+                || (status == StatusCode::OK && body["data"] != posted["data"])
             {
                 failures.push(format!("{mount} post as {caller:?}: {status} {body}"));
             }

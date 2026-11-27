@@ -49,9 +49,9 @@ async fn app() -> Option<App> {
         .unwrap(),
     );
     Some(App {
+        router: registry.published(&pool, crate::router(state)),
         pool,
         registry,
-        router: crate::router(state),
     })
 }
 

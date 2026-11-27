@@ -185,16 +185,28 @@ enum BodyShape {
 struct Finding {
     rule: String,
     check: String,
-    #[allow(dead_code)]
+    #[allow(
+        dead_code,
+        reason = "deny_unknown_fields accepts the verdict only with it; nothing reads it"
+    )]
     severity: Severity,
     message: String,
     #[serde(rename = "where")]
     location: Option<String>,
-    #[allow(dead_code)]
+    #[allow(
+        dead_code,
+        reason = "deny_unknown_fields accepts the verdict only with it; nothing reads it"
+    )]
     body_shape: Option<BodyShape>,
-    #[allow(dead_code)]
+    #[allow(
+        dead_code,
+        reason = "deny_unknown_fields accepts the verdict only with it; nothing reads it"
+    )]
     measured: Option<f64>,
-    #[allow(dead_code)]
+    #[allow(
+        dead_code,
+        reason = "deny_unknown_fields accepts the verdict only with it; nothing reads it"
+    )]
     limit: Option<f64>,
     fix: Option<String>,
     docs: Option<String>,
@@ -209,7 +221,10 @@ struct ResultItem {
     passed: Option<bool>,
     findings: Vec<Finding>,
     visual_summary: Option<String>,
-    #[allow(dead_code)]
+    #[allow(
+        dead_code,
+        reason = "deny_unknown_fields accepts the verdict only with it; nothing reads it"
+    )]
     unsupported: Option<bool>,
     error: Option<String>,
 }

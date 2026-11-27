@@ -92,7 +92,9 @@ pub struct Wallet {
 
 /// The signer is a current committee member.
 #[derive(Debug)]
-pub struct OnCommittee(());
+pub struct OnCommittee {
+    member: String,
+}
 
 /// May read the collection; `full` also reads its unpublished items.
 #[derive(Debug)]
@@ -229,6 +231,12 @@ impl Wallet {
 
     pub fn address(&self) -> &str {
         &self.address
+    }
+}
+
+impl OnCommittee {
+    pub fn member(&self) -> &str {
+        &self.member
     }
 }
 
@@ -382,24 +390,6 @@ impl CollectionGrant for CollectionEdit {
 
 impl CollectionGrant for CollectionSync {
     fn collection(&self) -> Uuid {
-        self.id
-    }
-}
-
-/// A grant to record a review of one collection: a curation of it or of its
-/// items ([`crate::curation`]); only this module's write grants implement it.
-pub trait CurationGrant: sealed::Sealed {
-    fn curated(&self) -> Uuid;
-}
-
-impl CurationGrant for CollectionManage {
-    fn curated(&self) -> Uuid {
-        self.id
-    }
-}
-
-impl CurationGrant for ThirdPartyPublish {
-    fn curated(&self) -> Uuid {
         self.id
     }
 }
@@ -868,7 +858,9 @@ pub async fn committee(state: &SharedState, signer: &Signer) -> Result<OnCommitt
         return Err(ApiError::unauthorized("Unauthorized")
             .with_data(json!({ "eth_address": signer.as_str() })));
     }
-    Ok(OnCommittee(()))
+    Ok(OnCommittee {
+        member: signer.as_str().to_string(),
+    })
 }
 
 /// A collection row's owner, provider and contract, with its provider's
@@ -927,7 +919,9 @@ async fn own_draft_while_stale(
 pub async fn known_committee_member(state: &SharedState, signer: &Signer) -> Option<OnCommittee> {
     known_committee(state, Since::read(), signer.as_str())
         .await
-        .then_some(OnCommittee(()))
+        .then(|| OnCommittee {
+            member: signer.as_str().to_string(),
+        })
 }
 
 /// `GET /v1/collections/:id`: any signer reads a published collection's
@@ -2129,7 +2123,10 @@ async fn reviewed(
     Ok((id, c, registry))
 }
 
-#[allow(clippy::too_many_arguments)]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "each argument is one source the curation decision reads"
+)]
 async fn admit(
     state: &SharedState,
     signer: &Signer,

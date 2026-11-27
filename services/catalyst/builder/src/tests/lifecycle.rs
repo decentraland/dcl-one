@@ -1604,12 +1604,12 @@ async fn publish_reads_the_copy_when_it_holds_the_collection() {
 
 #[tokio::test]
 async fn a_standard_publish_opens_the_collections_forum_topic_once() {
-    let forum = super::forum_fake::FakeForum::default();
+    let forum = crate::curation::forum::fake::FakeForum::default();
     let origin = forum.start().await;
     let committee = FakeCommittee::with(&[&address(COMMITTEE_KEY)]);
     let Some(node) = node(Options {
         committee: Some(committee),
-        forum: Some(super::forum_fake::FakeForum::forum(&origin)),
+        forum: Some(crate::curation::forum::fake::FakeForum::forum(&origin)),
         ..Options::default()
     })
     .await

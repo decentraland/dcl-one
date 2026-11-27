@@ -94,6 +94,18 @@ impl FakeForum {
         origin
     }
 
+    /// Knows the topic `topic` named `slug`, whose first post is `post`.
+    pub fn seed(&self, post: i64, topic: i64, slug: &str) {
+        let mut inner = self.0.lock().unwrap();
+        inner.topics.push(Topic {
+            id: topic,
+            slug: slug.into(),
+            posts: vec![post],
+            ..Topic::default()
+        });
+        inner.posts.push((post, topic));
+    }
+
     /// The forum settings that reach this fake at `origin`.
     pub fn forum(origin: &str) -> crate::curation::forum::Forum {
         crate::curation::forum::Forum {

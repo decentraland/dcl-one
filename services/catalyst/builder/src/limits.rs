@@ -16,9 +16,10 @@
 //!   of documents ([`Listing::admit`]).
 //!   `GET /v1/addresses` and the public collection search spend
 //!   [`ADDRESSES_TOKENS`] more ([`charge`]).
-//! - The newsletter also spends from a per-source
+//! - The review routes also spend from a per-wallet budget of their own
+//!   ([`spend_review`]); the newsletter from a per-source
 //!   ([`spend_newsletter_source`]), per-email and node-wide
-//!   ([`spend_newsletter_email`]) budget of its own.
+//!   ([`spend_newsletter_email`]) one.
 //!
 //! - An item or collection save spends one more write token per
 //!   [`BYTES_PER_WRITE_TOKEN`] of its body and its KiB of the wallet's and
@@ -63,6 +64,10 @@ pub const SOURCE_WRITES: u32 = 2_400;
 pub const WALLET_READS: u32 = 2_400;
 /// Writes of one signer a minute.
 pub const WALLET_WRITES: u32 = 1_200;
+/// Review writes (retry, appeal, comment) of one signer a minute, as builder-server.
+pub const REVIEW_WRITES: u32 = 30;
+/// Review timeline reads of one signer a minute, as builder-server.
+pub const REVIEW_READS: u32 = 120;
 /// Newsletter subscriptions from one source address an hour.
 pub const NEWSLETTER_PER_SOURCE: u32 = 10;
 /// Newsletter subscriptions of one email a day.
@@ -139,6 +144,8 @@ pub struct Limits {
     pub source_writes: RateLimiter,
     pub wallet_reads: RateLimiter,
     pub wallet_writes: RateLimiter,
+    pub review_writes: RateLimiter,
+    pub review_reads: RateLimiter,
     pub newsletter_sources: RateLimiter,
     pub newsletter_emails: RateLimiter,
     pub newsletter_node: RateLimiter,
@@ -237,6 +244,8 @@ impl Default for Limits {
             source_writes: budget(SOURCE_WRITES, MINUTE),
             wallet_reads: budget(WALLET_READS, MINUTE),
             wallet_writes: budget(WALLET_WRITES, MINUTE),
+            review_writes: budget(REVIEW_WRITES, MINUTE),
+            review_reads: budget(REVIEW_READS, MINUTE),
             newsletter_sources: budget(NEWSLETTER_PER_SOURCE, HOUR),
             newsletter_emails: budget(NEWSLETTER_PER_EMAIL, DAY),
             newsletter_node: budget(NEWSLETTER_PER_NODE, HOUR),
@@ -266,6 +275,8 @@ impl Limits {
             source_writes: all(),
             wallet_reads: all(),
             wallet_writes: all(),
+            review_writes: all(),
+            review_reads: all(),
             newsletter_sources: all(),
             newsletter_emails: all(),
             newsletter_node: all(),
@@ -349,6 +360,17 @@ pub fn spend_wallet(state: &SharedState, signer: &str, method: &Method) -> Resul
         &limits.wallet_reads
     } else {
         &limits.wallet_writes
+    };
+    limits.take(budget, signer, (state.now)())
+}
+
+/// The review routes' own budget for `signer`: its timeline reads or its writes.
+pub fn spend_review(state: &SharedState, signer: &str, read: bool) -> Result<(), ApiError> {
+    let limits = &state.limits;
+    let budget = if read {
+        &limits.review_reads
+    } else {
+        &limits.review_writes
     };
     limits.take(budget, signer, (state.now)())
 }

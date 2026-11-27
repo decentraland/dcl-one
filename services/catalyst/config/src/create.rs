@@ -18,6 +18,15 @@ pub struct CreateConfig {
     #[arg(long, env = "BUILDER_POLYGON_RPC_URL", hide_env_values = true)]
     pub builder_polygon_rpc_url: Option<String>,
 
+    /// Comma-separated wallets that may use the builder's curation console
+    /// (`/v1/collections/curation`); they hold no role on any other builder route.
+    #[arg(long, env = "BUILDER_ADMIN_ADDRESSES", default_value = "")]
+    pub builder_admin_addresses: String,
+
+    /// Bearer of the builder's curation console; unset fails closed.
+    #[arg(long, env = "CATALYRST_BUILDER_ADMIN_TOKEN", hide_env_values = true)]
+    pub catalyrst_builder_admin_token: Option<String>,
+
     /// The newsletter service's API base (public http(s)) a subscription is
     /// forwarded to; the forward needs all three newsletter settings, and
     /// without them a subscription is answered and goes nowhere. The node
@@ -105,6 +114,16 @@ pub struct CreateConfig {
     /// The public builder API base for forum item thumbnails.
     #[arg(long, env = "BUILDER_SERVER_URL")]
     pub builder_server_url: Option<String>,
+
+    /// The secret the wearable validator signs its claims, lease extensions
+    /// and verdicts with (at least 32 bytes); unset, no automated review is
+    /// requested and the validator routes refuse.
+    #[arg(
+        long,
+        env = "WEARABLE_VALIDATOR_CALLBACK_SECRET",
+        hide_env_values = true
+    )]
+    pub wearable_validator_callback_secret: Option<String>,
 
     /// Bearer of the moderator routes; unset refuses them.
     #[arg(
@@ -201,6 +220,8 @@ mod tests {
         let c = cli;
         assert!(!c.create.create_writes_enabled, "creator writes are opt-in");
         assert!(c.create.builder_polygon_rpc_url.is_none());
+        assert_eq!(c.create.builder_admin_addresses, "");
+        assert!(c.create.catalyrst_builder_admin_token.is_none());
         assert!(
             c.create.newsletter_service_url.is_none()
                 && c.create.newsletter_publication_id.is_none()
@@ -230,12 +251,20 @@ mod tests {
             "postgres:///catalyst",
             "--create-writes-enabled",
             "true",
+            "--builder-admin-addresses",
+            "0xABC",
             "--camera-reel-max-images-per-user",
             "7",
         ])
         .unwrap();
         assert!(cli.create.create_writes_enabled);
-        assert_eq!(cli.create.camera_reel_max_images_per_user, 7);
+        assert_eq!(
+            (
+                cli.create.builder_admin_addresses.as_str(),
+                cli.create.camera_reel_max_images_per_user
+            ),
+            ("0xABC", 7)
+        );
     }
 
     #[test]

@@ -1210,17 +1210,25 @@ The builder's own rows: a `builder.collections` row is a creator's draft.
 
 - `eth_address` is its owner: the signed-fetch signer at creation, which
   every write checks again.
-- A standard collection is published once the copy holds its contract
-  address, computed before its deployment, the node holds a verified
-  `builder.collection_publications` receipt for it, or an item of it has an
-  on-chain id.
+- A standard collection is published through
+  `builder.collection_publications`, whose verified finish writes its
+  contract address and collections-v2 urn, or it arrives with the contract
+  address computed before its deployment. A deployment the client sent
+  itself is recorded by `POST /v1/collections/{id}/publish`: once the copy,
+  or else the Polygon RPC, holds the contract at that address, each item
+  gets the on-chain id of its place in creation order, and the collection
+  reads as published from then on.
 - A third-party collection carries its provider urn from the draft on
   (`third_party_id` is the urn without its last segment). It is published
-  once an item of it has an item curation.
+  once an item of it has an item curation: `POST
+  /v1/collections/{id}/publish` submits the items a provider manager names,
+  with its slot cheque ("Builder curations workload").
 - `publication_pending` freezes the draft and its items while the standard
   publication row is in flight.
 
-The collection body and the collection listings read the copy
+The curation console's under-review listing reads the collections subgraph
+through the marketplace's subgraph readers and adds no table; its committee
+list reads the collections subgraph ("Curation committee" below). The collection body and the collection listings read the copy
 ("Builder collection listings workload" below), and so do the item bodies and
 listings ("Builder items workload" below).
 
@@ -5009,11 +5017,17 @@ Invariants:
 
 Every builder decision only the committee could grant (`builder::access`:
 the committee's listings, another wallet's collections and items, draft
-reads) and `GET /v1/committee` read the current members of the curation
-committee from the Polygon collections subgraph
-(`MATIC_COLLECTIONS_SUBGRAPH_URL`, else the builder's network's on
-Decentraland's subgraph worker; the accounts it marks `isCommitteeMember`),
-not from a table.
+reads, curation writes, forum replies), `GET /v1/committee` and the curation
+console's committee list read the current members of the curation committee
+from the Polygon collections subgraph (`MATIC_COLLECTIONS_SUBGRAPH_URL`, else
+the builder's network's on Decentraland's subgraph worker; the accounts it
+marks `isCommitteeMember`), not from a table.
+`BUILDER_ADMIN_ADDRESSES` grants no committee role (its wallets' signed
+requests, like the curation console's bearer, open only the operator's item
+status routes and `GET /v1/collections/curation`). A curation write reads the
+committee again inside its transaction, after its row locks: a curator the
+committee admitted and the assignee it names must still be members (401
+otherwise).
 
 Shop's mainnet `committee` index (`MARKETPLACE_COMMITTEE_INDEX_ENABLED`) walks
 the two Committee contracts' `MemberSet` logs from the first one's deployment
