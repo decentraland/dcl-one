@@ -20,8 +20,17 @@
 //! An item's metadata is bound to the network's chain: a Polygon token's
 //! item by its id, an Ethereum v1 token's by its collection URN and wearable
 //! id. A collection token the catalogue does not hold has no item and no
-//! category. LAND and Estate transfers live in the land-authz index, which
-//! keeps no sender or transaction, and are not read here (#2363).
+//! category.
+//!
+//! LAND and Estate transfers come from the land-authz index
+//! (`land_authz.authz_event`, kind `transfer`, with its sender and
+//! transaction), category `parcel` or `estate`, on the same Ethereum
+//! snapshot and by the same rules, up to the lower of the sales publication
+//! and the land-authz fold. They are read only while the land-authz index
+//! of the node's registries is ready and every transfer it holds has its
+//! sender and transaction (the indexer repairs the older rows); otherwise
+//! Ethereum's collection transfers are still served and the leg names
+//! `land-authz-index`.
 
 use std::cmp::Reverse;
 use std::collections::BTreeSet;
@@ -145,9 +154,16 @@ fn rows_sql(net: ChainNet) -> String {
 /// sale's executions and transfers share their block, which bounds the
 /// probe to the token's sales in that block.
 fn settled_sql(e: &str) -> String {
+    settled_sql_on(e, &format!("{e}.network"), &format!("{e}.contract_address"))
+}
+
+/// [`settled_sql`] for a log whose network is `network` and whose token's
+/// contract is `contract` (the land-authz log names neither as the nft
+/// index does).
+fn settled_sql_on(e: &str, network: &str, contract: &str) -> String {
     format!(
         "EXISTS (SELECT 1 FROM shop.sale_asset a JOIN shop.sale_execution x USING (network, block_number, log_index) \
-             WHERE a.network = {e}.network AND a.token_id = {e}.token_id AND a.contract_address = {e}.contract_address \
+             WHERE a.network = {network} AND a.token_id = {e}.token_id AND a.contract_address = {contract} \
                AND a.price > 0 AND a.currency = $6 AND a.block_number = {e}.block_number \
                AND (x.tx_hash = {e}.tx_hash OR coalesce({e}.tx_hash, '') = '') \
                AND (x.kind <> 'trade' OR NOT EXISTS (SELECT FROM shop.sale_asset other \
@@ -156,28 +172,101 @@ fn settled_sql(e: &str) -> String {
     )
 }
 
+/// The LAND and Estate side of Ethereum's read, from the land-authz log.
+/// `$1` the wallet, `$2` the network, `$3` the cap of each side, `$4` the
+/// zero address, `$5` the LAND registry, `$6` the network's MANA, `$7` the
+/// Estate registry, `$8` the land-authz network. Bounded by the sales
+/// publication and the land-authz fold, whichever is lower; each side walks
+/// its own transfer index newest first, as [`rows_sql`] does.
+fn land_rows_sql() -> String {
+    let side = |sent: bool| {
+        let (mine, other) = if sent {
+            ("from_address", "account")
+        } else {
+            ("account", "from_address")
+        };
+        let mint = if sent {
+            ""
+        } else {
+            " AND e.from_address <> $4"
+        };
+        format!(
+            "(SELECT {sent} AS sent, e.block_number, e.log_index, e.block_time, \
+                     e.token_address AS contract_address, e.token_id::text AS token_id, \
+                     e.from_address, e.account AS to_address, e.tx_hash, NULL::text AS item_id, \
+                     CASE WHEN e.token_address = $5 THEN 'parcel' ELSE 'estate' END AS category \
+              FROM land_authz.authz_event e CROSS JOIN bound b \
+              WHERE e.kind = 'transfer' AND e.{mine} = $1 AND e.{other} <> $1{mint} \
+                AND e.token_address IN ($5, $7) AND e.block_number <= b.upto AND NOT {settled} \
+              ORDER BY e.block_time DESC, e.block_number DESC, e.log_index DESC LIMIT $3)",
+            settled = settled_sql_on("e", "$2", "e.token_address"),
+        )
+    };
+    format!(
+        "WITH bound AS (SELECT least(p.block_number, c.folded_block) AS upto \
+                        FROM shop.sale_publication p JOIN land_authz.index_cursor c ON c.network = $8 \
+                        WHERE p.network = $2) \
+         {sent} UNION ALL {received}",
+        sent = side(true),
+        received = side(false),
+    )
+}
+
+/// Whether the land-authz log may answer on this snapshot: its index of the
+/// node's registries is ready ([`crate::land_authz::indexer::observation_ready`])
+/// and every transfer it holds has its sender and transaction.
+async fn land_ready(
+    conn: &mut sqlx::PgConnection,
+    land: crate::land_authz::LandNetwork,
+) -> Result<bool, sqlx::Error> {
+    let ready = crate::land_authz::indexer::cursor_observed(&mut *conn, land.network)
+        .await?
+        .is_some_and(|cursor| {
+            crate::land_authz::indexer::observation_ready(
+                &cursor,
+                land.land_registry,
+                land.estate_registry,
+            )
+        });
+    if !ready {
+        return Ok(false);
+    }
+    let unrepaired: bool = sqlx::query_scalar(
+        "SELECT EXISTS (SELECT 1 FROM land_authz.authz_event \
+                        WHERE kind = 'transfer' AND (from_address IS NULL OR tx_hash IS NULL))",
+    )
+    .fetch_one(&mut *conn)
+    .await?;
+    Ok(!unrepaired)
+}
+
 /// Why a network is left out.
 enum Missing {
     Publication,
     Failed(anyhow::Error),
 }
 
+type Keyed = (bool, (Reverse<i64>, Reverse<i64>, Reverse<i32>), Transfer);
+
 /// One network's transfers on its sales publication snapshot, each side
-/// newest first and capped, keyed for the merge.
+/// newest first and capped, keyed for the merge; on Ethereum, LAND and
+/// Estate transfers too when the land-authz log may answer, else the
+/// source that left them out.
 async fn read_network(
     state: &MarketplaceState,
     net: ChainNet,
     address: &str,
     cap: i64,
-) -> Result<Vec<(bool, (Reverse<i64>, Reverse<i64>, Reverse<i32>), Transfer)>, Missing> {
+) -> Result<(Vec<Keyed>, Option<&'static str>), Missing> {
     let now = Utc::now();
     let mut snap = sale_fold::snapshot(&state.pool, &[net], now)
         .await
         .map_err(Missing::Failed)?
         .ok_or(Missing::Publication)?;
     let chain = net.chain_id();
-    let rows: Vec<Row> = sqlx::query_as(sqlx::AssertSqlSafe(rows_sql(net)))
-        .bind(address.to_lowercase())
+    let wallet = address.to_lowercase();
+    let mut rows: Vec<Row> = sqlx::query_as(sqlx::AssertSqlSafe(rows_sql(net)))
+        .bind(&wallet)
         .bind(net.db_name())
         .bind(cap)
         .bind(ZERO_ADDRESS)
@@ -187,6 +276,17 @@ async fn read_network(
         .fetch_all(&mut *snap.transaction)
         .await
         .map_err(|e| Missing::Failed(e.into()))?;
+    let mut left_out = None;
+    if net == ChainNet::Ethereum {
+        match read_land(&mut snap.transaction, state, &wallet, cap).await {
+            Ok(Some(land)) => rows.extend(land),
+            Ok(None) => left_out = Some(Source::LandAuthzIndex.name()),
+            Err(e) => {
+                tracing::warn!(error = %e, "activity: the LAND transfers read failed");
+                left_out = Some(Source::LandAuthzIndex.name());
+            }
+        }
+    }
     if Utc::now() > snap.expires_at {
         return Err(Missing::Publication);
     }
@@ -194,7 +294,7 @@ async fn read_network(
         .ok()
         .and_then(|id| ChainId::try_from(id).ok())
         .ok_or_else(|| Missing::Failed(anyhow::anyhow!("no wire chain id for {chain}")))?;
-    Ok(rows
+    let rows = rows
         .into_iter()
         .map(|r| {
             let key = (
@@ -220,7 +320,38 @@ async fn read_network(
             };
             (r.sent, key, transfer)
         })
-        .collect())
+        .collect();
+    Ok((rows, left_out))
+}
+
+/// The wallet's LAND and Estate transfers on the Ethereum snapshot `tx`;
+/// `None` when the node has no LAND network or the land-authz log may not
+/// answer ([`land_ready`]).
+async fn read_land(
+    tx: &mut sqlx::Transaction<'static, sqlx::Postgres>,
+    state: &MarketplaceState,
+    wallet: &str,
+    cap: i64,
+) -> Result<Option<Vec<Row>>, sqlx::Error> {
+    let Some(land) = state.land_network() else {
+        return Ok(None);
+    };
+    if !land_ready(&mut *tx, land).await? {
+        return Ok(None);
+    }
+    let chain = ChainNet::Ethereum.chain_id();
+    sqlx::query_as(sqlx::AssertSqlSafe(land_rows_sql()))
+        .bind(wallet)
+        .bind(ChainNet::Ethereum.db_name())
+        .bind(cap)
+        .bind(ZERO_ADDRESS)
+        .bind(land.land_registry)
+        .bind(listings::mana_token(chain))
+        .bind(land.estate_registry)
+        .bind(land.network)
+        .fetch_all(&mut **tx)
+        .await
+        .map(Some)
 }
 
 /// The wallet's newest `cap` transfers on each side, from the networks
@@ -243,7 +374,8 @@ pub async fn transfers_of_address(
     let (mut sent, mut received) = (Vec::new(), Vec::new());
     for (net, read) in reads {
         match read {
-            Ok(rows) => {
+            Ok((rows, left_out)) => {
+                legs.unavailable.extend(left_out);
                 for (is_sent, key, transfer) in rows {
                     let side = if is_sent { &mut sent } else { &mut received };
                     side.push(((key.0, net.db_name(), key.1, key.2), transfer));
@@ -261,19 +393,32 @@ pub async fn transfers_of_address(
     for (side, out) in [(sent, &mut legs.sent), (received, &mut legs.received)] {
         let mut side = side;
         side.sort_by(|a, b| a.0.cmp(&b.0));
-        out.extend(side.into_iter().take(cap as usize).map(|(_, t)| t));
+        out.extend(
+            side.into_iter()
+                .take(crate::market::casts::page(cap))
+                .map(|(_, t)| t),
+        );
     }
     legs
 }
 
 #[cfg(test)]
 mod tests {
+    #![allow(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        clippy::cast_possible_wrap,
+        clippy::cast_precision_loss,
+        reason = "test fixtures use small literal values"
+    )]
+
     use super::*;
     use crate::market::tests::support::OwnDb;
     use std::sync::Arc;
 
     const ME: &str = "0x00000000000000000000000000000000000000a1";
     const OTHER: &str = "0x00000000000000000000000000000000000000b0";
+    const CARL: &str = "0x00000000000000000000000000000000000000c0";
     const WEARABLES: &str = "0x00000000000000000000000000000000000c011e";
     const EMOTES: &str = "0x00000000000000000000000000000000000e3073";
     const AMOY_ITEMS: &str = "0x0000000000000000000000000000000000a30e70";
@@ -320,6 +465,28 @@ mod tests {
         .unwrap();
     }
 
+    const LAND: &str = crate::land_authz::LAND_REGISTRY_MAINNET;
+    const ESTATE: &str = crate::land_authz::ESTATE_REGISTRY_MAINNET;
+
+    /// The land-authz index of the mainnet registries, folded at `folded`
+    /// and published `age_minutes` ago.
+    async fn publish_land(pool: &sqlx::PgPool, folded: i64, age_minutes: i32) {
+        sqlx::query(
+            "INSERT INTO land_authz.index_cursor (network, land_registry, estate_registry, last_block, folded_block, folded_at, full_replay_started) \
+             VALUES ($1, $2, $3, $4, $4, timezone('UTC', now()) - make_interval(mins => $5), true) \
+             ON CONFLICT (network) DO UPDATE SET last_block = EXCLUDED.last_block, folded_block = EXCLUDED.folded_block, \
+                 folded_at = EXCLUDED.folded_at",
+        )
+        .bind(crate::land_authz::NETWORK_MAINNET)
+        .bind(LAND)
+        .bind(ESTATE)
+        .bind(folded)
+        .bind(age_minutes)
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+
     struct Seed<'a>(&'a sqlx::PgPool);
 
     impl Seed<'_> {
@@ -350,6 +517,65 @@ mod tests {
             .bind(from)
             .bind(to)
             .bind(hash)
+            .execute(self.0)
+            .await
+            .unwrap();
+        }
+
+        /// A LAND or Estate transfer in the land-authz log, with its
+        /// sender and transaction (`None`: indexed before they were kept).
+        #[allow(
+            clippy::too_many_arguments,
+            reason = "fixture: one argument per log field"
+        )]
+        async fn land_transfer(
+            &self,
+            block: i64,
+            registry: &str,
+            token: &str,
+            from: &str,
+            to: &str,
+            hash: Option<String>,
+        ) {
+            sqlx::query(
+                "INSERT INTO land_authz.authz_event (block_number, log_index, block_time, token_address, kind, token_id, account, from_address, tx_hash) \
+                 VALUES ($1, 0, 1700000000 + $1, $2, 'transfer', $3::numeric, $4, $5, $6)",
+            )
+            .bind(block)
+            .bind(registry)
+            .bind(token)
+            .bind(to)
+            .bind(from)
+            .bind(hash)
+            .execute(self.0)
+            .await
+            .unwrap();
+        }
+
+        /// An Ethereum sale of a LAND or Estate token in the ledger.
+        async fn land_sale(&self, block: i64, registry: &str, token: &str, price: i64, hash: &str) {
+            sqlx::query(
+                "INSERT INTO shop.sale_execution (network, block_number, log_index, tx_hash, venue, kind, block_time) \
+                 VALUES ('ethereum', $1, 9, $2, $3, 'order', 1700000000 + $1)",
+            )
+            .bind(block)
+            .bind(hash)
+            .bind(VENUE)
+            .execute(self.0)
+            .await
+            .unwrap();
+            sqlx::query(
+                "INSERT INTO shop.sale_asset (network, block_number, log_index, ordinal, public_id, beneficiary, kind, \
+                     contract_address, token_id, seller, buyer, price, currency) \
+                 VALUES ('ethereum', $1, 9, 0, $1 || '-0', $2, 'order', $3, $4::numeric, $5, $2, $6, $7)",
+            )
+            .bind(block)
+            .bind(OTHER)
+            .bind(registry)
+            .bind(token)
+            .bind(ME)
+            .bind(price)
+            .bind(listings::mana_token(1))
             .execute(self.0)
             .await
             .unwrap();
@@ -464,6 +690,7 @@ mod tests {
         let pool = &db.pool;
         let seed = Seed(pool);
         publish_ledger(pool).await;
+        publish_land(pool, height(), 0).await;
         let zero = ZERO_ADDRESS;
         let b = height() - 100;
         let at = |net: &str, block: i64, log: i32| format!("{net}-{block}-{log}");
@@ -701,6 +928,138 @@ mod tests {
         assert_eq!(
             (legs.sent.len() + legs.received.len(), unavailable(&legs)),
             (0, vec!["nft-index"])
+        );
+        db.drop().await;
+    }
+
+    /// LAND and Estate transfers come from the land-authz log beside
+    /// Ethereum's collection transfers, by the same rules: sent and received
+    /// (a mint left out, never one to oneself), a transfer that settled a
+    /// LAND sale shows only as that sale, up to the lower of the sales
+    /// publication and the land-authz fold. While the land-authz index is
+    /// not ready for the node's registries, or still holds a transfer
+    /// without its sender or transaction, LAND is left out and named, and
+    /// the collections are still served.
+    #[tokio::test]
+    async fn a_wallet_sees_its_land_and_estate_transfers_from_the_land_index() {
+        let Some(db) = OwnDb::create("activity_land_transfers").await else {
+            return;
+        };
+        let pool = &db.pool;
+        let seed = Seed(pool);
+        publish_ledger(pool).await;
+        let b = height() - 100;
+        publish_land(pool, b + 50, 0).await;
+        let zero = ZERO_ADDRESS;
+        let at = |block: i64| format!("ethereum-{block}-0");
+
+        seed.land_transfer(b + 1, LAND, "100", ME, OTHER, Some(tx(101)))
+            .await;
+        seed.land_transfer(b + 2, ESTATE, "5", OTHER, ME, Some(tx(102)))
+            .await;
+        seed.land_transfer(b + 3, LAND, "101", zero, ME, Some(tx(103)))
+            .await;
+        seed.land_transfer(b + 4, LAND, "102", ME, ME, Some(tx(104)))
+            .await;
+        // Sold: the sale's transaction settles it; another block's sale of
+        // the same token does not.
+        seed.land_transfer(b + 5, LAND, "200", ME, OTHER, Some(tx(105)))
+            .await;
+        seed.land_sale(b + 5, LAND, "200", 5, &tx(105)).await;
+        seed.land_transfer(b + 6, ESTATE, "6", ME, OTHER, Some(tx(106)))
+            .await;
+        seed.land_sale(b + 1, ESTATE, "6", 5, &tx(61)).await;
+        // A registry the node is not configured with, and past the fold.
+        seed.land_transfer(b + 7, V1, "7", OTHER, ME, Some(tx(107)))
+            .await;
+        seed.land_transfer(b + 60, LAND, "100", OTHER, ME, Some(tx(160)))
+            .await;
+        // A collection transfer on Ethereum, served whatever LAND's state.
+        seed.transfer("ethereum", b + 8, 1, V1, "41", OTHER, ME, Some(tx(108)))
+            .await;
+
+        let state = node(pool, true).await;
+        let legs = transfers_of_address(&state, ME, 500).await;
+        assert_eq!(unavailable(&legs), Vec::<&str>::new());
+        assert_eq!(ids(&legs.sent), vec![at(b + 6), at(b + 1)]);
+        assert_eq!(
+            ids(&legs.received),
+            vec![format!("ethereum-{}-1", b + 8), at(b + 2)]
+        );
+        let parcel = serde_json::to_value(&legs.sent[1]).unwrap();
+        assert_eq!(
+            (
+                parcel["from"].as_str(),
+                parcel["to"].as_str(),
+                parcel["contractAddress"].as_str(),
+                parcel["tokenId"].as_str(),
+                parcel["category"].as_str(),
+                parcel["itemId"].as_str(),
+                parcel["txHash"].as_str(),
+                parcel["timestamp"].as_i64(),
+                parcel["network"].as_str(),
+                parcel["chainId"].as_u64(),
+            ),
+            (
+                Some(ME),
+                Some(OTHER),
+                Some(LAND),
+                Some("100"),
+                Some("parcel"),
+                None,
+                Some(tx(101).as_str()),
+                Some((1_700_000_000 + b + 1) * 1000),
+                Some("ETHEREUM"),
+                Some(1),
+            )
+        );
+        assert_eq!(legs.received[1].category.as_deref(), Some("estate"));
+
+        // The fold moves up to the publication: the later transfer shows.
+        publish_land(pool, height(), 0).await;
+        let legs = transfers_of_address(&state, ME, 500).await;
+        assert_eq!(
+            legs.received.first().map(|t| t.id.clone()),
+            Some(at(b + 60))
+        );
+
+        // A transfer still without its transaction leaves LAND out.
+        seed.land_transfer(b + 9, LAND, "300", OTHER, CARL, None)
+            .await;
+        let legs = transfers_of_address(&state, ME, 500).await;
+        assert_eq!(unavailable(&legs), vec!["land-authz-index"]);
+        assert_eq!(
+            (ids(&legs.sent), ids(&legs.received)),
+            (vec![], vec![format!("ethereum-{}-1", b + 8)])
+        );
+        sqlx::query("UPDATE land_authz.authz_event SET tx_hash = $1 WHERE block_number = $2")
+            .bind(tx(109))
+            .bind(b + 9)
+            .execute(pool)
+            .await
+            .unwrap();
+        assert_eq!(
+            unavailable(&transfers_of_address(&state, ME, 500).await),
+            Vec::<&str>::new()
+        );
+
+        // A fold older than the readiness window, or an index of other
+        // registries, leaves LAND out too.
+        publish_land(pool, height(), 31).await;
+        let legs = transfers_of_address(&state, ME, 500).await;
+        assert_eq!(
+            (legs.sent.len(), unavailable(&legs)),
+            (0, vec!["land-authz-index"])
+        );
+        publish_land(pool, height(), 0).await;
+        sqlx::query("UPDATE land_authz.index_cursor SET estate_registry = $1")
+            .bind(V1)
+            .execute(pool)
+            .await
+            .unwrap();
+        assert_eq!(
+            unavailable(&transfers_of_address(&state, ME, 500).await),
+            vec!["land-authz-index"]
         );
         db.drop().await;
     }

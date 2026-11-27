@@ -8,9 +8,6 @@
   border-radius: var(--r-md);
   overflow: hidden;
 }
-.searchRow input::placeholder {
-  color: #9a9a9a;
-}
 /* the search glass at 19px, 9px from the field's edge */
 .searchRow > * {
   gap: 7px;
@@ -118,9 +115,7 @@
   border: none;
   border-radius: var(--r-button);
   background: transparent;
-  /* The colour emoji face by name: through the HUD's text stack, Chromium and WebKit on Linux take a
-     monochrome glyph from the system's sans (DejaVu has the smileys) before they reach it. */
-  font-family: 'Apple Color Emoji', 'Segoe UI Emoji', 'Noto Color Emoji', sans-serif;
+  font-family: var(--font-emoji);
   font-size: 20px;
   line-height: 1;
   cursor: pointer;

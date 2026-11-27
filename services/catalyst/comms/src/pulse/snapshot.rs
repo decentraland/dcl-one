@@ -466,7 +466,10 @@ impl IdentityBoard {
         assignments: Arc<crate::pulse::cluster::feed::CurrentAssignments>,
     ) {
         assert!(
-            self.current.lock().unwrap().is_empty(),
+            self.current
+                .lock()
+                .expect("current lock poisoned")
+                .is_empty(),
             "attach before native registration"
         );
         self.current = assignments.native_current();

@@ -1,7 +1,9 @@
 #![forbid(unsafe_code)]
 
 pub mod avatar_movement;
-pub mod camera;
+mod camera;
+mod camera_collision;
+mod camera_zoom;
 mod debug_panel;
 pub mod point_at;
 
@@ -17,7 +19,10 @@ use common::{
     },
 };
 use console::DoAddConsoleCommand;
-use scene_runner::{update_scene::pointer_lock::update_pointer_lock, OutOfWorld};
+use scene_runner::{
+    update_scene::pointer_lock::update_pointer_lock,
+    update_world::mesh_collider::PlayerCollisionToggled, OutOfWorld,
+};
 
 use crate::avatar_movement::AvatarMovementPlugin;
 use crate::point_at::PointAtPlugin;
@@ -49,12 +54,21 @@ impl Plugin for UserInputPlugin {
             )
                 .chain(),
         );
+        app.add_event::<PlayerCollisionToggled>();
+        app.add_systems(PostUpdate, camera_collision::tag_camera_obstacle_meshes);
         app.init_resource::<EngineMovementControl>()
-            .init_resource::<CursorLocks>();
+            .init_resource::<CursorLocks>()
+            .init_resource::<camera_collision::CameraCollision>();
+        require_camera_state(app);
         app.add_preview_console_command::<NoClipCommand, _>(no_clip);
         app.add_preview_console_command::<SpeedCommand, _>(speed_cmd);
         app.add_preview_console_command::<JumpCommand, _>(jump_cmd);
     }
+}
+
+fn require_camera_state(app: &mut App) {
+    app.register_required_components::<PrimaryCamera, camera_zoom::CameraZoom>()
+        .register_required_components::<PrimaryCamera, camera_collision::CameraCollisionState>();
 }
 
 fn manage_player_visibility(
@@ -87,9 +101,10 @@ fn manage_player_visibility(
             }
         }
 
-        let distance =
-            (cam_transform.translation() - player_transform.translation() - Vec3::Y * 1.81)
-                .length();
+        let distance = (cam_transform.translation()
+            - player_transform.translation()
+            - Vec3::Y * camera_zoom::FOCUS_HEIGHT)
+            .length();
 
         // the photo camera may pass through the head; the avatar stays whole for the photo
         #[allow(clippy::collapsible_else_if)]
@@ -155,7 +170,7 @@ pub(crate) fn speed_cmd(
         user.jog_speed = command.jog;
         input.reply_ok(format!(
             "run speed: {}, jog speed: {}, walk speed: {}",
-            command.run, command.walk, command.jog
+            command.run, command.jog, command.walk
         ));
     }
 }

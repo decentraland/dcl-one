@@ -372,7 +372,7 @@ class DevelopmentWorkflowTest(unittest.TestCase):
         policy = WORKFLOW.parents[2] / 'tooling/repo-actions-policy.sh'
         self.assertIn("patterns_allowed[]=nix-community/cache-nix-action@*", policy.read_text())
         installs = 0
-        for name in ('development.yml', 'social-voice-release.yml'):
+        for name in ('development.yml', 'social-voice-release.yml', 'sdk.yml'):
             jobs = WORKFLOW.with_name(name).read_text().split('\njobs:\n', 1)[1]
             for job in re.split(r'(?m)^  (?=[\w-]+:\n)', jobs):
                 steps = re.split(r'(?m)^      - ', job)
@@ -381,7 +381,7 @@ class DevelopmentWorkflowTest(unittest.TestCase):
                         continue
                     installs += 1
                     snapshot, roots = steps[i + 1], steps[i + 2]
-                    shell = 'ci' if 'dev-test.sh rust' in job or 'social-voice-release-test.sh' in job else 'default'
+                    shell = 'ci' if 'dev-test.sh rust' in job or 'cargo clippy' in job or 'social-voice-release-test.sh' in job else 'default'
                     key = 'nix-store-${{ runner.os }}-${{ runner.arch }}-' + shell + '-'
                     self.assertTrue(snapshot.startswith('uses: nix-community/cache-nix-action@'), name)
                     self.assertIn('primary-key: ' + key + "${{ hashFiles('flake.nix', 'flake.lock', ", snapshot)
@@ -396,7 +396,7 @@ class DevelopmentWorkflowTest(unittest.TestCase):
                     self.assertIn('nix flake archive --json', roots)
                     for command in re.findall(r'nix develop(?: \.#\w+)?', job):
                         self.assertEqual(command, 'nix develop .#ci' if shell == 'ci' else 'nix develop', name)
-        self.assertEqual(installs, 5)
+        self.assertEqual(installs, 7)
 
     def test_smoke_snapshots_are_saved_only_from_passing_main_pushes(self):
         def allowed(event, ref, platform, passed=True, hit=False):
@@ -634,12 +634,13 @@ class DevelopmentWorkflowTest(unittest.TestCase):
         changes = jobs()['changes']
         self.assertNotIn('continue-on-error', changes)
         last = re.split(r'(?m)^      - ', changes)[-1]
+        command = ('python3 -m unittest tooling.tests.test_dev_workflow tooling.tests.test_ci_local '
+                   'tooling.tests.test_ui_gallery_receipt.WorkflowTest tooling.tests.test_image_cache.CompileWorkflowTest')
         self.assertEqual([line for line in last.splitlines() if line.strip() and not line.lstrip().startswith('#')],
-                         ['name: Run the workflow tests',
-                          '        run: python3 -m unittest tooling.tests.test_dev_workflow tooling.tests.test_ci_local '
-                          'tooling.tests.test_ui_gallery_receipt.WorkflowTest '
-                          'tooling.tests.test_image_cache.CompileWorkflowTest'],
+                         ['name: Run the workflow tests', f'        run: {command}'],
                          msg='Changes must end with exactly this step, after the steps that set its outputs')
+        local = runpy.run_path(str(WORKFLOW.parents[2] / 'tooling/ci-local.py'))['WORKFLOW_TESTS'].command
+        self.assertEqual(local, command, msg="ci-local must run the Changes job's workflow tests")
 
     def test_only_unit_suites_are_gated_by_web_selection(self):
         web = jobs()['web']
@@ -669,6 +670,79 @@ class DevelopmentWorkflowTest(unittest.TestCase):
                     if 'pnpm --dir apps/sites install' in step or 'pnpm --dir apps/ui3/editor-scene install' in step]
         self.assertEqual(len(installs), 2)
         self.assertLess(max(installs), steps.index(save))
+
+
+class WindowsMetricsWorkflowTest(unittest.TestCase):
+    FLOW = WORKFLOW.with_name('metrics-windows.yml')
+
+    def test_runs_when_the_crate_or_the_workspace_build_inputs_change(self):
+        inputs = ['library/dcl-metrics/**', 'services/catalyst/Cargo.lock', 'services/catalyst/Cargo.toml',
+                  'services/catalyst/clippy.toml', 'services/catalyst/rust-toolchain.toml',
+                  '.github/workflows/metrics-windows.yml']
+        local = runpy.run_path(str(WORKFLOW.parents[2] / 'tooling/ci-local.py'))
+        for event in ('push', 'pull_request'):
+            self.assertEqual(local['workflow_paths']('metrics-windows.yml', event), inputs, event)
+
+    def test_lints_the_crate_on_windows_with_the_workspace_toolchain_read_only(self):
+        text = self.FLOW.read_text()
+        channel = re.search(r'(?m)^channel = "([^"]+)"',
+                            (WORKFLOW.parents[2] / 'services/catalyst/rust-toolchain.toml').read_text())[1]
+        self.assertIn(f'          toolchain: {channel}\n', text)
+        self.assertIn(f'cargo +{channel} clippy --manifest-path services/catalyst/Cargo.toml --locked '
+                      '-p dcl-metrics --lib -- -D warnings', text)
+        self.assertIn('    runs-on: windows-', text)
+        self.assertIn('\npermissions:\n  contents: read\nconcurrency:', text)
+        self.assertNotRegex(text, r':\s*write\b|secrets\.')
+        for action in re.findall(r'uses: (\S+)', text):
+            self.assertRegex(action, r'@[0-9a-f]{40}$')
+
+
+class RustDependencyWorkflowTest(unittest.TestCase):
+    DEPS = WORKFLOW.with_name('rust-deps.yml')
+    DENY = WORKFLOW.parents[2] / 'services/catalyst/deny.toml'
+
+    def test_runs_on_dependency_changes_and_daily(self):
+        text = self.DEPS.read_text()
+        self.assertRegex(text, r"(?m)^  schedule:\n    - cron: '[\d ]+\* \* \*'\n")
+        inputs = ['**/Cargo.lock', '**/Cargo.toml', 'services/catalyst/deny.toml',
+                  'services/catalyst/rust-toolchain.toml', 'flake.*', '.github/workflows/rust-deps.yml']
+        local = runpy.run_path(str(WORKFLOW.parents[2] / 'tooling/ci-local.py'))
+        for event in ('push', 'pull_request'):
+            self.assertEqual(local['workflow_paths']('rust-deps.yml', event), inputs, event)
+        self.assertIn('  push:\n    branches: [main]\n', text)
+
+    def test_checks_both_workspaces_with_the_shared_policy_read_only(self):
+        text = self.DEPS.read_text()
+        self.assertIn('\npermissions:\n  contents: read\nconcurrency:', text)
+        self.assertNotRegex(text, r':\s*write\b|secrets\.')
+        for action in re.findall(r'uses: (\S+)', text):
+            self.assertRegex(action, r'@[0-9a-f]{40}$')
+        self.assertIn('checks: [advisories, bans licenses sources]', text)
+        for manifest in ('services/catalyst/Cargo.toml', 'services/catalyst/cast-bot/Cargo.toml'):
+            self.assertIn(f'cargo deny --manifest-path {manifest} \\\n'
+                          '            --workspace --config services/catalyst/deny.toml --locked check $CHECKS', text)
+
+    def test_only_pull_request_advisories_are_non_blocking(self):
+        expression = re.search(r'(?m)^    continue-on-error: \$\{\{ (.+) \}\}$', self.DEPS.read_text()).group(1)
+        expression = expression.replace('&&', 'and')
+        for event, checks, expected in (('pull_request', 'advisories', True),
+                                        ('pull_request', 'bans licenses sources', False),
+                                        ('push', 'advisories', False), ('schedule', 'advisories', False)):
+            with self.subTest(event=event, checks=checks):
+                self.assertEqual(eval(expression, {'__builtins__': {}}, {
+                    'github': SimpleNamespace(event_name=event), 'matrix': SimpleNamespace(checks=checks),
+                }), expected)
+
+    def test_policy_denies_unknown_sources_and_explains_every_ignored_advisory(self):
+        import tomllib
+        policy = tomllib.loads(self.DENY.read_text())
+        self.assertEqual(policy['advisories']['yanked'], 'deny')
+        for entry in policy['advisories']['ignore']:
+            self.assertRegex(entry['id'], r'^RUSTSEC-\d{4}-\d{4}$')
+            self.assertTrue(entry['reason'].strip(), entry['id'])
+        self.assertEqual(policy['bans']['multiple-versions'], 'warn')
+        self.assertEqual((policy['sources']['unknown-registry'], policy['sources']['unknown-git']), ('deny', 'deny'))
+        self.assertEqual(policy['sources']['allow-git'], ['https://github.com/decentraland/dcl-one'])
 
 
 if __name__ == '__main__':

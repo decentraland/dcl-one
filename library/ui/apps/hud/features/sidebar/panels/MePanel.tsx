@@ -3,8 +3,8 @@
 // by props, and a row whose action the bar does not pass is not drawn.
 
 import { useEffect, useRef, useState } from 'react'
-import { Avatar, MenuList, MenuPanel, MenuRow, showConfirm, showToast } from '../../../design'
-import { isAddress, splitName, userColor } from '@explorer-core/lib/identity'
+import { Avatar, showConfirm, showToast } from '../../../design'
+import { isAddress, shortWallet, splitName, userColor } from '@explorer-core/lib/identity'
 import type { Profile } from '@explorer-core/engine/protocol'
 import backpackIcon from '../../../assets/sidebar-rail/me-backpack.svg?no-inline'
 import profileIcon from '../../../assets/sidebar-rail/me-profile.svg?no-inline'
@@ -13,6 +13,7 @@ import signOutIcon from '../../../assets/sidebar-rail/me-sign-out.svg?no-inline'
 import exitIcon from '../../../assets/sidebar-rail/me-exit.svg?no-inline'
 import copyIcon from '../../../assets/sidebar-rail/me-copy.svg?no-inline'
 import styles from './MePanel.module.css'
+import { MenuList, MenuPanel, MenuRow } from '@dcl/one-ui'
 
 export interface MePanelProps {
   /** The local player; the head is left out until the profile has loaded. */
@@ -38,9 +39,6 @@ const COPIED_MS = 1200
 
 // The art keeps its own colours (the red Exit), so it is drawn as a picture at its own size.
 const art = (src: string): React.JSX.Element => <img src={src} alt="" draggable={false} />
-
-/** "0x10e...a7a92": the first five and the last five characters. */
-const shortWallet = (address: string): string => `${address.slice(0, 5)}...${address.slice(-5)}`
 
 export function MePanel({ profile, backpackKey, inviteLink, onBackpack, onProfile, onBadges, onSignOut, onExit, onClose }: MePanelProps): React.JSX.Element {
   const [copied, setCopied] = useState(false)

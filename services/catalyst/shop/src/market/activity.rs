@@ -1,18 +1,25 @@
-//! `GET /v1/activity?address=` (signed by that address, a marketplace or
-//! builder signer): one wallet's market history, newest first: the sales
+//! `GET /v1/activity` (a marketplace or builder signer): the signing
+//! wallet's market history, newest first. Like marketplace-server, it needs no
+//! `address`; one that is sent must name the signer, or the read is refused
+//! rather than answered for another wallet. The history holds the sales
 //! it bought and sold, the bids it placed and received, the orders it
 //! created and filled, the trades it signed or is a beneficiary of, and the
 //! NFTs it sent and received outside a sale ([`super::activity_transfers`]).
 //! Each leg contributes up to 500 events. Both sales roles read the same
 //! published snapshot. Activity merges the available legs by time, keeps
 //! one event per transaction and role (each transfer by its id: one
-//! transaction can move several NFTs), and pages the result in memory.
+//! transaction can move several NFTs), and pages the result in memory. A
+//! leg that cannot be read contributes nothing and the answer stays a 200
+//! with the legs that answered; the `x-activity-unavailable-sources` header
+//! ([`UNAVAILABLE_SOURCES_HEADER`]) names sources reported by incomplete
+//! transfer, bid, order and trade reads. Bid and order failures without a
+//! source use the leg's name, as does a failed direct trade read.
 
-use std::collections::HashSet;
+use std::collections::{BTreeSet, HashSet};
 
 use axum::Json;
 use axum::extract::{Query, State};
-use axum::http::HeaderMap;
+use axum::http::{HeaderMap, HeaderName, HeaderValue};
 use axum::response::{IntoResponse, Response};
 use serde::Serialize;
 use serde_json::{Value, json};
@@ -20,7 +27,7 @@ use serde_json::{Value, json};
 use super::SharedState;
 use super::activity_transfers::{Transfer, transfers_of_address};
 use super::bids::{Bid, BidFilters, list_bids};
-use super::orders::{Order, OrderFilters, list_orders};
+use super::orders::{BookRoute, Order, OrderFilters, list_orders_for};
 use super::readers::READER_MAX_FIRST;
 use super::sales::Sale;
 use super::signed::{MARKETPLACE_AUTH_SIGNERS, require_auth_metadata};
@@ -32,6 +39,11 @@ use crate::shared::signed_fetch::{
 use crate::types::{ASSET_TYPE_ERC20, ASSET_TYPE_USD_PEGGED_MANA};
 
 const INTERNAL_FETCH_CAP: i64 = 500;
+
+/// The response header naming, sorted and comma-separated, the source of
+/// each unavailable envelope that left a leg out of the activity; absent
+/// when no leg was left out that way.
+pub const UNAVAILABLE_SOURCES_HEADER: &str = "x-activity-unavailable-sources";
 const MAX_PAGE_SIZE: i64 = 500;
 const TRANSFER_SENT: &str = "transfer_sent";
 const TRANSFER_RECEIVED: &str = "transfer_received";
@@ -71,30 +83,57 @@ fn network_name<T: Serialize>(network: &T) -> String {
         .unwrap_or_default()
 }
 
-/// Collect the paged bid and order legs up to the internal cap.
-async fn pages<T, F, Fut>(fetch: F) -> Vec<T>
+/// Collect the paged bid and order legs up to the internal cap, one page
+/// after another. On failure, keep the pages already read and report the
+/// source from the error envelope or the leg label if it has no source.
+async fn pages<T, F, Fut>(fallback: &'static str, fetch: F) -> (Vec<T>, Option<String>)
 where
     F: Fn(i64) -> Fut,
     Fut: std::future::Future<Output = Result<(Vec<T>, i64), Response>>,
 {
-    let skips: Vec<i64> = (0..INTERNAL_FETCH_CAP)
-        .step_by(READER_MAX_FIRST as usize)
-        .collect();
-    let results = futures::future::join_all(skips.into_iter().map(&fetch)).await;
+    // One page at a time: a leg read from the shop's indexes holds a pooled
+    // read snapshot per page, and a page that comes back short ends the leg.
     let mut out = Vec::new();
-    for result in results {
-        match result {
+    for skip in (0..INTERNAL_FETCH_CAP).step_by(crate::market::casts::page(READER_MAX_FIRST)) {
+        match fetch(skip).await {
             Ok((rows, _)) => {
-                let short = (rows.len() as i64) < READER_MAX_FIRST;
+                let short = crate::market::casts::len_i64(rows.len()) < READER_MAX_FIRST;
                 out.extend(rows);
                 if short {
                     break;
                 }
             }
-            Err(_) => break,
+            Err(response) => {
+                let source = unavailable_source(response)
+                    .await
+                    .unwrap_or_else(|| fallback.to_string());
+                return (out, Some(source));
+            }
         }
     }
-    out
+    (out, None)
+}
+
+/// Source names carried by failed reads. The caller supplies the leg label
+/// for a timeout, an upstream failure or any other response without one.
+async fn unavailable_source(response: Response) -> Option<String> {
+    let body = axum::body::to_bytes(response.into_body(), 64 * 1024)
+        .await
+        .ok()?;
+    serde_json::from_slice::<Value>(&body)
+        .ok()?
+        .get("source")?
+        .as_str()
+        .filter(|source| !source.is_empty() && HeaderValue::from_str(source).is_ok())
+        .map(str::to_string)
+}
+
+/// A leg's rows, recording the source that left it short in `unavailable`.
+fn leg_rows<T>(leg: (Vec<T>, Option<String>), unavailable: &mut BTreeSet<String>) -> Vec<T> {
+    if let Some(source) = leg.1 {
+        unavailable.insert(source);
+    }
+    leg.0
 }
 
 pub async fn user_activity(
@@ -102,7 +141,7 @@ pub async fn user_activity(
     address: &str,
     limit: Option<i64>,
     offset: Option<i64>,
-) -> (Vec<ActivityEvent>, i64) {
+) -> (Vec<ActivityEvent>, i64, BTreeSet<String>) {
     let limit = limit
         .filter(|v| *v > 0)
         .unwrap_or(MAX_PAGE_SIZE)
@@ -119,7 +158,7 @@ pub async fn user_activity(
         transfers,
     ) = tokio::join!(
         super::sale_reads::activity_sales(state, &lower, INTERNAL_FETCH_CAP),
-        pages(|skip| {
+        pages("bids", |skip| {
             let f = BidFilters {
                 bidder: Some(lower.clone()),
                 limit: READER_MAX_FIRST,
@@ -128,7 +167,7 @@ pub async fn user_activity(
             };
             async move { list_bids(state, &f).await }
         }),
-        pages(|skip| {
+        pages("bids", |skip| {
             let f = BidFilters {
                 seller: Some(lower.clone()),
                 limit: READER_MAX_FIRST,
@@ -137,23 +176,23 @@ pub async fn user_activity(
             };
             async move { list_bids(state, &f).await }
         }),
-        pages(|skip| {
+        pages("orders", |skip| {
             let f = OrderFilters {
                 owner: Some(lower.clone()),
                 first: Some(READER_MAX_FIRST),
                 skip: Some(skip),
                 ..Default::default()
             };
-            async move { list_orders(state, &f).await }
+            async move { list_orders_for(state, &f, BookRoute::Activity).await }
         }),
-        pages(|skip| {
+        pages("orders", |skip| {
             let f = OrderFilters {
                 buyer: Some(lower.clone()),
                 first: Some(READER_MAX_FIRST),
                 skip: Some(skip),
                 ..Default::default()
             };
-            async move { list_orders(state, &f).await }
+            async move { list_orders_for(state, &f, BookRoute::Activity).await }
         }),
         trades_of_address(
             &state.pool,
@@ -163,11 +202,21 @@ pub async fn user_activity(
         ),
         transfers_of_address(state, &lower, INTERNAL_FETCH_CAP),
     );
+    let mut unavailable: BTreeSet<String> = transfers
+        .unavailable
+        .iter()
+        .map(|source| source.to_string())
+        .collect();
     if !transfers.unavailable.is_empty() {
         tracing::debug!(sources = ?transfers.unavailable, "activity omitted the transfers of a network whose indexes are not published");
     }
+    let bids_bidder = leg_rows(bids_bidder, &mut unavailable);
+    let bids_seller = leg_rows(bids_seller, &mut unavailable);
+    let orders_owner = leg_rows(orders_owner, &mut unavailable);
+    let orders_buyer = leg_rows(orders_buyer, &mut unavailable);
     let trades = trades.unwrap_or_else(|e| {
         tracing::warn!(error = %e, "activity: the trades leg failed");
+        unavailable.insert("trades".into());
         Vec::new()
     });
     let mut events: Vec<ActivityEvent> = Vec::new();
@@ -207,14 +256,15 @@ pub async fn user_activity(
     events.sort_by_key(|e| std::cmp::Reverse(e.timestamp));
     let mut seen = HashSet::new();
     events.retain(|e| seen.insert(dedup_key(e)));
-    let total = events.len() as i64;
+    let total = crate::market::casts::len_i64(events.len());
     (
         events
             .into_iter()
-            .skip(offset as usize)
-            .take(limit as usize)
+            .skip(crate::market::casts::page(offset))
+            .take(crate::market::casts::page(limit))
             .collect(),
         total,
+        unavailable,
     )
 }
 
@@ -224,7 +274,18 @@ pub async fn get_activity(
     Query(pairs): Query<Vec<(String, String)>>,
 ) -> Response {
     match activity(&state, &headers, &pairs).await {
-        Ok(envelope) => Json(envelope).into_response(),
+        Ok((envelope, unavailable)) => {
+            let mut response = Json(envelope).into_response();
+            let names = unavailable.into_iter().collect::<Vec<_>>().join(", ");
+            if let Ok(value) = HeaderValue::from_str(&names)
+                && !names.is_empty()
+            {
+                response
+                    .headers_mut()
+                    .insert(HeaderName::from_static(UNAVAILABLE_SOURCES_HEADER), value);
+            }
+            response
+        }
         Err(e) => e.into_response(),
     }
 }
@@ -259,7 +320,7 @@ async fn activity(
     state: &super::MarketplaceState,
     headers: &HeaderMap,
     pairs: &[(String, String)],
-) -> Result<ActivityEnvelope, ApiError> {
+) -> Result<(ActivityEnvelope, BTreeSet<String>), ApiError> {
     if !headers.contains_key(format!("{AUTH_CHAIN_HEADER_PREFIX}0").as_str())
         || !headers.contains_key(AUTH_TIMESTAMP_HEADER)
     {
@@ -276,18 +337,19 @@ async fn activity(
     .await
     .map_err(refusal)?
     .into_string();
-    let query_address = pairs
+    // The signer is the wallet read, as in marketplace-server. An `address`
+    // naming another wallet is refused, never answered with the signer's.
+    let requested = pairs
         .iter()
         .find(|(k, _)| k == "address")
-        .map(|(_, v)| v.to_lowercase())
-        .ok_or_else(|| ApiError::bad_request("Unauthorized"))?;
-    if recovered != query_address {
+        .map(|(_, v)| v.to_lowercase());
+    if requested.is_some_and(|requested| requested != recovered) {
         return Err(ApiError::bad_request("Forbidden: address mismatch"));
     }
     let limit = get_number_parameter("limit", pairs)?;
     let offset = get_number_parameter("offset", pairs)?;
-    let (data, total) = user_activity(state, &recovered, limit, offset).await;
-    Ok(ActivityEnvelope { data, total })
+    let (data, total, unavailable) = user_activity(state, &recovered, limit, offset).await;
+    Ok((ActivityEnvelope { data, total }, unavailable))
 }
 
 fn dedup_key(e: &ActivityEvent) -> String {
@@ -415,9 +477,85 @@ fn trade_to_event(t: &Trade) -> ActivityEvent {
 
 #[cfg(test)]
 mod tests {
+    #![allow(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        clippy::cast_possible_wrap,
+        clippy::cast_precision_loss,
+        reason = "test fixtures use small literal values"
+    )]
+
     use super::*;
     use crate::market::wire::{ChainId, Network};
+    use axum::http::StatusCode;
     use chrono::TimeZone;
+
+    #[tokio::test]
+    async fn incomplete_activities_keep_pages_and_name_each_failed_leg() {
+        for (response, expected) in [
+            (super::super::nft_reads::timed_out(), "orders"),
+            (
+                super::super::readers::upstream_failed("/v1/orders", "fixture"),
+                "orders",
+            ),
+            (StatusCode::INTERNAL_SERVER_ERROR.into_response(), "orders"),
+            (
+                (
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    Json(json!({"source":"nft-index"})),
+                )
+                    .into_response(),
+                "nft-index",
+            ),
+        ] {
+            let response = std::sync::Mutex::new(Some(response));
+            let (rows, source) = pages("orders", |skip| {
+                std::future::ready(if skip == 0 {
+                    Ok((vec![7; READER_MAX_FIRST as usize], READER_MAX_FIRST))
+                } else {
+                    Err(response.lock().unwrap().take().unwrap())
+                })
+            })
+            .await;
+            assert_eq!(rows, vec![7; READER_MAX_FIRST as usize]);
+            assert_eq!(source.as_deref(), Some(expected));
+        }
+    }
+
+    #[tokio::test]
+    async fn activity_names_a_failed_trades_query_in_its_header() {
+        use crate::shared::signed_fetch::test_support::signed_headers;
+        let Some(db) = crate::market::tests::support::OwnDb::create("activity_trade_failure").await
+        else {
+            return;
+        };
+        let state = std::sync::Arc::new(crate::market::MarketplaceState::new(
+            db.pool.clone(),
+            crate::http::Outbound::for_tests(),
+            crate::market::Settings::for_tests(),
+        ));
+        sqlx::query("ALTER TABLE shop.trades RENAME TO broken_trades")
+            .execute(&db.pool)
+            .await
+            .unwrap();
+        let headers = signed_headers(
+            "get",
+            "/v1/activity",
+            r#"{"signer":"dcl:marketplace"}"#,
+            true,
+        )
+        .await;
+        let response = get_activity(State(state), headers, Query(vec![])).await;
+        assert_eq!(response.status(), StatusCode::OK);
+        let names = response.headers()[UNAVAILABLE_SOURCES_HEADER]
+            .to_str()
+            .unwrap();
+        assert!(
+            names.split(", ").any(|source| source == "trades"),
+            "{names}"
+        );
+        db.drop().await;
+    }
 
     fn asset(asset_type: i32, token_id: Option<&str>, amount: Option<&str>) -> TradeAsset {
         TradeAsset {
@@ -653,7 +791,7 @@ mod tests {
         .execute(&state.pool)
         .await
         .unwrap();
-        let (events, _) = user_activity(&state, &me, None, None).await;
+        let (events, _, _) = user_activity(&state, &me, None, None).await;
         let ids: Vec<&str> = events.iter().map(|e| e.id.as_str()).collect();
         for (id, want) in [
             (&local, true),
@@ -672,7 +810,8 @@ mod tests {
     /// The route over the local trades (no subgraph configured, so the
     /// reader legs contribute nothing, as a failing source did before): the
     /// signer's own trades and the ones naming it as beneficiary, not a
-    /// stranger's; the old status and wording of every refusal.
+    /// stranger's, with or without `address`; the old status and wording of
+    /// every refusal.
     #[tokio::test]
     async fn activity_answers_the_signer_its_trades_and_refuses_as_before() {
         use crate::shared::signed_fetch::test_support::{address, signed_headers};
@@ -746,6 +885,28 @@ mod tests {
             (axum::http::StatusCode::OK, Some(1)),
             "{body}"
         );
+
+        // No address, as marketplace-server's clients ask: the signer's own.
+        let (status, body) = call(
+            state.clone(),
+            "/v1/activity",
+            signed_headers("get", "/v1/activity", marketplace, true).await,
+        )
+        .await;
+        assert_eq!(status, axum::http::StatusCode::OK, "{body}");
+        let ids: Vec<&str> = body["data"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|e| e["id"].as_str())
+            .collect();
+        for (id, want) in [(&mine, true), (&to_me, true), (&stranger, false)] {
+            assert_eq!(
+                ids.contains(&format!("trade_created:{id}").as_str()),
+                want,
+                "{id}: {ids:?}"
+            );
+        }
 
         let (status, body) = call(
             state.clone(),

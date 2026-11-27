@@ -213,8 +213,8 @@ pub struct LandMarketMarks {
 /// expiry rule, `round(expires_at / 1000) > round(now / 1000)` in seconds
 /// rounded half up (saturated expiries included), so the count moves at the
 /// very instant the build drops an expired order. The trades and rentals are small sets, marked by a
-/// digest of the very rows [`land_market`] reads at `$1` (the trades after
-/// the trade-events verdicts the CTE applies).
+/// digest of the very rows [`land_market`] reads at `$1`. Trade rows have
+/// both an open verdict and published LAND or Estate ownership.
 fn marks_sql() -> String {
     format!(
         "WITH {cte} \
@@ -279,8 +279,10 @@ pub async fn land_market_marks(
             .bind(&contracts)
             .bind(super::trades::mirrored_since(&state.settings, naive_now))
             .bind(mana)
-            .bind(chain_id as i32)
-            .bind(rentals_contract(chain_id as u64))
+            .bind(crate::market::casts::to_i32(chain_id).map_err(sqlx::Error::from)?)
+            .bind(rentals_contract(
+                crate::market::casts::to_u64(chain_id).map_err(sqlx::Error::from)?,
+            ))
             .fetch_one(&mut *conn)
             .await?;
     // Every source the build's `check_ready` asks for, the trade-events
@@ -418,11 +420,13 @@ async fn read(
         created_at_ms: r.get("created_at_ms"),
     })
     .collect();
-    let rentals = match rentals_contract(chain_id as u64) {
+    let rentals = match rentals_contract(
+        crate::market::casts::to_u64(chain_id).map_err(sqlx::Error::from)?,
+    ) {
         Some(venue) => sqlx::query(sqlx::AssertSqlSafe(rentals_sql("$1", "$2", "$3", "$4")))
             .bind(&contracts)
             .bind(naive_now)
-            .bind(chain_id as i32)
+            .bind(crate::market::casts::to_i32(chain_id).map_err(sqlx::Error::from)?)
             .bind(venue)
             .fetch_all(&mut *conn)
             .await?
@@ -469,6 +473,14 @@ async fn read(
 
 #[cfg(test)]
 mod tests {
+    #![allow(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        clippy::cast_possible_wrap,
+        clippy::cast_precision_loss,
+        reason = "test fixtures use small literal values"
+    )]
+
     use super::*;
     use crate::market::Settings;
     use crate::market::tests::support::OwnDb;
@@ -564,7 +576,10 @@ mod tests {
     /// [`trade`] received as `(asset type, token contract)`: (1, the chain's
     /// MANA) is a MANA price; another ERC-20, or type 2 (USD-pegged MANA),
     /// is not.
-    #[allow(clippy::too_many_arguments)]
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "one argument per seeded trade field"
+    )]
     async fn priced_trade(
         pool: &sqlx::PgPool,
         tag: &str,
@@ -583,7 +598,7 @@ mod tests {
         .bind(format!("sig-{tag}"))
         .bind(format!("hash-{tag}"))
         .bind(signer)
-        .bind(addr('9'))
+        .bind(super::super::trade_events::marketplaces(super::super::chain_walk::ChainNet::Ethereum)[0].0)
         .fetch_one(pool)
         .await
         .unwrap();
@@ -617,6 +632,10 @@ mod tests {
             .execute(pool)
             .await
             .unwrap();
+        crate::test_db::open_trade_verdict(pool, &id.to_string()).await;
+        if [LAND, ESTATE].contains(&contract) {
+            crate::test_db::publish_land_owner(pool, contract, token, signer).await;
+        }
     }
 
     /// An open rental listing of `token` of `contract`, signed for `chain_id`
@@ -874,6 +893,25 @@ mod tests {
         );
         assert!(rental.expiration_ms > Utc::now().timestamp_millis());
 
+        sqlx::query(
+            "INSERT INTO land_authz.authz_event (block_number, log_index, block_time, token_address, kind, token_id, account)
+             VALUES (101, 0, 1700000900, $1, 'transfer', 7, $2)",
+        )
+        .bind(ESTATE)
+        .bind(addr('c'))
+        .execute(&db.pool)
+        .await
+        .unwrap();
+        let held = market(&state, 1).await.unwrap().trades;
+        assert_eq!(
+            held.iter().map(|t| t.token_id.as_str()).collect::<Vec<_>>(),
+            ["5"]
+        );
+        sqlx::query("DELETE FROM land_authz.authz_event WHERE block_number = 101")
+            .execute(&db.pool)
+            .await
+            .unwrap();
+
         // A sold trade closes as soon as the trade-events index folds it.
         let estate_trade: uuid::Uuid =
             sqlx::query_scalar("SELECT id FROM shop.trades WHERE signature = 'sig-estate'")
@@ -881,7 +919,8 @@ mod tests {
                 .await
                 .unwrap();
         sqlx::query(
-            "INSERT INTO shop.trade_chain_state (trade_id, network, executions, status, folded_block) VALUES ($1, 'ethereum', 1, 'sold', 10)",
+            "INSERT INTO shop.trade_chain_state (trade_id, network, executions, status, folded_block) VALUES ($1, 'ethereum', 1, 'sold', 10)
+             ON CONFLICT (trade_id) DO UPDATE SET status='sold', executions=1, folded_block=10",
         )
         .bind(estate_trade)
         .execute(&db.pool)
@@ -898,6 +937,21 @@ mod tests {
             ["5"],
             "the sold estate trade is closed"
         );
+        let before_transfer = marks_at(&state, Utc::now()).await;
+        sqlx::query(
+            "INSERT INTO land_authz.authz_event (block_number, log_index, block_time, token_address, kind, token_id, account) \
+             VALUES (101, 0, 1700000900, $1, 'transfer', 5, $2)",
+        )
+        .bind(LAND)
+        .bind(addr('c'))
+        .execute(&db.pool)
+        .await
+        .unwrap();
+        assert!(
+            market(&state, 1).await.unwrap().trades.is_empty(),
+            "a transfer ahead of the fold hides the stale LAND owner's listing"
+        );
+        assert_ne!(before_transfer, marks_at(&state, Utc::now()).await);
         // A stale publish is not trusted: no answer, never the sold trade
         // read as open again.
         sqlx::query("UPDATE shop.chain_cursor SET folded_at = folded_at - interval '31 minutes' WHERE indexer = 'trade_events'")
@@ -1013,7 +1067,8 @@ mod tests {
                 .await
                 .unwrap();
         sqlx::query(
-            "INSERT INTO shop.trade_chain_state (trade_id, network, executions, status, folded_block) VALUES ($1, 'ethereum', 1, 'sold', 10)",
+            "INSERT INTO shop.trade_chain_state (trade_id, network, executions, status, folded_block) VALUES ($1, 'ethereum', 1, 'sold', 10)
+             ON CONFLICT (trade_id) DO UPDATE SET status='sold', executions=1, folded_block=10",
         )
         .bind(estate_trade)
         .execute(&db.pool)
@@ -1086,7 +1141,8 @@ mod tests {
             }
         };
         let (verdict_a, verdict_b) = (trade_id("verdict-a").await, trade_id("verdict-b").await);
-        let sold = "INSERT INTO shop.trade_chain_state (trade_id, network, executions, status, folded_block) VALUES ($1, 'ethereum', 1, 'sold', 10)";
+        let sold = "INSERT INTO shop.trade_chain_state (trade_id, network, executions, status, folded_block) VALUES ($1, 'ethereum', 1, 'sold', 10)
+             ON CONFLICT (trade_id) DO UPDATE SET status='sold', executions=1, folded_block=10";
         sqlx::query(sold)
             .bind(verdict_a)
             .execute(&db.pool)
@@ -1097,11 +1153,7 @@ mod tests {
             "two trades, one sold on chain",
             marks_at(&state, Utc::now()).await,
         );
-        sqlx::query("DELETE FROM shop.trade_chain_state WHERE trade_id = $1")
-            .bind(verdict_a)
-            .execute(&db.pool)
-            .await
-            .unwrap();
+        crate::test_db::open_trade_verdict(&db.pool, &verdict_a.to_string()).await;
         sqlx::query(sold)
             .bind(verdict_b)
             .execute(&db.pool)

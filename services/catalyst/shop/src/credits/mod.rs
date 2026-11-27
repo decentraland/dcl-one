@@ -15,8 +15,15 @@
 //! the operator routes `/admin/credits/{grant,revoke}`,
 //! `/admin/users/{a}/block`, `/admin/packs[/{sku}]`, `/admin/purchases`,
 //! `/admin/checkouts[/{id}/{refund,force-fulfill}]`, `/admin/ledger`,
-//! `/admin/grants/{ref}/{reclaim,release}`, `/admin/reconcile` behind
-//! `CATALYRST_CREDITS_ADMIN_TOKEN` (`admin.rs`).
+//! `/admin/grants/{ref}/{reclaim,release}`, `/admin/reconcile`,
+//! `/admin/test-purchase-email` and
+//! `/admin/studios[/{id}[/budget|/operators[/{address}]]]` behind
+//! `CATALYRST_CREDITS_ADMIN_TOKEN` (`admin.rs`, `studios.rs`); the ops
+//! dashboard's reads `/credits`, `/credit-reasons`, `/admin/ledger-stats`,
+//! `/admin/purchase-audit` and the studio reads behind that bearer or a
+//! wallet signature from `CREDITS_READ_ADMIN_ADDRESSES` or
+//! `CREDITS_WRITE_ADMIN_ADDRESSES` (`handlers/reports.rs`), and the studio
+//! changes behind the bearer or one from `CREDITS_WRITE_ADMIN_ADDRESSES`.
 //!
 //! Where each route reads and writes:
 //! - the wallet routes, the cart and the checkout: local (`credits.wallets`,
@@ -26,8 +33,8 @@
 //!   (`pricing::LocalMarket`; a source that is unset or not ready answers 503,
 //!   a quote miss prices to `null`);
 //! - the packs, intents, orders and the Stripe webhook: local
-//!   (`credits.packs`, `purchases`, `payment_reversals`, `stripe_events`) plus
-//!   Stripe's API;
+//!   (`credits.packs`, `purchases`, `payment_reversals`, `stripe_events`,
+//!   `purchase_receipts`) plus Stripe's API;
 //! - the MANA top-up, the fulfilment and the escrow ops: the economy module
 //!   (`escrow::EconomyBroker`, the old HTTP hops to `/v1/payments/verify`,
 //!   `/v1/broker/buy`, `/v1/escrow/{reclaim,release}` as handler calls with
@@ -64,7 +71,11 @@
 //! `CREDITS_MANAGER_CONTRACT`; it debits the ledger it folds, as the old
 //! reconciler did, so it is local authority too: it runs in `serve` and
 //! folds only with `OPS_WRITES_ENABLED`, indexing
-//! the log either way). Not carried: the `ts-rs`
+//! the log either way), and `credits-purchase-receipts` (the receipt
+//! outbox, `receipts.rs`, with `OPS_WRITES_ENABLED`). Metrics: the
+//! Prometheus families in `metrics.rs`, recorded by serve after each fact's
+//! commit (its doc maps credits-server's series to them).
+//! Not carried: the `ts-rs`
 //! bindings, the per-service `/health`, `/ping` (the content server owns
 //! them), `CREDITS_PG_CONNECTION_STRING`, `MARKET_BASE_URL`,
 //! `PRICE_BASE_URL`, `ECONOMY_BASE_URL`, `CATALYRST_ECONOMY_ADMIN_TOKEN` and
@@ -73,6 +84,7 @@
 
 pub mod admin;
 pub mod admin_store;
+pub mod alerts;
 pub mod authorize;
 pub mod batch;
 pub mod captcha;
@@ -82,21 +94,29 @@ pub mod digest;
 pub mod dto;
 pub mod errors;
 pub mod escrow;
+pub mod events;
 pub mod feed;
 pub mod fulfillment;
 pub mod goals;
 pub mod handlers;
 pub mod history;
+pub mod ledger_stats;
+pub mod metrics;
 pub mod money;
 pub mod orders;
 pub mod packs;
 pub mod pricing;
+pub mod purchase_audit;
 pub mod purchase_intent;
+pub mod receipts;
 pub mod reconcile;
 pub mod reports;
 pub mod settlement;
 pub mod store;
+pub mod stream;
 pub mod stripe;
+pub mod studio_grants;
+pub mod studios;
 pub mod trial;
 pub mod usage;
 pub mod wallet;
@@ -104,7 +124,15 @@ pub mod wallet_flags;
 pub mod writes;
 
 #[cfg(test)]
+mod alerts_tests;
+#[cfg(test)]
+mod metrics_tests;
+#[cfg(test)]
+mod receipts_tests;
+#[cfg(test)]
 mod reports_tests;
+#[cfg(test)]
+mod studio_grants_tests;
 #[cfg(test)]
 mod tests;
 #[cfg(test)]
@@ -138,7 +166,7 @@ pub const DEFAULT_TOPUP_MIN_CONFIRMATIONS: u64 = 64;
 const CHAIN_SEPOLIA: i64 = 11_155_111;
 
 /// The raw values `main.rs` reads from `Config` (the old env names; the
-/// secrets through `<NAME>_FILE`). No `Debug`: five fields are credentials.
+/// secrets through `<NAME>_FILE`). No `Debug`: several fields are credentials.
 #[derive(Clone)]
 pub struct RawSettings {
     pub goal_flags_source: goals::flags::Source,
@@ -149,10 +177,21 @@ pub struct RawSettings {
     /// `CREDITS_READ_ADMIN_ADDRESSES` (empty): comma-separated wallets whose
     /// signed requests may read the credits reports.
     pub read_admin_addresses: String,
+    /// `CREDITS_WRITE_ADMIN_ADDRESSES` (empty): comma-separated wallets whose
+    /// signed requests may change the studios, and read what a read admin reads.
+    pub write_admin_addresses: String,
+    /// `CREDITS_ADMIN_WRITES_REQUIRE_BOUND_BODY` (false): refuse a wallet's
+    /// admin write (`admin::require_write_admin`) or studio grant
+    /// (`handlers::studio_operators`) that signs no `bodySha256`.
+    pub admin_writes_require_bound_body: bool,
     /// `CREDITS_CAPTCHA_SECRET` (or `_FILE`): the hCaptcha secret; unset skips the token check.
     pub captcha_secret: Option<String>,
     /// `CREDITS_CAPTCHA_VERIFY_URL` (`https://hcaptcha.com/siteverify`).
     pub captcha_verify_url: String,
+    /// `CREDITS_ALERTS_SLACK_WEBHOOK` (or `_FILE`): the Slack incoming webhook
+    /// the credits alerts are posted to (`alerts.rs`); unset, each is logged
+    /// at error and not sent.
+    pub alerts_slack_webhook: Option<String>,
     /// `STRIPE_SECRET_KEY` (or `_FILE`): enables the Stripe client.
     pub stripe_secret_key: Option<String>,
     /// `STRIPE_WEBHOOK_SECRET` (or `_FILE`): the webhook signature secret.
@@ -199,6 +238,13 @@ pub struct RawSettings {
     /// `cancel_url` lands on this node's cancel-return for the order; unset,
     /// `cancel_url` is the surface's cancel page.
     pub public_url: Option<String>,
+    /// `CREDITS_DAILY_STUDIO_DEPOSIT_LIMIT_CENTS` (credits-server's
+    /// `DAILY_STUDIO_DEPOSIT_LIMIT_CENTS`): the most new studio budget one UTC
+    /// day may add, every studio together; unset or negative refuses new budget.
+    pub daily_studio_deposit_limit_cents: Option<i64>,
+    /// `CREDITS_STUDIO_GRANT_MAX_CENTS` (credits-server's `STUDIO_GRANT_MAX_CENTS`):
+    /// the most one studio grant may give; unset or negative refuses grants.
+    pub studio_grant_max_cents: Option<i64>,
     /// `CREDITS_USAGE_INDEX_ENABLED` (false): attach the CreditUsed index.
     pub usage_index_enabled: bool,
     /// `RPC_ENDPOINT_POLYGON` (or `_FILE`): the collections chain's JSON-RPC the index reads.
@@ -246,8 +292,11 @@ impl Default for RawSettings {
             writes_enabled: false,
             admin_token: None,
             read_admin_addresses: String::new(),
+            write_admin_addresses: String::new(),
+            admin_writes_require_bound_body: false,
             captcha_secret: None,
             captcha_verify_url: DEFAULT_CAPTCHA_VERIFY_URL.to_string(),
+            alerts_slack_webhook: None,
             stripe_secret_key: None,
             stripe_webhook_secret: None,
             stripe_api_base: stripe::DEFAULT_STRIPE_API_BASE.to_string(),
@@ -270,6 +319,8 @@ impl Default for RawSettings {
             checkout_success_url_builder: None,
             checkout_cancel_url_builder: None,
             public_url: None,
+            daily_studio_deposit_limit_cents: None,
+            studio_grant_max_cents: None,
             usage_index_enabled: false,
             usage_rpc_url: None,
             usage_chain_id: usage::CHAIN_POLYGON,
@@ -301,8 +352,17 @@ pub struct Settings {
     /// Lowercased `CREDITS_READ_ADMIN_ADDRESSES`: the wallets that may read
     /// the credits reports with a signed request (`admin::require_read_admin`).
     pub read_admin_addresses: Vec<String>,
+    /// Lowercased `CREDITS_WRITE_ADMIN_ADDRESSES`: the wallets that may change
+    /// the studios with a signed request (`admin::require_write_admin`); they
+    /// read too.
+    pub write_admin_addresses: Vec<String>,
+    /// A wallet's admin write or studio grant must sign its body
+    /// (`bodySha256`); off, one that signs none is accepted with a warning.
+    pub admin_writes_require_bound_body: bool,
     pub captcha_secret: Option<String>,
     pub captcha_verify_url: String,
+    /// The credits alerts' Slack webhook, checked to be a public https URL.
+    pub alerts_slack_webhook: Option<String>,
     pub stripe_secret_key: Option<String>,
     pub stripe_webhook_secret: Option<String>,
     pub stripe_api_base: String,
@@ -327,6 +387,12 @@ pub struct Settings {
     /// `PUBLIC_URL` without a trailing `/`: the base of the cancel-return URL
     /// Stripe sends an abandoning buyer to.
     pub public_url: Option<String>,
+    /// The day's ceiling on new studio budget, in cents; `None` (unset or
+    /// negative) refuses new budget (`studios.rs`).
+    pub daily_studio_deposit_limit_cents: Option<i64>,
+    /// The ceiling on one studio grant, in cents; `None` (unset or negative)
+    /// refuses studio grants (`studio_grants.rs`).
+    pub studio_grant_max_cents: Option<i64>,
     /// The CreditUsed index (`usage.rs`); its contract is `credits_manager_contract`.
     pub usage: usage::Settings,
     /// Which MANA top-up transfers are credited (`handlers::topup`).
@@ -350,15 +416,19 @@ fn non_empty(v: Option<String>) -> Option<String> {
 /// not a wallet address fails startup, so a typo can't silently lock the
 /// dashboard out or let a malformed entry stand in for an admin.
 pub fn parse_read_admin_addresses(raw: &str) -> anyhow::Result<Vec<String>> {
+    parse_admin_addresses("CREDITS_READ_ADMIN_ADDRESSES", raw)
+}
+
+/// A comma-separated list of admin wallets read from `env`, lowercased, as
+/// [`parse_read_admin_addresses`] reads its own.
+pub fn parse_admin_addresses(env: &str, raw: &str) -> anyhow::Result<Vec<String>> {
     raw.split(',')
         .map(str::trim)
         .filter(|s| !s.is_empty())
         .map(|s| {
             crate::shared::identity::Address::parse(s)
                 .map(|a| a.into_string())
-                .map_err(|_| {
-                    anyhow::anyhow!("CREDITS_READ_ADMIN_ADDRESSES: {s:?} is not a wallet address")
-                })
+                .map_err(|_| anyhow::anyhow!("{env}: {s:?} is not a wallet address"))
         })
         .collect()
 }
@@ -410,6 +480,13 @@ impl Settings {
                 && crate::http::is_safe_http_url(&captcha_verify_url))
         {
             anyhow::bail!("CREDITS_CAPTCHA_VERIFY_URL must be a public https:// endpoint");
+        }
+        let alerts_slack_webhook =
+            non_empty(raw.alerts_slack_webhook).map(|url| url.trim().to_string());
+        if let Some(url) = &alerts_slack_webhook
+            && !(url.starts_with("https://") && crate::http::is_safe_http_url(url))
+        {
+            anyhow::bail!("CREDITS_ALERTS_SLACK_WEBHOOK must be a public https:// endpoint");
         }
         let credits_signer_key = non_empty(raw.credits_signer_key);
         let credits_manager_contract = match non_empty(raw.credits_manager_contract) {
@@ -584,8 +661,14 @@ impl Settings {
             writes_enabled: raw.writes_enabled,
             admin_token: non_empty(raw.admin_token),
             read_admin_addresses: parse_read_admin_addresses(&raw.read_admin_addresses)?,
+            admin_writes_require_bound_body: raw.admin_writes_require_bound_body,
+            write_admin_addresses: parse_admin_addresses(
+                "CREDITS_WRITE_ADMIN_ADDRESSES",
+                &raw.write_admin_addresses,
+            )?,
             captcha_secret,
             captcha_verify_url,
+            alerts_slack_webhook,
             stripe_secret_key,
             stripe_webhook_secret: non_empty(raw.stripe_webhook_secret),
             stripe_api_base,
@@ -612,6 +695,10 @@ impl Settings {
             checkout_builder_urls: non_empty(raw.checkout_success_url_builder)
                 .zip(non_empty(raw.checkout_cancel_url_builder)),
             public_url: non_empty(raw.public_url).map(|u| u.trim_end_matches('/').to_string()),
+            daily_studio_deposit_limit_cents: raw
+                .daily_studio_deposit_limit_cents
+                .filter(|c| *c >= 0),
+            studio_grant_max_cents: raw.studio_grant_max_cents.filter(|c| *c >= 0),
             usage,
             topup: handlers::topup::TopupPolicy {
                 start_block: raw.topup_start_block,
@@ -681,9 +768,11 @@ impl Settings {
     }
 }
 
-/// `url` with `query` appended after `?`, or after `&` when it has one
-/// (credits-server's `appendQuery`). A `#` fragment stays last, so the query
-/// still reaches the page's server.
+/// `url` with `query` appended after `?`, or after `&` when it has one, as
+/// credits-server's `appendQuery` does, with one difference: a `#` fragment
+/// stays last, so the query reaches the page's server and `location.search`.
+/// credits-server appended after the fragment, so a hash-routed return page
+/// that read `order` from the fragment would not find it here.
 fn append_query(url: &str, query: &str) -> String {
     if query.is_empty() {
         return url.to_string();
@@ -719,6 +808,8 @@ pub struct State {
     pub revoker: Option<Arc<settlement::Revoker>>,
     /// The MANA/USD feed a USD-pegged group's marketplace settles at (`feed.rs`).
     pub feed: Arc<dyn feed::MarketplaceFeed>,
+    /// Where the credits alerts are posted (`alerts.rs`).
+    pub alerts: alerts::Delivery,
     /// Existing chain transport for the seasonal program paused() view.
     pub goals_chain: Option<Arc<crate::evm::chain::ChainComponent>>,
     pub goal_flags: goals::flags::Flags,
@@ -733,6 +824,12 @@ pub struct State {
     /// The `dapps` rollout flags the market reads (`market::features`); none without a market, and then every
     /// flag reads off.
     pub(crate) dapps_flags: Option<Arc<crate::market::features::DappsFlags>>,
+    /// The balance streams' listener and subscribers (`stream.rs`).
+    pub(crate) balance_changes: stream::BalanceChanges,
+    /// The purchase receipt's mailer, names and links (`receipts.rs`), set
+    /// once by [`Self::start_receipts`]: `serve` builds the mailer after
+    /// this state.
+    pub receipts: std::sync::OnceLock<Arc<receipts::Sender>>,
 }
 
 pub type SharedState = Arc<State>;
@@ -803,13 +900,13 @@ impl State {
                     std::time::Duration::from_secs(10),
                 ))
             });
-        let gate: Arc<dyn settlement::IssuanceGate> = match &chain {
-            Some(chain) => Arc::new(settlement::ChainGate::new(
-                chain.clone(),
-                settings.usage.chain_id as u64,
-            )),
-            None => Arc::new(settlement::ClosedGate),
-        };
+        let gate: Arc<dyn settlement::IssuanceGate> =
+            match (&chain, u64::try_from(settings.usage.chain_id)) {
+                (Some(chain), Ok(chain_id)) => {
+                    Arc::new(settlement::ChainGate::new(chain.clone(), chain_id))
+                }
+                _ => Arc::new(settlement::ClosedGate),
+            };
         let feed: Arc<dyn feed::MarketplaceFeed> = match &chain {
             Some(chain) => Arc::new(feed::ChainFeed::new(
                 chain.clone(),
@@ -832,6 +929,11 @@ impl State {
             },
             _ => None,
         };
+        let alerts = alerts::Delivery::new(
+            settings.alerts_slack_webhook.clone(),
+            &settings.shop_base_url,
+            http.clone(),
+        );
         let goal_flags = goals::flags::Flags::new(settings.goal_flags_source.clone(), http);
         Self {
             goal_flags,
@@ -851,8 +953,25 @@ impl State {
             gate,
             revoker,
             feed,
+            alerts,
             goals_chain: chain,
             dapps_flags: None,
+            balance_changes: stream::BalanceChanges::default(),
+            receipts: std::sync::OnceLock::new(),
+        }
+    }
+
+    /// Sets the purchase receipt's sender and starts the
+    /// `credits-purchase-receipts` job (`receipts::spawn_job`). A second call
+    /// keeps the first sender and starts nothing.
+    pub fn start_receipts(
+        self: &Arc<Self>,
+        sender: receipts::Sender,
+        interval: Duration,
+        jobs: &Jobs,
+    ) {
+        if self.receipts.set(Arc::new(sender)).is_ok() {
+            receipts::spawn_job(self, interval, jobs);
         }
     }
 
@@ -887,7 +1006,16 @@ impl State {
     /// wallet flags listener and the CreditUsed index, all under the shared
     /// lifecycle. `serve` runs them: the usage index's fold debits the
     /// ledger, so it runs beside the other credits writers.
+    /// Where the revenue events go (`events.rs`), handed in by the node:
+    /// attached before the jobs start, so no settlement goes unreported.
+    pub fn attach_revenue_events(&self, events: Arc<dyn events::RevenueEvents>) -> bool {
+        self.credits.attach_revenue_events(events)
+    }
+
     pub fn spawn_jobs(self: &Arc<Self>, jobs: &Jobs) {
+        // The balance streams end with the node, so its graceful shutdown
+        // never waits on them.
+        self.balance_changes.end_on(jobs.root_token().child_token());
         fulfillment::OutboxWorker {
             credits: self.credits.clone(),
             pricing: self.pricing.clone(),
@@ -910,6 +1038,12 @@ impl State {
             self.settings.checkout_worker_interval,
         );
         wallet_flags::spawn(jobs, self.credits.clone(), self.settings.writes_enabled);
+        alerts::spawn(
+            jobs,
+            self.credits.clone(),
+            self.alerts.clone(),
+            self.settings.writes_enabled,
+        );
         self.spawn_usage_index(jobs);
         if self.settings.writes_enabled {
             tracing::warn!(
@@ -943,6 +1077,8 @@ impl State {
         let index = self.usage.clone();
         let writes_enabled = self.settings.writes_enabled;
         let gate = Arc::new(crate::shared::writes::PassGate::new(usage::JOB_NAME));
+        // The pass's gauges are cleared when the lease they were set under ends.
+        let gauges = Arc::new(metrics::LeaseGauges::usage_index());
         let interval = settings.interval;
         tracing::info!(chain_id = settings.chain_id, contract = ?settings.contract, start_block = settings.start_block, "credits usage index started");
         jobs.spawn_periodic_leased(
@@ -953,6 +1089,7 @@ impl State {
             move |ctx| {
                 let index = index.clone();
                 let gate = gate.clone();
+                gauges.arm(&ctx.cancel);
                 async move {
                     index
                         .gated_pass(Some(&ctx), &gate, writes_enabled)
@@ -992,9 +1129,23 @@ impl State {
         .await?;
         let unpaid: Vec<&str> = diffs
             .iter()
-            .filter(|d| !d.consumed)
+            .filter(|d| !d.consumed && d.kind != settlement::DEFERRED)
             .map(|d| d.credit_id.as_str())
             .collect();
+        // In this full pass a log is deferred only behind an earlier log of
+        // its credit that could not be debited, which `unpaid` reports.
+        let deferred: Vec<&str> = diffs
+            .iter()
+            .filter(|d| d.kind == settlement::DEFERRED)
+            .map(|d| d.credit_id.as_str())
+            .collect();
+        if !deferred.is_empty() {
+            tracing::warn!(
+                count = deferred.len(),
+                credit_ids = ?deferred,
+                "reconcile: CreditUsed events left behind an earlier use of their credit that is not settled"
+            );
+        }
         if !unpaid.is_empty() {
             tracing::error!(
                 invariant = "credit_used==debited",
@@ -1041,11 +1192,20 @@ pub fn router(state: SharedState) -> Router {
             "/users/{wallet_id}/credits",
             get(handlers::users::user_credits),
         )
+        .route(
+            "/users/{wallet_id}/credits/stream",
+            get(stream::credits_stream),
+        )
         .route("/wallet/{wallet_id}/balance", get(handlers::users::balance))
         .route("/packs", get(handlers::packs::list_packs))
         .route("/credits/packs", get(handlers::packs::unity_list_packs))
         .route("/credits", get(handlers::reports::list_credits))
         .route("/credit-reasons", get(handlers::reports::credit_reasons))
+        .route("/admin/ledger-stats", get(handlers::reports::ledger_stats))
+        .route(
+            "/admin/purchase-audit",
+            get(handlers::reports::purchase_audit),
+        )
         .route("/packs/{sku}/intent", post(handlers::packs::create_intent))
         .route("/credits/checkout", post(handlers::orders::create_checkout))
         .route(
@@ -1122,6 +1282,8 @@ pub fn router(state: SharedState) -> Router {
             get(handlers::authorize::usage_index_status),
         )
         .merge(handlers::admin::router())
+        .merge(handlers::studios::router())
+        .merge(handlers::studio_operators::router())
         .layer(axum::extract::DefaultBodyLimit::max(64 * 1024))
         .layer(axum::middleware::from_fn(
             crate::shared::cors::cors_middleware,
@@ -1151,6 +1313,10 @@ pub fn shop_router(state: SharedState) -> Router {
             "/v1/users/{wallet_id}/credits",
             get(handlers::users::user_credits),
         )
+        .route(
+            "/v1/users/{wallet_id}/credits/stream",
+            get(stream::credits_stream),
+        )
         .route("/v1/packs", get(handlers::packs::unity_list_packs))
         .route(
             "/admin/credits",
@@ -1159,6 +1325,11 @@ pub fn shop_router(state: SharedState) -> Router {
         .route(
             "/admin/credit-reasons",
             get(handlers::reports::credit_reasons_canonical),
+        )
+        .route("/admin/ledger-stats", get(handlers::reports::ledger_stats))
+        .route(
+            "/admin/purchase-audit",
+            get(handlers::reports::purchase_audit),
         )
         .route(
             "/v1/packs/{sku}/payment-intents",
@@ -1244,6 +1415,8 @@ pub fn shop_router(state: SharedState) -> Router {
         )
         .route("/dev/topup/mock-card", post(handlers::packs::mock_topup))
         .merge(handlers::admin::shop_router())
+        .merge(handlers::studios::router())
+        .merge(handlers::studio_operators::router())
         .layer(axum::extract::DefaultBodyLimit::max(64 * 1024))
         .layer(axum::middleware::from_fn(
             crate::shared::cors::cors_middleware,

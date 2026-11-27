@@ -4,20 +4,26 @@
 //!
 //! The first projection takes the network's tables from the collections
 //! mirror (`shop.collection_projection.owned_at`, set in its transaction):
-//! from then the fold is their only writer, and the mirror refuses to write
-//! the network. Both take the network's advisory lock around the ownership
-//! check and the write ([`CATALOGUE_LOCK`]), the mirror shared and the fold
-//! exclusive, so a mirror page that read the network as unowned commits
-//! before the projection that takes it, and none commits after.
+//! from then the projection is their only writer, and the mirror refuses to
+//! write the network. Both take the network's advisory lock around the
+//! ownership check and the write ([`CATALOGUE_LOCK`]), the mirror shared and
+//! the projection exclusive, so a mirror page that read the network as
+//! unowned commits before the projection that takes it, and none commits
+//! after.
+//!
+//! The walk projects in the transaction that publishes its fold
+//! ([`project_in`], from `CollectionsIndex`'s `ChainIndex::publish`), so
+//! the rows, `projected_through` and `folded_block` commit together: a
+//! reader never sees the projection stand at a fold that is not published.
 //!
 //! A projection stands at a block (`projected_through`). The next one folds
 //! the events past it onto the rows ([`collections_fold::resume`]); a
 //! collection with no row yet (created since, or waiting for its creation
 //! read) or an event that names an item without a row (its metadata took no
 //! type) is folded again from its creation instead. A rewind clears
-//! `projected_through`, and the next fold rebuilds every row of the network
-//! from the whole log, in one transaction, so a reader sees the old rows or
-//! the new ones.
+//! `projected_through`, and the next publication rebuilds every row of the
+//! network from the whole log, in one transaction, so a reader sees the old
+//! rows or the new ones.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
@@ -83,6 +89,10 @@ pub struct Projected {
     pub replayed: usize,
     /// Walked collections still waiting for their creation read.
     pub waiting: usize,
+    /// Items it left out because the catalogue cannot describe them: an
+    /// Ethereum v1 `AddWearable` whose wearable id no static representation
+    /// has ([`super::collections_v1`]).
+    pub unrepresented: usize,
 }
 
 fn event_of(row: &sqlx::postgres::PgRow) -> CollectionEvent {
@@ -120,7 +130,7 @@ pub async fn lock(conn: &mut PgConnection, net: ChainNet, exclusive: bool) -> sq
     };
     sqlx::query(sql)
         .bind(CATALOGUE_LOCK)
-        .bind(net.chain_id() as i32)
+        .bind(net.chain_id_i32())
         .execute(conn)
         .await?;
     Ok(())
@@ -138,7 +148,8 @@ pub async fn owned(conn: &mut PgConnection, net: ChainNet) -> sqlx::Result<bool>
 
 /// Folds `net`'s log to `upto` into its catalogue rows, taking them from the
 /// mirror if it is the first projection, in one transaction fenced by
-/// `owner`.
+/// `owner`. The walk projects through [`project_in`], inside the transaction
+/// that publishes the fold.
 pub async fn project(
     pool: &PgPool,
     owner: &Owner,
@@ -146,22 +157,41 @@ pub async fn project(
     upto: i64,
 ) -> anyhow::Result<Projected> {
     let mut tx = pool.begin().await?;
-    lock(&mut tx, net, true).await?;
+    let out = project_in(&mut tx, net, upto).await?;
+    owner.check(&mut tx).await?;
+    tx.commit().await?;
+    Ok(out)
+}
+
+/// [`project`] in the caller's transaction, which fences and commits it: the
+/// walk's publication (`chain_walk::mark_folded`), so the rows, the block they
+/// stand at (`projected_through`) and the published fold commit together and
+/// a reader's snapshot never sees one without the other.
+pub async fn project_in(
+    conn: &mut PgConnection,
+    net: ChainNet,
+    upto: i64,
+) -> anyhow::Result<Projected> {
+    lock(&mut *conn, net, true).await?;
     sqlx::query(
         "INSERT INTO shop.collection_projection (network) VALUES ($1) ON CONFLICT DO NOTHING",
     )
     .bind(net.db_name())
-    .execute(&mut *tx)
+    .execute(&mut *conn)
     .await?;
     let through: Option<i64> = sqlx::query_scalar(
         "SELECT projected_through FROM shop.collection_projection WHERE network = $1 FOR UPDATE",
     )
     .bind(net.db_name())
-    .fetch_one(&mut *tx)
+    .fetch_one(&mut *conn)
     .await?;
-    let out = match through {
-        Some(through) if through <= upto => advance(&mut tx, net, through, upto).await?,
-        _ => rebuild(&mut tx, net, upto).await?,
+    let out = match (net, through) {
+        // Ethereum's closed v1 catalogue has a fold of its own.
+        (ChainNet::Ethereum, through) => {
+            super::collections_v1::project_in(&mut *conn, through, upto).await?
+        }
+        (_, Some(through)) if through <= upto => advance(&mut *conn, net, through, upto).await?,
+        _ => rebuild(&mut *conn, net, upto).await?,
     };
     sqlx::query(
         "UPDATE shop.collection_projection SET owned_at = COALESCE(owned_at, timezone('UTC', now())), \
@@ -170,11 +200,9 @@ pub async fn project(
     )
     .bind(net.db_name())
     .bind(upto)
-    .bind(out.waiting as i32)
-    .execute(&mut *tx)
+    .bind(crate::market::casts::len_i32(out.waiting)?)
+    .execute(&mut *conn)
     .await?;
-    owner.check(&mut tx).await?;
-    tx.commit().await?;
     Ok(out)
 }
 
@@ -193,6 +221,11 @@ pub async fn hand_back(pool: &PgPool, net: ChainNet) -> anyhow::Result<bool> {
     // went unconfirmed) must not erase what the mirror wrote since.
     if !owned(&mut tx, net).await? {
         return Ok(false);
+    }
+    if net == ChainNet::Ethereum {
+        sqlx::raw_sql("DELETE FROM shop.v1_royalty_item; DELETE FROM shop.v1_royalty_collection")
+            .execute(&mut *tx)
+            .await?;
     }
     for sql in [
         "DELETE FROM shop.items WHERE network = $1",
@@ -240,6 +273,7 @@ async fn rebuild(conn: &mut PgConnection, net: ChainNet, upto: i64) -> anyhow::R
         collections: folded.rows.len(),
         replayed: folded.rows.len(),
         waiting: folded.waiting,
+        unrepresented: 0,
     })
 }
 
@@ -615,12 +649,12 @@ fn item_record(contract: &str, i: &ItemRow) -> Value {
 
 /// Writes `rows`: each collection upserted, its items inserted (the caller
 /// deleted the ones they replace).
-async fn write(
+pub(super) async fn write(
     conn: &mut PgConnection,
     net: ChainNet,
     rows: &[(CollectionRow, Vec<ItemRow>)],
 ) -> anyhow::Result<()> {
-    let chain_id = net.chain_id() as i32;
+    let chain_id = net.chain_id_i32();
     let mirrored_at = now_utc();
     let collections: Vec<Value> = rows.iter().map(|(c, _)| collection_record(c)).collect();
     for chunk in collections.chunks(ROWS_PER_STATEMENT) {
@@ -824,7 +858,8 @@ mod tests {
                 rebuilt: true,
                 collections: 1,
                 replayed: 1,
-                waiting: 0
+                waiting: 0,
+                unrepresented: 0,
             }
         );
         assert_eq!(marker(&pool).await, (true, Some(97_895_000)));
@@ -911,7 +946,8 @@ mod tests {
                 rebuilt: false,
                 collections: 1,
                 replayed: 0,
-                waiting: 0
+                waiting: 0,
+                unrepresented: 0,
             },
             "the mints and minters past 97,751,000 folded onto the rows"
         );

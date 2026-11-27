@@ -553,6 +553,12 @@ impl Relayer {
     }
 }
 
+#[allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    clippy::cast_possible_wrap,
+    reason = "test support"
+)]
 #[cfg(test)]
 mod tests {
     use super::*;

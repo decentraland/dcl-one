@@ -12,6 +12,7 @@ use sqlx::{FromRow, PgConnection};
 
 use super::{ChainNet, Rpc, chain_walk, ethereum_sales, nft_index, sales_index, trade_events};
 use crate::chain_index::rpc::{RpcLog, hex_to_i64};
+use crate::market::casts;
 
 #[derive(FromRow)]
 struct Execution {
@@ -449,12 +450,13 @@ fn traded_issue(
 
 /// A Traded collection-item leg supplies an item id. Its matching Issue in
 /// this execution supplies the minted token id, including repeated copies.
+/// Whether it set them.
 async fn issued_tokens(
     c: &mut PgConnection,
     net: ChainNet,
     p: &Execution,
     logs: &[&RpcLog],
-) -> anyhow::Result<()> {
+) -> anyhow::Result<bool> {
     let assets: Vec<(i32, String, String, String)> = sqlx::query_as(
         "SELECT ordinal,contract_address,item_id::text,buyer FROM shop.sale_asset
          WHERE network=$1 AND block_number=$2 AND log_index=$3 AND kind='mint' ORDER BY ordinal",
@@ -465,7 +467,7 @@ async fn issued_tokens(
     .fetch_all(&mut *c)
     .await?;
     if assets.is_empty() {
-        return Ok(());
+        return Ok(false);
     }
     let contracts = assets
         .iter()
@@ -476,18 +478,18 @@ async fn issued_tokens(
         .filter_map(|l| traded_issue(l, &p.venue, &contracts))
         .collect();
     if assets.len() != issues.len() {
-        return Ok(());
+        return Ok(false);
     }
     for ((_, contract, item, buyer), (issuer, minted, recipient, _)) in assets.iter().zip(&issues) {
         if issuer != contract || minted != item || recipient != buyer {
-            return Ok(());
+            return Ok(false);
         }
     }
     for ((ordinal, _, _, _), (_, _, _, token)) in assets.into_iter().zip(issues) {
         sqlx::query("UPDATE shop.sale_asset SET token_id=$5::text::numeric WHERE (network,block_number,log_index,ordinal)=($1,$2,$3,$4)")
             .bind(net.db_name()).bind(p.block).bind(p.index).bind(ordinal).bind(token).execute(&mut *c).await?;
     }
-    Ok(())
+    Ok(true)
 }
 
 async fn save(
@@ -500,18 +502,22 @@ async fn save(
         .bind(net.db_name()).bind(p.block).bind(p.index).bind(p.ordinal).bind(split.payer).bind(split.payee).execute(&mut *conn).await?;
     for (n, l) in split.legs.iter().enumerate() {
         sqlx::query("INSERT INTO shop.sale_payout (network,block_number,log_index,payment_ordinal,ordinal,role,recipient,amount) VALUES($1,$2,$3,$4,$5,$6,$7,$8::text::numeric)")
-            .bind(net.db_name()).bind(p.block).bind(p.index).bind(p.ordinal).bind(n as i32).bind(l.role).bind(&l.recipient).bind(l.amount.to_string()).execute(&mut *conn).await?;
+            .bind(net.db_name()).bind(p.block).bind(p.index).bind(p.ordinal).bind(casts::len_i32(n)?).bind(l.role).bind(&l.recipient).bind(l.amount.to_string()).execute(&mut *conn).await?;
     }
     Ok(())
 }
 
+/// Writes the receipts' payments of `(from, to]` and of the executions it
+/// retries below it. Returns the touched UTC days, whether a payment below
+/// `from` changed, and the executions with a newly identified or priced asset.
 pub(super) async fn write(
     conn: &mut PgConnection,
     rpc: &Rpc<'_>,
     net: ChainNet,
     from: i64,
     to: i64,
-) -> anyhow::Result<(Vec<i64>, bool)> {
+    mana: &str,
+) -> anyhow::Result<(Vec<i64>, bool, Vec<(i64, i32)>)> {
     let retry:Vec<String>=sqlx::query_scalar(
        "SELECT tx_hash FROM shop.sale_execution WHERE network=$1 AND block_number <= $2 AND NOT receipt_read
           AND (receipt_attempted_at IS NULL OR receipt_attempted_at<timezone('UTC',now()) - interval '5 minutes')
@@ -571,6 +577,8 @@ pub(super) async fn write(
         .bind(net.db_name()).bind(&hashes).execute(&mut *conn).await?;
     let mut updated = Vec::new();
     let mut corrected_prefix = false;
+    let mut asset_changes = Vec::new();
+    let mut settled_trades = Vec::new();
     // Only one response body is retained. Split an unreadable batch into
     // individual envelopes, each subject to the same transport limit.
     let mut pending: std::collections::VecDeque<_> =
@@ -613,8 +621,8 @@ pub(super) async fn write(
         let heights: BTreeSet<_> = receipts
             .iter()
             .filter(|(_, r)| r["status"] == "0x1")
-            .map(|(h, _)| txs[h][0].block as u64)
-            .collect();
+            .map(|(h, _)| casts::to_u64(txs[h][0].block))
+            .collect::<Result<_, _>>()?;
         let (headers, _) = rpc
             .block_headers(&heights.into_iter().collect::<Vec<_>>())
             .await?;
@@ -631,7 +639,7 @@ pub(super) async fn write(
                     && receipt["blockNumber"].as_str().and_then(hex_to_i64) == Some(first.block),
                 "receipt position mismatch"
             );
-            let hash = &headers[&(first.block as u64)].hash;
+            let hash = &headers[&casts::to_u64(first.block)?].hash;
             ensure!(
                 receipt["blockHash"]
                     .as_str()
@@ -669,8 +677,10 @@ pub(super) async fn write(
                             "receipt venue mismatch"
                         );
                         seen.insert(index);
-                        if kind == "trade" {
-                            issued_tokens(conn, net, execution, &issue_logs).await?;
+                        if kind == "trade"
+                            && issued_tokens(conn, net, execution, &issue_logs).await?
+                        {
+                            asset_changes.push((execution.block, execution.index));
                         }
                         if let Some(slice) = payments.get(&(execution.block, index))
                             && let Some(splits) = if kind == "store" {
@@ -689,6 +699,9 @@ pub(super) async fn write(
                         {
                             for (p, split) in slice.iter().zip(splits) {
                                 save(conn, net, p, split).await?;
+                            }
+                            if kind == "trade" {
+                                settled_trades.push((execution.block, execution.index));
                             }
                         }
                     }
@@ -722,7 +735,9 @@ pub(super) async fn write(
     let days=sqlx::query_scalar(
         "SELECT DISTINCT block_time/86400*86400 FROM shop.sale_execution WHERE network=$1 AND (tx_hash=ANY($2) OR (block_number>$3 AND block_number<=$4))")
         .bind(net.db_name()).bind(updated).bind(from).bind(to).fetch_all(&mut *conn).await?;
-    Ok((days, corrected_prefix))
+    asset_changes
+        .extend(super::trade_prices::publish_proved(conn, net, &settled_trades, mana).await?);
+    Ok((days, corrected_prefix, asset_changes))
 }
 
 #[cfg(test)]

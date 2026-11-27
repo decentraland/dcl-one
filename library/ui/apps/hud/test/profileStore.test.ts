@@ -84,6 +84,14 @@ describe('profile store', () => {
     expect(peekProfile('0xabc')?.badges?.length).toBe(1)
   })
 
+  it("keeps a passport's official mark through replies that do not carry it, until a passport read clears it", () => {
+    receiveProfile('0xabc', full({ official: true }))
+    receiveOwnProfile(full({ name: 'Alicia', version: 4 })) // the own-profile message: no official key
+    expect(peekProfile('0xabc')).toMatchObject({ name: 'Alicia', official: true })
+    receiveProfile('0xabc', full({ version: 4, official: false }))
+    expect(peekProfile('0xabc')?.official).toBe(false)
+  })
+
   it('the engine copy replaces a seed only where it says something', () => {
     seedProfiles([{ address: '0xabc', name: 'Alice', picture: 'a.png' }])
     receiveProfile('0xabc', full({ name: 'Alicia', picture: undefined }))

@@ -42,6 +42,9 @@
 //! Routing is decided by the message type alone, so no per-cell "kind" flag
 //! exists to be order-dependent.
 
+// Decodes untrusted input: malformed bytes must not panic.
+#![deny(clippy::indexing_slicing, clippy::expect_used)]
+
 use std::collections::{BTreeMap, VecDeque};
 
 pub mod msg_type {
@@ -119,8 +122,17 @@ impl CrdtMessage {
 
 #[inline]
 fn read_u32(buf: &[u8], off: usize) -> Option<u32> {
-    let bytes = buf.get(off..off + 4)?;
-    Some(u32::from_le_bytes(bytes.try_into().unwrap()))
+    let bytes = buf.get(off..)?.first_chunk::<4>()?;
+    Some(u32::from_le_bytes(*bytes))
+}
+
+/// The first `N` little-endian words of `buf`.
+fn read_u32s<const N: usize>(buf: &[u8]) -> Option<[u32; N]> {
+    let mut words = [0u32; N];
+    for (i, word) in words.iter_mut().enumerate() {
+        *word = read_u32(buf, i * 4)?;
+    }
+    Some(words)
 }
 
 #[inline]
@@ -141,7 +153,12 @@ pub fn decode_batch(buf: &[u8]) -> Vec<CrdtMessage> {
             None => break,
         };
 
-        if len < HEADER_LEN || off + len > buf.len() {
+        let body = if len < HEADER_LEN {
+            None
+        } else {
+            buf.get(off + HEADER_LEN..off + len)
+        };
+        let Some(body) = body else {
             tracing::warn!(
                 offset = off,
                 declared_len = len,
@@ -149,52 +166,53 @@ pub fn decode_batch(buf: &[u8]) -> Vec<CrdtMessage> {
                 "CRDT framing error: unframeable record; discarding rest of batch"
             );
             break;
-        }
-        let body = &buf[off + HEADER_LEN..off + len];
+        };
         match ty {
-            msg_type::PUT_COMPONENT | msg_type::APPEND_VALUE if body.len() >= 16 => {
-                let entity = read_u32(body, 0).unwrap();
-                let component_id = read_u32(body, 4).unwrap();
-                let timestamp = read_u32(body, 8).unwrap();
-                let data_len = read_u32(body, 12).unwrap() as usize;
-                if 16 + data_len != body.len() {
-                    tracing::warn!(
-                        offset = off,
-                        declared_data_len = data_len,
-                        body_len = body.len(),
-                        "CRDT framing error: record does not carry exactly the payload \
-                         it declares; dropping the record"
-                    );
-                } else {
-                    let data = body[16..16 + data_len].to_vec();
-                    out.push(if ty == msg_type::PUT_COMPONENT {
-                        CrdtMessage::Put {
-                            entity,
-                            component_id,
-                            timestamp,
-                            data,
-                        }
+            msg_type::PUT_COMPONENT | msg_type::APPEND_VALUE => {
+                if let Some([entity, component_id, timestamp, data_len]) = read_u32s(body) {
+                    let data_len = data_len as usize;
+                    let payload = body.get(16..).filter(|d| d.len() == data_len);
+                    if let Some(payload) = payload {
+                        let data = payload.to_vec();
+                        out.push(if ty == msg_type::PUT_COMPONENT {
+                            CrdtMessage::Put {
+                                entity,
+                                component_id,
+                                timestamp,
+                                data,
+                            }
+                        } else {
+                            CrdtMessage::Append {
+                                entity,
+                                component_id,
+                                timestamp,
+                                data,
+                            }
+                        });
                     } else {
-                        CrdtMessage::Append {
-                            entity,
-                            component_id,
-                            timestamp,
-                            data,
-                        }
+                        tracing::warn!(
+                            offset = off,
+                            declared_data_len = data_len,
+                            body_len = body.len(),
+                            "CRDT framing error: record does not carry exactly the payload \
+                             it declares; dropping the record"
+                        );
+                    }
+                }
+            }
+            msg_type::DELETE_COMPONENT => {
+                if let Some([entity, component_id, timestamp]) = read_u32s(body) {
+                    out.push(CrdtMessage::DeleteComponent {
+                        entity,
+                        component_id,
+                        timestamp,
                     });
                 }
             }
-            msg_type::DELETE_COMPONENT if body.len() >= 12 => {
-                out.push(CrdtMessage::DeleteComponent {
-                    entity: read_u32(body, 0).unwrap(),
-                    component_id: read_u32(body, 4).unwrap(),
-                    timestamp: read_u32(body, 8).unwrap(),
-                });
-            }
-            msg_type::DELETE_ENTITY if body.len() >= 4 => {
-                out.push(CrdtMessage::DeleteEntity {
-                    entity: read_u32(body, 0).unwrap(),
-                });
+            msg_type::DELETE_ENTITY => {
+                if let Some(entity) = read_u32(body, 0) {
+                    out.push(CrdtMessage::DeleteEntity { entity });
+                }
             }
             _ => {}
         }
@@ -709,6 +727,7 @@ impl CrdtEngine {
     }
 }
 
+#[allow(clippy::indexing_slicing, clippy::expect_used, reason = "test support")]
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -932,6 +951,28 @@ mod tests {
         let mut batch = encode_batch(&[put(1, 1, 1, b"ok")]);
         batch.extend_from_slice(&[0x05, 0x00]);
         assert_eq!(decode_batch(&batch), vec![put(1, 1, 1, b"ok")]);
+    }
+
+    #[test]
+    fn short_bodies_in_well_framed_records_are_ignored() {
+        for (ty, body_len) in [
+            (msg_type::PUT_COMPONENT, 12),
+            (msg_type::APPEND_VALUE, 12),
+            (msg_type::DELETE_COMPONENT, 8),
+            (msg_type::DELETE_ENTITY, 0),
+            (msg_type::PUT_COMPONENT, 15),
+            (msg_type::APPEND_VALUE, 15),
+            (msg_type::DELETE_COMPONENT, 11),
+            (msg_type::DELETE_ENTITY, 3),
+        ] {
+            let mut batch = Vec::new();
+            write_u32(&mut batch, (HEADER_LEN + body_len) as u32);
+            write_u32(&mut batch, ty);
+            batch.resize(HEADER_LEN + body_len, 0);
+            // The next record still decodes, so the short one is not a framing error.
+            encode_message(&put(1, 1, 1, b"ok"), &mut batch);
+            assert_eq!(decode_batch(&batch), vec![put(1, 1, 1, b"ok")], "type {ty}");
+        }
     }
 
     fn apply_all(ops: &[CrdtMessage]) -> Vec<u8> {

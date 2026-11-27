@@ -32,9 +32,10 @@ use catalyst_shared::json_number::{integral_i64, integral_u64};
 use chrono::{DateTime, TimeZone, Utc};
 use serde::Deserialize;
 use serde_json::json;
-use sqlx::PgPool;
+use sqlx::{PgPool, Row};
 use std::str::FromStr;
 
+use super::catalogue::{self, Purpose};
 use super::signed::{
     CREATE_TRADE_INTENT, MARKETPLACE_AUTH_SIGNERS, require_auth_metadata, require_signer,
 };
@@ -102,8 +103,16 @@ pub struct OffChainMarketplace {
 }
 
 pub const ETHEREUM_MAINNET: i64 = 1;
+#[allow(
+    clippy::cast_possible_wrap,
+    reason = "the Sepolia chain id is a small constant"
+)]
 pub const ETHEREUM_SEPOLIA: i64 = crate::types::ChainId::SEPOLIA.0 as i64;
 pub const MATIC_MAINNET: i64 = 137;
+#[allow(
+    clippy::cast_possible_wrap,
+    reason = "the Amoy chain id is a small constant"
+)]
 pub const MATIC_AMOY: i64 = crate::types::ChainId::AMOY.0 as i64;
 
 pub fn offchain_marketplace_v2(chain_id: i64) -> Option<OffChainMarketplace> {
@@ -425,7 +434,7 @@ fn uint_word(value: &str) -> Result<[u8; 32], SignatureError> {
 }
 
 fn to_seconds(ms: i64) -> u64 {
-    (ms / 1000).max(0) as u64
+    u64::try_from(ms / 1000).unwrap_or(0)
 }
 
 fn hash_external_checks(checks: &TradeChecksInput) -> Result<[u8; 32], SignatureError> {
@@ -474,7 +483,9 @@ fn hash_assets(
     let mut members = Vec::with_capacity(assets.len());
     for asset in assets {
         let mut fields = vec![
-            word_u64(asset.asset_type as u64),
+            word_u64(u64::try_from(asset.asset_type).map_err(|_| {
+                SignatureError::Malformed(format!("assetType {} is negative", asset.asset_type))
+            })?),
             address_word(&asset.contract_address)?,
             uint_word(&asset.signed_value()?)?,
             hash_dynamic(&hex_bytes(asset.extra.as_deref().unwrap_or("0x"))?),
@@ -501,7 +512,7 @@ fn trade_domain_separator(
             hash_dynamic(marketplace.name.as_bytes()),
             hash_dynamic(marketplace.version.as_bytes()),
             word_address(parse_address(marketplace.address)?),
-            word_u64(chain_id.max(0) as u64),
+            word_u64(u64::try_from(chain_id).unwrap_or(0)),
         ],
     ))
 }
@@ -730,6 +741,9 @@ pub enum TradeCreationError {
     },
     /// The item is not in the mirrored catalogue (yet).
     ItemUnknown,
+    /// The collections index owns the item's network and cannot authorize
+    /// a read of it: why.
+    CatalogueUnavailable(String),
     NotTheCreator,
     /// The price is not the chain's MANA (nor USD-pegged MANA).
     InvalidPriceAsset,
@@ -779,6 +793,7 @@ impl std::fmt::Display for TradeCreationError {
                 )
             }
             Self::ItemUnknown => write!(f, "the item is not in the catalogue yet; retry later"),
+            Self::CatalogueUnavailable(why) => write!(f, "{why}; retry later"),
             Self::NotTheCreator => {
                 write!(f, "only the item's creator may sell it as a primary sale")
             }
@@ -810,7 +825,19 @@ pub fn served_chain(indexes: &super::chain_walk::IndexSettings, network: &str) -
     }
 }
 
-/// A public item order is a primary sale: only the item's creator may sign it.
+/// The item's creator and its network's catalogue state, in one statement.
+static ITEM_CREATOR_SQL: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| {
+    format!(
+        "SELECT {columns}, i.creator FROM (SELECT lower($1) AS network) AS n {joins} \
+         LEFT JOIN shop.items i ON i.network = n.network AND i.contract_address = lower($2) AND i.item_id = $3::numeric",
+        columns = catalogue::STATE_COLUMNS,
+        joins = *catalogue::STATE_JOINS,
+    )
+});
+
+/// A public item order is a primary sale: only the item's creator may sign
+/// it. On a network the collections index owns, the creator is read under
+/// its authorizing publication, in the statement that reads the verdict.
 async fn verify_item_creator(
     pool: &PgPool,
     network: &str,
@@ -818,15 +845,17 @@ async fn verify_item_creator(
 ) -> Result<(), TradeCreationError> {
     let sent = &trade.sent[0];
     let item_id = sent.item_id.as_deref().unwrap_or_default();
-    let creator: Option<String> = sqlx::query_scalar(
-        "SELECT creator FROM shop.items \
-         WHERE network = lower($1) AND contract_address = lower($2) AND item_id = $3::numeric",
-    )
-    .bind(network)
-    .bind(&sent.contract_address)
-    .bind(item_id)
-    .fetch_optional(pool)
-    .await?;
+    let row = sqlx::query(sqlx::AssertSqlSafe(ITEM_CREATOR_SQL.as_str()))
+        .bind(network)
+        .bind(&sent.contract_address)
+        .bind(item_id)
+        .fetch_one(pool)
+        .await?;
+    let state = catalogue::NetworkState::from_row(&row)?;
+    if let Some(Err(why)) = state.owned_verdict(trade.chain_id, Purpose::Authorize, Utc::now()) {
+        return Err(TradeCreationError::CatalogueUnavailable(why));
+    }
+    let creator: Option<String> = row.try_get("creator")?;
     match creator {
         None => Err(TradeCreationError::ItemUnknown),
         Some(c) if c.eq_ignore_ascii_case(&trade.signer) => Ok(()),
@@ -1290,7 +1319,10 @@ pub(crate) async fn insert_trade<'e>(
     let signature = trade.signature.to_lowercase();
     let inserted: Option<(String,)> = sqlx::query_as(CREATE_TRADE_SQL)
         .bind(network)
-        .bind(trade.chain_id as i32)
+        .bind(
+            i32::try_from(trade.chain_id)
+                .map_err(|_| TradeCreationError::UnsupportedChain(trade.chain_id))?,
+        )
         .bind(&signature)
         .bind(hashed_signature(&signature))
         .bind(checks_json(&trade.checks))
@@ -1309,6 +1341,18 @@ pub(crate) async fn insert_trade<'e>(
     Ok(trade_id)
 }
 
+/// The 503 of a trade the catalogue cannot judge yet, with `Retry-After`: the
+/// mirror catches up within a pass, and the collections index publishes
+/// within one.
+fn retryable_creation_error(e: TradeCreationError) -> Response {
+    let mut response = creation_error_to_api(e).into_response();
+    response.headers_mut().insert(
+        axum::http::header::RETRY_AFTER,
+        axum::http::HeaderValue::from_static("60"),
+    );
+    response
+}
+
 fn creation_error_to_api(e: TradeCreationError) -> ApiError {
     let message = e.to_string();
     match e {
@@ -1320,7 +1364,8 @@ fn creation_error_to_api(e: TradeCreationError) -> ApiError {
         }
         TradeCreationError::OwnershipUnverifiable(_)
         | TradeCreationError::OwnershipLookupFailed(_)
-        | TradeCreationError::ItemUnknown => ApiError::http(503, message),
+        | TradeCreationError::ItemUnknown
+        | TradeCreationError::CatalogueUnavailable(_) => ApiError::http(503, message),
         TradeCreationError::Duplicate | TradeCreationError::DuplicateOpen(_) => {
             ApiError::http(409, message)
         }
@@ -1385,15 +1430,10 @@ async fn post_trade_inner(
     .await
     {
         Ok(id) => id,
-        // The mirror catches up within a pass: tell the client when to retry.
-        Err(TradeCreationError::ItemUnknown) => {
-            let mut response =
-                creation_error_to_api(TradeCreationError::ItemUnknown).into_response();
-            response.headers_mut().insert(
-                axum::http::header::RETRY_AFTER,
-                axum::http::HeaderValue::from_static("60"),
-            );
-            return Ok(response);
+        Err(
+            e @ (TradeCreationError::ItemUnknown | TradeCreationError::CatalogueUnavailable(_)),
+        ) => {
+            return Ok(retryable_creation_error(e));
         }
         Err(e) => return Err(creation_error_to_api(e)),
     };
@@ -1506,8 +1546,37 @@ pub(crate) mod test_support {
 
 #[cfg(test)]
 mod tests {
+    #![allow(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        clippy::cast_possible_wrap,
+        clippy::cast_precision_loss,
+        reason = "test fixtures use small literal values"
+    )]
+
     use super::test_support::*;
     use super::*;
+
+    /// A trade the catalogue cannot judge yet answers 503 with `Retry-After`:
+    /// an item the mirror has not brought, or an owned network the
+    /// collections index refuses.
+    #[test]
+    fn a_trade_the_catalogue_cannot_judge_yet_says_when_to_retry() {
+        for e in [
+            TradeCreationError::ItemUnknown,
+            TradeCreationError::CatalogueUnavailable("the index is rewinding".into()),
+        ] {
+            let response = retryable_creation_error(e);
+            assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+            assert_eq!(
+                response
+                    .headers()
+                    .get(axum::http::header::RETRY_AFTER)
+                    .unwrap(),
+                "60"
+            );
+        }
+    }
 
     #[test]
     fn endpoints_parse_per_chain_and_owner_words_decode() {

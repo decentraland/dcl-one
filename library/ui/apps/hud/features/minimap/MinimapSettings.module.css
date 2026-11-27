@@ -92,5 +92,4 @@
 /* Set as Home: the label, then the switch at the row's end. */
 .toggleEntry {
   justify-content: space-between;
-  cursor: default;
 }

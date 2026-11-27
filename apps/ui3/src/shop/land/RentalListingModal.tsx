@@ -299,7 +299,7 @@ export default function RentalListingModal({
                 {listForRentAgain ? "List for Rent Again" : editing ? "Update listing" : "List for rent"}
               </Button>
               {editing && onRemove ? (
-                <Button size="md" variant="secondary" onClick={onRemove}>
+                <Button size="md" variant="outline" tone="danger" onClick={onRemove}>
                   Remove listing
                 </Button>
               ) : (

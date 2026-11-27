@@ -3,6 +3,7 @@
 // | Unity test                 | Here                                                              | Class   |
 // | TestSkyboxWidgetPresence   | the Skybox panel shows its title, switch, slider and an HH:mm time | Partial |
 // | TestModifySkyboxTime       | the engine's /time sets 18:00 and the panel shows it               | Partial |
+// | (none)                     | Escape closes the panel while its Auto switch holds the focus      | New     |
 //
 // Partial:
 // - TestSkyboxWidgetPresence expects the title "Night/day"; the panel's title is "NIGHT/DAY" (the
@@ -13,11 +14,19 @@
 //   `NIGHT/DAY Auto Custom HH:mm`.
 // - TestModifySkyboxTime writes the slider's value; the slider has no name and where a click lands
 //   on it depends on its thumb, so the engine's `/time 18 0` stops the clock at 18:00 instead (the
-//   same 0.75 of the day). The panel reads the clock when it opens and does not follow a stopped
-//   one, so it is closed and reopened to show it, as Unity reopens its widget after the write. The
-//   assertions are Unity's: the label is an HH:mm time within 17:50 to 18:10, and the Auto
-//   switch reaches the state asked of it at each change. Added: the slider reads about
-//   18 and is enabled. Unity restores the switch only; here the clock is put back as found too.
+//   same 0.75 of the day). The panel is closed and reopened to show it, as Unity reopens its
+//   widget after the write. The assertions are Unity's: the label is an HH:mm time within 17:50
+//   to 18:10, and the Auto switch reaches the state asked of it at each change. Added: the slider
+//   reads about 18 and is enabled. Unity restores the switch only; here the clock is put back as
+//   found too.
+//   Where the scene sets the time of day the switch and the slider are disabled and `/time` does
+//   not move the sky, so every scenario first checks that the place it runs in does not hold it
+//   (`sceneLocked` in `/sky_state`) and fails with that reason otherwise.
+//
+// New:
+// - A click leaves the focus on the Auto switch, a native checkbox. The Escape after it must still
+//   reach the engine, whose Cancel closes the panel: on the web the engine page forwards keys from a
+//   focused control that takes no text, and the HUD declares no text focus for it.
 import assert from 'node:assert/strict'
 import { spec, until, type Explorer, type Selector } from '../driver/index.ts'
 
@@ -79,7 +88,15 @@ async function waitClock(explorer: Explorer, running: boolean): Promise<void> {
   })
 }
 
+/** These scenarios move the sky with the panel and `/time`, which a scene that holds the time of
+ *  day does not allow. */
+async function requirePlayersSky(explorer: Explorer): Promise<void> {
+  const { sceneLocked } = await explorer.json<{ sceneLocked: boolean }>('/sky_state')
+  assert.equal(sceneLocked, false, 'the scene here holds the time of day: run the Skybox scenarios where no scene does')
+}
+
 scenario('the Skybox panel shows its title, the switch, the slider and a time', async ({ explorer }) => {
+  await requirePlayersSky(explorer)
   await openSkybox(explorer)
   const panel = await explorer.hud.get(PANEL)
   assert.ok(panel.text.startsWith('NIGHT/DAY'), `the panel should be titled NIGHT/DAY: ${panel.text}`)
@@ -90,18 +107,19 @@ scenario('the Skybox panel shows its title, the switch, the slider and a time', 
 })
 
 scenario('with the day cycle off, the Skybox panel shows the time the clock was set to', async ({ explorer }) => {
+  await requirePlayersSky(explorer)
   const original = await readClock(explorer)
   const autoWasOn = original.speed !== 0
   try {
     await openSkybox(explorer)
-    // The panel reads the clock as it opens and then sets its switch from it. A `/time` of ours is
-    // answered after that read, so the press below cannot be overwritten by it.
+    // The panel sets its switch and its hour from the engine's first report after it opens. A
+    // `/time` round trip of ours gives that report time to land before the press below.
     await readClock(explorer)
     await waitAuto(explorer, autoWasOn)
     if (autoWasOn) {
       await press(explorer, AUTO)
       await waitAuto(explorer, false)
-      // the panel freezes the clock after it reads it: set the time only once that has landed
+      // the panel freezes the clock at the hour it shows: set the time only once that has landed
       await waitClock(explorer, false)
     }
     await closeSkybox(explorer)
@@ -122,6 +140,23 @@ scenario('with the day cycle off, the Skybox panel shows the time the clock was 
       await waitAuto(explorer, true)
       await waitClock(explorer, true)
     }
+    await closeSkybox(explorer)
+  } finally {
+    await explorer.time(original.hours, original.speed)
+  }
+})
+
+scenario('Escape closes the Skybox panel while its Auto switch holds the focus', async ({ explorer }) => {
+  await requirePlayersSky(explorer)
+  const original = await readClock(explorer)
+  const autoWasOn = original.speed !== 0
+  try {
+    await openSkybox(explorer)
+    // the engine's first report sets the switch: wait for it before the press, as above
+    await readClock(explorer)
+    await waitAuto(explorer, autoWasOn)
+    await press(explorer, AUTO)
+    await waitAuto(explorer, !autoWasOn)
     await closeSkybox(explorer)
   } finally {
     await explorer.time(original.hours, original.speed)

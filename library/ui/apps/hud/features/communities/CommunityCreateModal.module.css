@@ -1,5 +1,5 @@
 /* Create-a-Community modal — faithfully matches dcl-react-ui's CommunityCreate. Just the card: the
-   popup layer (PopupHost .dim/.pop) draws the scrim, DPI-scales it and animates it in. */
+   popup layer (PopupHost's ModalBackdrop) draws the scrim, DPI-scales it and animates it in. */
 .modal {
   display: flex;
   flex-direction: column;

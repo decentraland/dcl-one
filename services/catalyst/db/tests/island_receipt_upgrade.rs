@@ -1,5 +1,11 @@
 //! Real PostgreSQL coverage for multi-generation receipt upgrades. Every database
 //! here is owned by this test and dropped after use; the configured DSN is admin only.
+#![allow(
+    clippy::unwrap_used,
+    clippy::print_stdout,
+    clippy::print_stderr,
+    reason = "test support"
+)]
 use catalyst_db::{
     MIGRATIONS_SQL, SCHEMA_SQL,
     schema_migrate::{self, MigrateError, Object},

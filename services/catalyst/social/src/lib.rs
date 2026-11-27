@@ -19,7 +19,13 @@
 
 // Production routes go through `shared::routing` (social/clippy.toml); test routers may use axum's.
 #![cfg_attr(not(test), deny(clippy::disallowed_methods))]
-#![cfg_attr(test, allow(clippy::disallowed_methods))]
+#![cfg_attr(
+    test,
+    allow(
+        clippy::disallowed_methods,
+        reason = "test routers may use axum's routing"
+    )
+)]
 
 // The crates this one builds on, under their module names (AGENTS.md).
 pub(crate) use catalyst_chain_index as chain_index;
@@ -57,6 +63,7 @@ pub use metrics::FAMILIES as SERVICE_FAMILIES;
 pub mod rpc;
 pub mod segment_webhooks;
 #[cfg(any(test, feature = "test-support"))]
+#[allow(clippy::unwrap_used, reason = "test support")]
 pub mod test_fixtures;
 pub mod writes;
 

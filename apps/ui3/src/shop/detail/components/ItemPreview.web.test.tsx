@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import type { CatalogItem } from "@shop/discovery/lib/catalogItem";
 import { invalidateShopQueries, primeShopQuery } from "../../discovery/query";
 import { primeRemoteFlags } from "../../discovery/lib/remoteFlags";
+import { resetMeasuredLinkForTests } from "../lib/previewDevice";
 import ItemPreview from "./ItemPreview";
 
 const PREVIEW = "https://wearable-preview.decentraland.org";
@@ -19,11 +20,23 @@ const env = vi.hoisted(() => ({
   account: null as string | null,
   device: "full" as "full" | "lite",
   profile: null as null | ((profile: unknown) => void),
+  // Only the link left to decide: the device reads optimistic until the probe answers, which it never does here.
+  linkUndecided: false,
+  probes: 0,
 }));
 
 vi.mock("../../wallet/context", () => ({ useShopWallet: () => ({ account: env.account }) }));
 vi.mock("../lib/pickRenderer", () => ({
-  pickRenderer: () => ({ renderer: env.device, reason: env.device === "full" ? "connection-ok" : "mobile" }),
+  pickRenderer: (measuredMbps: number | null = null) =>
+    env.linkUndecided && measuredMbps === null
+      ? { renderer: "full", reason: "optimistic-default" }
+      : { renderer: env.device, reason: env.device === "full" ? "connection-ok" : "mobile" },
+}));
+vi.mock("@web-core/connection-speed", () => ({
+  measureDownlinkMbps: () => {
+    env.probes += 1;
+    return new Promise(() => {});
+  },
 }));
 vi.mock("../../../data/catalyst/profile", () => ({
   fetchProfile: () => new Promise((resolve) => (env.profile = resolve)),
@@ -55,6 +68,9 @@ beforeEach(() => {
   env.account = null;
   env.device = "full";
   env.profile = null;
+  env.linkUndecided = false;
+  env.probes = 0;
+  resetMeasuredLinkForTests();
   invalidateShopQueries();
   flag(true);
 });
@@ -141,6 +157,22 @@ describe("what the iframe mounts with", () => {
     render(<ItemPreview item={item()} />);
     expect(frame()).not.toBeNull();
     expect(params().has("unity")).toBe(false);
+  });
+
+  test("while the link probe runs, only the thumbnail shows: no frame, and no Show 3D button it could not act on", () => {
+    env.linkUndecided = true;
+    render(<ItemPreview item={item()} />);
+    expect(env.probes).toBe(1);
+    expect(thumb()).not.toBeNull();
+    expect(frame()).toBeNull();
+    expect(screen.queryByTestId("show-3d")).toBeNull();
+  });
+
+  test("a NAME, which has no preview, never pays for the link probe", () => {
+    env.linkUndecided = true;
+    render(<ItemPreview item={item({ category: "ens" } as Partial<CatalogItem>)} />);
+    expect(env.probes).toBe(0);
+    expect(frame()).toBeNull();
   });
 
   test("an emote plays on the avatar, with no view type and a closer wheel zoom", () => {
@@ -361,5 +393,45 @@ describe("talking to the iframe", () => {
     fromPreview({ type: "load", payload: { renderer: "unity" } }, window);
     fromPreview({ type: "load", payload: { renderer: "unity" } }, frame()!.contentWindow, "https://evil.example");
     expect(thumb()).not.toBeNull();
+  });
+});
+
+describe("the Bevy avatar preview", () => {
+  const bevy = (unity: boolean) => primeRemoteFlags({ "dapps-unity-wearable-preview": unity, "dapps-shop-bevy-avatar-preview": true });
+  const fromBevy = (data: unknown) => fromPreview(data, frame()!.contentWindow, window.location.origin);
+
+  test("with its flag on, the item page draws with Bevy in marketplace mode, with no controls of the page's own", () => {
+    bevy(true);
+    render(<ItemPreview item={item()} renderer="full" />);
+    expect(frame()!.src.startsWith(`${window.location.origin}/avatar-preview/?`)).toBe(true);
+    expect(params().get("mode")).toBe("marketplace");
+    expect(params().get("profile")).toBe("default");
+    expect(params().has("unity")).toBe(false);
+    fromBevy({ type: "load", payload: { renderer: "bevy" } });
+    expect(thumb()).toBeNull();
+    expect(screen.queryByTestId("preview-toggle")).toBeNull();
+  });
+
+  test("an emote leaves Bevy its own controls, its playback among them: no framing that hides them, and no second playbar", () => {
+    bevy(false);
+    render(<ItemPreview item={item({ category: "emote" } as Partial<CatalogItem>)} renderer="full" />);
+    for (const hides of ["wheelZoom", "zoom", "hideControls", "camera", "showThumbnailBoundaries"]) expect(params().has(hides)).toBe(false);
+    fromBevy({ type: "ready" });
+    fromBevy({ type: "load", payload: { renderer: "bevy" } });
+    expect(screen.queryByRole("button", { name: "Play emote" })).toBeNull();
+  });
+
+  test("Bevy failing gives way to Unity, then Babylon; a new item tries Bevy again", () => {
+    bevy(true);
+    const view = render(<ItemPreview item={item()} renderer="full" />);
+    fromBevy({ type: "error", payload: { message: "renderer failed to start" } });
+    expect(frame()!.src.startsWith(`${PREVIEW}/?`)).toBe(true);
+    expect(params().get("unity")).toBe("true");
+    fromPreview({ type: "error", payload: { message: "unity failed" } });
+    expect(params().has("unity")).toBe(false);
+    expect(frame()!.src.startsWith(`${PREVIEW}/?`)).toBe(true);
+
+    view.rerender(<ItemPreview item={item({ urn: "urn:decentraland:matic:collections-v2:0x0768847951fddd4e73e670800da26d953a77059b:1" } as Partial<CatalogItem>)} renderer="full" />);
+    expect(frame()!.src.startsWith(`${window.location.origin}/avatar-preview/?`)).toBe(true);
   });
 });

@@ -1,10 +1,10 @@
-import { MaskIcon } from '../../design'
 import { useOptionalSession } from '../session/SessionContext'
 import { inCommunityStream, streamAct } from '../voiceChat/callGate'
 import playersIcon from '../../assets/chat/players.png'
 import joinStreamIcon from '../../assets/voice/join-stream.png'
 import streamIcon from '../../assets/voice/stream-large.png'
 import styles from './Chat.module.css'
+import { MaskIcon } from '@dcl/one-ui'
 
 export function CommunityStreamBanner({ communityId }: { communityId: string }): React.JSX.Element | null {
   const session = useOptionalSession()

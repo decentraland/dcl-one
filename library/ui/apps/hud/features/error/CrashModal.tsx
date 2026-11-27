@@ -1,16 +1,17 @@
 // Full-screen crash surface: the engine panics, the engine stops responding, or react-web itself
 // throws. Sits above everything (the popup layer, login, loading) and is deliberately NOT a popup —
 // it renders in the ErrorBoundary fallback and in embedded mode, where PopupHost isn't mounted, so it
-// owns its scrim, DPI scale, animation and focus trap. Fed by useEngineSession's fatalError or the
+// mounts its own scrim and focus trap. Fed by useEngineSession's fatalError or the
 // ErrorBoundary. A world-not-found is not a crash and does not come here — see openRealmError.
 
 import { useEffect, useRef } from 'react'
 import { createPortal } from 'react-dom'
-import { ModalShell, Button } from '../../design'
+import { ModalShell } from '../../design'
 import { useFocusTrap } from '../../lib/useFocusTrap'
 import { lockInput } from '@explorer-core/lib/inputLock'
 import type { CrashSource } from '@explorer-core/features/error/fatalError'
 import styles from './CrashModal.module.css'
+import { Button, ModalBackdrop } from '@dcl/one-ui'
 
 const COPY: Record<CrashSource, { title: string; subtitle: string }> = {
   launch: { title: 'Something went wrong', subtitle: "The 3D engine couldn't start. Reloading often fixes it." },
@@ -45,42 +46,40 @@ export function CrashModal({
   // close a menu), and a stray press would wipe the panic text before it's read. A dismissable crash
   // closes on Dismiss or a scrim click; a fatal boot/react crash has no onDismiss at all.
 
-  // Own scrim at --z-fatal (above the whole popup layer + login), portaled to <body>. ModalShell is
-  // rendered scrimless — just the card; this component owns the backdrop, DPI scale, animation and
-  // focus trap (what PopupHost does for popups, but here without depending on it).
+  // The popup layer's scrim (the shared ModalBackdrop: DPI scale, entrance) at --z-fatal, above the whole
+  // popup layer + login, portaled to <body>. ModalShell is just the card; this component owns the focus
+  // trap and the dismissal (what PopupHost does for popups, but here without depending on it).
   return createPortal(
-    <div ref={scrimRef} className={styles.scrim} tabIndex={-1} onClick={onDismiss ?? undefined}>
-      <div className={styles.pop}>
-        <ModalShell
-          // Alert-style dialog: centered header with title-scale type, centered footer buttons.
-          header={
-            <div className={styles.head}>
-              <h2 className={styles.title}>{title}</h2>
-              <p className={styles.subtitle}>{subtitle}</p>
-            </div>
-          }
-          role="alertdialog"
-          ariaLabel={title}
-          closeButton={false}
-          actionsAlign="center"
-          actions={
-            <>
-              {onDismiss && (
-                <Button variant="ghost" className={styles.btn} onClick={onDismiss}>
-                  Dismiss
-                </Button>
-              )}
-              <Button variant="primary" className={styles.btn} onClick={onReload}>
-                Reload
+    <ModalBackdrop ref={scrimRef} className={styles.scrim} tabIndex={-1} onClick={onDismiss ?? undefined}>
+      <ModalShell
+        // Alert-style dialog: centered header with title-scale type, centered footer buttons.
+        header={
+          <div className={styles.head}>
+            <h2 className={styles.title}>{title}</h2>
+            <p className={styles.subtitle}>{subtitle}</p>
+          </div>
+        }
+        role="alertdialog"
+        ariaLabel={title}
+        closeButton={false}
+        actionsAlign="center"
+        actions={
+          <>
+            {onDismiss && (
+              <Button appearance="hud" variant="ghost" className={styles.btn} onClick={onDismiss}>
+                Dismiss
               </Button>
-            </>
-          }
-        >
-          {/* The panic text itself — what a bug report needs. */}
-          <pre className={styles.detail}>{error.message}</pre>
-        </ModalShell>
-      </div>
-    </div>,
+            )}
+            <Button appearance="hud" variant="primary" className={styles.btn} onClick={onReload}>
+              Reload
+            </Button>
+          </>
+        }
+      >
+        {/* The panic text itself — what a bug report needs. */}
+        <pre className={styles.detail}>{error.message}</pre>
+      </ModalShell>
+    </ModalBackdrop>,
     document.body
   )
 }

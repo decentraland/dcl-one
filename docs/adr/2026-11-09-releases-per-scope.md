@@ -24,7 +24,8 @@ from here ([SDK ADR](2026-10-26-sdk-in-dcl-one.md), follow-up 1).
   the previous tag with the same prefix, not over the repository.
 - One dispatcher can later release several scopes from a single run by starting each scope's
   release run.
-- The SDK releases from `.github/workflows/sdk-release.yml`, which also publishes `next`; it calls
+- The SDK releases from `.github/workflows/sdk-release.yml`, which also publishes `next` from `main`
+  and the `auth-server` dist-tag from the branch of that name; it calls
   the build jobs of `.github/workflows/sdk.yml`, the SDK's CI, and keeps the publish job in its own
   file, since npm matches the workflow that was started. Its manual run takes the version as an
   input, as upstream takes it from the release tag, and stamps it into the manifests before packing
@@ -39,9 +40,11 @@ from here ([SDK ADR](2026-10-26-sdk-in-dcl-one.md), follow-up 1).
 
 - npm trusts a publish by repository, workflow filename and environment, not by branch, and a
   branch can edit a workflow. So the job that publishes `@dcl/*` uses the `npm-release`
-  environment, which only `main` may deploy to (a repository setting), and each package's trusted
-  publisher requires it. The environment is the gate, not the filename.
-- PR previews cannot pass that gate: a pull request's run is not a `main` run, and npm rejects
+  environment, which only `main` and `auth-server` may deploy to (a repository setting), and each
+  package's trusted publisher requires it. The environment is the gate, not the filename. A branch
+  the environment admits can publish any dist-tag by editing its copy of the workflow, so
+  `auth-server` is a protected branch that takes pull requests only.
+- PR previews cannot pass that gate: a pull request's run is not a run of those branches, and npm rejects
   trusted publishing from `pull_request_target`, which GitHub also blocks by default in public
   repositories. So previews publish from the pull request's own run to separate packages,
   `@dcl-regenesislabs/*`, whose trusted publishers name `sdk.yml` and no environment. Any branch

@@ -506,6 +506,7 @@ pub async fn optional_signer_at(
 }
 
 #[cfg(any(test, feature = "test-support"))]
+#[allow(clippy::unwrap_used, reason = "test support")]
 pub mod test_support {
     use super::*;
     use crate::auth::{AuthLink, AuthLinkType};

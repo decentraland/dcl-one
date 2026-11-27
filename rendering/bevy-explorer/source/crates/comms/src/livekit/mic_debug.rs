@@ -33,9 +33,7 @@ impl Plugin for MicDebugPlugin {
                     ("Mute mic in background", "muteMicInBackground"),
                     ("Local microphone track active", "transmitting"),
                     ("Active remote speakers (up to 32)", "speakers"),
-                    #[cfg(not(target_arch = "wasm32"))]
                     ("Available input devices", "devices"),
-                    #[cfg(not(target_arch = "wasm32"))]
                     ("Current input device", "device"),
                     #[cfg(not(target_arch = "wasm32"))]
                     ("Capture sample rate (Hz)", "rate"),
@@ -114,10 +112,12 @@ fn microphone_info(
     speakers: Query<&LivekitParticipant, (With<ActiveSpeaker>, Without<Local>)>,
     #[cfg(not(target_arch = "wasm32"))] device: Option<Res<MicrophoneDevice>>,
     #[cfg(not(target_arch = "wasm32"))] format: Option<Res<CaptureFormat>>,
+    #[cfg(target_arch = "wasm32")] devices: Res<MicrophoneDevices>,
+    #[cfg(target_arch = "wasm32")] inputs: Res<crate::livekit::web::MicrophoneTrackInputs>,
+    #[cfg(target_arch = "wasm32")] routes: Query<&MicrophonePublication>,
 ) {
     let Some(Ok(_)) = input.take() else { return };
     let speakers: BTreeSet<_> = speakers.iter().map(|p| p.identity().to_string()).collect();
-    #[allow(unused_mut)]
     let mut report = json!({"available": mic.available, "enabled": mic.enabled, "connected": !connected.is_empty(), "permission": format!("{:?}", permission.get()), "windowFocus": format!("{:?}", focus.window()), "muteMicInBackground": focus.audio.mute_mic_in_background,
         "transmitting": *transmission.get() == MicrophoneTransmissionState::Enabled, "speakers": speakers.into_iter().take(32).collect::<Vec<_>>()});
     #[cfg(not(target_arch = "wasm32"))]
@@ -134,6 +134,24 @@ fn microphone_info(
             "channels": "Microphone capture is inactive",
             "device": "No current input device",
             "devices": "Input device enumeration failed",
+        });
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        // what the live tracks capture from, which livekit may have moved off the choice
+        let captured: BTreeSet<_> = routes
+            .iter()
+            .filter_map(|route| {
+                let track = route.state.lock_ignore_poison().track.clone()?;
+                inputs.get(track.id()).map(|input| input.label.clone())
+            })
+            .collect();
+        report["device"] = json!(
+            (!captured.is_empty()).then(|| captured.into_iter().collect::<Vec<_>>().join(", "))
+        );
+        report["devices"] = json!(devices.offered());
+        report["unavailable"] = json!({
+            "device": "No live microphone track",
         });
     }
     input.reply_ok(report.to_string());

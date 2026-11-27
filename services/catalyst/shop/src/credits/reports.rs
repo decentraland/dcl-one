@@ -2,20 +2,26 @@
 //! The ops dashboard's cross-wallet credits list and its grant reasons, read
 //! from this node's tables in the old server's row shape:
 //!
-//! - an operator grant (`credits.ledger` kind `grant` with its
-//!   `ops.admin_audit` row): a USD row, source `grant` (`studio_grant` when
-//!   the audit names a studio), goal `on-demand-granted-credits`, its reason
-//!   and annotation from the audit detail, and the granter when the audit
-//!   actor is a wallet (a bearer grant records `token:<VARIABLE>`, so it has
-//!   no granter, and no grant path writes an annotation yet);
-//! - a grant migrated from the old server (kind `grant`, no audit row): a USD
-//!   row, source `migrated`, no goal, reason or granter. The migration folded
-//!   every positive non-purchase credit (grants, studio grants, IAP, sale
-//!   proceeds and royalties, won disputes) into `grant` without its source,
-//!   so these rows are not claimed as the operator's grants;
+//! - an audited USD grant (`credits.ledger` kind `grant` with its
+//!   `ops.admin_audit` row: an admin's or operator's grant, or one imported
+//!   with credits-server's grant metadata): source `grant`, goal
+//!   `on-demand-granted-credits`, its reason and annotation from the audit
+//!   detail, and the granter when the audit actor is a wallet (a bearer grant
+//!   records `token:<VARIABLE>`, so it has no granter);
+//! - a studio grant, source `studio_grant`, on proof that a studio paid for
+//!   it: a studio budget entry names the row (`studio_budget_entries.ledger_id`:
+//!   a studio operator's grant, or an imported one the budget import linked),
+//!   or its audit is credits-server's own record of a studio grant (an
+//!   imported audit, `upstreamCreditId`, that carries `studioName`, null when
+//!   the studio's name was unavailable). One with no audit row has no goal,
+//!   reason or granter. A `studioName` alone proves nothing: the admin route
+//!   once wrote one on grants that spent no budget, and those stay `grant`;
+//! - an imported credit of kind `grant` without an audit row and no budget
+//!   entry: source `migrated`, no goal, reason or granter. This includes IAP,
+//!   sale proceeds and royalties, and won disputes;
 //! - a pack purchase (`credits.ledger` kind `purchase`): a USD row, source
 //!   `purchase`;
-//! - a goal credit (`credits.goal_grants`): a MANA row with its season,
+//! - a claimed goal credit (`credits.goal_grants` with `claimed_at`): a MANA row with its season,
 //!   contract, signature and expiry, source `goal`, and the MANA its salt
 //!   has consumed on chain (`credits.usages`).
 //!
@@ -112,8 +118,9 @@ fn credit_rows() -> String {
            CASE WHEN a.actor ~ '^0x[0-9a-f]{{40}}$' THEN a.actor END AS granter_address, \
            a.detail->>'reason' AS reason, a.detail->>'annotation' AS annotation, \
            0::numeric AS total_consumed, \
-           CASE WHEN a.id IS NULL THEN 'migrated' \
-                WHEN a.detail ? 'studioName' THEN 'studio_grant' ELSE 'grant' END AS source, \
+           CASE WHEN EXISTS (SELECT 1 FROM credits.studio_budget_entries e WHERE e.ledger_id = l.id) \
+                     OR (a.detail ? 'upstreamCreditId' AND a.detail ? 'studioName') THEN 'studio_grant' \
+                WHEN a.id IS NULL THEN 'migrated' ELSE 'grant' END AS source, \
            CASE WHEN a.id IS NOT NULL THEN 'on-demand-granted-credits' END AS goal_id \
     FROM credits.ledger l LEFT JOIN ops.admin_audit a ON a.id = l.admin_audit_id \
     WHERE l.kind = 'grant' \
@@ -128,7 +135,8 @@ fn credit_rows() -> String {
            NULL::text, NULL::text, NULL::text, \
            COALESCE((SELECT SUM(u.value_wei) FROM credits.usages u WHERE u.salt = g.salt), 0), \
            'goal'::text, g.goal_id \
-    FROM credits.goal_grants g LEFT JOIN credits.seasons s ON s.id = g.season_id"
+    FROM credits.goal_grants g LEFT JOIN credits.seasons s ON s.id = g.season_id \
+    WHERE g.claimed_at IS NOT NULL"
     )
 }
 
@@ -263,9 +271,15 @@ impl Credits {
 
     /// A REPEATABLE READ, READ ONLY transaction: every statement in it reads
     /// the same snapshot, and nothing in it can write.
-    async fn read_snapshot(&self) -> Result<sqlx::Transaction<'_, sqlx::Postgres>, ApiError> {
+    pub(super) async fn read_snapshot(
+        &self,
+    ) -> Result<sqlx::Transaction<'_, sqlx::Postgres>, ApiError> {
         let mut tx = self.pool.begin().await?;
         sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY")
+            .execute(&mut *tx)
+            .await?;
+        // Each report statement is bounded, as the market's reads are.
+        sqlx::query("SET LOCAL statement_timeout = '10s'")
             .execute(&mut *tx)
             .await?;
         Ok(tx)

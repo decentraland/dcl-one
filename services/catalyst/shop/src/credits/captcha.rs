@@ -11,10 +11,19 @@ const MARKER_HALF_PX: i64 = 2;
 
 pub const CLAIM_TOLERANCE: f64 = 3.0;
 
+#[allow(
+    clippy::cast_precision_loss,
+    reason = "4000 + a remainder below ANSWER_RANGE is far below 2^53"
+)]
 pub fn answer_for_seed(seed: u64) -> f64 {
     (4000 + seed % ANSWER_RANGE as u64) as f64 / 100.0
 }
 
+#[allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    reason = "the clamped percent maps into 0..=WIDTH - 1"
+)]
 fn marker_pixel(answer_percent: f64) -> u32 {
     let pct = answer_percent.clamp(0.0, 100.0);
     let px = (pct / 100.0 * (WIDTH - 1) as f64).round() as u32;
@@ -33,6 +42,11 @@ fn lcg(state: &mut u64) -> u32 {
     (*state >> 33) as u32
 }
 
+#[allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    reason = "answer_x only seeds the noise; float-to-int `as` saturates"
+)]
 pub fn render_png(answer_x: f64) -> Vec<u8> {
     let marker = marker_pixel(answer_x) as i64;
 
@@ -47,9 +61,9 @@ pub fn render_png(answer_x: f64) -> Vec<u8> {
         for col in 0..WIDTH {
             let n = lcg(&mut rng);
 
-            let mut r = (40 + (n & 0x7f)) as u8;
-            let mut g = (60 + ((n >> 7) & 0x7f)) as u8;
-            let mut b = (90 + ((n >> 14) & 0x7f)) as u8;
+            let mut r = 40 + (n.to_le_bytes()[0] & 0x7f);
+            let mut g = 60 + ((n >> 7).to_le_bytes()[0] & 0x7f);
+            let mut b = 90 + ((n >> 14).to_le_bytes()[0] & 0x7f);
 
             let d = col as i64 - marker;
             if d.abs() <= MARKER_HALF_PX {
@@ -85,6 +99,10 @@ pub fn render_png(answer_x: f64) -> Vec<u8> {
     png
 }
 
+#[allow(
+    clippy::cast_possible_truncation,
+    reason = "a chunk holds at most the 160x60 image"
+)]
 fn write_chunk(out: &mut Vec<u8>, kind: &[u8; 4], data: &[u8]) {
     out.extend_from_slice(&(data.len() as u32).to_be_bytes());
     out.extend_from_slice(kind);
@@ -105,6 +123,7 @@ fn zlib_store(data: &[u8]) -> Vec<u8> {
         let chunk = std::cmp::min(0xffff, data.len() - pos);
         let last = pos + chunk >= data.len();
         out.push(if last { 1 } else { 0 });
+        #[allow(clippy::cast_possible_truncation, reason = "chunk is at most 0xffff")]
         let len = chunk as u16;
         out.extend_from_slice(&len.to_le_bytes());
         out.extend_from_slice(&(!len).to_le_bytes());
@@ -146,6 +165,13 @@ fn crc32(data: &[u8]) -> u32 {
 }
 
 #[cfg(test)]
+#[allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    clippy::cast_possible_wrap,
+    clippy::cast_precision_loss,
+    reason = "test fixtures use small literal values"
+)]
 mod tests {
     use super::*;
 
@@ -401,10 +427,13 @@ pub async fn cooldown(
     Ok(row
         .filter(|r| r.get::<i16, _>("failed_attempts") >= 3)
         .map(|r| {
-            ((r.get::<chrono::NaiveDateTime, _>("last_failed_at") + chrono::Duration::days(1) - now)
-                .num_milliseconds()
-                .max(0) as u64)
-                .div_ceil(1000)
+            u64::try_from(
+                (r.get::<chrono::NaiveDateTime, _>("last_failed_at") + chrono::Duration::days(1)
+                    - now)
+                    .num_milliseconds(),
+            )
+            .unwrap_or(0)
+            .div_ceil(1000)
         })
         .unwrap_or(0))
 }

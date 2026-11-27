@@ -1,9 +1,12 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { breakpoints } from '@dcl/one-ui'
+import { useCanvasHeight } from '../canvasHeight'
+import { COMPONENT_OVERVIEW, componentGroups, componentPages } from '../componentPages'
 import { entries } from '../examples'
 import { foundationPages } from '../foundations/FoundationPages'
 import { HUD_OVERVIEW, hudPages, hudSections } from '../hudPages'
-import { HEIGHT_MESSAGE } from '../messages'
+import { OPEN_MESSAGE, WIDTH_MESSAGE } from '../messages'
+import { sortByLabel } from '../order'
 import {
   MAX_WIDTH,
   MIN_WIDTH,
@@ -17,17 +20,46 @@ import {
   type View,
   type Width
 } from '../url'
+import {
+  allCollapsed,
+  expandGroup,
+  readCollapsedGroups,
+  toggleAllGroups,
+  toggleGroup,
+  writeCollapsedGroups
+} from './collapsedGroups'
 import styles from './Shell.module.css'
 
-const componentNames = entries.map((entry) => entry.name)
 // Exports shown on a page named after another export open by their own name too.
 const aliases = pageAliases(entries)
 const foundationNames = foundationPages.map((page) => page.name)
 const hudNavigation = [{ name: HUD_OVERVIEW, components: [] }, ...hudSections]
 const presets = widthPresets(breakpoints)
-const groups = [...new Set(entries.map((entry) => entry.group))]
 
-const figmaNames = new Set(__GENERATED_COMPONENTS__.map((component) => component.name))
+// The sidebar's collapsible groups, by the id their collapsed state is stored under.
+const FOUNDATIONS_GROUP = 'foundations'
+const HUD_GROUP = 'hud'
+const componentGroupId = (group: string) => `component:${group}`
+// The id of the note that says why the collapse buttons do nothing while a filter is set.
+const FILTER_LOCK_NOTE = 'gallery-filter-lock'
+const groupIds = [
+  FOUNDATIONS_GROUP,
+  ...componentGroups.map((group) => componentGroupId(group.name)),
+  HUD_GROUP
+]
+
+/** The group whose list holds a route's page; none for the Showcase link and the Figma reference. */
+function groupOf(route: Route): string | null {
+  if (route.source !== 'runtime') return null
+  if (route.view === 'foundations') return FOUNDATIONS_GROUP
+  if (route.view === 'hud') return HUD_GROUP
+  const group = entries.find((entry) => entry.name === route.name)?.group
+  return group === undefined ? null : componentGroupId(group)
+}
+
+// The generated Review's catalog lists its components in capture order; the sidebar lists them by name.
+const figmaComponents = sortByLabel(__GENERATED_COMPONENTS__, (component) => component.name)
+const figmaNames = new Set(figmaComponents.map((component) => component.name))
 // The hosted pull request preview leaves the Figma reference out; the Review artifact carries it.
 const FIGMA_REFERENCE_ELSEWHERE =
   'Not in this hosted preview: the full build linked from the pull request includes it.'
@@ -85,16 +117,81 @@ function NavLink({
   )
 }
 
+/** A sidebar group: its heading is the button that collapses and expands its list. */
+function NavGroup({
+  id,
+  label,
+  level,
+  expanded,
+  locked,
+  onToggle,
+  children
+}: {
+  id: string
+  label: string
+  level: 2 | 3
+  expanded: boolean
+  /** A filter shows every match, so the group stays open and its button, still focusable, does nothing meanwhile. */
+  locked: boolean
+  onToggle: (id: string) => void
+  children: ReactNode
+}) {
+  const Heading = level === 2 ? 'h2' : 'h3'
+  const region = `gallery-group-${id.replace(/[^A-Za-z0-9_-]/g, '-')}`
+  return (
+    <section>
+      <Heading className={level === 2 ? styles.navHeading : styles.groupHeading}>
+        <button
+          type="button"
+          className={styles.groupToggle}
+          aria-expanded={expanded}
+          aria-controls={region}
+          aria-disabled={locked || undefined}
+          aria-describedby={locked ? FILTER_LOCK_NOTE : undefined}
+          onClick={() => {
+            if (!locked) onToggle(id)
+          }}
+        >
+          <span>{label}</span>
+          <span className={styles.chevron} aria-hidden="true" />
+        </button>
+      </Heading>
+      <div id={region} hidden={!expanded}>
+        {children}
+      </div>
+    </section>
+  )
+}
+
 function Navigation({ route, navigate }: { route: Route; navigate: Navigate }) {
   const [filter, setFilter] = useState('')
+  const filtering = filter.trim() !== ''
   const matches = (...names: readonly string[]) =>
     names.some((name) => name.toLowerCase().includes(filter.trim().toLowerCase()))
+  const [collapsed, setCollapsed] = useState(() => readCollapsedGroups(groupIds))
+  // Opening a page expands the group that lists it, so a link never lands on a page its sidebar hides. Collapsing
+  // that group afterwards is the viewer's choice and stays until another page opens.
+  const page = route.source === 'runtime' ? `${route.view}:${route.name}` : null
+  const [opened, setOpened] = useState<string | null>(null)
+  if (page !== opened) {
+    setOpened(page)
+    const group = groupOf(route)
+    if (group !== null) setCollapsed((current) => expandGroup(current, group))
+  }
+  useEffect(() => writeCollapsedGroups(collapsed), [collapsed])
+  const everyCollapsed = allCollapsed(collapsed, groupIds)
+  const group = (id: string) => ({
+    id,
+    expanded: filtering || !collapsed.has(id),
+    locked: filtering,
+    onToggle: (toggled: string) => setCollapsed((current) => toggleGroup(current, toggled))
+  })
   const width = route.source === 'runtime' ? route.width : undefined
   const isCurrent = (view: View, name: string) =>
     route.source === 'runtime' && route.view === view && route.name === name
   const generatedName =
     route.source === 'generated' ? new URLSearchParams(route.query).get('component') : null
-  const figma = __GENERATED_COMPONENTS__.filter((component) => matches(component.name))
+  const figma = figmaComponents.filter((component) => matches(component.name))
   return (
     <nav className={styles.nav} aria-label="Gallery">
       <input
@@ -105,30 +202,53 @@ function Navigation({ route, navigate }: { route: Route; navigate: Navigate }) {
         value={filter}
         onChange={(event) => setFilter(event.target.value)}
       />
-      <h2 className={styles.navHeading}>Foundations</h2>
-      <ul className={styles.navList}>
-        {foundationPages
-          .filter((page) => matches(page.title))
-          .map((page) => (
-            <NavLink
-              key={page.name}
-              href={galleryHref({ foundations: page.name, width })}
-              current={isCurrent('foundations', page.name)}
-              label={page.title}
-              source="runtime"
-              navigate={navigate}
-            />
-          ))}
-      </ul>
+      <button
+        type="button"
+        className={styles.collapseAll}
+        aria-disabled={filtering || undefined}
+        aria-describedby={filtering ? FILTER_LOCK_NOTE : undefined}
+        onClick={() => {
+          if (!filtering) setCollapsed((current) => toggleAllGroups(current, groupIds))
+        }}
+      >
+        {everyCollapsed ? 'Expand all' : 'Collapse all'}
+      </button>
+      <p id={FILTER_LOCK_NOTE} hidden>
+        Groups stay open while filtering.
+      </p>
+      <NavGroup {...group(FOUNDATIONS_GROUP)} label="Foundations" level={2}>
+        <ul className={styles.navList}>
+          {foundationPages
+            .filter((page) => matches(page.title))
+            .map((page) => (
+              <NavLink
+                key={page.name}
+                href={galleryHref({ foundations: page.name, width })}
+                current={isCurrent('foundations', page.name)}
+                label={page.title}
+                source="runtime"
+                navigate={navigate}
+              />
+            ))}
+        </ul>
+      </NavGroup>
       <h2 className={styles.navHeading}>Components</h2>
       <p className={styles.navNote}>What apps import from @dcl/one-ui.</p>
-      {groups.map((group) => {
-        const items = entries.filter(
-          (entry) => entry.group === group && matches(entry.name, ...entry.components)
-        )
+      {matches(COMPONENT_OVERVIEW) ? (
+        <ul className={styles.navList}>
+          <NavLink
+            href={galleryHref({ component: COMPONENT_OVERVIEW, width })}
+            current={isCurrent('component', COMPONENT_OVERVIEW)}
+            label={COMPONENT_OVERVIEW}
+            source="runtime"
+            navigate={navigate}
+          />
+        </ul>
+      ) : null}
+      {componentGroups.map(({ name, entries: grouped }) => {
+        const items = grouped.filter((entry) => matches(entry.name, ...entry.components))
         return items.length ? (
-          <section key={group}>
-            <h3 className={styles.groupHeading}>{group}</h3>
+          <NavGroup key={name} {...group(componentGroupId(name))} label={name} level={3}>
             <ul className={styles.navList}>
               {items.map((entry) => (
                 <NavLink
@@ -142,27 +262,28 @@ function Navigation({ route, navigate }: { route: Route; navigate: Navigate }) {
                 />
               ))}
             </ul>
-          </section>
+          </NavGroup>
         ) : null
       })}
-      <h2 className={styles.navHeading}>HUD</h2>
-      <p className={styles.navNote}>
-        The Explorer HUD&apos;s design primitives: the sections of its Showcase.
-      </p>
-      <ul className={styles.navList}>
-        {hudNavigation
-          .filter((section) => matches(section.name, ...section.components))
-          .map((section) => (
-            <NavLink
-              key={section.name}
-              href={galleryHref({ hud: section.name, width })}
-              current={isCurrent('hud', section.name)}
-              label={section.name}
-              source="hud"
-              navigate={navigate}
-            />
-          ))}
-      </ul>
+      <NavGroup {...group(HUD_GROUP)} label="HUD" level={2}>
+        <p className={styles.navNote}>
+          The Explorer HUD&apos;s design primitives: the sections of its Showcase.
+        </p>
+        <ul className={styles.navList}>
+          {hudNavigation
+            .filter((section) => matches(section.name, ...section.components))
+            .map((section) => (
+              <NavLink
+                key={section.name}
+                href={galleryHref({ hud: section.name, width })}
+                current={isCurrent('hud', section.name)}
+                label={section.name}
+                source="hud"
+                navigate={navigate}
+              />
+            ))}
+        </ul>
+      </NavGroup>
       <details className={styles.reference} open={route.source === 'generated' || undefined}>
         <summary className={styles.navHeading}>Figma reference</summary>
         <p className={styles.navNote}>
@@ -262,17 +383,25 @@ function RuntimeView({
   navigate: Navigate
 }) {
   const frame = useRef<HTMLIFrameElement>(null)
-  const [height, setHeight] = useState(480)
+  const height = useCanvasHeight(frame, 240, 480)
+  // A link on the Showcase canvas opens its page here, in place and at the chosen width.
+  const { width } = route
   useEffect(() => {
     const receive = (event: MessageEvent) => {
       if (event.source !== frame.current?.contentWindow) return
-      const data = event.data as { type?: unknown; height?: unknown }
-      if (data?.type === HEIGHT_MESSAGE && typeof data.height === 'number')
-        setHeight(Math.max(240, Math.ceil(data.height)))
+      const data = event.data as { type?: unknown; component?: unknown } | null
+      if (data?.type !== OPEN_MESSAGE || typeof data.component !== 'string') return
+      if (componentPages.includes(data.component))
+        navigate(galleryHref({ component: data.component, width }))
     }
     window.addEventListener('message', receive)
     return () => window.removeEventListener('message', receive)
-  }, [])
+  }, [navigate, width])
+  // The canvas stays the same document across a width change, and the same size when the new width is the one it
+  // already had: the Showcase's links carry the chosen width, so the canvas is told.
+  useEffect(() => {
+    frame.current?.contentWindow?.postMessage({ type: WIDTH_MESSAGE }, window.location.origin)
+  }, [width])
   // A canvas wider than the space beside the sidebar is drawn scaled down, not scrolled: it keeps the chosen width,
   // which is what its media queries read, and the whole of it stays in view.
   const viewport = useRef<HTMLDivElement>(null)
@@ -315,6 +444,7 @@ function RuntimeView({
       ? foundationPages.find((item) => item.name === route.name)
       : undefined
   const section = hud ? hudSections.find((item) => item.name === route.name) : undefined
+  const overview = route.view === 'component' && route.name === COMPONENT_OVERVIEW
   const title = page?.title ?? route.name
   const shown = entry?.components ?? section?.components ?? []
   return (
@@ -334,7 +464,7 @@ function RuntimeView({
           {title}
           {hud ? (
             <SourceBadge label="HUD" />
-          ) : figmaNames.has(title) ? (
+          ) : entry && figmaNames.has(title) ? (
             <SourceBadge label="runtime" />
           ) : null}
         </h1>
@@ -342,7 +472,9 @@ function RuntimeView({
           {entry?.summary ??
             page?.summary ??
             section?.title ??
-            "Every section of the Explorer HUD's Showcase, as ?showcase=1 shows them in a HUD host, then its glyphs."}
+            (overview
+              ? 'Every component page in one canvas, grouped as the sidebar groups them. A page name opens its own page.'
+              : "Every section of the Explorer HUD's Showcase, as ?showcase=1 shows them in a HUD host, then its glyphs.")}
         </p>
         {hud ? (
           <p className={styles.summary}>
@@ -435,7 +567,7 @@ export function Shell({ search: initial }: { search: string }) {
     window.history.pushState(null, '', url)
     setSearch(url.search)
   }, [])
-  const route = parseRoute(search, componentNames, foundationNames, aliases, hudPages)
+  const route = parseRoute(search, componentPages, foundationNames, aliases, hudPages)
   return (
     <div className={styles.layout}>
       <Navigation route={route} navigate={navigate} />

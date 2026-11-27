@@ -69,8 +69,8 @@ pub fn parse_filters(pairs: &[(String, String)]) -> Result<ProceedsFilters, ApiE
         from: summary.from,
         to: summary.to,
         network,
-        first: p.get_number("first", None).map(|v| v as i64),
-        skip: p.get_number("skip", None).map(|v| v as i64),
+        first: p.get_integer("first"),
+        skip: p.get_integer("skip"),
     })
 }
 

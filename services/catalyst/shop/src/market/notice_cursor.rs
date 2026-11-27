@@ -10,6 +10,7 @@
 //! logs of the token precede it. The same log mined again in another block
 //! keeps its id; a different log at the same (block, log_index) gets another.
 
+use dcl_metrics::{Descriptor, GaugeFamily};
 use sqlx::{PgConnection, PgPool};
 use uuid::Uuid;
 
@@ -43,6 +44,35 @@ pub const PRODUCERS: &[&str] = &[
     ROYALTIES_BID_ACCEPTED_MATIC,
     BID_RECEIVED,
 ];
+
+/// Blocks between a producer's cursor and the published block its pages
+/// read up to (for bids, the lower of the sales and nft indexes'), by
+/// `producer`, set after each page: 0 once a page reads everything up to
+/// that block, otherwise the blocks still ahead of the cursor. The
+/// producers that wait for the catalogue (sales, bids, royalties) report
+/// it: a cursor held behind a sale shows as a lag that keeps growing. A
+/// pass whose index is not published reads no page and leaves it as it was.
+const CURSOR_LAG: GaugeFamily<1> = GaugeFamily::new(
+    "shop_notification_cursor_lag",
+    "Blocks between a chain notification producer's cursor and the published block it reads up to.",
+    None,
+    &["producer"],
+);
+
+/// The producers' families, declared for serve's registry.
+pub const FAMILIES: &[Descriptor] = &[CURSOR_LAG.descriptor];
+
+/// Records `producer`'s [`CURSOR_LAG`]: its cursor at `cursor_block`, its
+/// pages bounded by `published` (equal when a page read everything).
+#[allow(
+    clippy::cast_precision_loss,
+    reason = "a lag in blocks, far below 2^53"
+)]
+pub(super) fn report_lag(producer: &'static str, published: i64, cursor_block: i64) {
+    CURSOR_LAG
+        .handle([producer])
+        .set(published.saturating_sub(cursor_block).max(0) as f64);
+}
 
 /// How far below an index's head a replay moves the cursors back: deeper
 /// rows are not announced again, and a backfill entirely below it replays nothing.
@@ -747,6 +777,14 @@ pub fn token_log_key(a: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    #![allow(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        clippy::cast_possible_wrap,
+        clippy::cast_precision_loss,
+        reason = "test fixtures use small literal values"
+    )]
+
     use super::*;
     use crate::market::chain_walk::INDEXER_MANA;
 

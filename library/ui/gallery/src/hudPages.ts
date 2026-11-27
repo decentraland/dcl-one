@@ -1,10 +1,11 @@
-// The HUD section's pages: the Explorer HUD's Showcase as a whole, each of its sections, then its glyphs. The section
-// index (apps/hud/design/ShowcaseIndex.ts) names them without loading the HUD, which only the HUD canvas (hud.html)
-// loads.
+// The HUD section's pages: the Explorer HUD's Showcase as a whole, then each of its sections and its glyphs, by name.
+// The section index (apps/hud/design/ShowcaseIndex.ts) names them without loading the HUD, which only the HUD canvas
+// (hud.html) loads.
 import { SHOWCASE_INDEX, type ShowcaseEntry } from '../../apps/hud/design/ShowcaseIndex'
+import { sortByLabel } from './order'
 import { pageAliases, type HudPages } from './url'
 
-/** The page with every section in one window, as `?showcase=1` shows them in a HUD host, then the glyphs. */
+/** The page with every section and the glyphs in one window, in the sidebar's order. */
 export const HUD_OVERVIEW = 'Showcase'
 
 /**
@@ -17,10 +18,19 @@ export const HUD_GLYPHS = {
   components: []
 } satisfies ShowcaseEntry
 
-export const hudSections: readonly ShowcaseEntry[] = [...SHOWCASE_INDEX, HUD_GLYPHS]
+const declared: readonly ShowcaseEntry[] = [...SHOWCASE_INDEX, HUD_GLYPHS]
 
-/** The `hud` pages, the overview first, and the section each other component opens (MenuRow shows MenuPanel). */
+/** The sections and the glyphs by name (`sortByLabel`): the order of the sidebar and of the Showcase page. */
+export const hudSections: readonly ShowcaseEntry[] = sortByLabel(
+  declared,
+  (section) => section.name
+)
+
+/**
+ * The `hud` pages, the overview first, and the section each other component opens (TextArea shows FormControls): of
+ * the sections that render it, the first in the HUD's own index.
+ */
 export const hudPages: HudPages = {
   pages: [HUD_OVERVIEW, ...hudSections.map((section) => section.name)],
-  aliases: pageAliases(hudSections)
+  aliases: pageAliases(declared)
 }

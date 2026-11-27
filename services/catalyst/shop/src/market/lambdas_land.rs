@@ -166,7 +166,7 @@ fn lands_page(base: &str, lands: &[OwnedLand], page: JsPagination) -> Response {
         .iter()
         .map(|l| land_element(base, l))
         .collect();
-    Json(json!({ "elements": elements, "totalAmount": lands.len() as i64, "pageNum": page.page_num, "pageSize": page.page_size })).into_response()
+    Json(json!({ "elements": elements, "totalAmount": crate::market::casts::len_i64(lands.len()), "pageNum": page.page_num, "pageSize": page.page_size })).into_response()
 }
 
 /// The owner's lands from the marketplace subgraph, paged here (the reader
@@ -242,8 +242,12 @@ pub async fn user_lands(
         Some((offset, limit)) => (offset, limit, None),
         None => match user_lands_count(&mut land.tx, net, &owner).await {
             Ok(total) => {
-                let r = page.range(total.max(0) as usize);
-                (r.start as i64, r.len() as i64, Some(total))
+                let r = page.range(crate::market::casts::page(total));
+                (
+                    crate::market::casts::len_i64(r.start),
+                    crate::market::casts::len_i64(r.len()),
+                    Some(total),
+                )
             }
             Err(e) => {
                 tracing::error!(error = %e, "user lands count failed");

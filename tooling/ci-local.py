@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Run the GitHub workflows' checks locally, on exactly the content being committed or pushed.
 
-  python3 tooling/ci-local.py install      enable the hooks in .githooks (core.hooksPath)
+  python3 tooling/ci-local.py install      make pre-commit and pre-push the git hooks of every worktree
   python3 tooling/ci-local.py pre-commit   fast checks on the staged tree
   python3 tooling/ci-local.py pre-push     every triggered workflow job on each pushed commit
   python3 tooling/ci-local.py run [REV]    the pre-push checks on REV (default HEAD), without pushing
@@ -12,7 +12,8 @@ between runs. The Nix shell environment is cached per flake.lock/toolchain, and 
 that passed on a tree is not repeated for that tree. Workflow path filters are read from
 .github/workflows, so a workflow GitHub would skip is skipped here too. Without Nix
 (e.g. Windows) the steps whose tools are on PATH run and the rest are reported skipped.
-`git commit --no-verify` / `git push --no-verify` bypass the hooks.
+CI_LOCAL_SKIP=1 skips the hooks' checks; pre-push still uploads the Git LFS objects, which
+`git push --no-verify` skips too.
 """
 import contextlib
 import errno
@@ -22,6 +23,7 @@ import importlib.util
 import os
 from pathlib import Path
 import platform
+import re
 import shutil
 import subprocess
 import sys
@@ -44,16 +46,18 @@ matching_paths = paths.matching_paths
 non_documentation = paths.non_documentation
 
 
-def git(*args, cwd=ROOT, env=None, check=True, input=None):
-    result = subprocess.run(['git', *args], cwd=cwd, env=env, input=input, capture_output=True, text=True)
+def git(*args, cwd=None, env=None, check=True, input=None):
+    result = subprocess.run(['git', *args], cwd=cwd or ROOT, env=env, input=input, capture_output=True, text=True)
     if check and result.returncode:
         sys.exit(f'git {" ".join(args)} failed:\n{result.stderr}')
     return result.stdout.strip()
 
 
 def clean_env():
-    """The hook's GIT_DIR/GIT_INDEX_FILE must not reach git commands run in the worktree."""
-    return {k: v for k, v in os.environ.items() if not k.startswith('GIT_')}
+    """What a hook's git sets (GIT_DIR, GIT_INDEX_FILE, GIT_EXEC_PATH, ...) must not reach the worktree's commands."""
+    return {k: v for k, v in os.environ.items()
+            if not k.startswith('GIT_') or k.startswith('GIT_LFS_')
+            or k in ('GIT_CONFIG_GLOBAL', 'GIT_CONFIG_SYSTEM', 'GIT_CONFIG_NOSYSTEM')}
 
 
 def workflow_paths(name, event='pull_request', source=None):
@@ -120,9 +124,20 @@ def web_steps(changed_ui3=True):
     return steps
 
 
+# Without Nix, the steps that need the dev shell (Python 3.11+, bash 4+) are skipped rather than failed.
 STRUCTURE = [Step('ownership catalogue', 'python3 tooling/owners.py --check', tools=('python3',)),
-             Step('module layers', 'bash services/catalyst/scripts/check-module-dag.sh', tools=('bash', 'rg'))]
-TOOLING_TESTS = Step('tooling tests', 'python3 -m unittest discover -s tooling/tests', tools=('python3',))
+             Step('module layers', 'bash services/catalyst/scripts/check-module-dag.sh', tools=('nix',))]
+# The development workflow's unused-dependency check, from the flake's nixpkgs.
+MACHETE = ('nix build --inputs-from . nixpkgs#cargo-machete -o .cache/cargo-machete && '
+           '.cache/cargo-machete/bin/cargo-machete services/catalyst library/dcl-* apps/dcl-scene-cli')
+# sdk.yml's check for the scene CLI alone.
+SCENE_CLI_MACHETE = ('nix build --inputs-from . nixpkgs#cargo-machete -o .cache/cargo-machete && '
+                     '.cache/cargo-machete/bin/cargo-machete apps/dcl-scene-cli')
+TOOLING_TESTS = Step('tooling tests', 'python3 -m unittest discover -s tooling/tests', tools=('nix',))
+# The Changes job runs these on every pull request.
+WORKFLOW_TESTS = Step('workflow tests', 'python3 -m unittest tooling.tests.test_dev_workflow tooling.tests.test_ci_local '
+                      'tooling.tests.test_ui_gallery_receipt.WorkflowTest tooling.tests.test_image_cache.CompileWorkflowTest',
+                      tools=('nix',))
 
 
 # What ui3 builds from. Its `@dcl/one-ui` root import reaches every shared component and foundation, and
@@ -135,7 +150,7 @@ UI3_SOURCES = ('apps/ui3/*', 'library/catalyst-api/*', 'library/shop/*', 'librar
 
 
 def pre_commit_steps(changed):
-    steps = list(STRUCTURE)
+    steps = [*STRUCTURE, WORKFLOW_TESTS]
     if touches(changed, 'tooling/*', 'flake.*', 'infra/dev/*'):
         steps.append(TOOLING_TESTS)
     if touches(changed, 'infra/gateway/*', '.github/workflows/gateway-images.yml'):
@@ -171,7 +186,7 @@ def image_system():
 
 
 def pre_push_steps(changed):
-    steps = list(STRUCTURE)
+    steps = [*STRUCTURE, WORKFLOW_TESTS]
     # Pull requests run it unfiltered (its CI gate always reports); what it tests is its push.paths.
     development = triggered('development.yml', changed, event='push')
     images = triggered('apis-sites-images.yml', changed)
@@ -198,7 +213,17 @@ def pre_push_steps(changed):
     if development:
         steps.append(Step('dev stack smoke', 'bash tooling/dev-smoke.sh', tools=('nix',)))
         steps += web_steps()
+        steps.append(Step('catalyst clippy', 'cd services/catalyst && cargo clippy --locked '
+                          '--workspace --all-targets -- -D warnings', tools=('cargo',)))
+        steps.append(Step('catalyst clippy (ts)', 'cd services/catalyst && cargo clippy --locked '
+                          '--workspace --all-targets --features catalyst/ts -- -D warnings', tools=('cargo',)))
+        steps.append(Step('unused dependencies', MACHETE, tools=('nix',)))
         steps.append(Step('rust and sites e2e suites', 'bash tooling/dev-test.sh', tools=('nix',)))
+    elif triggered('sdk.yml', changed):
+        # the workspace clippy above covers it otherwise
+        steps.append(Step('scene cli clippy', 'cd services/catalyst && cargo clippy --locked '
+                          '-p dcl-scene-cli --all-targets -- -D warnings', tools=('cargo',)))
+        steps.append(Step('scene cli unused dependencies', SCENE_CLI_MACHETE, tools=('nix',)))
     if images:
         system = image_system()
         if system is None:
@@ -248,7 +273,11 @@ def locked():
                     delay = min(delay * 2, 2)
         else:
             import fcntl
-            fcntl.flock(handle, fcntl.LOCK_EX)
+            try:
+                fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                print('Waiting for another local CI run to finish; Ctrl-C cancels this queued run.', file=sys.stderr)
+                fcntl.flock(handle, fcntl.LOCK_EX)
         yield
 
 
@@ -323,7 +352,7 @@ def run_steps(label, treeish, steps):
     for reason in skipped:
         print(f'  skip {reason}')
     if failures:
-        print(f'  Worktree with the failing content: {TREE}\n  Bypass (not recommended): --no-verify')
+        print(f'  Worktree with the failing content: {TREE}')
     return not failures
 
 
@@ -331,21 +360,32 @@ def changed_files(*diff_args, env=None):
     return set(filter(None, git('diff', '--name-only', '--no-renames', *diff_args, env=env).splitlines()))
 
 
+def skipping():
+    if os.environ.get('CI_LOCAL_SKIP') != '1':
+        return False
+    print('ci-local: CI_LOCAL_SKIP=1, checks skipped', file=sys.stderr)
+    return True
+
+
 def pre_commit():
+    if skipping():
+        return True
     # write-tree/diff use the hook's environment so a partial `git commit <paths>` index is honoured.
     tree = git('write-tree')
     has_head = git('rev-parse', '--verify', '-q', 'HEAD', check=False)
     changed = changed_files('--cached', *(['HEAD'] if has_head else ['4b825dc642cb6eb9a060e54bf8d69288fbee4904']))
     with locked():
         sync_tree(tree)
-        return run_steps('pre-commit', tree, pre_commit_steps(changed))
+        ok = run_steps('pre-commit', tree, pre_commit_steps(changed))
+    if not ok:
+        print('  Bypass (not recommended): CI_LOCAL_SKIP=1 git commit ..., or git commit --no-verify')
+    return ok
 
 
 def changes_for_push(sha, remote_sha):
     env = clean_env()
     changed = set()
-    if remote_sha != ZERO and subprocess.run(['git', 'cat-file', '-e', remote_sha], cwd=ROOT, env=env,
-                                             capture_output=True).returncode == 0:
+    if remote_sha != ZERO:
         changed |= changed_files(remote_sha, sha, env=env)
     base = git('merge-base', sha, 'origin/main', check=False, env=env)
     if base:
@@ -361,24 +401,101 @@ def check_commit(sha, changed, label):
         return run_steps(label, sha, pre_push_steps(changed))
 
 
+def peel(sha):
+    """The commit a pushed sha names (an annotated tag's target), or '' for a deletion or a tree or blob tag."""
+    return git('rev-parse', '--verify', '-q', f'{sha}^{{commit}}', check=False, env=clean_env())
+
+
 def pre_push(args):
     updates = sys.stdin.read()
-    seen = set()
-    for line in updates.splitlines():
-        _, sha, _, remote_sha = line.split()
-        if sha == ZERO or sha in seen:
-            continue
-        seen.add(sha)
-        if not check_commit(sha, changes_for_push(sha, remote_sha), f'pre-push {sha[:10]}'):
-            return False
-    if shutil.which('git-lfs'):
-        return subprocess.run(['git', 'lfs', 'pre-push', *args], input=updates, text=True).returncode == 0
-    return True
+    if not skipping():
+        seen = set()
+        for line in updates.splitlines():
+            _, sha, _, remote_sha = line.split()
+            commit = peel(sha)
+            if not commit or commit in seen:
+                continue
+            seen.add(commit)
+            if not check_commit(commit, changes_for_push(commit, peel(remote_sha) or ZERO), f'pre-push {commit[:10]}'):
+                print('  Bypass (not recommended): CI_LOCAL_SKIP=1 git push ..., which still uploads the Git LFS '
+                      'objects that git push --no-verify skips')
+                return False
+    return subprocess.run(['git', 'lfs', 'pre-push', *args], input=updates, text=True).returncode == 0
+
+
+MARKER = '# Written by tooling/ci-local.py install, which overwrites this file.'
+HOOKS = {'pre-commit': f'#!/bin/sh\n{MARKER}\n[ -f tooling/ci-local.py ] || exit 0\n'
+                       'exec python3 tooling/ci-local.py pre-commit\n',
+         # The check covers worktrees on older branches too, whose ci-local skips the upload without git-lfs.
+         'pre-push': f'#!/bin/sh\n{MARKER}\n'
+                     'command -v git-lfs >/dev/null 2>&1 || { echo >&2 "ci-local: git-lfs is not on PATH, '
+                     'so this push would not upload its Git LFS objects"; exit 2; }\n'
+                     '[ -f tooling/ci-local.py ] || exec git lfs pre-push "$@"\n'
+                     'exec python3 tooling/ci-local.py pre-push "$@"\n'}
+
+
+def is_stock_lfs_hook(path):
+    """git-lfs's own hook: whatever its message, line 2 only prints it and exits."""
+    if not path.is_file():
+        return False
+    lines = [line for line in path.read_bytes().decode(errors='replace').splitlines() if line.strip()]
+    return (len(lines) == 3 and lines[0] == '#!/bin/sh' and lines[2] == f'git lfs {path.name} "$@"' and re.fullmatch(
+        r'command -v git-lfs >/dev/null 2>&1 \|\| \{ (echo >&2 "\\n[^"$`\\]*\\n"|printf >&2 "\\n%s\\n\\n" "[^"$`\\]*"); '
+        r'exit 2; \}', lines[1]) is not None)
+
+
+def hooks_path(*scope, cwd=None):
+    return git('config', '-z', *scope, '--get-all', 'core.hooksPath', cwd=cwd, check=False).split('\0')[:-1]
 
 
 def install():
-    git('config', 'core.hooksPath', '.githooks')
-    print('Hooks enabled from .githooks (pre-commit, pre-push and the Git LFS hooks).')
+    # Windows ships a python3 stub that only opens the Store, so run it rather than look it up.
+    try:
+        usable = subprocess.run(['python3', '-c', ''], capture_output=True).returncode == 0
+    except OSError:
+        usable = False
+    if not usable:
+        print('ci-local: the hooks run python3, which does not run here', file=sys.stderr)
+        return False
+    trees = [Path(line[9:]) for line in git('worktree', 'list', '--porcelain').splitlines()
+             if line.startswith('worktree ')]
+    # --local skips includes, worktree, global, system and -c values; -z keeps an empty one, which turns hooks off.
+    local = hooks_path('--local')
+    everywhere = [hooks_path(cwd=tree) for tree in trees if (tree / '.git').exists()]
+    if local not in ([], ['.githooks']) or any(values != local for values in everywhere):
+        shown = sorted({value for values in everywhere for value in values})
+        print(f'ci-local: core.hooksPath is set ({", ".join(map(repr, shown))}), so git runs hooks from there '
+              'instead of the repository\'s hooks folder; install changed nothing', file=sys.stderr)
+        return False
+    hooks = ROOT / git('rev-parse', '--git-common-dir') / 'hooks'
+    for name in HOOKS:
+        path = hooks / name
+        if path.is_symlink() or path.exists() and not (
+                path.is_file() and MARKER.encode() in path.read_bytes().split(b'\n')
+                or name == 'pre-push' and is_stock_lfs_hook(path)):
+            print(f'ci-local: {path} is another hook, so install changed nothing; remove it and run install again',
+                  file=sys.stderr)
+            return False
+    started = []
+    if local:
+        # Unsetting it swaps each worktree's untracked .githooks, where only git-lfs writes hooks, for the shared folder.
+        stopped = [path for tree in trees for path in sorted((tree / '.githooks').glob('*')) if not is_stock_lfs_hook(path)]
+        if stopped:
+            print(f'ci-local: core.hooksPath is .githooks, and unsetting it would stop git running '
+                  f'{", ".join(map(str, stopped))}; install changed nothing. Move them into {hooks} or remove them, '
+                  'then run install again', file=sys.stderr)
+            return False
+        started = [path for path in sorted(hooks.glob('*'))
+                   if path.suffix != '.sample' and path.name not in HOOKS and not is_stock_lfs_hook(path)]
+        git('config', '--local', '--unset-all', 'core.hooksPath')
+    hooks.mkdir(exist_ok=True)
+    for name, text in HOOKS.items():
+        (hooks / name).write_bytes(text.encode())
+        (hooks / name).chmod(0o755)
+    print(f'ci-local: pre-commit and pre-push installed in {hooks}. `git lfs install` now stops at this pre-push '
+          '(exit 2), so run `git lfs pull` on its own.')
+    if started:
+        print(f'ci-local: with core.hooksPath unset, git runs these hooks again: {", ".join(map(str, started))}')
     return True
 
 

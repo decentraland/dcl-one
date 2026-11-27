@@ -15,7 +15,7 @@ on:
       - 'tooling/tests/**'
       - 'tooling/migration/**'
       - 'services/catalyst/**'
-      # the node never links the scene CLI, but the workspace reads its manifest
+      # the node never links the scene CLI, but the workspace reads its manifest; sdk.yml lints its sources
       - 'apps/dcl-scene-cli/Cargo.toml'
       - 'library/**'
       # the SDK is TypeScript nothing here builds; sdk.yml tests it
@@ -222,6 +222,64 @@ jobs:
           name: development-rust-logs-${{ runner.os }}-${{ runner.arch }}-${{ matrix.shard }}
           path: .cache/dev/*.log
           retention-days: 7
+  clippy:
+    name: Rust clippy
+    needs: changes
+    # Same selection as the Rust tests; Linux only, the lints do not depend on the platform.
+    if: ${{ !cancelled() && needs.changes.outputs.run != 'false' && needs.changes.outputs.rust != 'false' }}
+    runs-on: ${{ vars.RUNNER_LINUX_X86 || 'ubuntu-26.04' }}
+    timeout-minutes: 60
+    env:
+      CARGO_PROFILE_DEV_DEBUG: '0'
+      CARGO_INCREMENTAL: '0'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: cachix/install-nix-action@3dc140bfc76c49fbd4dd958429132e3746bcb086 # v31.11.5
+      - uses: nix-community/cache-nix-action@7df957e333c1e5da7721f60227dbba6d06080569 # v7.0.2
+        with:
+          primary-key: nix-store-${{ runner.os }}-${{ runner.arch }}-ci-${{ hashFiles('flake.nix', 'flake.lock', 'services/catalyst/rust-toolchain.toml', 'infra/dev/**', 'infra/packages/**') }}
+          restore-prefixes-first-match: nix-store-${{ runner.os }}-${{ runner.arch }}-ci-
+          save: ${{ github.ref == 'refs/heads/main' && github.run_attempt == '1' }}
+          gc-max-store-size: 0
+      - name: Root the shell and the flake inputs
+        run: |
+          mkdir -p .cache/nix-roots
+          nix develop .#ci --profile .cache/nix-roots/env --command true
+          nix-store --add-root .cache/nix-roots/input -r $(nix flake archive --json | jq -r '.inputs | .. | .path? // empty') > /dev/null
+      - name: Put the Nix Rust toolchain on PATH for the cache action
+        run: |
+          toolchain=$(dirname "$(nix develop .#ci --command bash -c 'command -v cargo')")
+          test -x "$toolchain/rustc"
+          echo "$toolchain" >> "$GITHUB_PATH"
+      - name: Restore the Rust dependency cache
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        env:
+          # Only the Nix rustc enters the key; see the Rust tests job.
+          RUSTUP_HOME: /dev/null
+        with:
+          # Clippy keeps check metadata, not the test build's artifacts, so it has its own entry.
+          workspaces: services/catalyst -> target-clippy
+          shared-key: dev-clippy-${{ hashFiles('flake.lock') }}
+          save-if: ${{ github.ref == 'refs/heads/main' && github.run_attempt == '1' }}
+          cache-on-failure: true
+      - name: Clippy over every workspace target
+        env:
+          CARGO_TARGET_DIR: ${{ github.workspace }}/services/catalyst/target-clippy
+        run: |
+          nix develop .#ci --command \
+            cargo clippy --manifest-path services/catalyst/Cargo.toml --locked --workspace --all-targets -- -D warnings
+      - name: Clippy with the TypeScript export types
+        env:
+          CARGO_TARGET_DIR: ${{ github.workspace }}/services/catalyst/target-clippy
+        # catalyst/ts turns on every crate's ts feature, which gates the export shapes and their tests.
+        run: |
+          nix develop .#ci --command \
+            cargo clippy --manifest-path services/catalyst/Cargo.toml --locked --workspace --all-targets --features catalyst/ts -- -D warnings
+      - name: No unused dependencies
+        # Reads sources only; services/catalyst covers cast-bot, and its gitignored target dirs are skipped.
+        run: |
+          nix build --inputs-from . nixpkgs#cargo-machete -o .cache/cargo-machete
+          .cache/cargo-machete/bin/cargo-machete services/catalyst library/dcl-* apps/dcl-scene-cli
   smoke:
     needs: changes
     if: ${{ !cancelled() && needs.changes.outputs.run != 'false' }}
@@ -251,8 +309,10 @@ jobs:
           fi
           df -h /
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: Fetch the embedded error-page images and fonts
-        run: git lfs pull --include="$ERROR_PAGE_LFS" --exclude=''
+      # foundation-dev's web-install task reads the HUD's input graph, which lists every Sites asset the
+      # shared UI entry reaches.
+      - name: Fetch the embedded error-page images and fonts, and the shared UI's assets
+        run: git lfs pull --include="$ERROR_PAGE_LFS,library/ui/apps/sites/assets/**" --exclude=''
       - uses: cachix/install-nix-action@3dc140bfc76c49fbd4dd958429132e3746bcb086 # v31.11.5
       - uses: nix-community/cache-nix-action@7df957e333c1e5da7721f60227dbba6d06080569 # v7.0.2
         with:
@@ -470,25 +530,26 @@ jobs:
         with:
           path: ${{ env.PNPM_STORE }}
           key: ${{ steps.pnpm-cache.outputs.cache-primary-key }}
-  # The one check to mark required on main. It always reports: green when the Changes, Rust, smoke, tooling and web
-  # jobs passed or were skipped, red when one failed, was cancelled or is missing.
+  # The one check to mark required on main. It always reports: green when the Changes, Rust, clippy, smoke, tooling
+  # and web jobs passed or were skipped, red when one failed, was cancelled or is missing.
   gate:
     name: CI gate
-    needs: [changes, rust, smoke, tooling, web]
+    needs: [changes, rust, clippy, smoke, tooling, web]
     if: ${{ always() }}
     runs-on: ${{ vars.RUNNER_LINUX_X86 || 'ubuntu-26.04' }}
     timeout-minutes: 5
     steps:
-      - name: Require the Changes, Rust, smoke, tooling and web jobs to pass or be skipped
+      - name: Require the Changes, Rust, clippy, smoke, tooling and web jobs to pass or be skipped
         env:
           CHANGES: ${{ needs.changes.result }}
           RUST: ${{ needs.rust.result }}
+          CLIPPY: ${{ needs.clippy.result }}
           SMOKE: ${{ needs.smoke.result }}
           TOOLING: ${{ needs.tooling.result }}
           WEB: ${{ needs.web.result }}
         run: |
-          echo "changes=$CHANGES rust=$RUST smoke=$SMOKE tooling=$TOOLING web=$WEB"
-          for result in "$CHANGES" "$RUST" "$SMOKE" "$TOOLING" "$WEB"; do
+          echo "changes=$CHANGES rust=$RUST clippy=$CLIPPY smoke=$SMOKE tooling=$TOOLING web=$WEB"
+          for result in "$CHANGES" "$RUST" "$CLIPPY" "$SMOKE" "$TOOLING" "$WEB"; do
             case "$result" in
               success|skipped) ;;
               *) echo "::error::A required job ended as '$result'"; exit 1 ;;

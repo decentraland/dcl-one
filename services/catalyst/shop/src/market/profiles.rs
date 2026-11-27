@@ -869,7 +869,10 @@ fn not_modified_since(entities: &[Value], threshold: i64) -> bool {
     entities.iter().all(|entity| {
         entity
             .get("timestamp")
-            .and_then(|t| t.as_i64().or_else(|| t.as_f64().map(|f| f as i64)))
+            .and_then(|t| {
+                t.as_i64()
+                    .or_else(|| t.as_f64().map(super::casts::saturating_i64))
+            })
             .is_some_and(|ts| ts.div_euclid(1000) * 1000 <= threshold)
     })
 }
@@ -1057,6 +1060,31 @@ pub async fn profiles_metadata(
         }
     }
     Json(compact).into_response()
+}
+
+/// The profile's name when the address holds it as a NAME (`hasClaimedName`,
+/// the same check `profiles` serves), as the purchase receipt greets its
+/// buyer. `None` for an unclaimed name, no profile, or a failed read: an
+/// unclaimed name is a non-unique default, and a greeting is never worth an
+/// error.
+pub async fn claimed_name(state: &MarketplaceState, address: &str) -> Option<String> {
+    let pointer = address.to_lowercase();
+    let found = processed_profiles(state, std::slice::from_ref(&pointer))
+        .await
+        .ok()?;
+    let (_, profile) = found
+        .into_iter()
+        .find(|(found, _)| found.eq_ignore_ascii_case(&pointer))?;
+    let avatar = profile.get("avatars")?.as_array()?.first()?;
+    if avatar.get("hasClaimedName").and_then(Value::as_bool) != Some(true) {
+        return None;
+    }
+    avatar
+        .get("name")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+        .map(str::to_string)
 }
 
 pub async fn profile_by_id(State(state): State<SharedState>, Path(id): Path<String>) -> Response {

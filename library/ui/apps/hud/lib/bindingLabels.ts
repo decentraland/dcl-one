@@ -134,9 +134,15 @@ export function cancelKeyCodes(): string[] {
   return bindingsForAction(snapshot, { System: 'Cancel' }).filter(isKeyWire)
 }
 
-/** Is this a text-entry element (keystrokes there are typing, not hotkeys/cancel)? */
+/** Inputs that take no text: the HUD's switches are native checkboxes, the permission prompt's choices radios. */
+const NON_TEXT_INPUTS = new Set(['checkbox', 'radio'])
+
+/** Is this a text-entry element (keystrokes there are typing, not hotkeys/cancel)? Focusing a checkbox or a
+ *  radio leaves the keys to the engine. The web engine page forwards keys to the engine by the same rule
+ *  (`isTextField` in the Explorer's deploy/web/engine/boot.js): change both together. */
 export const isEditableTarget = (t: EventTarget | null | undefined): boolean =>
-  t instanceof HTMLElement && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)
+  t instanceof HTMLElement &&
+  ((t.tagName === 'INPUT' && !NON_TEXT_INPUTS.has((t as HTMLInputElement).type)) || t.tagName === 'TEXTAREA' || t.isContentEditable === true)
 
 /** Does this keydown mean cancel? Matches the physical `code`; the `key` fallback keeps
  *  synthetic events that only set `key` (tests) working while Escape is the cancel key. */

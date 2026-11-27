@@ -13,12 +13,14 @@ import { registerMinimap } from './domains/minimap'
 import { renderSceneUi } from './ui'
 import { registerSession } from './domains/session'
 import { registerConnectivity } from './domains/connectivity'
+import { registerSkyTime } from './domains/skyTime'
 import { registerAnalytics } from './domains/analytics'
 import { registerTextureOptimization } from './domains/textureOptimization'
 import { registerProfile } from './domains/profile'
 import { registerFriends } from './domains/friends'
 import { registerChat } from './domains/chat'
 import { registerDm } from './domains/dm'
+import { registerReactions } from './domains/reactions'
 import { registerNearbyMutes } from './domains/nearbyMutes'
 import { registerUiSound } from './domains/uiSound'
 import { registerEmotes } from './domains/emotes'
@@ -63,12 +65,14 @@ export function main(): void {
     const avatarModifiers = registerAvatarModifiers(ctx)
     registerSession(ctx)
     registerConnectivity(ctx)
+    registerSkyTime(ctx)
     registerAnalytics(ctx)
     registerTextureOptimization(ctx)
     registerProfile(ctx)
     registerFriends(ctx)
     registerChat(ctx, avatarModifiers)
     registerDm(ctx)
+    registerReactions(ctx)
     registerUiSound(ctx)
     registerVoice(ctx)
     registerNearbyMutes(ctx)

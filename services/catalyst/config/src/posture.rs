@@ -149,6 +149,56 @@ fn sepolia(lookup: &Lookup) -> bool {
         == Some(ChainPair::Testnet)
 }
 
+#[derive(Clone, Copy)]
+struct CollectionsNetwork {
+    names: [&'static str; 2],
+    replay_start: &'static str,
+    replay_stop: &'static str,
+}
+
+const ETH_COLLECTIONS: CollectionsNetwork = CollectionsNetwork {
+    names: ["ethereum", "mainnet"],
+    replay_start: "MARKETPLACE_INDEX_START_BLOCK_ETHEREUM",
+    replay_stop: "MARKETPLACE_INDEX_STOP_BLOCK_ETHEREUM",
+};
+const MATIC_COLLECTIONS: CollectionsNetwork = CollectionsNetwork {
+    names: ["matic", "polygon"],
+    replay_start: "MARKETPLACE_INDEX_START_BLOCK_MATIC",
+    replay_stop: "MARKETPLACE_INDEX_STOP_BLOCK_MATIC",
+};
+
+fn owns_collections(raw: &str, names: [&str; 2]) -> bool {
+    raw.split(',')
+        .map(str::trim)
+        .any(|name| names.iter().any(|alias| name.eq_ignore_ascii_case(alias)))
+}
+
+fn walks_mainnet_collections(lookup: &Lookup) -> bool {
+    mainnet(lookup)
+        && lookup("MARKETPLACE_COLLECTIONS_INDEX_ENABLED")
+            .is_none_or(|value| value.trim() == "true")
+        && set(lookup, "MARKETPLACE_INDEX_CHAIN_ID_ETHEREUM")
+            .is_none_or(|value| value.trim() == "1")
+        && set(lookup, "MARKETPLACE_INDEX_CHAIN_ID_MATIC").is_none_or(|value| value.trim() == "137")
+}
+
+fn default_collections_ownership(lookup: &Lookup) -> Option<String> {
+    Some(
+        [MATIC_COLLECTIONS, ETH_COLLECTIONS]
+            .into_iter()
+            .filter(|network| can_default_to_projection(lookup, *network))
+            .map(|network| network.names[0])
+            .collect::<Vec<_>>()
+            .join(","),
+    )
+}
+
+fn can_default_to_projection(lookup: &Lookup, network: CollectionsNetwork) -> bool {
+    walks_mainnet_collections(lookup)
+        && set(lookup, network.replay_start).is_none()
+        && set(lookup, network.replay_stop).is_none()
+}
+
 fn eth_collections_source(lookup: &Lookup) -> Option<String> {
     Some(
         if set(lookup, "MARKETPLACE_INDEX_CHAIN_ID_ETHEREUM").as_deref() == Some("11155111") {
@@ -347,6 +397,16 @@ const ROWS: &[Row] = &[
     ),
     row(
         "mirrors",
+        "MARKETPLACE_COLLECTIONS_INDEX_OWNS",
+        From(
+            "Ethereum and Polygon when walking mainnet collections",
+            default_collections_ownership,
+        ),
+        Is(""),
+        Is(""),
+    ),
+    row(
+        "mirrors",
         "ETH_COLLECTIONS_SUBGRAPH_URL",
         From(
             "collections subgraph of the served ethereum chain",
@@ -402,8 +462,6 @@ const ROWS: &[Row] = &[
     mirrored("indexes", "MARKETPLACE_THIRD_PARTY_REGISTRY_INDEX_ENABLED"),
     // Account inventory and lifetime creator rankings require the factory walk.
     mirrored("indexes", "MARKETPLACE_COLLECTIONS_INDEX_ENABLED"),
-    // Taking a network's catalogue from the mirror is an operator's step.
-    same("indexes", "MARKETPLACE_COLLECTIONS_INDEX_OWNS", ""),
     // The MANA transfer walk stays an operator's opt-in under every posture.
     same(
         "indexes",
@@ -679,13 +737,21 @@ pub fn resolve(env: &Lookup) -> anyhow::Result<Option<(Posture, Expansion)>> {
 /// Expands `NODE_POSTURE` into this process's environment. Runs first in
 /// `main`, before any other thread exists and before clap reads the
 /// environment.
-pub fn apply_to_process_env() -> anyhow::Result<Option<Posture>> {
+///
+/// # Safety
+///
+/// No other thread may exist: it writes the process environment.
+#[allow(
+    unsafe_code,
+    reason = "the posture is applied by writing the process environment"
+)]
+pub unsafe fn apply_to_process_env() -> anyhow::Result<Option<Posture>> {
     let env = |key: &str| std::env::var_os(key).map(|v| v.to_string_lossy().into_owned());
     let Some((posture, vars)) = resolve(&env)? else {
         return Ok(None);
     };
     for (key, value) in vars {
-        // SAFETY: called from `main` before the runtime or any other thread starts.
+        // SAFETY: the caller guarantees this is the only thread.
         unsafe { std::env::set_var(key, value) };
     }
     Ok(Some(posture))
@@ -892,30 +958,47 @@ fn refuse_unfiltered_profiles(config: &Config, env: &Lookup) -> anyhow::Result<(
              but MARKETPLACE_NFT_INDEX_ENABLED is off: unset it to walk the index"
         );
     }
-    // The walk takes its contracts from the collections mirror and starts on
-    // a network once that mirror completed a pass there, so a node that fills
-    // its own catalogue reads both collections subgraphs. One whose catalogue
-    // another writer fills (MARKETPLACE_MIRRORS_ENABLED=false) reads its tables.
-    if config.marketplace.marketplace_mirrors_enabled {
-        let upstreams = &config.market_upstreams;
-        for (key, url) in [
-            (
-                "ETH_COLLECTIONS_SUBGRAPH_URL",
-                &upstreams.eth_collections_subgraph_url,
-            ),
-            (
-                "MATIC_COLLECTIONS_SUBGRAPH_URL",
-                &upstreams.matic_collections_subgraph_url,
-            ),
-        ] {
-            if Config::non_empty(url).is_none() {
-                anyhow::bail!(
-                    "{ENV}=mirror walks the nft index over the contracts its collections mirror finds, \
-                     but {key} is empty: that network's mirror has nothing to read and its ownership \
-                     never publishes. Unset it to read Decentraland's subgraph, or set \
-                     MARKETPLACE_MIRRORS_ENABLED=false on a node whose catalogue another node fills"
-                );
-            }
+    let market = &config.marketplace;
+    let projects = market.marketplace_collections_index_enabled
+        && ChainPair::from_eth_network(&config.node.eth_network) == Some(ChainPair::Mainnet)
+        && market.marketplace_index_chain_id_ethereum == 1
+        && market.marketplace_index_chain_id_matic == 137;
+    let upstreams = &config.market_upstreams;
+    for (key, url, network, bounded) in [
+        (
+            "ETH_COLLECTIONS_SUBGRAPH_URL",
+            &upstreams.eth_collections_subgraph_url,
+            ETH_COLLECTIONS,
+            market.marketplace_index_start_block_ethereum.is_some()
+                || market.marketplace_index_stop_block_ethereum.is_some(),
+        ),
+        (
+            "MATIC_COLLECTIONS_SUBGRAPH_URL",
+            &upstreams.matic_collections_subgraph_url,
+            MATIC_COLLECTIONS,
+            market.marketplace_index_start_block_matic.is_some()
+                || market.marketplace_index_stop_block_matic.is_some(),
+        ),
+    ] {
+        let owns =
+            projects && owns_collections(&market.marketplace_collections_index_owns, network.names);
+        let has_url = Config::non_empty(url).is_some();
+        if owns && bounded && !(market.marketplace_mirrors_enabled && has_url) {
+            let [name, _] = network.names;
+            let (start, stop) = (network.replay_start, network.replay_stop);
+            anyhow::bail!(
+                "{ENV}=mirror cannot rely on a bounded {name} projection without a mirror. \
+                 Remove the {start} or {stop} override, or remove {name} from \
+                 MARKETPLACE_COLLECTIONS_INDEX_OWNS, enable MARKETPLACE_MIRRORS_ENABLED and set {key}"
+            );
+        }
+        if market.marketplace_mirrors_enabled && !owns && !has_url {
+            anyhow::bail!(
+                "{ENV}=mirror walks the nft index over the contracts its collections mirror finds, \
+                 but {key} is empty: that network's mirror has nothing to read and its ownership \
+                 never publishes. Unset it to read Decentraland's subgraph, or set \
+                 MARKETPLACE_MIRRORS_ENABLED=false on a node whose catalogue another node fills"
+            );
         }
     }
     // The list a mirror derives from its own endpoints, or the explicit
@@ -1046,6 +1129,7 @@ pub const ANY_HOST: &[(&str, &str)] = &[
     ("MARKETPLACE_BASE_URL", LINK),
     ("NOTIFICATIONS_SERVICE_BASE_URL", LINK),
     ("SHOP_BASE_URL", LINK),
+    ("SHOP_EMAIL_ASSETS_URL", LINK),
     ("SHOP_ITEM_BASE_URL", LINK),
     ("EVENTS_BASE_URL", LINK),
     ("EVENTS_SITE_URL", LINK),

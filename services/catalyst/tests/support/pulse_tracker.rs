@@ -1,4 +1,4 @@
-#![allow(dead_code)]
+#![allow(dead_code, reason = "the recovery tests use a subset of these helpers")]
 use catalyst::comms::pulse::{
     cluster::nats::{NatsClusterFeed, NatsFeedOptions},
     cluster::{ClusterOptions, ClusterTracker},

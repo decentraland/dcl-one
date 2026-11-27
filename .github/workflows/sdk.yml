@@ -57,6 +57,53 @@ jobs:
         run: make lint
       - name: Package manifests agree
         run: make lint-packages
+  clippy:
+    name: Scene CLI clippy
+    # The Development workflow lints the whole catalyst workspace, this crate included, but only on the
+    # changes it selects; this job covers a change to the CLI's own sources.
+    runs-on: ${{ vars.RUNNER_LINUX_X86 || 'ubuntu-26.04' }}
+    timeout-minutes: 60
+    env:
+      CARGO_PROFILE_DEV_DEBUG: '0'
+      CARGO_INCREMENTAL: '0'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: cachix/install-nix-action@3dc140bfc76c49fbd4dd958429132e3746bcb086 # v31.11.5
+      - uses: nix-community/cache-nix-action@7df957e333c1e5da7721f60227dbba6d06080569 # v7.0.2
+        with:
+          primary-key: nix-store-${{ runner.os }}-${{ runner.arch }}-ci-${{ hashFiles('flake.nix', 'flake.lock', 'services/catalyst/rust-toolchain.toml', 'infra/dev/**', 'infra/packages/**') }}
+          restore-prefixes-first-match: nix-store-${{ runner.os }}-${{ runner.arch }}-ci-
+          save: ${{ github.ref == 'refs/heads/main' && github.run_attempt == '1' }}
+          gc-max-store-size: 0
+      - name: Root the shell and the flake inputs
+        run: |
+          mkdir -p .cache/nix-roots
+          nix develop .#ci --profile .cache/nix-roots/env --command true
+          nix-store --add-root .cache/nix-roots/input -r $(nix flake archive --json | jq -r '.inputs | .. | .path? // empty') > /dev/null
+      - name: Put the Nix Rust toolchain on PATH for the cache action
+        run: |
+          toolchain=$(dirname "$(nix develop .#ci --command bash -c 'command -v cargo')")
+          test -x "$toolchain/rustc"
+          echo "$toolchain" >> "$GITHUB_PATH"
+      - name: Restore the Rust dependency cache
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        env:
+          RUSTUP_HOME: /dev/null
+        with:
+          workspaces: services/catalyst -> target-clippy
+          shared-key: sdk-clippy-${{ hashFiles('flake.lock') }}
+          save-if: ${{ github.ref == 'refs/heads/main' && github.run_attempt == '1' }}
+          cache-on-failure: true
+      - name: Clippy over the scene CLI
+        env:
+          CARGO_TARGET_DIR: ${{ github.workspace }}/services/catalyst/target-clippy
+        run: |
+          nix develop .#ci --command \
+            cargo clippy --manifest-path services/catalyst/Cargo.toml --locked -p dcl-scene-cli --all-targets -- -D warnings
+      - name: Unused dependencies in the scene CLI
+        run: |
+          nix build --inputs-from . nixpkgs#cargo-machete -o .cache/cargo-machete
+          .cache/cargo-machete/bin/cargo-machete apps/dcl-scene-cli
   build-test:
     name: Build, test, pack
     runs-on: ${{ vars.RUNNER_LINUX_X86 || 'ubuntu-26.04' }}

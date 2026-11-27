@@ -1254,9 +1254,11 @@ mod tests {
     /// a terminal sends to that group does not reach it.
     #[cfg(unix)]
     #[test]
+    #[allow(unsafe_code, reason = "reads process groups through libc")]
     fn the_opener_runs_in_a_process_group_of_its_own() {
         let mut child = spawn_apart("sleep", "600").unwrap();
         let pid = child.id() as libc::pid_t;
+        // SAFETY: getpgid(2) takes a pid and reads no memory of ours.
         let (group, own) = unsafe { (libc::getpgid(pid), libc::getpgid(0)) };
         child.kill().unwrap();
         child.wait().unwrap();

@@ -87,6 +87,19 @@ pub async fn op_set_setting(
 }
 
 #[wasm_bindgen]
+pub async fn op_get_settings_stream(state: &WorkerContext) -> u32 {
+    dcl_js::system_api::op_get_settings_stream(state.rc()).await
+}
+
+#[wasm_bindgen]
+pub async fn op_read_settings_stream(
+    state: &WorkerContext,
+    rid: u32,
+) -> Result<JsValue, WasmError> {
+    serde_result!(dcl_js::system_api::op_read_settings_stream(state.rc(), rid).await)
+}
+
+#[wasm_bindgen]
 pub async fn op_kernel_fetch_headers(
     state: &WorkerContext,
     uri: String,
@@ -299,6 +312,24 @@ pub fn op_send_chat_reaction(
     remove: bool,
 ) {
     dcl_js::system_api::op_send_chat_reaction(state.rc(), channel, message_id, emoji, remove)
+}
+
+#[wasm_bindgen]
+pub async fn op_get_reaction_stream(state: &WorkerContext) -> u32 {
+    dcl_js::system_api::op_get_reaction_stream(state.rc()).await
+}
+
+#[wasm_bindgen]
+pub async fn op_read_reaction_stream(
+    state: &WorkerContext,
+    rid: u32,
+) -> Result<JsValue, WasmError> {
+    serde_result!(dcl_js::system_api::op_read_reaction_stream(state.rc(), rid).await)
+}
+
+#[wasm_bindgen]
+pub fn op_send_reaction(state: &WorkerContext, emoji: String) {
+    dcl_js::system_api::op_send_reaction(state.rc(), emoji)
 }
 
 #[wasm_bindgen]

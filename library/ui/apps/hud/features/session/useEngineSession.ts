@@ -11,7 +11,7 @@ import { type GotoTarget, randomParcel, worldOfRealm } from '@explorer-core/feat
 import { answerItemPurchase, type PurchaseSceneItem } from '../itemPurchase/answer'
 import type { PlatformBanNotice, PortableInfo, PortableState, SatelliteView, WorldAccessVerdict } from '@explorer-core/engine/generated'
 import type { AvatarLook } from '@explorer-core/engine/avatarEquip'
-import { PLATFORM_BANNED_REFUSAL, type UiSound, type EngineViewportRegion, type GiftingPageMessage, type GiftingQueryRequest, type PhotoModeSnapshot, type PhotoModeSource, type PreviewFocus } from '@explorer-core/engine/protocol'
+import { PLATFORM_BANNED_REFUSAL, type UiSound, type EngineViewportRegion, type GiftingPageMessage, type GiftingQueryRequest, type PhotoModeSnapshot, type PhotoModeSource, type PreviewFocus, type PreviewStageFraming, type SituationalReaction } from '@explorer-core/engine/protocol'
 import { clickButton, screenViewed, sessionId, track } from '@explorer-core/lib/analytics'
 import { useStoredProfile } from '../login/useStoredProfile'
 import { inShell, postToShell } from '@explorer-core/lib/shell'
@@ -193,18 +193,14 @@ function memberProfiles(members: CommunityMember[]): Parameters<typeof seedProfi
 }
 
 // The engine's clock starts at 10:00 and runs at 12× (crates/visuals/src/day_night.rs start_clock).
-// Fallbacks only: the menu reads the live clock with `/time` when it opens.
+// Fallbacks only: the engine reports the time of day while the menu is open.
 const SKYBOX_START_HOURS = 10
 const SKYBOX_DAY_SPEED = 12
 
 const NEARBY_VOICE_RESTRICTION = 'Nearby voice disabled'
 
-// The engine's `/time` reply (day_night.rs timeofday_console_command) ends with
-// "speed <S> (elapsed: <seconds since midnight>)".
-function parseTimeReply(reply: string): { hours: number; speed: number } | null {
-  const m = /speed (-?[\d.]+) \(elapsed: ([\d.]+)\)/.exec(reply)
-  return m ? { hours: Number(m[2]) / 3600, speed: Number(m[1]) } : null
-}
+// How long after this menu sent a `/time` a report of the time of day may still predate it.
+const SKYBOX_SETTLE_MS = 300
 
 // Unity's wording (BackpackEquipStatusController's in-world warning) when a profile deploy fails.
 export const SAVE_FAILED_MESSAGE = 'There was an error updating your avatar profile. Please try again.'
@@ -261,9 +257,10 @@ export interface BackpackState {
   preview: (urns: string[] | null) => void
   /** Frame part of the preview avatar (follows the selected category). */
   focus: (focus: PreviewFocus) => void
-  /** Where the Shop draws its stage image on screen, for the scene to draw behind the preview avatar;
-   *  null gives the preview the Backpack's backdrop back. */
-  stage: (rect: { x: number; y: number; width: number; height: number } | null) => void
+  /** Where the Shop draws its stage image on screen, for the scene to draw behind the preview avatar, and how its
+   *  page draws the avatar (the catalogue's framing, unless given); null gives the preview the Backpack's backdrop
+   *  back. */
+  stage: (rect: { x: number; y: number; width: number; height: number } | null, framing?: PreviewStageFraming) => void
   /** Play an emote on the preview avatar (again for every call); null stops it. */
   emote: (urn: string | null) => void
   /** Turn the preview avatar by `degrees` about its vertical axis (a drag over it). */
@@ -280,8 +277,12 @@ export interface BackpackState {
   /** Number of outfit slots available (5 free + 1 per owned DCL name, capped at 10). */
   outfitSlots: number
   warnAboutClearingExtraOutfits: boolean
-  /** The saved outfits have arrived: until then every slot reads empty, saved or not. */
+  /** The saved outfits have arrived: until then no slot says whether it holds one. */
   outfitsLoaded: boolean
+  /** The save or delete asked of the scene and not yet ended; null when none. */
+  outfitOperation: OutfitOperation | null
+  /** The slot whose outfit is being put on, from the request to its end; null when none. */
+  outfitEquipping: number | null
   /** Save the current look into a slot. */
   saveOutfit: (slot: number) => void
   /** Delete a saved outfit slot. */
@@ -291,6 +292,10 @@ export interface BackpackState {
   dismissOutfitError: () => void
   /** Equip a saved outfit (applies its body shape, colors and wearables). */
   equipOutfit: (slot: number) => void
+  /** Show a saved outfit on the avatar until `restoreOutfitPreview`, unless it is equipped. */
+  previewOutfit: (slot: number) => void
+  /** Put back the look from before the first outfit preview, unless an outfit was equipped since. */
+  restoreOutfitPreview: () => void
   /** The randomize bar's state for this Backpack session. */
   outfitHistory: OutfitHistory
   /** Put a random look from the owned and base wearables on (keeps body shape and colors). */
@@ -299,6 +304,11 @@ export interface BackpackState {
   undoOutfit: () => void
   /** Go forward to the look the last undo left. */
   redoOutfit: () => void
+}
+
+export interface OutfitOperation {
+  slot: number
+  action: 'save' | 'delete'
 }
 
 export interface OutfitHistory {
@@ -579,6 +589,8 @@ export interface SkyboxState {
   hours: number
   /** The sky follows the engine's day cycle; the slider is locked while on. */
   progressing: boolean
+  /** The scene the player stands in holds the time of day: the menu shows it and changes nothing. */
+  sceneLocked: boolean
   setHours: (hours: number) => void
   setProgressing: (on: boolean) => void
 }
@@ -918,6 +930,11 @@ export interface ChatState {
   playSound: (sound: UiSound) => void
   /** Adds or removes the local user's reaction to a message on the channel shown. */
   react: (messageId: string, emoji: string, remove: boolean) => void
+  /** Reacts with an emoji, shown over the local user's avatar. An emoji the wire does not carry does nothing. */
+  sendReaction: (emoji: string) => void
+  /** Hears each situational reaction as it plays, the local user's included, until the returned
+   *  function is called. None arrive while the "Chat Reactions" setting is off. */
+  onReaction: (listener: (reaction: SituationalReaction) => void) => () => void
   /** The Nearby lines, whichever channel is shown. */
   nearby: ChatLine[]
   /** Redraws the bubble over a Nearby sender's head with other words, while it is still that message's. */
@@ -1525,6 +1542,7 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
   // Reactions to Nearby lines, by message id; a DM tab's come with its stored history.
   const [nearbyReactions, setNearbyReactions] = useState<Record<string, MessageReaction[]>>({})
   const nearbyIdsRef = useRef<Set<string>>(new Set())
+  const reactionListeners = useRef(new Set<(reaction: SituationalReaction) => void>())
   // Every community the local user is a member of, as chat tabs (closed ones included: `closed`
   // says which are hidden), most recently active first. The handler reads the refs.
   const [communityConvos, setCommunityConvos] = useState<CommunityConversation[]>([])
@@ -1646,6 +1664,7 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
   const [skyboxOpen, setSkyboxOpen] = useState(false)
   const [skyboxHours, setSkyboxHoursState] = useState(SKYBOX_START_HOURS)
   const [skyboxProgressing, setSkyboxProgressingState] = useState(true)
+  const [skyboxSceneLocked, setSkyboxSceneLocked] = useState(false)
   const [emotes, setEmotes] = useState<Emote[]>([])
   const [emotesOpen, setEmotesOpen] = useState(false)
   const [mic, setMic] = useState({ enabled: false, available: false, sceneBlocked: false, refusals: 0 })
@@ -1668,6 +1687,8 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
   const [outfits, setOutfits] = useState<OutfitsMetadata>({ outfits: [], namesForExtraSlots: [] })
   const [outfitsLoaded, setOutfitsLoaded] = useState(false)
   const [outfitFailure, setOutfitFailure] = useState<{ action: 'save' | 'delete'; slot: number } | null>(null)
+  const [outfitOperation, setOutfitOperation] = useState<OutfitOperation | null>(null)
+  const [outfitEquipping, setOutfitEquipping] = useState<number | null>(null)
   const [outfitHistory, setOutfitHistory] = useState<OutfitHistory>(NO_OUTFIT_HISTORY)
   const [backpackOpen, setBackpackOpen] = useState(false)
   const [communities, setCommunities] = useState<Community[]>([])
@@ -1818,6 +1839,10 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
   const chatAccountRef = useRef<string | null>(null)
   // The speed to restore when Time progression is turned back on (the last running speed seen).
   const skyboxDaySpeed = useRef(SKYBOX_DAY_SPEED)
+  // The player dragged the slider of a stopped clock: the menu keeps that hour over the reports.
+  const skyboxDragged = useRef(false)
+  // When this menu last sent a `/time`.
+  const skyboxSentAt = useRef(0)
   // Catalog fetches done once per session (cache; relays re-emit on change).
   const fetchedRef = useRef<Set<string>>(new Set())
 
@@ -2084,6 +2109,10 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
           })
           break
         }
+        case 'reaction':
+          // straight to whoever shows them: a reaction that plays is no state of the session
+          for (const listener of reactionListeners.current) listener(msg.reaction)
+          break
         case 'chatReaction': {
           const r = msg.reaction
           if (r.channel === 'Nearby') {
@@ -2205,6 +2234,9 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
           setBridgeAnswered(true)
           // a bridge that starts again reports what is in force from scratch
           setPermissionsInForce([])
+          // and never ends what the one before it was running
+          setOutfitOperation(null)
+          setOutfitEquipping(null)
           break
         case 'bridgeUnavailable':
           // no answer is coming: Verifying's clock runs, so a sign-in waiting on it gives up
@@ -2289,6 +2321,20 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
         case 'emotes':
           setEmotes(msg.emotes)
           break
+        case 'skyTime': {
+          // read before the engine applied what this menu just sent
+          if (Date.now() - skyboxSentAt.current < SKYBOX_SETTLE_MS) break
+          const { hours, locked, speed, followsClock } = msg.state
+          setSkyboxSceneLocked(locked)
+          setSkyboxProgressingState(speed !== 0)
+          if (speed !== 0) skyboxDaySpeed.current = speed
+          // The menu shows the time the sky shows, except an hour the player dragged a stopped
+          // clock to: the sky is still on its way there.
+          const playersClock = followsClock && speed === 0 && !locked
+          if (!playersClock) skyboxDragged.current = false
+          if (!skyboxDragged.current) setSkyboxHoursState(hours)
+          break
+        }
         case 'mic':
           setMic((m) => ({ enabled: msg.enabled, available: msg.available, sceneBlocked: msg.sceneBlocked === true, refusals: msg.refusals ?? m.refusals }))
           break
@@ -2349,6 +2395,13 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
           setOutfitFailure({ action: msg.action, slot: msg.slot })
           console.error(`[outfits] ${msg.action} of slot ${msg.slot} failed:`, msg.message)
           break
+        case 'outfitBusy': {
+          // An end clears only the work it names.
+          const { slot, action, busy } = msg
+          if (action === 'equip' || action === 'preview') setOutfitEquipping((prev) => (busy ? slot : prev === slot ? null : prev))
+          else setOutfitOperation((prev) => (busy ? { slot, action } : prev?.slot === slot && prev.action === action ? null : prev))
+          break
+        }
         case 'outfitHistory':
           setOutfitHistory({ canUndo: msg.canUndo, canRedo: msg.canRedo, rolling: msg.rolling })
           break
@@ -3369,6 +3422,15 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
   const reactInChat = useCallback((messageId: string, emoji: string, remove: boolean) => {
     driverRef.current?.send({ kind: 'sendChatReaction', channel: channelRef.current, messageId, emoji, remove })
   }, [])
+  const sendReaction = useCallback((emoji: string) => {
+    driverRef.current?.send({ kind: 'sendReaction', emoji })
+  }, [])
+  const onReaction = useCallback((listener: (reaction: SituationalReaction) => void) => {
+    reactionListeners.current.add(listener)
+    return () => {
+      reactionListeners.current.delete(listener)
+    }
+  }, [])
   const bubbleText = useCallback((sender: string, messageId: string, message: string) => {
     driverRef.current?.send({ kind: 'chatBubbleText', sender, messageId, message })
   }, [])
@@ -3476,66 +3538,37 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
   const runDebugCommand = useCallback((line: string) =>
     driverRef.current?.command?.(line) ?? Promise.reject(new Error('Engine console unavailable')), [])
 
-  // The engine clock as `/time` (no args) reports it; null when there is no engine console.
-  const readClock = useCallback(async (): Promise<{ hours: number; speed: number } | null> => {
-    const reply = await driverRef.current?.command?.('/time').catch(() => undefined)
-    const clock = reply != null ? parseTimeReply(reply) : null
-    if (clock != null && clock.speed !== 0) skyboxDaySpeed.current = clock.speed
-    return clock
-  }, [])
   const setClock = useCallback((hours: number, speed: number) => {
+    skyboxSentAt.current = Date.now()
     driverRef.current
       ?.command?.(`/time ${hours.toFixed(2)} ${speed}`)
       .catch((e: unknown) => console.warn('[hud] /time failed:', e))
   }, [])
-  const toggleSkybox = useCallback(
-    () =>
-      exclusive(setSkyboxOpen, () => {
-        void readClock().then((clock) => {
-          if (clock == null) return
-          setSkyboxHoursState(clock.hours)
-          setSkyboxProgressingState(clock.speed !== 0)
-        })
-      }),
-    [exclusive, readClock]
-  )
+  const toggleSkybox = useCallback(() => exclusive(setSkyboxOpen), [exclusive])
   const setSkyboxHours = useCallback(
     (hours: number) => {
       setSkyboxHoursState(hours)
-      if (!skyboxProgressing) setClock(hours, 0)
+      if (skyboxProgressing) return
+      skyboxDragged.current = true
+      setClock(hours, 0)
     },
     [skyboxProgressing, setClock]
   )
   const setSkyboxProgressing = useCallback(
     (on: boolean) => {
       setSkyboxProgressingState(on)
-      if (on) {
-        setClock(skyboxHours, skyboxDaySpeed.current)
-        return
-      }
-      // Freeze where the running clock is now, not where the slider last was.
-      void readClock().then((clock) => {
-        const hours = clock?.hours ?? skyboxHours
-        setSkyboxHoursState(hours)
-        setClock(hours, 0)
-      })
+      // Off freezes the clock at the hour shown, which follows the engine while the menu is open.
+      setClock(skyboxHours, on ? skyboxDaySpeed.current : 0)
     },
-    [skyboxHours, readClock, setClock]
+    [skyboxHours, setClock]
   )
-  // While the day cycle runs, the open menu follows the engine clock (Unity's slider tracks it too).
+  // While the menu is open the engine reports the time of day: at once, then once a second.
   useEffect(() => {
-    if (!skyboxOpen || !skyboxProgressing) return
-    let live = true
-    const id = setInterval(() => {
-      void readClock().then((clock) => {
-        if (live && clock != null && clock.speed !== 0) setSkyboxHoursState(clock.hours)
-      })
-    }, 1000)
-    return () => {
-      live = false
-      clearInterval(id)
-    }
-  }, [skyboxOpen, skyboxProgressing, readClock])
+    if (!skyboxOpen) return
+    skyboxDragged.current = false
+    driverRef.current?.send({ kind: 'watchSkyTime', on: true })
+    return () => driverRef.current?.send({ kind: 'watchSkyTime', on: false })
+  }, [skyboxOpen])
   const toggleGallery = useCallback(() => exclusive(setGalleryOpen), [exclusive])
   const setPhotoModeEnabled = useCallback((enable: boolean, source: PhotoModeSource) => {
     driverRef.current?.send({ kind: 'setPhotoMode', enable, source })
@@ -4192,6 +4225,8 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
   useEffect(() => {
     if (backpackWasOpen.current && !backpackOpen) {
       driverRef.current?.send({ kind: 'resetOutfitHistory' })
+      // An outfit shown but not equipped is not part of the look that deploys.
+      driverRef.current?.send({ kind: 'restoreOutfitPreview' })
       driverRef.current?.send({ kind: 'commitAvatar' })
       setOutfitHistory(NO_OUTFIT_HISTORY)
     }
@@ -4207,8 +4242,8 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
   const focusPreview = useCallback((focus: PreviewFocus) => {
     driverRef.current?.send({ kind: 'previewFocus', focus })
   }, [])
-  const stagePreview = useCallback((rect: { x: number; y: number; width: number; height: number } | null) => {
-    driverRef.current?.send({ kind: 'previewStage', rect })
+  const stagePreview = useCallback((rect: { x: number; y: number; width: number; height: number } | null, framing?: PreviewStageFraming) => {
+    driverRef.current?.send(framing != null ? { kind: 'previewStage', rect, framing } : { kind: 'previewStage', rect })
   }, [])
   const emotePreview = useCallback((urn: string | null) => {
     driverRef.current?.send({ kind: 'previewEmote', urn })
@@ -4245,11 +4280,19 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
       },
     [bridgeCall]
   )
+  // An outfit request shows as running from the click; the scene's `outfitBusy` end, sent whatever
+  // the outcome, clears it.
   const saveOutfit = useCallback((slot: number) => {
-    driverRef.current?.send({ kind: 'saveOutfit', slot })
+    const driver = driverRef.current
+    if (driver == null) return
+    setOutfitOperation({ slot, action: 'save' })
+    driver.send({ kind: 'saveOutfit', slot })
   }, [])
   const deleteOutfit = useCallback((slot: number) => {
-    driverRef.current?.send({ kind: 'deleteOutfit', slot })
+    const driver = driverRef.current
+    if (driver == null) return
+    setOutfitOperation({ slot, action: 'delete' })
+    driver.send({ kind: 'deleteOutfit', slot })
   }, [])
   const dismissOutfitError = useCallback(() => setOutfitFailure(null), [])
   // The live names lookup decides; until it answers, the outfits read does. An occupied extra slot
@@ -4274,7 +4317,19 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
     // The bridge resolves the outfit's wearables by urn and re-emits the full `wearables` set (incl.
     // items off the loaded catalog page), which becomes the authoritative equipped set — so no
     // client-side rebuild here (that dropped off-page items and later un-equipped them).
-    driverRef.current?.send({ kind: 'equipOutfit', slot })
+    const driver = driverRef.current
+    if (driver == null) return
+    setOutfitEquipping(slot)
+    driver.send({ kind: 'equipOutfit', slot })
+  }, [])
+  const previewOutfit = useCallback((slot: number) => {
+    const driver = driverRef.current
+    if (driver == null) return
+    setOutfitEquipping(slot)
+    driver.send({ kind: 'previewOutfit', slot })
+  }, [])
+  const restoreOutfitPreview = useCallback(() => {
+    driverRef.current?.send({ kind: 'restoreOutfitPreview' })
   }, [])
   // The bridge re-emits the full `wearables` set after each step, like equipOutfit.
   const randomizeOutfit = useCallback(() => {
@@ -5500,6 +5555,8 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
       send: sendChat,
       playSound: playUiSound,
       react: reactInChat,
+      sendReaction,
+      onReaction,
       nearby: messages,
       bubbleText,
       channel,
@@ -5560,6 +5617,7 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
       toggle: toggleSkybox,
       hours: skyboxHours,
       progressing: skyboxProgressing,
+      sceneLocked: skyboxSceneLocked,
       setHours: setSkyboxHours,
       setProgressing: setSkyboxProgressing
     },
@@ -5575,8 +5633,8 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
     backpack: {
       list: catalogItems, total: catalogTotal, loading: catalogLoading, query: queryCatalog,
       equipped: equippedWearables, open: backpackOpen, toggle: toggleBackpack, bodyShape, colors: avatarColors, setColor: setAvatarColor, equip: equipWearables, saveError, retrySave, revertSave, preview: previewWearables, focus: focusPreview, stage: stagePreview, emote: emotePreview, rotate: rotatePreview, zoom: zoomPreview, forceRender, setForceRender,
-      outfits: outfits.outfits, outfitSlots: extraOutfitSlots ? 10 : 5, outfitsLoaded, warnAboutClearingExtraOutfits,
-      saveOutfit, deleteOutfit, outfitError, dismissOutfitError, equipOutfit,
+      outfits: outfits.outfits, outfitSlots: extraOutfitSlots ? 10 : 5, outfitsLoaded, outfitOperation, outfitEquipping, warnAboutClearingExtraOutfits,
+      saveOutfit, deleteOutfit, outfitError, dismissOutfitError, equipOutfit, previewOutfit, restoreOutfitPreview,
       outfitHistory, randomizeOutfit, undoOutfit, redoOutfit
     },
     communities: { list: communities, browse: communityBrowse, loadBrowse: loadCommunityBrowse, loadMoreBrowse: loadMoreCommunityBrowse, open: communitiesOpen, toggle: toggleCommunities, create: createCommunity, update: updateCommunity, remove: deleteCommunity, deleted: deletedCommunity, save: communitySave, clearSave: clearCommunitySave, placeOptions: communityPlaceOptions, loadPlaceOptions: loadCommunityPlaceOptions, clearPlaceOptions: clearCommunityPlaceOptions, removePlace: removeCommunityPlace, memberAction: communityMemberAction, join: joinCommunity, requestToJoin: requestToJoinCommunity, cancelRequest: cancelJoinRequest, leave: leaveCommunity, error: communityError, detail: communityDetail, loadDetail: loadCommunityDetail, cards: communityCards, fetch: fetchCommunity, invites: communityInvites, loadInvites: loadCommunityInvites, pendingCount, loadInvitesCount: loadCommunityInvitesCount, manageRequest: manageCommunityRequest, memberSections, cardOpen: setOpenCard, loadMemberSection, invitable, loadInvitable, invite: inviteToCommunity, unban: unbanCommunityMember, posts: communityPosts, loadPosts: loadCommunityPosts, loadMorePosts: loadMoreCommunityPosts, createPost: createCommunityPost, deletePost: deleteCommunityPost, likePost: likeCommunityPost },
