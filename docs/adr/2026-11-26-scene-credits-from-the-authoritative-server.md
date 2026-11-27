@@ -5,7 +5,7 @@
 
 ## Context
 
-`~system/SceneCredits.grantCredits` (protocol `scene_credits.proto`) lets a scene pay a player Credits out of a program that Decentraland set up for a studio and pinned to one scene: its world, scene entity id and base parcel. Credits are money. Whoever can call credits-server's payment route as a scene spends that program's budget.
+`~system/SceneCredits.grantCredits` (protocol `scene_credits.proto`) lets a scene pay a player Credits out of a program that Decentraland set up for a studio and pinned to a place: a world and a base parcel, paid from by the scene that one of the studio's named deployer wallets deployed there. Credits are money. Whoever can call credits-server's payment route as a scene spends that program's budget.
 
 A scene's code is public and runs on every client. Nothing in it, or in its Scene Storage, can prove which scene is asking. Authoritative scenes run in this engine's headless server, orchestrated by sdk-multiplayer-server, which already mints a per-scene delegation for World storage.
 
@@ -22,7 +22,7 @@ A scene's code is public and runs on every client. Nothing in it, or in its Scen
 - **A separate key.** Credits gets its own ephemeral key, never World storage's. A signed-fetch signature does not cover the host, so with a shared key a request captured at one service could be replayed at the other wherever the paths overlap. The envelope decoding, the delegated signer and the renewal system are shared.
 - **Presence.** The engine reports it and credits-server decides. The body carries `recipientConnected`, which is true only when the player is in this scene's crdt context, on this scene's room transport, and that room is connected. A new payment needs it; a retry of an outcome already paid returns its receipt without it.
 - **What the scene names.** Only the program, the recipient and its own outcome id. Amounts, budgets, eligibility and limits belong to the program in credits-server.
-- **Confirming a payment.** An answer counts as paid only with its whole receipt. Anything ambiguous is `GCE_UNAVAILABLE`: a lost connection, a gateway page, a partial body or a request dropped with its scene. The scene then retries with the same program, recipient and outcome id. If the first call committed, credits-server returns its receipt to the location it was paid in; otherwise the retry is judged as a new payment.
+- **Confirming a payment.** An answer counts as paid only with its whole receipt. Anything ambiguous is `GCE_UNAVAILABLE`: a lost connection, a gateway page, a partial body or a request dropped with its scene. The scene then retries with the same program, recipient and outcome id. If the first call committed, credits-server returns its receipt to the scene that paid it, or to a later deployment at the program's place once it checks that deployment as the program's own; otherwise the retry is judged as a new payment.
 - **Pending requests.** They are entities despawned with their scene (`DespawnWith`), at most 4 per scene. More are refused with `GCE_RATE_LIMITED`, not queued.
 
 ## Alternatives rejected
@@ -37,5 +37,5 @@ A scene's code is public and runs on every client. Nothing in it, or in its Scen
 
 - **Turning payments off** needs no engine release. To stop new payments at once, credits-server switches issuance off: it refuses every new payment and still answers receipts already paid. Turning off minting (`CREDITS_DELEGATIONS_ENABLED`, read when the orchestrator starts) stops new claims, but each claim already issued stays usable until it expires.
 - **Rotating the root key.** A claim signed by a root that credits-server no longer trusts is refused until the orchestrator mints a new one.
-- **Redeploys.** A redeploy changes the scene entity id, so a program pinned to the old deployment stops paying until it is pinned again.
+- **Redeploys.** A redeploy changes the scene entity id, and the claim names the new one. credits-server checks that it is the scene active at the program's place and that one of the program's deployers deployed it, so a redeploy by them over the approved footprint keeps paying with no change to the program. Once a deploy by any other wallet replaces it, requests observed after that are refused; one observed just before can still be paid within the evidence age, as the check promises only that the scene was active when it was observed.
 - **Explorer clients** (this engine's desktop and web builds, the Unity explorer and the mobile explorer) ship a module that always answers `GCE_NOT_AVAILABLE`, so a scene that imports `~system/SceneCredits` still loads.
