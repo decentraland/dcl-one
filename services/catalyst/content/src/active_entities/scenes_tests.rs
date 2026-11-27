@@ -121,34 +121,41 @@ async fn active_scenes_lists_every_active_scene_with_its_parcels_and_base() {
 
     // The tag names the body: a request naming it is answered 304 with no body,
     // weak, in a list, or `*` alike, and one naming another tag gets the list.
+    // Other tests share the database and the memo lasts only 5 s, so each
+    // conditional request names the tag of the answer just before it.
     let uri = "/content/entities/active/scenes";
-    let (status, headers, body) = get_if_none_match(&node, uri, None).await;
+    let (status, headers, _) = get_if_none_match(&node, uri, None).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(headers[header::CACHE_CONTROL], "no-cache");
     let first = etag_of(&headers);
     assert_eq!(first.len(), 66, "{first}");
     assert!(first.starts_with('"') && first.ends_with('"'), "{first}");
-    for if_none_match in [
-        first.clone(),
-        format!("W/{first}"),
-        format!("\"other\", {first}"),
-        "*".to_string(),
-    ] {
+    let naming = |tag: &str| {
+        [
+            tag.to_string(),
+            format!("W/{tag}"),
+            format!("\"other\", {tag}"),
+            "*".to_string(),
+        ]
+    };
+    for variant in 0..4 {
+        let (_, headers, _) = get_if_none_match(&node, uri, None).await;
+        let current = etag_of(&headers);
+        let if_none_match = naming(&current)[variant].clone();
         let (status, headers, body) = get_if_none_match(&node, uri, Some(&if_none_match)).await;
         assert_eq!(status, StatusCode::NOT_MODIFIED, "{if_none_match}");
-        assert_eq!(etag_of(&headers), first, "{if_none_match}");
+        assert_eq!(etag_of(&headers), current, "{if_none_match}");
         assert_eq!(headers[header::CACHE_CONTROL], "no-cache");
         assert!(body.is_empty(), "{if_none_match}");
     }
     let (status, _, again) = get_if_none_match(&node, uri, Some("\"other\"")).await;
     assert_eq!(status, StatusCode::OK);
-    assert_eq!(again, body);
+    let again: Value = serde_json::from_slice(&again).unwrap();
+    assert_eq!(seeded(&again, tag).len(), 2);
 
-    // Memoized: a scene deployed after the first answer shows once the memo
-    // is cleared, as a commit clears it, under a new tag.
+    // A scene deployed since the first answer shows once the memo is cleared,
+    // as a local commit clears it, under a new tag.
     let later = seed(&pool, tag, 6, "scene", &["7660,7660"], json!({}), &[]).await;
-    let (status, _, _) = get_if_none_match(&node, uri, Some(&first)).await;
-    assert_eq!(status, StatusCode::NOT_MODIFIED);
     node.state.deployments_cache.clear();
     let (status, headers, body) = get_if_none_match(&node, uri, Some(&first)).await;
     assert_eq!(status, StatusCode::OK);
@@ -229,4 +236,17 @@ async fn active_scenes_answers_get_only() {
         .unwrap();
     assert_eq!(response.status(), StatusCode::METHOD_NOT_ALLOWED);
     assert_eq!(response.headers().get(header::ALLOW).unwrap(), "HEAD, GET");
+}
+
+// A memo entry that is not a tag and a body is an error, not a panic.
+#[test]
+fn a_memo_entry_without_a_tag_is_refused() {
+    use super::split_active_scenes_memo;
+    let tag = format!("\"{}\"", "0".repeat(64));
+    let memo = bytes::Bytes::from(format!("{tag}[]"));
+    let (etag, body) = split_active_scenes_memo(&memo).unwrap();
+    assert_eq!(etag, tag);
+    assert_eq!(&body[..], b"[]");
+    assert!(split_active_scenes_memo(&bytes::Bytes::from_static(b"[]")).is_none());
+    assert!(split_active_scenes_memo(&bytes::Bytes::from("x".repeat(80))).is_none());
 }

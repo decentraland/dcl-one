@@ -1373,10 +1373,10 @@ fn report_player_parcel(
 
 /// A realm's one-request scene list (`IpfsIo::active_scenes`), asked once per realm that does
 /// not list its scenes itself. The debug panel shows it (`/scene_list_state`).
-#[derive(Resource, Default)]
-pub enum SceneList {
-    #[default]
-    Unasked,
+#[derive(Resource)]
+pub(crate) enum SceneList {
+    /// Not asked for, and why.
+    NotAsked(&'static str),
     Pending {
         task: ActiveScenesTask,
         asked_at: web_time::Instant,
@@ -1388,6 +1388,12 @@ pub enum SceneList {
     },
     /// The content server does not list them: parcels resolve by range.
     FellBack { reason: String, took: Duration },
+}
+
+impl Default for SceneList {
+    fn default() -> Self {
+        SceneList::NotAsked("no realm")
+    }
 }
 
 impl SceneList {
@@ -1439,7 +1445,7 @@ fn load_active_entities(
         *fetch_count = 100;
         // drop current request
         *pointer_request = None;
-        *city_scenes = SceneList::Unasked;
+        *city_scenes = SceneList::default();
         // clear stored parcels
         *stored_parcels = (IVec2::MAX, Vec::default());
 
@@ -1567,14 +1573,30 @@ fn load_active_entities(
 
     let has_scene_urns = current_realm.config.lists_scenes();
     // a run that loads nothing by distance (an orchestrated server) has no use for the whole map
-    let wants_scene_list = !has_scene_urns && range.load.max(range.load_imposter) > 0.0;
+    let loads_by_distance = range.load.max(range.load_imposter) > 0.0;
+    let wants_scene_list = !has_scene_urns && loads_by_distance;
+    let not_asked = if has_scene_urns {
+        Some("the realm lists its scenes")
+    } else if !loads_by_distance {
+        Some("nothing loads by distance")
+    } else if current_realm.address.is_empty() {
+        Some("no realm")
+    } else if ipfas.active_endpoint().is_none() {
+        Some("the realm has no content server")
+    } else {
+        None
+    };
 
     // A realm whose content server lists all its active scenes places them in one request. Until
     // it answers, only the player's own parcel resolves below, so the scene they start or land in
     // loads at once; a server without the route leaves the whole range to resolve there.
-    if wants_scene_list && !current_realm.address.is_empty() && ipfas.active_endpoint().is_some() {
+    if let Some(reason) = not_asked {
+        if matches!(*city_scenes, SceneList::NotAsked(was) if was != reason) {
+            *city_scenes = SceneList::NotAsked(reason);
+        }
+    } else {
         match &mut *city_scenes {
-            SceneList::Unasked => {
+            SceneList::NotAsked(_) => {
                 *city_scenes = SceneList::Pending {
                     task: ipfas
                         .ipfs()
@@ -1601,6 +1623,11 @@ fn load_active_entities(
                             pointers.set_base(&scene.id, base);
                         }
                         for parcel in scene.pointers.iter().filter_map(|p| pointer_parcel(p)) {
+                            // the list can be a few seconds old: a parcel resolved on its own
+                            // meanwhile keeps that answer
+                            if pointers.pointers.contains_key(&parcel) {
+                                continue;
+                            }
                             if let Some(new_bounds) = pointers.insert(
                                 parcel,
                                 PointerResult::Exists {

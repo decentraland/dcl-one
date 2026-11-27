@@ -144,30 +144,46 @@ pub async fn get_active_entities(
 /// Not an upstream route: decentraland/catalyst#1829 proposed it without
 /// `base`, which a client needs to place a scene before reading its entity.
 /// It lists what this node holds; read-through peers are not consulted.
-/// The answer is memoized with the history routes (5 s, cleared on every
-/// commit), denylisted scenes dropped before it is, as `/deployments` does.
-/// Its `ETag` is the SHA-256 of the body, the same on every node holding the
-/// same scenes (they are ordered by id); a request naming it in
+/// The answer is memoized with the history routes for up to 5 s per process
+/// (a local deploy, unpublish or snapshot clears it sooner), denylisted scenes
+/// dropped before it is, as `/deployments` does, and its query has the same
+/// time budget. Its `ETag` is the SHA-256 of the body, the same on every node
+/// holding the same scenes (they are ordered by id); a request naming it in
 /// `If-None-Match` is answered `304 Not Modified`. `no-cache` lets any cache
 /// keep the list but makes it ask again before reusing it. A node that may
-/// miss scenes answers 503 `no-store`: a partial list would read as empty land.
-pub async fn get_active_scenes(
-    State(state): State<SharedState>,
-    headers: HeaderMap,
-) -> AppResult<Response> {
+/// miss scenes answers 503 `no-store`: a partial list would read as empty
+/// land. Every error is `no-store`.
+pub async fn get_active_scenes(State(state): State<SharedState>, headers: HeaderMap) -> Response {
+    active_scenes_response(&state, &headers)
+        .await
+        .unwrap_or_else(|error| {
+            let mut response = error.into_response();
+            response
+                .headers_mut()
+                .insert(CACHE_CONTROL, HeaderValue::from_static("no-store"));
+            response
+        })
+}
+
+async fn active_scenes_response(state: &SharedState, headers: &HeaderMap) -> AppResult<Response> {
     if !state.holds_every_scene() {
-        let mut response =
-            AppError::ServiceUnavailable("This node does not hold every scene".to_string())
-                .into_response();
-        response
-            .headers_mut()
-            .insert(CACHE_CONTROL, HeaderValue::from_static("no-store"));
-        return Ok(response);
+        return Err(AppError::ServiceUnavailable(
+            "This node does not hold every scene".to_string(),
+        ));
     }
     let memo = state
         .deployments_cache
         .get_or_fetch("active-scenes".to_string(), || async {
-            let mut scenes = queries::active_scenes(&state.pool).await?;
+            let mut scenes = tokio::time::timeout(
+                state.settings.deployments_query_timeout,
+                queries::active_scenes(&state.pool),
+            )
+            .await
+            .map_err(|_| {
+                AppError::ServiceUnavailable(
+                    "active scene query exceeded server-side time budget".into(),
+                )
+            })??;
             scenes.retain(|scene| queries::non_denylisted(&scene.id, &state.denylist));
             let body =
                 serde_json::to_vec(&scenes).map_err(|e| AppError::Internal(e.to_string()))?;
@@ -177,24 +193,26 @@ pub async fn get_active_scenes(
             Ok::<_, AppError>(Bytes::from(memo))
         })
         .await?;
-    let (etag, body) = split_active_scenes_memo(&memo);
-    let etag = std::str::from_utf8(&etag).map_err(|e| AppError::Internal(e.to_string()))?;
+    let (etag, body) = split_active_scenes_memo(&memo)
+        .ok_or_else(|| AppError::Internal("malformed active scene memo entry".into()))?;
     let cache_headers = [
         (ETAG, etag),
         (CACHE_CONTROL, "no-cache"),
         (ACCESS_CONTROL_EXPOSE_HEADERS, "ETag"),
     ];
-    Ok(if if_none_match_matches(&headers, etag) {
+    Ok(if if_none_match_matches(headers, etag) {
         (StatusCode::NOT_MODIFIED, cache_headers).into_response()
     } else {
         (cache_headers, [(CONTENT_TYPE, "application/json")], body).into_response()
     })
 }
 
-/// The quoted SHA-256 tag (66 bytes) and the body of an `active-scenes` memo entry.
-fn split_active_scenes_memo(memo: &Bytes) -> (Bytes, Bytes) {
+/// The quoted SHA-256 tag (66 bytes) and the body of an `active-scenes` memo entry; `None` for
+/// any other value.
+fn split_active_scenes_memo(memo: &Bytes) -> Option<(&str, Bytes)> {
     const TAG_LEN: usize = 64 + 2;
-    (memo.slice(..TAG_LEN), memo.slice(TAG_LEN..))
+    let tag = std::str::from_utf8(memo.get(..TAG_LEN)?).ok()?;
+    (tag.starts_with('"') && tag.ends_with('"')).then(|| (tag, memo.slice(TAG_LEN..)))
 }
 
 /// GET /entities/{type}?pointer=..|id=..[&fields=content,pointers,metadata]

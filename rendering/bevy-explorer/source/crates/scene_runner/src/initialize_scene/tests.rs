@@ -1639,7 +1639,32 @@ fn a_run_loading_nothing_by_distance_does_not_ask_for_the_scene_list() {
     assert!(!asked_for_the_list(&seen));
     assert!(matches!(
         *app.world().resource::<SceneList>(),
-        SceneList::Unasked
+        SceneList::NotAsked("nothing loads by distance")
     ));
     assert_eq!(pointer(&app, IVec2::X), None);
+}
+
+// The list can be a few seconds old: a parcel resolved on its own before it lands keeps that
+// answer (here a newer deployment of the scene), and the list places the rest.
+#[test]
+fn the_scene_list_does_not_overwrite_a_parcel_resolved_before_it() {
+    let far = IVec2::new(50, 50);
+    let gate = ListGate::default();
+    let mut newer = the_scene_entity();
+    newer[0]["id"] = "bafynewer".into();
+    let (content, _) =
+        stub_content_server(Ok(the_scene_list()), newer, gate.clone(), ListGate::open());
+    let mut app = city_realm_app(content);
+    let newer = PointerResult::Exists {
+        hash: "bafynewer".to_owned(),
+        urn: None,
+    };
+    run_until(&mut app, |app| pointer(app, IVec2::ZERO).is_some());
+    assert_eq!(pointer(&app, IVec2::ZERO), Some(newer.clone()));
+
+    gate.release();
+    run_until(&mut app, |app| pointer(app, far).is_some());
+    assert_eq!(pointer(&app, IVec2::ZERO), Some(newer.clone()));
+    assert_eq!(pointer(&app, IVec2::new(0, 1)), Some(newer));
+    assert_eq!(pointer(&app, IVec2::X), Some(PointerResult::Nothing));
 }

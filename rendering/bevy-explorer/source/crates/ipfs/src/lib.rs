@@ -2114,11 +2114,7 @@ const MAX_KEPT_SCENE_LIST: usize = 32 * 1024 * 1024;
 /// name. The entry holds the list's `ETag`, a newline and the body ([`split_kept_scene_list`]),
 /// and the cache trim counts it with the rest.
 fn active_scenes_cache_key(url: &str) -> String {
-    use base64::{prelude::BASE64_URL_SAFE_NO_PAD, Engine};
-    use multihash_codetable::MultihashDigest;
-    let digest =
-        multihash_codetable::Code::Sha2_256.digest(format!("active-scenes {url}").as_bytes());
-    BASE64_URL_SAFE_NO_PAD.encode(digest.digest())
+    ipfs_path::digest_name(&format!("active-scenes {url}"))
 }
 
 /// The `ETag` and body of a kept active scene list.
@@ -2133,10 +2129,10 @@ fn split_kept_scene_list(mut kept: Vec<u8>) -> Option<(String, Vec<u8>)> {
 fn fetch_error(e: platform::FetchError<reqwest::Error>, what: &str) -> anyhow::Error {
     match e {
         platform::FetchError::Headers => anyhow!("timed out awaiting {what} headers"),
-        platform::FetchError::Send(e) => anyhow!(e),
+        platform::FetchError::Send(e) => anyhow!("{what} request failed: {e}"),
         platform::FetchError::Status(s, _) => anyhow!("status: {s}"),
         platform::FetchError::Stalled => anyhow!("{what} response stalled"),
-        platform::FetchError::Body(e) => anyhow!(e),
+        platform::FetchError::Body(e) => anyhow!("{what} body failed: {e}"),
     }
 }
 

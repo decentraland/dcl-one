@@ -707,29 +707,16 @@ fn loading_state(
 struct SceneListState;
 
 /// What became of the realm's one-request scene list ([`SceneList`]).
-fn scene_list_state(
-    mut input: ConsoleCommand<SceneListState>,
-    list: Res<SceneList>,
-    realm: Res<common::structs::CurrentRealm>,
-    range: Res<common::structs::SceneLoadDistance>,
-) {
+fn scene_list_state(mut input: ConsoleCommand<SceneListState>, list: Res<SceneList>) {
     if input.take().is_none() {
         return;
     }
     let not_placed = "Only once the list is placed.";
     let reply = match &*list {
-        SceneList::Unasked => {
-            let state = if realm.address.is_empty() {
-                "Not asked: no realm"
-            } else if realm.config.lists_scenes() {
-                "Not asked: the realm lists its scenes"
-            } else if range.load.max(range.load_imposter) <= 0.0 {
-                "Not asked: nothing loads by distance"
-            } else {
-                "Not asked yet"
-            };
-            json!({"state": state, "unavailable": {"": "The list has not been asked for."}})
-        }
+        SceneList::NotAsked(reason) => json!({
+            "state": format!("Not asked: {reason}"),
+            "unavailable": {"": "The list has not been asked for."},
+        }),
         SceneList::Pending { asked_at, .. } => json!({
             "state": "Pending",
             "ms": asked_at.elapsed().as_millis() as u64,
@@ -1018,18 +1005,12 @@ mod tests {
         assert_eq!(report["from"]["range"], json!([1, 1, 0]));
     }
 
-    fn read_scene_list_state(list: SceneList, realm: common::structs::CurrentRealm) -> Value {
+    fn read_scene_list_state(list: SceneList) -> Value {
         let mut app = App::new();
         app.add_plugins(console::ConsolePlugin {
             add_bevy_console: false,
         })
         .insert_resource(list)
-        .insert_resource(realm)
-        .insert_resource(common::structs::SceneLoadDistance {
-            load: 20.0,
-            unload: 10.0,
-            load_imposter: 0.0,
-        })
         .add_console_command::<SceneListState, _>(scene_list_state);
         let result = Arc::new(Mutex::new(None));
         let responder: ConsoleResponder = {
@@ -1050,32 +1031,21 @@ mod tests {
     // the kept copy answered, how long it took, or why it fell back.
     #[test]
     fn the_scene_list_section_reads_the_lists_outcome() {
-        let city = || common::structs::CurrentRealm {
-            address: "https://realm.example".to_owned(),
-            ..Default::default()
-        };
-
-        let placed = read_scene_list_state(
-            SceneList::Placed {
-                scenes: 24_424,
-                from_kept_copy: true,
-                took: std::time::Duration::from_millis(240),
-            },
-            city(),
-        );
+        let placed = read_scene_list_state(SceneList::Placed {
+            scenes: 24_424,
+            from_kept_copy: true,
+            took: std::time::Duration::from_millis(240),
+        });
         assert_eq!(placed["state"], "Placed");
         assert_eq!(placed["scenes"], 24_424);
         assert_eq!(placed["fromKeptCopy"], true);
         assert_eq!(placed["ms"], 240);
         assert!(placed["unavailable"]["reason"].is_string());
 
-        let fell_back = read_scene_list_state(
-            SceneList::FellBack {
-                reason: "status: 404 Not Found".to_owned(),
-                took: std::time::Duration::from_millis(12),
-            },
-            city(),
-        );
+        let fell_back = read_scene_list_state(SceneList::FellBack {
+            reason: "status: 404 Not Found".to_owned(),
+            took: std::time::Duration::from_millis(12),
+        });
         assert_eq!(
             fell_back["state"],
             "Fell back to resolving parcels by range"
@@ -1084,16 +1054,7 @@ mod tests {
         assert_eq!(fell_back["ms"], 12);
         assert!(fell_back["scenes"].is_null());
 
-        let world = read_scene_list_state(
-            SceneList::Unasked,
-            common::structs::CurrentRealm {
-                config: common::structs::ServerConfiguration {
-                    scenes_urn: Some(vec!["urn:decentraland:entity:bafyscene".to_owned()]),
-                    ..Default::default()
-                },
-                ..city()
-            },
-        );
+        let world = read_scene_list_state(SceneList::NotAsked("the realm lists its scenes"));
         assert_eq!(world["state"], "Not asked: the realm lists its scenes");
     }
 }
