@@ -1056,8 +1056,8 @@ impl IpfsIo {
 
     /// The url the bytes of the content file at asset `path` are read from, when every read of
     /// that url gives the same bytes: the variant that answered it, else the original's url when
-    /// a content hash names the file and the server is not loopback (a preview server's files
-    /// change). Two loads with the same url hold the same file.
+    /// a content hash names the file, the session is not a preview and the server is not loopback
+    /// (a preview server's files change). Two loads with the same url hold the same file.
     ///
     /// Blocking: reads the context.
     pub fn immutable_source_url(&self, path: &Path) -> Option<String> {
@@ -1089,14 +1089,14 @@ impl IpfsIo {
     }
 
     /// The content hash of the file at `ipfs_path` and its original's url, when a content hash
-    /// names it and the server is not loopback.
+    /// names it, the session is not a preview and the server is not loopback.
     fn immutable_original_url(&self, ipfs_path: &IpfsPath) -> Option<(String, String)> {
         let context = self.context.blocking_read();
         let hash = ipfs_path
             .hash(&context)
             .filter(|hash| ContentHashView::try_from(hash.as_str()).is_ok())?;
         let url = ipfs_path.to_url(&context).ok()?;
-        (!common::util::is_loopback_url(&url)).then_some((hash, url))
+        (!self.is_preview && !common::util::is_loopback_url(&url)).then_some((hash, url))
     }
 
     /// Whether the model at `path`, which failed to load, is about to load again from its
