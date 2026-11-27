@@ -14970,6 +14970,13 @@ mod compare_sources_tests {
         chain
     }
 
+    #[test]
+    fn the_read_only_pool_refuses_verify_ca() {
+        let err = compare_sources::read_only_pool("postgres://u@127.0.0.1:1/x?sslmode=verify-ca")
+            .unwrap_err();
+        assert_eq!(err, "sslmode=verify-ca is not supported");
+    }
+
     #[tokio::test]
     async fn equal_sources_compare_the_whole_range() {
         let Some(db) = ScratchDb::create().await else {

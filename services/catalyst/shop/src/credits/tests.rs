@@ -13650,7 +13650,10 @@ fn stalling_state(pool: &PgPool, proxy: &StallProxy) -> SharedState {
         .balance_changes =
         super::stream::BalanceChanges::with_limits(std::time::Duration::from_secs(3600), 8, 100)
             .listening_at(
-                options.host("127.0.0.1").port(proxy.port),
+                options
+                    .host("127.0.0.1")
+                    .port(proxy.port)
+                    .ssl_mode(sqlx::postgres::PgSslMode::Disable),
                 std::time::Duration::from_millis(300),
                 std::time::Duration::from_secs(2),
             );

@@ -3,7 +3,7 @@ pub mod schema_migrate;
 use parking_lot::Mutex;
 use std::collections::HashMap;
 
-use sqlx::postgres::{PgConnectOptions, PgPool, PgPoolOptions};
+use sqlx::postgres::{PgConnectOptions, PgPool, PgPoolOptions, PgSslMode};
 use thiserror::Error;
 
 pub const SCHEMA_IDENTITY: &str = "catalyst";
@@ -63,6 +63,9 @@ impl Default for PoolSettings {
 pub enum PoolError {
     #[error("invalid postgres connection string: {0}")]
     InvalidUrl(sqlx::Error),
+
+    #[error("sslmode=verify-ca is not supported")]
+    VerifyCaUnsupported,
 
     #[error(transparent)]
     Connect(sqlx::Error),
@@ -137,6 +140,10 @@ pub async fn connect_pool(url: &str, settings: &PoolSettings) -> Result<PgPool, 
         .parse::<PgConnectOptions>()
         .map_err(PoolError::InvalidUrl)?
         .options(options);
+    // sqlx's verify-ca verifier needs a process-wide rustls provider, and none is installed.
+    if matches!(connect_opts.get_ssl_mode(), PgSslMode::VerifyCa) {
+        return Err(PoolError::VerifyCaUnsupported);
+    }
 
     let mut pool_opts = PgPoolOptions::new()
         .max_connections(settings.max_connections)
@@ -910,6 +917,17 @@ pub mod scratch {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn connect_pool_refuses_verify_ca_before_connecting() {
+        let err = connect_pool(
+            "postgres://catalyst@127.0.0.1:1/catalyst?sslmode=verify-ca",
+            &PoolSettings::default(),
+        )
+        .await
+        .unwrap_err();
+        assert!(matches!(err, PoolError::VerifyCaUnsupported), "{err}");
+    }
 
     #[tokio::test]
     async fn isolated_pools_do_not_share_facts() {

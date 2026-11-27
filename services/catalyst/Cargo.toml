@@ -116,7 +116,7 @@ dcl-scene-cli = { path = "../../apps/dcl-scene-cli" }
 tokio = { version = "1", features = ["full"] }
 axum = { version = "0.8", features = ["multipart", "ws"] }
 tower-http = { version = "0.7", features = ["cors", "trace", "timeout", "fs", "normalize-path"] }
-sqlx = { version = "0.9", features = ["runtime-tokio", "postgres", "json", "chrono", "macros", "uuid"] }
+sqlx = { version = "0.9", features = ["runtime-tokio", "tls-rustls-aws-lc-rs", "postgres", "json", "chrono", "macros", "uuid"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["float_roundtrip", "raw_value"] }
 chrono = { version = "0.4", features = ["serde"] }
