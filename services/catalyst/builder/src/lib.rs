@@ -334,7 +334,10 @@ impl Settings {
         .transpose()?;
         let cors = cors::Cors::parse(raw.cors_origin.as_deref(), raw.cors_method.as_deref())?;
         let admin_token = non_empty(&raw.admin_token);
-        if admin_token.as_ref().is_some_and(|s| s.len() < MIN_SECRET_BYTES) {
+        if admin_token
+            .as_ref()
+            .is_some_and(|s| s.len() < MIN_SECRET_BYTES)
+        {
             bail!("CATALYRST_BUILDER_ADMIN_TOKEN must be at least {MIN_SECRET_BYTES} bytes");
         }
         if raw
@@ -681,9 +684,12 @@ mod router_tests {
             settings,
         )
         .unwrap();
-        let held: Vec<_> = (0..2)
+        let mut held: Vec<_> = (0..2)
             .map(|n| state.videos.admit(&format!("0xwallet{n}"), None).ok())
             .collect();
+        for upload in held.iter_mut().flatten() {
+            upload.place().arrived(1_000_000).unwrap();
+        }
         assert!(held.iter().all(Option::is_some));
         assert!(state.videos.admit("0xwallet2", None).is_err());
     }

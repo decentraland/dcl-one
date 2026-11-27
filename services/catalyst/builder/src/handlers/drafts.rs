@@ -136,7 +136,9 @@ pub async fn get_item(
 /// among the file uploads in flight ([`crate::State::file_uploads`], 429
 /// with `Retry-After` at once) and the upload's budgets checked
 /// ([`crate::limits::within_storage`]) before the body is read
-/// (`items::upload`); answers `{ok: true}` without data.
+/// (`items::upload`) within its deadline and the idle bound, an upload
+/// behind its pace giving its place to a newcomer whose bytes arrive
+/// ([`crate::items::places`]); answers `{ok: true}` without data.
 pub async fn post_item_files(
     State(state): State<SharedState>,
     Signed(signer): Signed,
@@ -153,7 +155,15 @@ pub async fn post_item_files(
         return Err(upload::too_large());
     }
     let source = crate::limits::upload_source(request.headers());
-    let _admission = match state.file_uploads.admit(signer.as_str(), source.as_deref()) {
+    let timing = crate::items::places::Timing {
+        deadline: state.file_deadline,
+        idle: crate::items::places::IDLE_TIMEOUT,
+        most: crate::UPLOAD_BODY_LIMIT as u64,
+    };
+    let mut admission = match state
+        .file_uploads
+        .admit(signer.as_str(), source.as_deref(), timing)
+    {
         Ok(admission) => admission,
         Err(busy) => return Ok(busy),
     };
@@ -172,13 +182,17 @@ pub async fn post_item_files(
             return Ok(refused.into_response());
         }
     };
-    let files = tokio::time::timeout(state.file_deadline, upload::read(multipart))
-        .await
-        .unwrap_or_else(|_| Err(ApiError::http(408, "The upload timed out")));
+    let files = upload::read(multipart, &mut admission).await;
+    admission.body_arrived();
     let count = files.as_ref().map_or(1, |files| files.len().max(1));
     upload.carried(u32::try_from(count).unwrap_or(u32::MAX));
     drop(upload);
-    let files = files?;
+    let files = match files {
+        Err(refused) if admission.gave_way() => {
+            return Ok(crate::items::places::retry_later(refused));
+        }
+        files => files?,
+    };
     let bytes = files.iter().map(|(_, file)| file.len() as u64).sum();
     let count = files.len() as u64;
     state.items.save_item_files(&change, files).await?;
@@ -210,7 +224,7 @@ pub async fn post_item_videos(
         return Err(video::too_large(state.videos.max_bytes));
     }
     let source = crate::limits::upload_source(request.headers());
-    let admission = match state.videos.admit(signer.as_str(), source.as_deref()) {
+    let mut admission = match state.videos.admit(signer.as_str(), source.as_deref()) {
         Ok(admission) => admission,
         Err(busy) => return Ok(busy),
     };
@@ -224,7 +238,7 @@ pub async fn post_item_videos(
     let root = video::spool_root(&state.items.blobs);
     state.videos.sweep(&root).await;
     let request = upload.counted(request);
-    let received = video::receive(&state.videos, &root, request, admission.progress()).await;
+    let received = video::receive(&state.videos, &root, request, admission.place()).await;
     drop(upload);
     let received = match received {
         Err(refused) if admission.gave_way() => {

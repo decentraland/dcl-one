@@ -37,7 +37,11 @@ The builder answers items as `github.com/decentraland/builder-server` at
   content hash its item names. Before it reads the body, the node takes one
   of 16 places for file uploads in flight, at most four for each wallet and
   eight for each source address (a refused place answers 429 with
-  `Retry-After` at once). It reads the body within its bounds, hashes each
+  `Retry-After` at once). The whole body must arrive within 5 minutes
+  (about 0.6 Mbit/s for the largest, 21 MiB), and 30 seconds without a byte
+  ends the upload. While all 16 places are held, an upload behind that pace
+  gives its place to a newcomer as a video upload does (below). It reads
+  the body within its bounds, hashes each
   file, refuses a file whose bytes don't match the hash, whose item doesn't
   name it or that the item names only as its `video.mp4` (a video comes
   through `/videos` and its container check), and only then stores it,
@@ -65,20 +69,31 @@ The builder answers items as `github.com/decentraland/builder-server` at
 - **A video streams to the store.** `POST /v1/items/{id}/videos` takes a
   smart wearable's preview video, one file part named `video.mp4`, of up to
   250,000,000 bytes. The node decides access, checks that the item names a
-  video and takes one of eight places for uploads in flight, at most two for
-  each wallet and two for each source address, before it reads a byte of
-  the body (the places work as the file uploads' do); it never waits for a place, and a refused one answers 429 with
-  `Retry-After` at once, so two wallets can't hold every place.
+  video and takes one of 32 places for uploads in flight
+  (`BUILDER_VIDEO_UPLOADS_MAX`, 1 to 256), at most one for each wallet and
+  two for each source address, before it reads a byte of the body (the
+  places work as the file uploads' do); it never waits for a place, and a
+  refused one answers 429 with `Retry-After` at once, so filling every place
+  takes as many wallets and half as many addresses. A wallet and a source
+  address may hold places for 4 and 12 hours of a day.
   The body then streams into one spool file beside the blob store, hashed as
   it arrives, holding no database connection or row lock. The multipart
   parser may hold at most 64 KiB beyond the bytes it has handed on, the
   whole body must arrive within 20 minutes (about 1.7 Mbit/s for the
   largest video), 30 seconds without a byte ends the upload, and the node
-  stops reading the moment a bound is passed. While all eight places are
-  held, a new upload takes the place of the slowest one that has run 30
-  seconds below the rate the largest video needs (about 1.7 Mbit/s), which
-  ends; a small video on a slow link finishes while places are free, and
-  holding every place costs a sender that rate per place. The video must be an MP4 container (an `ftyp`
+  stops reading the moment a bound is passed. An upload is behind while it
+  has received less, since it took its place, than the pace the largest
+  video needs to arrive in 20 minutes (about 1.7 Mbit/s). While every
+  place is held and an upload is behind, a newcomer takes an extra place,
+  one for each upload behind, and reads its body; once its first bytes
+  arrive, the slowest upload behind ends with 408 and `Retry-After`, or,
+  when none is behind any more and no place came free, the newcomer ends
+  with 429. A newcomer that sends nothing ends at its idle bound having cut
+  nobody, so a place is taken only by an upload that is sending. An
+  upload is behind from its first moment, with no grace: a grace would let
+  uploads that send nothing and restart inside it hold every place for
+  free. A small video on a slow link finishes while places are free, and
+  holding every place costs a sender that pace per place. The video must be an MP4 container (an `ftyp`
   box first, a `moov` box, boxes that end where the file does), whatever
   its part's name or content type says. Only then, in one transaction with
   the item locked, the node decides access again, checks that the item
@@ -196,10 +211,15 @@ The builder answers items as `github.com/decentraland/builder-server` at
 - The gateway passes a video's body to the node as it arrives, so a caller
   the node refuses never makes the gateway store a body first. What an
   admitted upload can cost is bounded: 250 MB of spool and of store for
-  each upload, eight at a time, two for each wallet and two for each source
-  address, so filling every place takes four wallets on four addresses; a
-  stalled sender gives its place back within 30 seconds. A replaced video's
-  bytes become collectable once no item names them.
+  each upload, 32 at a time by default (8 GB of spool, and 250 MB for each
+  place `BUILDER_VIDEO_UPLOADS_MAX` sets), one for each wallet and two for
+  each source address, so filling every place takes 32 wallets on 16
+  addresses. A newcomer waiting on an extra place holds no more than its
+  first read's bytes before an upload gives way, and the spool of the
+  upload that gives way is removed. A stalled sender gives its place back
+  within 30 seconds, and one sending below the pace as soon as a newcomer's
+  bytes arrive. A replaced video's bytes become collectable once no item
+  names them.
 
 ## Alternatives considered
 
