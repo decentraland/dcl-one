@@ -17,7 +17,8 @@
 //
 // Beyond explorer-automation: the chat's `Reactions` button (the heart in its strip), whose
 // `checked` is its bar being open. A reaction plays over the avatar, which no control shows, so it
-// is read from `/reaction_state`.
+// is read from `/reaction_state`; the bar's `Chat Reactions` switch is the engine's setting of that
+// name, read back from the same command.
 import assert from 'node:assert/strict'
 import { spec, until, type ChatHistory, type ChatMessage, type Explorer } from '../driver/index.ts'
 
@@ -41,6 +42,7 @@ const FIRST_REACTION = { name: String.fromCodePoint(0x2665, 0xfe0f), role: 'butt
 const REACTION_PILL = /^you reacted(?: with :\S+:)?$/
 const REACTIONS = { name: 'Reactions', role: 'button' } as const
 const REACTIONS_BAR = { name: 'Reactions', role: 'dialog' } as const
+const CHAT_REACTIONS = { name: 'Chat Reactions', role: 'switch' } as const
 
 /** `/reaction_state`, as far as these scenarios read it. */
 interface ReactionState {
@@ -48,6 +50,10 @@ interface ReactionState {
   picked: number
   /** Reactions played this session, the player's own and their peers'. */
   played: number
+  /** The Chat Reactions setting: reactions are passed to the HUD to show on screen. */
+  screenLane: boolean
+  /** Those passed to the HUD. */
+  streamed: number
 }
 
 function reactionState(explorer: Explorer): Promise<ReactionState> {
@@ -243,5 +249,42 @@ scenario('a reaction picked from the Reactions button plays and leaves its bar o
   await explorer.hud.click(REACTIONS)
   await explorer.hud.waitHidden(REACTIONS_BAR, TEXT_TIMEOUT_MS)
   assert.equal((await explorer.hud.get(REACTIONS)).checked, false, 'the Reactions button should read released once its bar is closed')
+  await closeChat(explorer)
+})
+
+scenario("the bar's Chat Reactions switch sets whether reactions are shown on screen", async ({ explorer, restore }) => {
+  await openChat(explorer)
+  const original = await reactionState(explorer)
+  const shown = async (on: boolean): Promise<void> => {
+    await until(() => reactionState(explorer), (state) => state.screenLane === on, { timeoutMs: TEXT_TIMEOUT_MS, what: `reactions ${on ? 'shown' : 'not shown'} on screen` })
+    await until(() => explorer.hud.get(CHAT_REACTIONS), (control) => control.checked === on, { timeoutMs: TEXT_TIMEOUT_MS, what: `the Chat Reactions switch to be ${on ? 'on' : 'off'}` })
+  }
+
+  await explorer.hud.click(REACTIONS)
+  await explorer.hud.wait(CHAT_REACTIONS, { timeoutMs: TEXT_TIMEOUT_MS })
+  restore(async () => {
+    if ((await reactionState(explorer)).screenLane === original.screenLane) return
+    // the Reactions button is there only while the chat is open, wherever the scenario stopped
+    await openChat(explorer)
+    if (!(await explorer.hud.isVisible(REACTIONS_BAR))) await explorer.hud.click(REACTIONS)
+    await explorer.hud.click(CHAT_REACTIONS)
+    await shown(original.screenLane)
+  })
+  await shown(original.screenLane)
+
+  await explorer.hud.click(CHAT_REACTIONS)
+  await shown(!original.screenLane)
+  // with the setting on a reaction played is passed to the HUD; off, it is not
+  const before = await reactionState(explorer)
+  await explorer.hud.click(FIRST_REACTION)
+  await until(() => reactionState(explorer), (state) => state.played > before.played, { timeoutMs: TEXT_TIMEOUT_MS, what: 'the reaction to play' })
+  const reached = (await reactionState(explorer)).streamed - before.streamed
+  if (original.screenLane) assert.equal(reached, 0, 'no reaction should reach the HUD while the setting is off')
+  else assert.ok(reached >= 1, 'a reaction should reach the HUD while the setting is on')
+
+  await explorer.hud.click(CHAT_REACTIONS)
+  await shown(original.screenLane)
+  await explorer.hud.click(REACTIONS)
+  await explorer.hud.waitHidden(REACTIONS_BAR, TEXT_TIMEOUT_MS)
   await closeChat(explorer)
 })

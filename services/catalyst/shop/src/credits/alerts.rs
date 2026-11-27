@@ -990,7 +990,7 @@ fn tenths(tenths: i64) -> String {
 }
 
 /// A whole number with thousands separated.
-fn grouped(n: i64) -> String {
+pub(super) fn grouped(n: i64) -> String {
     let digits = n.unsigned_abs().to_string();
     let mut out = String::new();
     for (i, digit) in digits.chars().enumerate() {
@@ -1003,7 +1003,7 @@ fn grouped(n: i64) -> String {
 }
 
 /// Cents as dollars, thousands separated.
-fn usd(cents: i64) -> String {
+pub(super) fn usd(cents: i64) -> String {
     let sign = if cents < 0 { "-" } else { "" };
     let abs = cents.unsigned_abs();
     format!("{sign}${}.{:02}", grouped((cents / 100).abs()), abs % 100)

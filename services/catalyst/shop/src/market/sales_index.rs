@@ -61,6 +61,7 @@ pub const BID_V2_MATIC_START_BLOCK: u64 = 22_514_900;
 pub struct SalesIndex {
     chain: i64,
     polygon: Option<CollectionVenues>,
+    check_catalogue: bool,
     bid: &'static str,
     bid_start: u64,
 }
@@ -72,6 +73,7 @@ struct CollectionVenues {
 
 pub const POLYGON: SalesIndex = SalesIndex {
     chain: 137,
+    check_catalogue: false,
     polygon: Some(CollectionVenues {
         store: STORE_MATIC,
         market_v2: "0x480a0f4e360e8964e68858dd231c2922f1df45ef",
@@ -82,6 +84,7 @@ pub const POLYGON: SalesIndex = SalesIndex {
 
 pub const AMOY: SalesIndex = SalesIndex {
     chain: 80_002,
+    check_catalogue: false,
     polygon: Some(CollectionVenues {
         store: "0xe36abc9ec616c83caaa386541380829106149d68",
         market_v2: "0x0c8ad1f6aadf89d2eb19f01a100a6143108fe2b0",
@@ -96,6 +99,7 @@ pub const AMOY: SalesIndex = SalesIndex {
 /// Creation receipt 0x44be8623150396ab165f8d1d5bd80e073c32deb0a3b485bcc75f7e8bca360a1f.
 pub const SEPOLIA: SalesIndex = SalesIndex {
     chain: 11_155_111,
+    check_catalogue: false,
     polygon: None,
     bid: "0x2c2835b95852fd975e087b3b25297322728792e2",
     bid_start: 3_831_237,
@@ -106,6 +110,11 @@ impl SalesIndex {
     /// `bidAddress`.
     pub fn bid_contract(self) -> &'static str {
         self.bid
+    }
+
+    pub(super) fn with_catalogue_gate(mut self) -> Self {
+        self.check_catalogue = true;
+        self
     }
 
     pub fn for_chain(chain: i64) -> Option<Self> {
@@ -573,15 +582,21 @@ impl ChainIndex for SalesIndex {
         let mut groups = Vec::new();
         if let Some(venues) = self.polygon {
             let bound = chain_walk::time_at_most(ChainNet::Matic, anchor, to);
+            let mut tx =
+                nft_index::catalogue_snapshot(pool, self.net(), self.chain, self.check_catalogue)
+                    .await?;
             let collections: Vec<String> = sqlx::query_scalar(
-            "SELECT contract_address FROM shop.collections WHERE network = $1 AND created_at <= $2 AND chain_id = $3 AND ($4 OR testnet_verified) ORDER BY contract_address",
-        )
-        .bind(ChainNet::Matic.db_name())
-        .bind(bound)
-        .bind(casts::to_i32(self.chain)?)
-        .bind(self.chain == ChainNet::Matic.chain_id())
-        .fetch_all(pool)
-        .await?;
+                "SELECT contract_address FROM shop.collections
+                 WHERE network = $1 AND created_at <= $2 AND chain_id = $3 AND ($4 OR testnet_verified)
+                 ORDER BY contract_address",
+            )
+            .bind(self.net().db_name())
+            .bind(bound)
+            .bind(casts::to_i32(self.chain)?)
+            .bind(self.chain == ChainNet::Matic.chain_id())
+            .fetch_all(&mut *tx)
+            .await?;
+            tx.commit().await?;
             if !collections.is_empty() {
                 groups.push(LogGroup {
                     addresses: collections,

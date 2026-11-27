@@ -159,6 +159,16 @@
   height: 100%;
   object-fit: contain;
   object-position: center bottom;
+  /* The snapshot's frame cuts wide or tall wearables at its left, right and top edges: fade those
+   * edges out so the cut blends into the page instead of showing the frame. */
+  -webkit-mask-image:
+    linear-gradient(to right, transparent, black 6%, black 94%, transparent),
+    linear-gradient(to bottom, transparent, black 3%);
+  -webkit-mask-composite: source-in;
+  mask-image:
+    linear-gradient(to right, transparent, black 6%, black 94%, transparent),
+    linear-gradient(to bottom, transparent, black 3%);
+  mask-composite: intersect;
 }
 
 @media (min-width: 1024px) {

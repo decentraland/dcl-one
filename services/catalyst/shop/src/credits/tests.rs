@@ -333,6 +333,7 @@ struct StateCfg {
     studio_grant_max_cents: Option<i64>,
     revenue_events: Option<Arc<dyn super::events::RevenueEvents>>,
     eip1654: Option<Arc<dyn crate::auth::eip1654::Eip1654Validator>>,
+    require_bound_body: bool,
 }
 
 impl Default for StateCfg {
@@ -350,6 +351,7 @@ impl Default for StateCfg {
             studio_grant_max_cents: None,
             revenue_events: None,
             eip1654: None,
+            require_bound_body: false,
         }
     }
 }
@@ -372,6 +374,7 @@ fn state_with(pool: PgPool, cfg: StateCfg, market: FakeMarket, broker: MockBroke
         admin_token: cfg.admin_token.map(str::to_string),
         daily_studio_deposit_limit_cents: cfg.daily_studio_deposit_limit_cents,
         studio_grant_max_cents: cfg.studio_grant_max_cents,
+        admin_writes_require_bound_body: cfg.require_bound_body,
         marketplace_markup_bps: 0,
         mana_price_max_staleness_secs: 3600,
         ..RawSettings::default()
@@ -11763,6 +11766,24 @@ pub(super) fn admin_bearer() -> HeaderMap {
 /// (`None` refuses them), with room for any day's deposits.
 pub(super) fn grant_state(pool: PgPool, grant_max_cents: Option<i64>) -> SharedState {
     grant_state_with(pool, grant_max_cents, None)
+}
+
+/// [`grant_state`] with `CREDITS_ADMIN_WRITES_REQUIRE_BOUND_BODY` set to `required`.
+pub(super) fn grant_state_bound(
+    pool: PgPool,
+    grant_max_cents: Option<i64>,
+    required: bool,
+) -> SharedState {
+    test_state(
+        pool,
+        StateCfg {
+            admin_token: Some("s3cret"),
+            daily_studio_deposit_limit_cents: Some(i64::MAX / 2),
+            studio_grant_max_cents: grant_max_cents,
+            require_bound_body: required,
+            ..StateCfg::default()
+        },
+    )
 }
 
 /// [`grant_state`] with `eip1654` answering contract wallets.

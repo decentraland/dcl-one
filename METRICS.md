@@ -8,9 +8,124 @@ A local Polygon refold fixture replayed 288 legacy sales in 288 distinct blocks 
 
 The index process increments `catalyst_index_sales_repair_failures_total` by indexer and network when a historical sales repair fails. The error log includes the starting block and requests spent. The cursor keeps its last verified boundary.
 
+## Marketplace order book reads
+
+PostgreSQL 17.6 on Apple Silicon held one million legacy orders (700,000
+Polygon and 300,000 Ethereum), 700,000 tokens and 2,000 Polygon collections.
+The book held 130,000 stored open orders. Around 2% still had the seller's
+ownership proof. `EXPLAIN (ANALYZE, BUFFERS)` used the repository's order
+predicates, including LAND rights and catalogue membership. Each value below
+is the median of three executions after `ANALYZE`. Other workspace builds
+shared the machine.
+
+| Unscoped page of 100 | Before | Indexed | Indexed shared buffers (hit/read) |
+| --- | ---: | ---: | ---: |
+| Issued ID ascending | 11,270 ms | 1.65 ms | 976/0 |
+| Issued ID descending | 8,839 ms | 1.95 ms | 873/0 |
+| Cheapest across statuses | 7,771 ms | 2.10 ms | 975/0 |
+
+Both issued-ID directions use the 39.8 MiB token ID index with incremental
+sorts for ties. Cheapest uses the 90.4 MiB price and order ID index. The
+indexes took 2.75 s and 5.78 s to build. In a single rolled-back 1,000-order
+append probe, they added 1,437 shared-buffer reads and 329 WAL full-page
+images. That indexed run took 301 ms and produced 3.59 MB of WAL, compared to
+12 ms and 0.87 MB in the baseline run, whose page accesses were all cache hits.
+
+For the deepest newest-first open window (25,000), the page took 2,119 ms and
+the two capped counts took 965 ms (Polygon) and 328 ms (Ethereum) with the
+sort indexes installed. The page accessed 33,293 shared buffers and the counts
+40,078 and 29,649. The query still proves ownership across the stored open
+rows to fill the window. A trial partial index on open orders by creation time
+left the heavy scans in place.
+
+A skewed fixture added 100,000 backed open orders to one of the 200 requested
+collections. The legacy leg uses a lateral top-N lookup inside the batched
+statement so each index scan can stop at its own cap. The original batched
+window had to rank every eligible row before its cut. In PostgreSQL-only
+runs with eight clients and 24 reads per case, mean transaction latency fell
+from 1,469 to 105 ms for a cap of 25, and from 1,690 to 488 ms for a cap of
+5,000. Both shapes returned the same row counts. At the 5,000 cap, the median
+`EXPLAIN (ANALYZE, BUFFERS)` fell from 432 ms (22,926 hits, 32,014 reads) to
+89 ms (113,323 hits, zero reads).
+
+The concurrent test used the same numbers of orders and tokens, plus 1,200
+backed v3 listings in the requested collections. Eight clients used an
+eight-connection pool and issued three reads each. The harness called the
+Shop request functions directly, including their readiness checks and
+response assembly. It sampled checked-out connections every 2 ms to
+estimate mean time held per request. The mixed workload was 18 item
+batches, three deepest open pages and three issued-ID pages. All 24 reads
+in each run succeeded.
+
+| Workload | Reads/s before → batched | Mean connection hold before → batched | Item batch p95 before → batched |
+| --- | ---: | ---: | ---: |
+| 20 contracts | 7.03 → 47.59 | 1,063 → 142 ms | 1,334 → 228 ms |
+| 200 contracts | 2.30 → 17.49 | 3,370 → 432 ms | 3,634 → 626 ms |
+| Mixed (200-contract batches) | 2.55 → 7.57 | 2,754 → 483 ms | 3,836 → 202 ms |
+
+The 200-contract case took one local candidate statement per batch where
+it had taken 400. Both implementations returned identical results at the
+same cap of 5,000 per contract. The three deep pages in the batched mixed
+run completed in up to 2.97 s. These are synthetic measurements without
+HTTP transport time. The current request path uses the indexes and batching
+without a book-result cache.
+
+## Catalog legacy listing aggregation
+
+A PostgreSQL 17.6 fixture held 1,000,000 legacy orders, including 18,867
+open ones with seller ownership on Ethereum and Polygon, and 20,000 items
+over 2,000 collections. The listing SQL joined ownership and item
+identity, computed prices and counts, and capped the page at 20.
+The legacy leg of a cheapest page took 234–375 ms in three single-session
+runs and averaged 345 ms with eight clients and varying offsets. A
+listing-dependent newest page (`isOnSale=true` on the fixture's resale
+rows) took 322–448 ms and averaged 323 ms with eight clients. A newest
+page without a listing predicate uses the page-first shape and took
+10.5–12.7 ms. Its eight-client run averaged 21 ms with varying offsets.
+
+V1's memo preflight reads publication and the next expiry on each
+network. The index-only expiry lookup and cursor join took 0.068–0.209 ms
+and averaged 0.149 ms with eight clients. A memo miss uses the applicable
+listing query. These measurements exclude the v3 leg, the other readiness
+checks and HTTP transport.
+
+## NFT listing publication and page reads
+
+A warm PostgreSQL 17.6 pool measured 20 Polygon folds at each latency.
+Each fold committed a change to one ownership row, recorded the fold, waited
+for two simulated successful head RPCs, and committed its publication.
+The timing starts when the fold commit returns and ends when publication
+returns.
+
+| Delay per RPC | Median gap | p95 gap | p95 gap / 5 s |
+| ---: | ---: | ---: | ---: |
+| 0 ms | 0.60 ms | 0.79 ms | 0.02% |
+| 25 ms | 55.75 ms | 57.16 ms | 1.14% |
+| 100 ms | 205.87 ms | 207.25 ms | 4.15% |
+| 250 ms | 506.89 ms | 507.89 ms | 10.16% |
+
+The last column estimates the fraction of independent reads hitting the
+window if a write-producing fold runs every five seconds. The deployed
+rate depends on RPC latency, the pass cadence and which projections the
+fold writes. The per-network publication-check and refusal counters use
+`route="nfts"` for order-dependent NFT pages.
+`catalyst_shop_nft_optional_land_read_failures_total` counts failed optional
+LAND snapshot reads by network. Mixed pages can still return NAMEs and
+collections when these reads fail.
+
+On the same PostgreSQL version, a warm `EXPLAIN (ANALYZE, BUFFERS, TIMING OFF)`
+of the bound page query used 32,000 tokens for one Polygon owner, 4,600
+backed v3 listings, 4,450 open legacy listings, a wearable category and
+`isOnSale=true&sortBy=cheapest&first=24`. Three executions after the first
+pass took 210–220 ms for the epoch-to-milliseconds sort and 211–221 ms for
+the stored `timestamp(3)` sort. Both plans drove each candidate's listing
+lookup from `trade_assets_erc721_token_idx` and sorted at most one matching
+trade per token in this fixture. The timestamp sort also leaves the
+`(signer, created_at DESC)` index order available to the planner.
+
 ## Ethereum collections-v1 first walk
 
-On 2026-11-26 the Ethereum `collections` walk (`shop::market::collections_v1`) ran its first history over `rpc.decentraland.org/mainnet`, which takes at most 10,000 blocks per `eth_getLogs`, with the default settings (10,000-block windows, a budget of 100 `eth_getLogs` per pass) and an empty scratch database. It walked from block 8,828,687 to the head, 17,671,095 blocks, in 18 passes run back to back, with 7,108 RPC requests in all. A two-pass rerun over the same start counted them by kind. Each pass spent its 100-request budget on `eth_getLogs`, about one per 10,000-block window: 989,704 and 1,000,000 blocks. Each pass also sent about 300 other requests, for the chain, the head, each window's bracket and the blocks holding logs: 299 and 302. So the full walk's `eth_getLogs` came to about 1,770, one per window, and the rest were headers. It took 2,198 s, plus the pause between passes a job adds (`MARKETPLACE_INDEX_INTERVAL_SECS`, 5 s, or 30 s under the mirror posture). It kept 438 `add_item`, 73,506 `issue` and 52 `ownership_transferred` rows. The 438 items and the 73,506 mints equal the collections subgraph's v1 items and their total supply at block 26,499,473. After the catch-up, each pass reads the same 42-address filter over the new blocks only. The command is in the `measure_the_first_walk` test, which prints each pass's `eth_getLogs` and other requests (`COLLECTIONS_V1_MEASURE_PASSES` stops it early).
+On 2026-11-26 the Ethereum `collections` walk (`shop::market::collections_v1`) ran its first history over `rpc.decentraland.org/mainnet`, which takes at most 10,000 blocks per `eth_getLogs`, with the default settings (10,000-block windows, a budget of 100 `eth_getLogs` per pass) and an empty scratch database. It walked from block 8,828,687 to the head, 17,671,095 blocks, in 18 passes run back to back, with 7,108 HTTP requests in all: `eth_getLogs` plus the headers of each window's bracket and of the blocks holding logs. That run recorded only the total. A two-pass rerun over the same start counted the requests by kind. Each pass spent its 100-request budget on `eth_getLogs`, about one per 10,000-block window: 989,704 and 1,000,000 blocks. Each pass also sent about 300 other requests, for the chain, the head, each window's bracket and the blocks holding logs: 299 and 302. So the full walk's `eth_getLogs` came to about 1,770, one per window, and the rest were headers. It took 2,198 s, plus the pause between passes a job adds (`MARKETPLACE_INDEX_INTERVAL_SECS`, 5 s, or 30 s under the mirror posture). It kept 438 `add_item`, 73,506 `issue` and 52 `ownership_transferred` rows. The 438 items and the 73,506 mints equal the collections subgraph's v1 items and their total supply at block 26,499,473. After the catch-up, each pass reads the same 42-address filter over the new blocks only. The command is in the `measure_the_first_walk` test, which prints each pass's `eth_getLogs` and other requests (`COLLECTIONS_V1_MEASURE_PASSES` stops it early).
 
 ## Marketplace catalogue mirror proof
 

@@ -993,15 +993,7 @@ pub async fn current_on(
     conn: &mut PgConnection,
     now: chrono::DateTime<Utc>,
 ) -> Result<(), (Source, String)> {
-    current_for_networks_on(conn, &ChainNet::ALL, now).await
-}
-
-pub(super) async fn current_for_networks_on(
-    conn: &mut PgConnection,
-    nets: &[ChainNet],
-    now: chrono::DateTime<Utc>,
-) -> Result<(), (Source, String)> {
-    match stale_networks_on(conn, nets, now).await {
+    match stale_networks_on(conn, &ChainNet::ALL, now).await {
         Ok(stale) if stale.is_empty() => Ok(()),
         Ok(stale) => Err((Source::TradeEventsIndex, stale_message(&stale))),
         Err(e) => Err(unreadable_reason(e)),
@@ -1015,7 +1007,7 @@ fn unreadable(e: sqlx::Error) -> Response {
 }
 
 /// [`unreadable`]'s source and reason.
-fn unreadable_reason(e: sqlx::Error) -> (Source, String) {
+pub(super) fn unreadable_reason(e: sqlx::Error) -> (Source, String) {
     tracing::warn!(error = %e, "cannot read shop.chain_cursor; treating the trade-events index as not current");
     (
         Source::TradeEventsIndex,

@@ -1,5 +1,6 @@
 // Settings: the explorer settings list + changing one.
-//   from: BevyApi.getSettings() / setSetting().
+//   from: BevyApi.getSettings() / setSetting(), and getSettingsStream() (the list again whenever
+//         a value or choice changes, such as the microphones).
 //
 // Also injects a synthetic "Graphics Preset" setting (Low/Medium/High/Custom) at the head
 // of the list. Presets are defined scene-side (graphicsPresets.ts): the engine only knows the
@@ -8,6 +9,7 @@
 // values against each preset (Custom when none match).
 import { BevyApi } from '../bevy-api'
 import type { Setting } from '@explorer-core/engine/protocol'
+import { relay } from '../system-helpers'
 import type { Ctx } from '../bridge'
 import { PRESET_NAMES, currentPreset, presetTargets } from './graphicsPresets'
 
@@ -68,4 +70,10 @@ export function registerSettings(ctx: Ctx): void {
   })
 
   pushSettings() // initial snapshot
+
+  const open = BevyApi.getSettingsStream
+  if (open == null) return
+  relay('settings', open, (settings) => {
+    ctx.send({ kind: 'settings', settings: withPreset(settings) })
+  })
 }

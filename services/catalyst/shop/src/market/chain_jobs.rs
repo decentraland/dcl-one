@@ -1455,14 +1455,9 @@ fn visit_projections(
             Arc::new(move || {
                 let state = state.clone();
                 async move {
-                    Ok(
-                        (!super::nft_index::mirror_complete(&state.pool, net, chain_id).await).then(|| {
-                            format!(
-                                "nft {}: waiting for the collections mirror's first complete pass",
-                                net.db_name()
-                            )
-                        }),
-                    )
+                    Ok(super::nft_index::catalogue_wait(&state.pool, net, chain_id)
+                        .await?
+                        .map(|why| format!("nft {}: {why}", net.db_name())))
                 }
                 .boxed()
             })
@@ -1473,7 +1468,8 @@ fn visit_projections(
             Arc::new(move || {
                 Arc::new(
                     super::nft_index::NftIndex::for_chain(net, chain_id)
-                        .expect("validated NFT index chain"),
+                        .expect("validated NFT index chain")
+                        .with_catalogue_gate(),
                 )
             }),
             Some(gate),
@@ -1493,7 +1489,8 @@ fn visit_projections(
         && (net == ChainNet::Matic || chain_id == ChainNet::Ethereum.testnet_chain_id())
     {
         let index = super::sales_index::SalesIndex::for_chain(chain_id)
-            .expect("validated sales index chain");
+            .expect("validated sales index chain")
+            .with_catalogue_gate();
         let url = state.catalogue_rpc_url(net);
         let gate: Gate = {
             let (state, url) = (state.clone(), url.clone().unwrap_or_default());
@@ -1507,9 +1504,9 @@ fn visit_projections(
                         super::sales_index::check_venues(&rpc, &state.pool, index).await?;
                         venues_checked.store(true, Ordering::SeqCst);
                     }
-                    Ok((!super::nft_index::mirror_complete(&state.pool, net, chain_id).await).then(|| {
-                        "sales matic: waiting for the collections mirror's first complete pass".to_string()
-                    }))
+                    Ok(super::nft_index::catalogue_wait(&state.pool, net, chain_id)
+                        .await?
+                        .map(|why| format!("sales {}: {why}", net.db_name())))
                 }
                 .boxed()
             })

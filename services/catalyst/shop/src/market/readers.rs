@@ -43,7 +43,7 @@ pub(super) async fn require_land_on(
     conn: &mut sqlx::PgConnection,
     state: &MarketplaceState,
     chain_id: i64,
-) -> Result<(), Response> {
+) -> Result<crate::land_authz::indexer::Cursor, Response> {
     let unavailable = super::nft_reads::land_unavailable;
     let served = super::nft_index::deployments::Deployments::for_chain(
         super::chain_walk::ChainNet::Ethereum,
@@ -60,16 +60,16 @@ pub(super) async fn require_land_on(
             tracing::warn!(%error, "cannot read the land-authz index for the marketplace book");
             unavailable()
         })?;
-    if !observed.is_some_and(|observed| {
-        crate::land_authz::indexer::observation_ready(
-            &observed,
-            land.land_registry,
-            land.estate_registry,
-        )
-    }) {
-        return Err(unavailable());
-    }
-    Ok(())
+    observed
+        .filter(|observed| {
+            crate::land_authz::indexer::observation_ready(
+                observed,
+                land.land_registry,
+                land.estate_registry,
+            )
+        })
+        .map(|observed| observed.cursor)
+        .ok_or_else(unavailable)
 }
 
 /// The freshness budgets the route table names.
@@ -514,6 +514,18 @@ pub fn at<'a>(v: &'a Value, path: &str) -> Option<&'a Value> {
         }
     }
     Some(cur)
+}
+
+/// Compare the two raw expiry encodings on the Graph before paging.
+/// Nest the OR under AND so it can share a query with field filters and
+/// the count cursor. The boundary matches the wire's unit conversion.
+pub(super) fn graph_unexpired(field: &str, now_ms: i64) -> Value {
+    let threshold = super::nft_index::LEGACY_EXPIRY_UNIT_THRESHOLD.to_string();
+    let gt = format!("{field}_gt");
+    json!([{ "or": [
+        { (&gt): now_ms.div_euclid(1_000).to_string(), (format!("{field}_lt")): threshold },
+        { (&gt): now_ms.to_string(), (format!("{field}_gte")): threshold },
+    ] }])
 }
 
 /// The subgraph's unix seconds as the wire's milliseconds.

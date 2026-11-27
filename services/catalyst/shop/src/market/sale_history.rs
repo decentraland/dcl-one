@@ -452,8 +452,8 @@ async fn repair_window(
     let mut tx = pool.begin().await?;
     // Book repair and folding share the cursor-first order. Trade-events
     // recovery locks its event rows before the cursor.
-    let book = matches!(owner.indexer, INDEXER_NFT | INDEXER_SALES);
-    if book {
+    let cursor_first = chain_walk::locks_cursor_before_projection_write(owner.indexer);
+    if cursor_first {
         owner.check(&mut tx).await?;
     }
     if owner.indexer == INDEXER_NFT {
@@ -510,7 +510,7 @@ async fn repair_window(
         .bind(owner.indexer).bind(owner.net.db_name()).bind(VERSION).bind(i64::try_from(window.reached)?)
         .bind(i64::try_from(anchor)?).bind(hash).bind(next).execute(&mut *tx).await?.rows_affected();
     ensure!(count == 1, "sales repair coverage changed");
-    if !book {
+    if !cursor_first {
         owner.check(&mut tx).await?;
     }
     tx.commit().await?;
