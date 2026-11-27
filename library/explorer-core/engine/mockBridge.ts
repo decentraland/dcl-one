@@ -1466,6 +1466,12 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
       if (msg.region === 'avatarPreview' && msg.rect != null) reply({ kind: 'avatarPreviewReady' })
       return
     }
+    if (msg.kind === 'passportPreview') {
+      // No engine in mock mode: the passport keeps its picture of the avatar.
+      if (msg.open != null) reply({ kind: 'passportPreviewState', id: msg.open.id, state: 'failed' })
+      return
+    }
+    if (msg.kind === 'passportPreviewDrag' || msg.kind === 'passportPreviewTurn' || msg.kind === 'passportPreviewEmote') return
     if (msg.kind === 'interactableArea') return
     if (msg.kind === 'minimapConfig') {
       // No engine in mock mode — the Camera style has nothing to render. The DOM styles

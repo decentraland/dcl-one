@@ -209,6 +209,7 @@ export function fakeSession(): EngineSession {
     homeScene: () => null,
     avatarPreviewRect: null,
     avatarPreviewReady: false,
+    passportPreview: { send: vi.fn(), state: null },
     pickDestination: vi.fn(() => true),
     welcome: { terms: false, newProfile: false, pending: false, saving: false, error: null, showLook: vi.fn(), accept: vi.fn(), openLegal: vi.fn(), email: null },
     sceneLoading: null,

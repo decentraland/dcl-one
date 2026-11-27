@@ -3,38 +3,76 @@
    side, and on the right the name, the tab row and the scrolling sections. */
 /* the passport's backdrop: the passport scrim colour, unblurred */
 .scrim.scrim {
-  background: var(--passport-scrim);
+  background: none;
   backdrop-filter: none;
 }
+/* Drawn apart from the scrim's box, so the popup layer can open it over the engine's avatar
+   (`--popup-hole`, see lib/engineWindow) while the panel in it keeps the pointer there. */
+.scrim.scrim::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  background: var(--passport-scrim);
+  clip-path: var(--popup-hole, none);
+}
 .panel {
+  --passport-width: 1650px;
+  --passport-column: 514px;
+  /* two pixels of the screen, whatever the HUD's scale */
+  --passport-overlap: calc(2px / var(--ui-scale, 1));
+  /* the backdrop does not drift: a fixed gradient. The bridge scene draws the part under the avatar
+     column from these (react-web/scripts/passport-backgrounds.mjs): run it again when they change. */
+  --passport-bg: linear-gradient(173deg, #2f043f 9%, #330444 34%, #3e0b63 54%, #47096e 60%, #b22d5b 77%);
   position: relative;
-  width: min(1650px, 100%);
-  height: min(926px, 100%);
+  isolation: isolate;
+  width: min(var(--passport-width), 100%);
+  height: min(928px, 100%);
   display: flex;
   border-radius: 20px;
   overflow: hidden;
-  /* the backdrop does not drift: a fixed gradient */
-  background: linear-gradient(173deg, #2f043f 9%, #330444 34%, #3e0b63 54%, #47096e 60%, #b22d5b 77%);
+  background: var(--passport-bg);
   box-shadow: 0 24px 70px rgba(0, 0, 0, 0.6);
   font-size: 16px;
   color: var(--text);
 }
 .panel[data-tab='photos'] {
-  background: linear-gradient(192deg, #2f043f 14%, #3a0858 34%, #4b087d 55%, #b22d5b 79%);
+  --passport-bg: linear-gradient(192deg, #2f043f 14%, #3a0858 34%, #4b087d 55%, #b22d5b 79%);
 }
 .panel[data-tab='creations'] {
-  background:
+  --passport-bg:
     radial-gradient(ellipse 56% 62% at 100% 66%, #b22d5b 0%, #b22d5b 22%, rgba(178, 45, 91, 0) 100%),
     linear-gradient(180deg, #3b055c 0%, #330444 48%, #3e0c65 100%);
 }
+/* The engine draws the avatar under the column (PassportAvatar). */
+.panel[data-live-avatar] {
+  background: none;
+}
+.panel[data-live-avatar]::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  background: var(--passport-bg);
+  /* It starts a little inside the column. The engine's picture ends on a whole pixel and the world is drawn
+     right after it, so a background that began at the column's edge would let the world show through the
+     pixel it only half covers there. */
+  clip-path: inset(0 0 0 calc(var(--passport-column) - var(--passport-overlap)));
+}
 .avatarCol {
   position: relative;
-  flex: 0 0 514px;
+  flex: 0 0 var(--passport-column);
   min-width: 0;
   display: flex;
   align-items: flex-end;
   justify-content: center;
   padding: 118px 40px 68px;
+}
+.avatarPending {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  margin: -35px 0 0 -35px;
 }
 /* Full-body avatar snapshot (catalyst body image). */
 .avatarImg {

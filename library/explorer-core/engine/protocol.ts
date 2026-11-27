@@ -235,6 +235,10 @@ export type PageToScene =
   | PreviewEmoteRequest
   | PreviewRotateRequest
   | PreviewZoomRequest
+  | PassportPreviewRequest
+  | PassportPreviewDragRequest
+  | PassportPreviewTurnRequest
+  | PassportPreviewEmoteRequest
   | GetOutfitsRequest
   | SaveOutfitRequest
   | DeleteOutfitRequest
@@ -754,8 +758,11 @@ export interface Profile {
   description?: string
   links?: { title: string; url: string }[]
   // --- rich passport fields (optional; populated by the passport fetch) -----
-  /** Full-body avatar snapshot (catalyst `avatar.snapshots.body`) — the passport hero image. */
+  /** Full-body avatar snapshot (catalyst `avatar.snapshots.body`): what the passport shows when it cannot
+   *  draw the avatar itself. */
   bodyImage?: string
+  /** What the avatar wears, for the passport to draw it; absent when the profile has no avatar. */
+  look?: AvatarLook
   badges?: Badge[]
   info?: ProfileInfo
   /** An official Decentraland wallet; set by the passport fetch. */
@@ -2371,6 +2378,66 @@ export interface PreviewZoomRequest {
   anchor: number
 }
 
+/** On screen, in CSS pixels of the viewport. */
+export interface ScreenRect {
+  x: number
+  y: number
+  width: number
+  height: number
+}
+
+export type PassportBackground = 'overview' | 'photos' | 'creations'
+
+/** The passport's avatar: the scene draws `look` in `rect` (the passport's avatar column, which the page
+ *  leaves see-through), over the part of the panel's `background` that lies there. It is a stage of its
+ *  own, over any other preview, which stops drawing while this one is up.
+ *  Sent again with the same `id` when the rect, the background or the look changes; a new `id` is a new
+ *  passport, whose avatar faces front and, with `wave`, waves once it has loaded. `open: null` closes it. */
+export interface PassportPreviewRequest {
+  kind: 'passportPreview'
+  open: {
+    id: number
+    look: AvatarLook
+    rect: ScreenRect
+    dpr: number
+    background: PassportBackground
+    wave: boolean
+  } | null
+}
+
+/** The pointer's drag over the passport's avatar since the last one sent: `dx` in screen pixels, over
+ *  `seconds`. The scene turns the avatar by it and lets it coast when the drags stop. */
+export interface PassportPreviewDragRequest {
+  kind: 'passportPreviewDrag'
+  id: number
+  dx: number
+  seconds: number
+}
+
+/** The keyboard's turn: at once, with no coasting. */
+export interface PassportPreviewTurnRequest {
+  kind: 'passportPreviewTurn'
+  id: number
+  degrees: number
+}
+
+/** Play an emote on the passport's avatar once; asked again, it plays again. */
+export interface PassportPreviewEmoteRequest {
+  kind: 'passportPreviewEmote'
+  id: number
+  urn: string
+}
+
+export type PassportPreviewMessage = PassportPreviewRequest | PassportPreviewDragRequest | PassportPreviewTurnRequest | PassportPreviewEmoteRequest
+
+/** The passport's avatar has loaded and been drawn (`ready`), or cannot be (`failed`: its load ended in an
+ *  error or never ended), so the page shows the picture it has instead. */
+export interface PassportPreviewStateMessage {
+  kind: 'passportPreviewState'
+  id: number
+  state: 'ready' | 'failed'
+}
+
 /** The furthest the preview avatar's camera zooms in: the head framing is 2.5× the whole body. */
 export const PREVIEW_MAX_ZOOM = 2.5
 
@@ -2771,6 +2838,7 @@ export type SceneToPage =
   | LobbyStageReadyMessage
   | SigninStageReadyMessage
   | AvatarPreviewReadyMessage
+  | PassportPreviewStateMessage
   | MinimapReadyMessage
   | GalleryMessage
   | MapPlayersMessage

@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { fireEvent, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { EquippedItemCard } from './EquippedItemCard'
 
 // jsdom applies no stylesheet, so what the link's classes do is read from the rules.
@@ -181,6 +181,31 @@ describe('EquippedItemCard', () => {
         '25 Credits',
         'Shop'
       ])
+    })
+  })
+
+  describe('when the card has an action', () => {
+    it('should make its picture a named button that runs it, and run it for a click anywhere on the card', async () => {
+      const onAction = vi.fn()
+      render(<EquippedItemCard name="Disco" onAction={onAction} actionLabel="Play Disco" />)
+      await userEvent.click(screen.getByRole('button', { name: 'Play Disco' }))
+      expect(onAction).toHaveBeenCalledTimes(1)
+      await userEvent.click(screen.getByText('Disco'))
+      expect(onAction).toHaveBeenCalledTimes(2)
+    })
+
+    it('should not run it for a click on the link to the sale', async () => {
+      const onAction = vi.fn()
+      render(<EquippedItemCard name="Disco" shopUrl={SHOP} onAction={onAction} actionLabel="Play Disco" />)
+      const link = screen.getByRole('link', { name: 'Shop' })
+      link.addEventListener('click', (e) => e.preventDefault())
+      await userEvent.click(link)
+      expect(onAction).not.toHaveBeenCalled()
+    })
+
+    it('should have no button without one', () => {
+      render(<EquippedItemCard name="Hat" />)
+      expect(screen.queryByRole('button')).toBeNull()
     })
   })
 })

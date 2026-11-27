@@ -9,6 +9,7 @@
 import { ReactEcsRenderer } from '@dcl/sdk/react-ecs'
 import { startBridge } from './bridge'
 import { registerAvatarPreview } from './domains/avatarPreview'
+import { registerPassportPreview } from './domains/passportPreview'
 import { registerMinimap } from './domains/minimap'
 import { renderSceneUi } from './ui'
 import { registerSession } from './domains/session'
@@ -110,6 +111,7 @@ export function main(): void {
     registerPlatformBan(ctx)
     registerEditor(ctx)
     registerAvatarPreview(ctx)
+    registerPassportPreview(ctx)
     registerMinimap(ctx)
   })
 

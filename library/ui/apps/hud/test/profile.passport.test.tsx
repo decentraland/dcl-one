@@ -1,7 +1,7 @@
 import { afterEach, describe, it, expect, vi } from 'vitest'
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { ProfilePassport } from '../features/profile/ProfilePassport'
+import { ProfilePassport, type PassportAvatarSlot } from '../features/profile/ProfilePassport'
 import type { Emote, GalleryPhoto, Profile, Wearable } from '@explorer-core/engine/protocol'
 import { setPublicReelFetcher } from '../features/gallery/publicReels'
 import type { PassportPhotoActions } from '../features/gallery/PassportPhotos'
@@ -118,6 +118,50 @@ describe('profile passport', () => {
     render(<ProfilePassport profile={profile} onClose={vi.fn()} />)
     const picture = screen.getAllByRole('img', { name: 'kurd' })[0]
     expect(picture.parentElement?.querySelector('[class*="hudDot"]')).toBeNull()
+  })
+
+  describe('when its host gives it the live avatar', () => {
+    const slot = vi.fn((given: PassportAvatarSlot) => <div data-testid="live-avatar" data-background={given.background} data-wave={String(given.wave)} />)
+    afterEach(() => slot.mockClear())
+
+    it("should show it in the column in the picture's place, over the background of the tab on show", async () => {
+      render(<ProfilePassport profile={{ ...profile, bodyImage: 'https://x/body.png' }} avatar={slot} onClose={vi.fn()} />)
+      expect(screen.getByTestId('live-avatar')).toHaveAttribute('data-background', 'overview')
+      expect(screen.queryByRole('img', { name: 'kurd' })).toBeNull()
+      await userEvent.click(screen.getByRole('tab', { name: 'PHOTOS' }))
+      expect(screen.getByTestId('live-avatar')).toHaveAttribute('data-background', 'photos')
+    })
+
+    it('should hand it the picture to show when it cannot be drawn', () => {
+      render(<ProfilePassport profile={{ ...profile, bodyImage: 'https://x/body.png' }} avatar={slot} onClose={vi.fn()} />)
+      const { container } = render(<>{slot.mock.calls[0][0].picture}</>)
+      expect(container.querySelector('img')).toHaveAttribute('src', 'https://x/body.png')
+    })
+
+    it('should hide it on the Badges tab, and not have it wave when it comes back', async () => {
+      render(<ProfilePassport profile={{ ...profile, badges: [] }} avatar={slot} onClose={vi.fn()} />)
+      expect(screen.getByTestId('live-avatar')).toHaveAttribute('data-wave', 'true')
+      await userEvent.click(screen.getByRole('tab', { name: 'BADGES' }))
+      expect(screen.queryByTestId('live-avatar')).toBeNull()
+      await userEvent.click(screen.getByRole('tab', { name: 'OVERVIEW' }))
+      expect(screen.getByTestId('live-avatar')).toHaveAttribute('data-wave', 'false')
+    })
+
+    it('should open the panel background over the column only while the avatar says it is drawn', () => {
+      const { container } = render(<ProfilePassport profile={profile} avatar={slot} onClose={vi.fn()} />)
+      const panel = container.querySelector('[data-passport-panel]')
+      expect(panel).not.toHaveAttribute('data-live-avatar')
+      act(() => slot.mock.calls[0][0].onLive(true))
+      expect(panel).toHaveAttribute('data-live-avatar')
+      act(() => slot.mock.calls[0][0].onLive(false))
+      expect(panel).not.toHaveAttribute('data-live-avatar')
+    })
+
+    it('should wait with a spinner while the avatar is not known yet', () => {
+      const { container } = render(<ProfilePassport profile={profile} avatarPending onClose={vi.fn()} />)
+      expect(within(container.querySelector<HTMLElement>('[data-passport-avatar]')!).getByRole('status')).toBeInTheDocument()
+      expect(screen.queryByRole('img', { name: 'kurd' })).toBeNull()
+    })
   })
 
   it.each([
@@ -464,5 +508,33 @@ describe('passport photos', () => {
     expect(screen.getByRole('dialog', { name: 'Photo' })).toBeInTheDocument()
     expect(a.loadPhoto).toHaveBeenCalledWith('p1')
     expect(screen.queryByRole('button', { name: /Delete/ })).toBeNull()
+  })
+})
+
+describe('when the passport can play an equipped emote on its avatar', () => {
+  it('should play the emote of the tile that is clicked, by its picture button or anywhere on the tile', async () => {
+    const onPlayEmote = vi.fn()
+    render(<ProfilePassport profile={equippedProfile} onPlayEmote={onPlayEmote} onClose={vi.fn()} />)
+    await userEvent.click(screen.getByRole('button', { name: 'Play Disco' }))
+    expect(onPlayEmote).toHaveBeenLastCalledWith(DISCO.urn)
+    await userEvent.click(screen.getByText('Wave'))
+    expect(onPlayEmote).toHaveBeenLastCalledWith(WAVE.urn)
+  })
+
+  it('should leave the tile\'s shop link to open the shop alone', async () => {
+    const onPlayEmote = vi.fn()
+    render(<ProfilePassport profile={equippedProfile} onPlayEmote={onPlayEmote} onClose={vi.fn()} />)
+    const shop = screen.getAllByRole('link', { name: /shop/i }).find((link) => link.getAttribute('href') === SHOP_DISCO)!
+    shop.addEventListener('click', (e) => e.preventDefault())
+    await userEvent.click(shop)
+    expect(onPlayEmote).not.toHaveBeenCalled()
+  })
+
+  it('should give the wearable tiles and, without it, the emote tiles no button', () => {
+    const { unmount } = render(<ProfilePassport profile={equippedProfile} onPlayEmote={vi.fn()} onClose={vi.fn()} />)
+    expect(screen.queryByRole('button', { name: /Play Neon Tiara/ })).toBeNull()
+    unmount()
+    render(<ProfilePassport profile={equippedProfile} onClose={vi.fn()} />)
+    expect(screen.queryByRole('button', { name: 'Play Disco' })).toBeNull()
   })
 })

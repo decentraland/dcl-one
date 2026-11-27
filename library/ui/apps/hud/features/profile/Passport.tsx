@@ -11,6 +11,7 @@ import { relationshipOf } from '@explorer-core/lib/relationship'
 import { track } from '@explorer-core/lib/analytics'
 import { openNameEdit } from './NameEditModal'
 import { ProfilePassport, type PassportTab } from './ProfilePassport'
+import { PassportAvatar, playPassportEmote } from './PassportAvatar'
 import styles from './ProfilePassport.module.css'
 import type { Profile } from '@explorer-core/engine/protocol'
 import { splitName, userColor } from '@explorer-core/lib/identity'
@@ -22,6 +23,8 @@ import { openGiftPicker } from '../gifting/GiftPicker'
 import { useGiftingAvailable } from '../gifting/useGifting'
 import { canJumpToFriend, jumpToFriend } from '../friends/jumpToFriend'
 import { travelToPhoto } from '../gallery/reelActions'
+
+const AVATAR_WAIT_MS = 5000
 
 export function Passport({
   userId,
@@ -103,10 +106,23 @@ export function Passport({
     if (isSelf) requestOwnedNames()
   }, [isSelf, requestOwnedNames])
 
+  // The look comes with the full profile: the column waits for it, but not for a read that never answers.
+  const { look } = stored
+  const read = look != null || stored.equippedWearables !== undefined || stored.badges !== undefined
+  const [waited, setWaited] = useState(false)
+  useEffect(() => {
+    const timer = setTimeout(() => setWaited(true), AVATAR_WAIT_MS)
+    return () => clearTimeout(timer)
+  }, [])
+  const avatarName = splitName(profile.name).base
+
   return (
     <ProfilePassport
       profile={profile}
       isSelf={isSelf}
+      avatar={look != null ? (slot) => <PassportAvatar look={look} name={avatarName} {...slot} /> : undefined}
+      avatarPending={!read && !waited}
+      onPlayEmote={look != null ? playPassportEmote : undefined}
       initialTab={initialTab}
       onDirtyChange={onDirtyChange}
       editing={

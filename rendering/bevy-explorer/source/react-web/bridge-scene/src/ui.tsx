@@ -8,6 +8,7 @@
 import ReactEcs, { UiEntity } from '@dcl/react-ecs'
 import { renderAvatarPreview } from './domains/avatarPreview'
 import { renderMinimap } from './domains/minimap'
+import { renderPassportPreview } from './domains/passportPreview'
 
 export function renderSceneUi(): ReactEcs.JSX.Element {
   return (
@@ -17,6 +18,8 @@ export function renderSceneUi(): ReactEcs.JSX.Element {
           full-screen backdrop. In practice they can't be — the minimap is HUD chrome and
           unmounts whenever a full-screen page, the Backpack included, is open. */}
       {renderAvatarPreview()}
+      {/* The passport is a popup over whatever is up, the Backpack included: its avatar is drawn over that. */}
+      {renderPassportPreview()}
     </UiEntity>
   )
 }

@@ -399,6 +399,8 @@
   --lobby-ink: var(--dcl-neutrals-snow);
   --lobby-ink-dim: rgb(191, 191, 199);
   --ease-outcubic: cubic-bezier(0.215, 0.61, 0.355, 1);
+  --ease-outquad: cubic-bezier(0.5, 1, 0.89, 1);
+  --dur-avatar-fade: 500ms; /* the passport's avatar fading in once loaded */
   --type-96: 96px;
   --fw-light: 300;
   --fw-regular: 400;

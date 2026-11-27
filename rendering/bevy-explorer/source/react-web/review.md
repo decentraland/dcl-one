@@ -236,6 +236,17 @@ tag (name, badges, distance, opacity, scale) and `/nametag_bubble` shows a test 
       the avatar on its podium, with nothing of the lobby stage or the world in between and nothing
       of the preview outside the modal; closing hands the live stage back. Jump In loads the world
       (the hold is released) and a failed trip returns to the lobby.
+- [ ] **Passport avatar** (`bridge-scene/src/domains/passportPreview.tsx`,
+      `library/ui/apps/hud/features/profile/PassportAvatar.tsx`): a passport, yours or another
+      player's, shows a spinner in its left column, then the live avatar fading in and waving once,
+      on the panel's own background with no edge where the column meets the rest of the panel, at
+      any window size. A left drag turns it with the rotate cursor in the pointer's place and it
+      coasts to a stop; the left and right arrow keys turn it while it has the focus; the wheel and
+      a right drag do nothing. Badges hides it; back on another tab it faces front and does not wave
+      again. A click on an equipped emote's tile plays that emote. Nothing under the passport shows
+      in the column or takes its clicks: open it over the world's chat, the Backpack, the Shop, the
+      lobby and another passport (the Photos tab's people), and close it: what was under it draws
+      again. With no engine (`?mock=1`) the column shows the profile's picture at once.
 - [ ] **Minimap Camera style** (`bridge-scene/src/domains/minimap.tsx`, map region): picking Camera in
       Minimap settings, expanding the minimap in that style and entering a World each show the map
       square black until the engine reports `minimapReady`, then the top-down view, with nothing of

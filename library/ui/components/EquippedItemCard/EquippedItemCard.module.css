@@ -70,6 +70,21 @@
     color-mix(in srgb, var(--item-rarity) 86%, var(--dcl-neutrals-black)) 100%
   );
 }
+/* The picture as a button, when the card has an action. */
+button.thumbWrap {
+  padding: 0;
+  border: 0;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+}
+button.thumbWrap:focus-visible {
+  outline: 2px solid var(--dcl-neutrals-white);
+  outline-offset: -2px;
+}
+.card[data-action] {
+  cursor: pointer;
+}
 .thumb {
   width: 95%;
   height: 95%;

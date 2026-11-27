@@ -1327,6 +1327,10 @@
           "kind": "directory"
         },
         {
+          "name": "passport",
+          "kind": "directory"
+        },
+        {
           "name": "photo-mode",
           "kind": "directory"
         },
@@ -2580,6 +2584,23 @@
       ]
     },
     {
+      "path": "library/ui/apps/hud/assets/passport",
+      "entries": [
+        {
+          "name": "LICENSE",
+          "kind": "regular"
+        },
+        {
+          "name": "NOTICE.md",
+          "kind": "regular"
+        },
+        {
+          "name": "cursor-rotate.png",
+          "kind": "regular"
+        }
+      ]
+    },
+    {
       "path": "library/ui/apps/hud/assets/photo-mode",
       "entries": [
         {
@@ -3823,6 +3844,10 @@
         {
           "name": "EngineViewport.tsx",
           "kind": "regular"
+        },
+        {
+          "name": "UnderEngineWindow.tsx",
+          "kind": "regular"
         }
       ]
     },
@@ -4599,6 +4624,14 @@
           "kind": "regular"
         },
         {
+          "name": "PassportAvatar.module.css",
+          "kind": "regular"
+        },
+        {
+          "name": "PassportAvatar.tsx",
+          "kind": "regular"
+        },
+        {
           "name": "ProfileEditForm.module.css",
           "kind": "regular"
         },
@@ -4989,6 +5022,10 @@
         },
         {
           "name": "bindingLabels.ts",
+          "kind": "regular"
+        },
+        {
+          "name": "engineWindow.ts",
           "kind": "regular"
         },
         {
@@ -5620,6 +5657,10 @@
         },
         {
           "name": "passport.container.test.tsx",
+          "kind": "regular"
+        },
+        {
+          "name": "passportAvatar.test.tsx",
           "kind": "regular"
         },
         {
@@ -10055,7 +10096,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/avatarPreview.tsx",
-      "sha256": "f76aa44d1d2112ddc368b62ad631371279d608c361be7229b52a3cacd3248211"
+      "sha256": "e713f28bb30c460f5a625f46d54f2d031a32c386ba915056a06f1d898c719b74"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/chat.ts",
@@ -10134,6 +10175,14 @@
       "sha256": "1115bf2c2a1719c0244bc05c0593798bf7743512fd78e2899606a1bfefbeb526"
     },
     {
+      "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/passportPreview.tsx",
+      "sha256": "f1a6ad87a697be54449d15f8813c9d0e78f0b22707df37ca6923181018b903f3"
+    },
+    {
+      "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/passportTurn.ts",
+      "sha256": "6457523661280afbb83e3352740c655177af2d6b1fe3590c4723c394df5227b5"
+    },
+    {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/permissions.ts",
       "sha256": "e4c0cf2808521329cc12dbe1a43532b6d4e160ec0e7b488d014fe5d03a38e0e1"
     },
@@ -10147,7 +10196,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/profile.ts",
-      "sha256": "69612c63e5fd14b0a64266221f0e63a29cb702ab6681f5dd412e5c861f63093a"
+      "sha256": "6f00050f34979dcdc59c2a87c39eb58ff202f56e2abd77a158485b744f9023b5"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/randomizer.ts",
@@ -10410,6 +10459,14 @@
       "sha256": "23b37387d6f49cd7da7ed80e61472c1962d2560e0548b3c98960685e55a220c1"
     },
     {
+      "path": "rendering/bevy-explorer/source/react-web/src/test/bridgePassportPreview.test.ts",
+      "sha256": "5e5d1d3adadbb3304523ab43ecf8437e56dca91e7f52379bdef19ce996a70c86"
+    },
+    {
+      "path": "rendering/bevy-explorer/source/react-web/src/test/bridgePassportTurn.test.ts",
+      "sha256": "9fb15e243842451e768c5e38b181809c26641f183f292f84633173ead501a1ab"
+    },
+    {
       "path": "rendering/bevy-explorer/source/react-web/src/test/bridgePermissionsInForce.test.ts",
       "sha256": "248649e2f3fec4824353befaa8b4b2b4dae15fd7cfde78075f1a0a85b7959177"
     },
@@ -10607,7 +10664,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/tsconfig.json",
-      "sha256": "a4bfe115cd806aa8e3996d899255d26c5bd1ac8329e13ee9ce2fe2bddb3478d7"
+      "sha256": "d9a66ddd34f523a320df1fa71ecc2f154c2f38aef96839aff83a1a6e4cca72b0"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/vite.config.ts",
@@ -10667,6 +10724,8 @@
     "rendering/bevy-explorer/source/react-web/src/test/bridgeNearbyMutes.test.ts",
     "rendering/bevy-explorer/source/react-web/src/test/bridgeNotifications.test.ts",
     "rendering/bevy-explorer/source/react-web/src/test/bridgeOutfits.test.ts",
+    "rendering/bevy-explorer/source/react-web/src/test/bridgePassportPreview.test.ts",
+    "rendering/bevy-explorer/source/react-web/src/test/bridgePassportTurn.test.ts",
     "rendering/bevy-explorer/source/react-web/src/test/bridgePermissionsInForce.test.ts",
     "rendering/bevy-explorer/source/react-web/src/test/bridgePlaces.test.ts",
     "rendering/bevy-explorer/source/react-web/src/test/bridgePreviewView.test.ts",
@@ -10768,7 +10827,7 @@
     },
     {
       "path": "library/explorer-core/engine/mockBridge.ts",
-      "sha256": "5a59a309c92f9c342861468814c04cffb703be237fef87a6d3c50742ddbe595d"
+      "sha256": "105a47e30f2d68d3dcea802c1e70e957d84d48b765bf2c7149121340c3ec3c02"
     },
     {
       "path": "library/explorer-core/engine/mockEvents.ts",
@@ -10808,7 +10867,7 @@
     },
     {
       "path": "library/explorer-core/engine/protocol.ts",
-      "sha256": "b15743fc078fc68976878634cc0bf610707efb3a0db2eeb5b382d6457cbf1cb6"
+      "sha256": "f2af7079ece7951f8c08793e1a2a2243705d4413fddcfc42161dce96707fac61"
     },
     {
       "path": "library/explorer-core/engine/requestIds.ts",
@@ -11416,7 +11475,7 @@
     },
     {
       "path": "library/ui/apps/hud/App.tsx",
-      "sha256": "04fd4ffae61d61d5e8b3acbff410de169a37f20307dd269262e382d1ab8c3c52"
+      "sha256": "7b117ccc54e27bbf9be1a2ccef1f4e4e878aea622da2ee53d3385a6e5871f314"
     },
     {
       "path": "library/ui/apps/hud/assets/backpack/add-gradient.webp",
@@ -12451,6 +12510,10 @@
       "sha256": "ca00a32d628e90ff2858bda58df00b26a5823ba1ff8ced84351206108cdafa5f"
     },
     {
+      "path": "library/ui/apps/hud/assets/passport/cursor-rotate.png",
+      "sha256": "a021657cd66e67fa8b3df5a8f40731c09c492fd7579f5f6082687ece8ef5371f"
+    },
+    {
       "path": "library/ui/apps/hud/assets/photo-mode/gallery.png",
       "sha256": "1bd14ac5610d84dddd4e91144a7aedd371ce088c108115754b16301a92f83e8a"
     },
@@ -13128,7 +13191,7 @@
     },
     {
       "path": "library/ui/apps/hud/design/popups.tsx",
-      "sha256": "fa13439be7066534b69fecbc8fe379ebcf9b7e8ea951be785385d8461ca81027"
+      "sha256": "c390ba482aa3b9c4976d29d43ab223cefffcc80f7f6058198f358d068f902ca2"
     },
     {
       "path": "library/ui/apps/hud/design/rarityArt.ts",
@@ -13429,6 +13492,10 @@
     {
       "path": "library/ui/apps/hud/features/engine/EngineViewport.tsx",
       "sha256": "db441849d9a9e8c3e6c75e2a1e2269e0fc0bc1711d26023aa2a36acd605e1428"
+    },
+    {
+      "path": "library/ui/apps/hud/features/engine/UnderEngineWindow.tsx",
+      "sha256": "1e739601ae72450d31006e3c6a787b80f4e9c5bf0bb048a440a023d69a342995"
     },
     {
       "path": "library/ui/apps/hud/features/error/ConnectivityFeedback.module.css",
@@ -14088,7 +14155,15 @@
     },
     {
       "path": "library/ui/apps/hud/features/profile/Passport.tsx",
-      "sha256": "4db12d6649e2a5e7f2fbc194247b2dd2109d063fbaa9e57887fbfbca626bd528"
+      "sha256": "c6ee74306bc3874578e6832c0e01f20e919d47ca1c41cb95a6d9f665908e487a"
+    },
+    {
+      "path": "library/ui/apps/hud/features/profile/PassportAvatar.module.css",
+      "sha256": "036581e7e6765d7ccbc2c2b6ae0ea521914e61d36a716856932cb6458d017a24"
+    },
+    {
+      "path": "library/ui/apps/hud/features/profile/PassportAvatar.tsx",
+      "sha256": "eda898d0c70ef7567f225aad27fc0c0588b5b8b7eda03ee8c63e56a3d201e5b2"
     },
     {
       "path": "library/ui/apps/hud/features/profile/ProfileEditForm.module.css",
@@ -14108,11 +14183,11 @@
     },
     {
       "path": "library/ui/apps/hud/features/profile/ProfilePassport.module.css",
-      "sha256": "04eb44a8c89083bb4ac0feb7c9a1c8cf35242f6456be3b28882329666b8cf557"
+      "sha256": "78feb41bbb8acf7b350a6785e7da235a0fc73d78956312ca23cafe30e2f1a3fc"
     },
     {
       "path": "library/ui/apps/hud/features/profile/ProfilePassport.tsx",
-      "sha256": "b4650b73843f93c84c9ce6dea0a75cd1617a3101620983f9d81b74620516f49a"
+      "sha256": "c97e53f8ed4376cb71d3d10c8f9ed4628e12b46f89caa1055bd34c42d905663a"
     },
     {
       "path": "library/ui/apps/hud/features/profileCard/ProfileCard.tsx",
@@ -14160,7 +14235,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/session/useEngineSession.ts",
-      "sha256": "d97915bbc7790460de5c03df0b4305a7ccfb6b3b108f1c40f722d2b4c8845293"
+      "sha256": "970d794b1b48d9ced41036696a624a96fd563a44d81f3c570d544e2b3cc93899"
     },
     {
       "path": "library/ui/apps/hud/features/settings/KeyBindingsTab.module.css",
@@ -14415,6 +14490,10 @@
       "sha256": "ab1b4c9b56f8f657a6b364d4a9e90b3cb7f69f3143f0c676cf3686c1470f971d"
     },
     {
+      "path": "library/ui/apps/hud/lib/engineWindow.ts",
+      "sha256": "a1aac9b36678378986762c6efc5f3d7afca6cf455c56836e108fc2753fda801c"
+    },
+    {
       "path": "library/ui/apps/hud/lib/hudInset.ts",
       "sha256": "ccb0c386a1b862293f7137b1587474d41e357713955f6c15fecd473fe8fbadec"
     },
@@ -14436,7 +14515,7 @@
     },
     {
       "path": "library/ui/apps/hud/styles/tokens.css",
-      "sha256": "059f71a85e8e126491c6fc717cfff231b15ab8478a9ea29f54ebdcfac57154e3"
+      "sha256": "b867fa167ecc03810b57ffa53d48b8410569cc6c17da7c034eefc8d425e67045"
     },
     {
       "path": "library/ui/apps/hud/test/armedButton.test.tsx",
@@ -14508,7 +14587,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/harness.tsx",
-      "sha256": "d7e4a1ede9f7b0a34007023bee7f0f5429b386f51543f8c8ee745851c0798b8a"
+      "sha256": "47709406a910b1f3cf11a2910769dbddf570e3636198ac658e2994b0d3958eef"
     },
     {
       "path": "library/ui/apps/hud/test/hintsButton.test.tsx",
@@ -14875,6 +14954,10 @@
       "sha256": "f78b5bafc2b2733e7b306190d2085761bd52b7b0305bac56053312f1aa4cf758"
     },
     {
+      "path": "library/ui/apps/hud/test/hosted/passportAvatar.test.tsx",
+      "sha256": "779302f68eda38b904c12eff8ad0384b3fc4661b236ded590b81b0ebfcbd3b2b"
+    },
+    {
       "path": "library/ui/apps/hud/test/hosted/permissions.test.tsx",
       "sha256": "799e6cd71901d75b0561dbc7637527a056386440878ffddb4be8485b17b6a805"
     },
@@ -15036,7 +15119,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/popupLayers.test.tsx",
-      "sha256": "3fd090276dbf9caa83aaa63a0d968cdb84353930810781ec4f5101ddd366e168"
+      "sha256": "08e28b16c4c63639b4c9ae5f2aca697bdead909468912d8463c42fcd0ca52c74"
     },
     {
       "path": "library/ui/apps/hud/test/popups.test.tsx",
@@ -15052,7 +15135,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/profile.passport.test.tsx",
-      "sha256": "0cec3580570f4b504fabbdeaa31bf5fb1d6b2640ed66c32d54b932beaff52626"
+      "sha256": "54a30beaa973c8e32e5b29d8b826ed61556754c65f6fd38f4641d2e399ecd704"
     },
     {
       "path": "library/ui/apps/hud/test/profile.passportCreations.test.tsx",
@@ -17088,11 +17171,11 @@
     },
     {
       "path": "library/ui/components/EquippedItemCard/EquippedItemCard.module.css",
-      "sha256": "4d6e94b92da217846f4299fa1bec66898bde149ecfeba90526ba0a9c8d95c7a4"
+      "sha256": "71816605851b94c281004cb3b7d2192fa33fefbfc3d3149bc49eb43abba130bd"
     },
     {
       "path": "library/ui/components/EquippedItemCard/EquippedItemCard.tsx",
-      "sha256": "c851f40ae865e7046f7f2a08bac7a7f361dfdf9f604977accdbcd8c825901059"
+      "sha256": "0251fa7dc02b06491d5a8da2cec22e803afe5344aee7502b0c7163f6a0ab13c1"
     },
     {
       "path": "library/ui/components/EventCard/EventCard.module.css",
@@ -20841,6 +20924,21 @@
     },
     {
       "from": "library/ui/apps/hud/App.tsx",
+      "to": "library/ui/apps/hud/features/engine/UnderEngineWindow.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/App.tsx",
+      "to": "library/ui/apps/hud/features/engine/UnderEngineWindow.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/App.tsx",
+      "to": "library/ui/apps/hud/features/engine/UnderEngineWindow.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/App.tsx",
       "to": "library/ui/apps/hud/features/error/ConnectivityFeedback.tsx",
       "kind": "native:runtime"
     },
@@ -23331,6 +23429,21 @@
     },
     {
       "from": "library/ui/apps/hud/design/popups.tsx",
+      "to": "library/explorer-core/lib/hudScale.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/design/popups.tsx",
+      "to": "library/explorer-core/lib/hudScale.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/design/popups.tsx",
+      "to": "library/explorer-core/lib/hudScale.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/design/popups.tsx",
       "to": "library/explorer-core/lib/inputLock.ts",
       "kind": "native:runtime"
     },
@@ -23357,6 +23470,21 @@
     {
       "from": "library/ui/apps/hud/design/popups.tsx",
       "to": "library/ui/apps/hud/design/Modal.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/design/popups.tsx",
+      "to": "library/ui/apps/hud/lib/engineWindow.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/design/popups.tsx",
+      "to": "library/ui/apps/hud/lib/engineWindow.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/design/popups.tsx",
+      "to": "library/ui/apps/hud/lib/engineWindow.ts",
       "kind": "test:runtime"
     },
     {
@@ -27902,6 +28030,21 @@
     {
       "from": "library/ui/apps/hud/features/engine/EngineViewport.tsx",
       "to": "library/ui/apps/hud/features/engine/EngineViewport.module.css",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/engine/UnderEngineWindow.tsx",
+      "to": "library/ui/apps/hud/lib/engineWindow.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/engine/UnderEngineWindow.tsx",
+      "to": "library/ui/apps/hud/lib/engineWindow.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/engine/UnderEngineWindow.tsx",
+      "to": "library/ui/apps/hud/lib/engineWindow.ts",
       "kind": "test:runtime"
     },
     {
@@ -38991,6 +39134,21 @@
     },
     {
       "from": "library/ui/apps/hud/features/profile/Passport.tsx",
+      "to": "library/ui/apps/hud/features/profile/PassportAvatar.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/profile/Passport.tsx",
+      "to": "library/ui/apps/hud/features/profile/PassportAvatar.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/profile/Passport.tsx",
+      "to": "library/ui/apps/hud/features/profile/PassportAvatar.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/profile/Passport.tsx",
       "to": "library/ui/apps/hud/features/profile/ProfilePassport.module.css",
       "kind": "native:runtime"
     },
@@ -39062,6 +39220,111 @@
     {
       "from": "library/ui/apps/hud/features/profile/Passport.tsx",
       "to": "library/ui/apps/hud/features/voiceChat/callGate.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/profile/PassportAvatar.tsx",
+      "to": "library/explorer-core/lib/hudScale.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/profile/PassportAvatar.tsx",
+      "to": "library/explorer-core/lib/hudScale.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/profile/PassportAvatar.tsx",
+      "to": "library/explorer-core/lib/hudScale.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/profile/PassportAvatar.tsx",
+      "to": "library/ui/apps/hud/assets/passport/cursor-rotate.png",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/profile/PassportAvatar.tsx",
+      "to": "library/ui/apps/hud/assets/passport/cursor-rotate.png",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/profile/PassportAvatar.tsx",
+      "to": "library/ui/apps/hud/assets/passport/cursor-rotate.png",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/profile/PassportAvatar.tsx",
+      "to": "library/ui/apps/hud/design/popups.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/profile/PassportAvatar.tsx",
+      "to": "library/ui/apps/hud/design/popups.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/profile/PassportAvatar.tsx",
+      "to": "library/ui/apps/hud/design/popups.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/profile/PassportAvatar.tsx",
+      "to": "library/ui/apps/hud/features/profile/PassportAvatar.module.css",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/profile/PassportAvatar.tsx",
+      "to": "library/ui/apps/hud/features/profile/PassportAvatar.module.css",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/profile/PassportAvatar.tsx",
+      "to": "library/ui/apps/hud/features/profile/PassportAvatar.module.css",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/profile/PassportAvatar.tsx",
+      "to": "library/ui/apps/hud/features/session/SessionContext.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/profile/PassportAvatar.tsx",
+      "to": "library/ui/apps/hud/features/session/SessionContext.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/profile/PassportAvatar.tsx",
+      "to": "library/ui/apps/hud/features/session/SessionContext.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/profile/PassportAvatar.tsx",
+      "to": "library/ui/apps/hud/lib/engineWindow.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/profile/PassportAvatar.tsx",
+      "to": "library/ui/apps/hud/lib/engineWindow.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/profile/PassportAvatar.tsx",
+      "to": "library/ui/apps/hud/lib/engineWindow.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/profile/PassportAvatar.tsx",
+      "to": "library/ui/index.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/profile/PassportAvatar.tsx",
+      "to": "library/ui/index.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/profile/PassportAvatar.tsx",
+      "to": "library/ui/index.ts",
       "kind": "test:runtime"
     },
     {
@@ -44870,6 +45133,21 @@
       "kind": "test:runtime"
     },
     {
+      "from": "library/ui/apps/hud/lib/engineWindow.ts",
+      "to": "library/explorer-core/lib/holeClip.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/lib/engineWindow.ts",
+      "to": "library/explorer-core/lib/holeClip.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/lib/engineWindow.ts",
+      "to": "library/explorer-core/lib/holeClip.ts",
+      "kind": "test:runtime"
+    },
+    {
       "from": "library/ui/apps/hud/lib/hudInset.ts",
       "to": "library/explorer-core/lib/hudScale.ts",
       "kind": "native:runtime"
@@ -50045,6 +50323,66 @@
       "kind": "test:runtime"
     },
     {
+      "from": "library/ui/apps/hud/test/hosted/passportAvatar.test.tsx",
+      "to": "library/ui/apps/hud/features/profile/PassportAvatar.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/passportAvatar.test.tsx",
+      "to": "library/ui/apps/hud/features/profile/PassportAvatar.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/passportAvatar.test.tsx",
+      "to": "library/ui/apps/hud/features/profile/PassportAvatar.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/passportAvatar.test.tsx",
+      "to": "library/ui/apps/hud/features/session/SessionContext.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/passportAvatar.test.tsx",
+      "to": "library/ui/apps/hud/features/session/SessionContext.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/passportAvatar.test.tsx",
+      "to": "library/ui/apps/hud/features/session/SessionContext.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/passportAvatar.test.tsx",
+      "to": "library/ui/apps/hud/lib/engineWindow.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/passportAvatar.test.tsx",
+      "to": "library/ui/apps/hud/lib/engineWindow.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/passportAvatar.test.tsx",
+      "to": "library/ui/apps/hud/lib/engineWindow.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/passportAvatar.test.tsx",
+      "to": "library/ui/apps/hud/test/harness.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/passportAvatar.test.tsx",
+      "to": "library/ui/apps/hud/test/harness.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/passportAvatar.test.tsx",
+      "to": "library/ui/apps/hud/test/harness.tsx",
+      "kind": "test:runtime"
+    },
+    {
       "from": "library/ui/apps/hud/test/hosted/permissions.test.tsx",
       "to": "library/ui/apps/hud/design/index.ts",
       "kind": "native:runtime"
@@ -51872,6 +52210,36 @@
     {
       "from": "library/ui/apps/hud/test/popupLayers.test.tsx",
       "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/popupLayers.test.tsx",
+      "to": "library/ui/apps/hud/design/popups.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/popupLayers.test.tsx",
+      "to": "library/ui/apps/hud/design/popups.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/popupLayers.test.tsx",
+      "to": "library/ui/apps/hud/design/popups.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/popupLayers.test.tsx",
+      "to": "library/ui/apps/hud/lib/engineWindow.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/popupLayers.test.tsx",
+      "to": "library/ui/apps/hud/lib/engineWindow.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/popupLayers.test.tsx",
+      "to": "library/ui/apps/hud/lib/engineWindow.ts",
       "kind": "test:runtime"
     },
     {
@@ -68841,6 +69209,11 @@
     },
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/ui/apps/hud/features/engine/UnderEngineWindow.tsx",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/ui/apps/hud/features/error/ConnectivityFeedback.tsx",
       "kind": "type"
     },
@@ -69381,6 +69754,11 @@
     },
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/ui/apps/hud/features/profile/PassportAvatar.tsx",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/ui/apps/hud/features/profile/ProfileEditForm.tsx",
       "kind": "type"
     },
@@ -69647,6 +70025,11 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/ui/apps/hud/lib/bindingLabels.ts",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/ui/apps/hud/lib/engineWindow.ts",
       "kind": "type"
     },
     {
@@ -70212,6 +70595,11 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/ui/apps/hud/test/hosted/passport.container.test.tsx",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/ui/apps/hud/test/hosted/passportAvatar.test.tsx",
       "kind": "type"
     },
     {
@@ -75722,6 +76110,21 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
       "to": "library/ui/apps/hud/assets/minimap/reload.png",
+      "kind": "test:asset"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
+      "to": "library/ui/apps/hud/assets/passport/cursor-rotate.png",
+      "kind": "native:asset"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
+      "to": "library/ui/apps/hud/assets/passport/cursor-rotate.png",
+      "kind": "production:asset"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
+      "to": "library/ui/apps/hud/assets/passport/cursor-rotate.png",
       "kind": "test:asset"
     },
     {

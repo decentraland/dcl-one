@@ -24,6 +24,10 @@ export type EquippedItemCardProps = {
    * hovered, over whatever sits below.
    */
   pinShop?: boolean
+  /** What a click on the card does (an emote's card plays it): the picture is then a button. */
+  onAction?: () => void
+  /** The button's name; needed with `onAction`. */
+  actionLabel?: string
 }
 
 /**
@@ -39,25 +43,42 @@ export function EquippedItemCard({
   shopLabel = 'Shop',
   price,
   categoryIcon,
-  pinShop = false
+  pinShop = false,
+  onAction,
+  actionLabel
 }: EquippedItemCardProps) {
   // The picture that failed to load: a new one is tried again.
   const [failedSrc, setFailedSrc] = useState<string>()
   const failed = failedSrc != null && failedSrc === thumbnail
   const shop = shopUrl == null ? undefined : pinShop ? styles.pinnedShop : styles.hasShop
+  const picture = (
+    <>
+      {thumbnail && !failed ? (
+        <img className={styles.thumb} src={thumbnail} alt="" onError={() => setFailedSrc(thumbnail)} />
+      ) : (
+        <span className={styles.placeholder} />
+      )}
+      {categoryIcon != null && <span className={styles.corner}>{categoryIcon}</span>}
+    </>
+  )
   return (
     <div
       className={[styles.card, rarityStyles.tone, shop].filter(Boolean).join(' ')}
       data-rarity={rarity ?? 'base'}
+      data-action={onAction != null ? '' : undefined}
+      // The whole card answers the pointer; the picture's button is the same action for the keyboard.
+      onClick={onAction == null ? undefined : (e) => {
+        if (e.target instanceof Element && e.target.closest('a, button') != null) return
+        onAction()
+      }}
     >
-      <div className={styles.thumbWrap}>
-        {thumbnail && !failed ? (
-          <img className={styles.thumb} src={thumbnail} alt="" onError={() => setFailedSrc(thumbnail)} />
-        ) : (
-          <span className={styles.placeholder} />
-        )}
-        {categoryIcon != null && <span className={styles.corner}>{categoryIcon}</span>}
-      </div>
+      {onAction != null ? (
+        <button type="button" className={styles.thumbWrap} aria-label={actionLabel} onClick={onAction}>
+          {picture}
+        </button>
+      ) : (
+        <div className={styles.thumbWrap}>{picture}</div>
+      )}
       <span className={styles.name} title={name}>
         {name}
       </span>
