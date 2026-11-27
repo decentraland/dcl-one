@@ -26,6 +26,9 @@ const REPLACEMENT: &str = "0x777777777777777777777777777777777777777777777777777
 
 async fn rpc(State(state): State<Arc<Mutex<Value>>>, Json(req): Json<Value>) -> Json<Value> {
     let mut s = state.lock().unwrap();
+    if !s["no_result"].is_null() && s["no_result"] == req["params"][0] {
+        return Json(json!({"jsonrpc":"2.0", "id":req["id"]}));
+    }
     let result = match req["method"].as_str().unwrap() {
         "eth_chainId" => s.get("chain").cloned().unwrap_or(json!("0x89")),
         "eth_getTransactionByHash" if s["unknown_once"] == req["params"][0] => Value::Null,
@@ -758,65 +761,17 @@ async fn a_replaced_publication_transaction_still_publishes_the_collection() {
 /// refused and the attempt resolves as the original's receipt says.
 #[tokio::test]
 async fn a_recorded_transaction_the_rpc_forgets_once_is_not_replaced() {
-    let Some(pool) = super::validator::own_pool().await else {
+    let Some(submitted) = submitted().await else {
         return;
     };
-    let rpc_state = Arc::new(Mutex::new(json!({"receipt":null, "finalized":"0x10",
-        "canonical":BLOCK, "count":1})));
-    let (url, task) = serve_rpc(rpc_state.clone()).await;
-    let (app, state) = node_over(pool, |state| {
-        state.settings.polygon_rpc_url = Some(url);
-    })
-    .await;
-    let owner = super::validator::address(OWNER_KEY);
-    rpc_state.lock().unwrap()["creator"] = json!(owner);
-    let Draft { collection, .. } = draft_of(&state.items, &owner).await;
-    let path = format!("/v1/collections/{}/publication", collection.id);
-    let call = |method, body: Value| Call {
-        method,
-        key: Some(OWNER_KEY),
-        body: body.to_string().into_bytes(),
-        ..Call::get(path.clone())
-    };
-    let answer = |(status, body, _): (u16, String, Option<String>)| {
-        let body: Value = serde_json::from_str(&body).unwrap();
-        (status, body)
-    };
-    let (_, prepared) = answer(
-        send(
-            &app,
-            &Call {
-                key: Some(OWNER_KEY),
-                ..Call::get(path.clone())
-            },
-        )
-        .await,
-    );
-    let prepared: PublicationPreparation =
-        serde_json::from_value(prepared["data"].clone()).unwrap();
-    let revision = json!({"revision": prepared.revision});
-    assert_eq!(send(&app, &call("POST", revision)).await.0, 200);
-    let sent = json!({"hash":HASH, "from":owner, "to":POLYGON.collection_manager, "value":"0x0",
-        "input":publication_calldata(&prepared).unwrap(), "blockNumber":"0x10", "blockHash":BLOCK});
-    rpc_state.lock().unwrap()["tx"] = sent.clone();
-    assert_eq!(
-        answer(send(&app, &call("PUT", json!({"tx_hash": HASH}))).await).1["data"]["status"],
-        "submitted"
-    );
-    let mut resent = sent.clone();
-    resent["hash"] = json!(REPLACEMENT);
     {
-        let mut rpc = rpc_state.lock().unwrap();
-        rpc["replacement"] = resent;
+        let mut rpc = submitted.rpc.lock().unwrap();
         rpc["unknown_once"] = json!(HASH);
-        rpc["receipt"] = json!({"transactionHash":HASH, "from":owner,
-            "to":POLYGON.collection_manager, "status":"0x1", "blockNumber":"0x10", "blockHash":BLOCK,
-            "logs":[{"address":POLYGON.collection_factory, "topics":[format!("{:#x}", keccak256("ProxyCreated(address,bytes32)")),
-                format!("0x{:0>64}", &CONTRACT[2..])], "data":prepared.salt}]});
+        rpc["receipt"] = submitted.receipt.clone();
     }
-    let (status, refused) = answer(send(&app, &call("PUT", json!({"tx_hash": REPLACEMENT}))).await);
+    let (status, refused) = submitted.put(REPLACEMENT).await;
     assert_eq!(status, 409, "{refused}");
-    let (status, published) = answer(send(&app, &call("PUT", json!({"tx_hash": HASH}))).await);
+    let (status, published) = submitted.put(HASH).await;
     assert_eq!(
         (
             status,
@@ -827,5 +782,127 @@ async fn a_recorded_transaction_the_rpc_forgets_once_is_not_replaced() {
         (200, Some("published"), Some(HASH), Some(CONTRACT)),
         "{published}"
     );
-    task.abort();
+    submitted.task.abort();
+}
+
+/// Only an explicit `"result": null` for both the recorded transaction and
+/// its receipt counts as the RPC not knowing it: while the receipt is still
+/// there the replacement is refused with 409, and an answer carrying
+/// neither `result` nor `error`, as a misbehaving proxy sends, is a 503
+/// that leaves the recorded hash in place.
+#[tokio::test]
+async fn a_recorded_transaction_is_replaced_only_once_the_rpc_answers_null_for_it() {
+    let Some(submitted) = submitted().await else {
+        return;
+    };
+    {
+        let mut rpc = submitted.rpc.lock().unwrap();
+        rpc["tx"] = Value::Null;
+        rpc["receipt"] = submitted.receipt.clone();
+    }
+    let (status, refused) = submitted.put(REPLACEMENT).await;
+    assert_eq!(status, 409, "the receipt is still known: {refused}");
+    {
+        let mut rpc = submitted.rpc.lock().unwrap();
+        rpc["receipt"] = Value::Null;
+        rpc["no_result"] = json!(HASH);
+    }
+    let (status, refused) = submitted.put(REPLACEMENT).await;
+    assert_eq!(status, 503, "{refused}");
+    assert_eq!(submitted.recorded().await.as_deref(), Some(HASH));
+    submitted.task.abort();
+}
+
+/// A publication whose transaction [`HASH`] is recorded as submitted, over
+/// a mock RPC that also knows the same call resent as [`REPLACEMENT`].
+struct Submitted {
+    app: Router,
+    state: crate::SharedState,
+    rpc: Arc<Mutex<Value>>,
+    task: tokio::task::JoinHandle<()>,
+    path: String,
+    receipt: Value,
+}
+
+impl Submitted {
+    async fn put(&self, hash: &str) -> (u16, Value) {
+        let (status, body, _) = send(
+            &self.app,
+            &Call {
+                method: "PUT",
+                key: Some(OWNER_KEY),
+                body: json!({ "tx_hash": hash }).to_string().into_bytes(),
+                ..Call::get(self.path.clone())
+            },
+        )
+        .await;
+        (status, serde_json::from_str(&body).unwrap())
+    }
+
+    async fn recorded(&self) -> Option<String> {
+        let id: Uuid = self.path.split('/').nth(3).unwrap().parse().unwrap();
+        sqlx::query_scalar(
+            "SELECT tx_hash FROM builder.collection_publications WHERE collection_id = $1",
+        )
+        .bind(id)
+        .fetch_one(self.state.items.pool())
+        .await
+        .unwrap()
+    }
+}
+
+async fn submitted() -> Option<Submitted> {
+    let pool = super::validator::own_pool().await?;
+    let rpc = Arc::new(Mutex::new(json!({"receipt":null, "finalized":"0x10",
+        "canonical":BLOCK, "count":1})));
+    let (url, task) = serve_rpc(rpc.clone()).await;
+    let (app, state) = node_over(pool, |state| {
+        state.settings.polygon_rpc_url = Some(url);
+    })
+    .await;
+    let owner = super::validator::address(OWNER_KEY);
+    rpc.lock().unwrap()["creator"] = json!(owner);
+    let Draft { collection, .. } = draft_of(&state.items, &owner).await;
+    let path = format!("/v1/collections/{}/publication", collection.id);
+    let call = |method, body: Value| Call {
+        method,
+        key: Some(OWNER_KEY),
+        body: body.to_string().into_bytes(),
+        ..Call::get(path.clone())
+    };
+    let (_, prepared, _) = send(
+        &app,
+        &Call {
+            key: Some(OWNER_KEY),
+            ..Call::get(path.clone())
+        },
+    )
+    .await;
+    let prepared: Value = serde_json::from_str(&prepared).unwrap();
+    let prepared: PublicationPreparation =
+        serde_json::from_value(prepared["data"].clone()).unwrap();
+    let revision = json!({"revision": prepared.revision});
+    assert_eq!(send(&app, &call("POST", revision)).await.0, 200);
+    let sent = json!({"hash":HASH, "from":owner, "to":POLYGON.collection_manager, "value":"0x0",
+        "input":publication_calldata(&prepared).unwrap(), "blockNumber":"0x10", "blockHash":BLOCK});
+    let mut resent = sent.clone();
+    resent["hash"] = json!(REPLACEMENT);
+    {
+        let mut rpc = rpc.lock().unwrap();
+        rpc["tx"] = sent;
+        rpc["replacement"] = resent;
+    }
+    let submitted = Submitted {
+        app,
+        state,
+        rpc,
+        task,
+        path,
+        receipt: json!({"transactionHash":HASH, "from":owner,
+            "to":POLYGON.collection_manager, "status":"0x1", "blockNumber":"0x10", "blockHash":BLOCK,
+            "logs":[{"address":POLYGON.collection_factory, "topics":[format!("{:#x}", keccak256("ProxyCreated(address,bytes32)")),
+                format!("0x{:0>64}", &CONTRACT[2..])], "data":prepared.salt}]}),
+    };
+    assert_eq!(submitted.put(HASH).await.1["data"]["status"], "submitted");
+    Some(submitted)
 }

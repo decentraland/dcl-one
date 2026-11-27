@@ -8,8 +8,9 @@
 //! the deployed collection's creator and item count, and finishes the
 //! attempt as `published` or `reverted`. A transaction the wallet sped up or
 //! replaced carries the same reviewed call under a new hash: it replaces the
-//! recorded one once the RPC knows neither the recorded hash nor its
-//! receipt, asked twice a few seconds apart. v2 never holds a signing key.
+//! recorded one once the RPC answers an explicit `null` for both the
+//! recorded hash and its receipt, asked twice a few seconds apart. v2 never
+//! holds a signing key.
 
 use alloy_primitives::{Address, B256, U256, hex, keccak256};
 use alloy_sol_types::{SolCall, sol};
@@ -78,16 +79,21 @@ pub struct PublicationChain<'a> {
 }
 impl PublicationChain<'_> {
     async fn rpc(&self, method: &str, params: Value) -> Result<Value, ApiError> {
-        Rpc::new(self.http, self.url).call(method, params).await.map_err(|e| match e {
-            RpcError::Refused(_) | RpcError::Transport(_) => {
-                ApiError::service_unavailable("Polygon RPC is unavailable. Retry to check the same transaction.")
-            }
-            RpcError::Status(_) => ApiError::service_unavailable("Polygon RPC returned an error. Retry to check the same transaction."),
-            RpcError::Malformed(_) => ApiError::service_unavailable("Polygon RPC returned an invalid response"),
-            RpcError::Response { .. } => {
-                ApiError::service_unavailable("Polygon RPC could not verify this publication. Retry to check the same transaction.")
-            }
-        })
+        Rpc::new(self.http, self.url)
+            .call(method, params)
+            .await
+            .map_err(unavailable)
+    }
+
+    /// The RPC answers an explicit `"result": null` for `hash` under
+    /// `method`; an answer without `result` is a 503, never a `null`.
+    async fn unknown(&self, method: &str, hash: &str) -> Result<bool, ApiError> {
+        Rpc::new(self.http, self.url)
+            .call_result(method, json!([hash]))
+            .await
+            .map_err(unavailable)?
+            .map(|result| result.is_null())
+            .ok_or_else(|| ApiError::service_unavailable(INVALID_RESPONSE))
     }
 
     /// The RPC knows neither `hash` nor its receipt, asked twice
@@ -98,14 +104,8 @@ impl PublicationChain<'_> {
             if check > 0 {
                 tokio::time::sleep(RECHECK).await;
             }
-            if !self
-                .rpc("eth_getTransactionByHash", json!([hash]))
-                .await?
-                .is_null()
-                || !self
-                    .rpc("eth_getTransactionReceipt", json!([hash]))
-                    .await?
-                    .is_null()
+            if !self.unknown("eth_getTransactionByHash", hash).await?
+                || !self.unknown("eth_getTransactionReceipt", hash).await?
             {
                 return Ok(false);
             }
@@ -217,6 +217,23 @@ impl PublicationChain<'_> {
             }
             _ => Err(invalid("Publication receipt has an invalid status")),
         }
+    }
+}
+
+const INVALID_RESPONSE: &str = "Polygon RPC returned an invalid response";
+
+fn unavailable(error: RpcError) -> ApiError {
+    match error {
+        RpcError::Refused(_) | RpcError::Transport(_) => ApiError::service_unavailable(
+            "Polygon RPC is unavailable. Retry to check the same transaction.",
+        ),
+        RpcError::Status(_) => ApiError::service_unavailable(
+            "Polygon RPC returned an error. Retry to check the same transaction.",
+        ),
+        RpcError::Malformed(_) => ApiError::service_unavailable(INVALID_RESPONSE),
+        RpcError::Response { .. } => ApiError::service_unavailable(
+            "Polygon RPC could not verify this publication. Retry to check the same transaction.",
+        ),
     }
 }
 
