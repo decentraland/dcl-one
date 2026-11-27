@@ -1,9 +1,10 @@
-import path from 'node:path'
-import { createServer, type ViteDevServer } from 'vite'
+import type { ViteDevServer } from 'vite'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { findBrowser, openSession } from '../figma/review/scripts/capture-browser.mjs'
+import { serveConsumerPage } from './consumer-page.helpers'
 
 let server: ViteDevServer
+let disruptions: string[] = []
 let session: Awaited<ReturnType<typeof openSession>>
 
 type Box = { left: number; top: number; right: number; bottom: number; width: number }
@@ -48,6 +49,8 @@ async function open(width: number, height: number) {
       await new Promise(resolve=>setTimeout(resolve,50))
     }
     await document.fonts.ready
+    // The selected pill tab pops in with a scale animation; measure it at rest (a cancelled one rejects, so settle).
+    await Promise.allSettled([...document.querySelectorAll('[role="tab"]')].flatMap((tab)=>tab.getAnimations()).map((animation)=>animation.finished))
     await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))
   })()`)
 }
@@ -79,25 +82,10 @@ async function layoutAt(width: number, height = 1024): Promise<Geometry> {
 }
 
 beforeAll(async () => {
-  server = await createServer({
-    configFile: false,
-    root: path.resolve(import.meta.dirname, '..'),
-    appType: 'custom',
-    logLevel: 'error',
-    resolve: { dedupe: ['react', 'react-dom'] },
-    server: { host: '127.0.0.1', port: 0 }
-  })
-  server.middlewares.use(async (request, response, next) => {
-    if (new URL(request.url ?? '/', 'http://localhost').pathname !== '/') return next()
-    response.setHeader('Content-Type', 'text/html')
-    response.end(
-      await server.transformIndexHtml(
-        '/',
-        '<!doctype html><meta name="viewport" content="width=device-width,initial-scale=1"><style>body{margin:0}</style><div id="root"></div><script type="module" src="/test/consumer/help-layout-browser.tsx"></script>'
-      )
-    )
-  })
-  await server.listen()
+  ;({ server, disruptions } = await serveConsumerPage(
+    'test/consumer/help-layout-browser.tsx',
+    '<meta name="viewport" content="width=device-width,initial-scale=1"><style>body{margin:0}</style>'
+  ))
   session = await openSession(
     await findBrowser([
       process.env.BROWSER_PATH,
@@ -217,5 +205,13 @@ describe('when the help center renders', () => {
       expect(geometry.status.left).toBeGreaterThan(geometry.title.left)
       expect(geometry.panel.top).toBeGreaterThanOrEqual(geometry.tabs.bottom)
     })
+  })
+})
+
+describe('when the Help page is served', () => {
+  // A failed dependency scan or a re-optimization reloads the page under the tests above, which then fail with
+  // "Inspected target navigated or closed".
+  it('should load it without a dependency scan error or a dependency reload', () => {
+    expect(disruptions).toEqual([])
   })
 })

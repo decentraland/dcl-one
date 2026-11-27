@@ -1,5 +1,5 @@
 // The /create landing's copy and media, as decentraland.org shows them.
-import { docsUrl } from "@ui/data/docs";
+import { docsUrl } from "@web-core/docs";
 
 type MediaProps = { url: string; width: number; height: number };
 

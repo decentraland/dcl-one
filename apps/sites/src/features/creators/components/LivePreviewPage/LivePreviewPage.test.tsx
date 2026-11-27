@@ -38,7 +38,7 @@ vi.mock('@/data/lib/creators/featureFlags', async () => {
 vi.mock('@/data/lib/creators/catalyst', () => ({ fetchBaseWearables: vi.fn().mockResolvedValue([]) }))
 vi.mock('@/data/lib/creators/analytics', () => ({ track: vi.fn(), errorCode: () => 'unknown' }))
 vi.mock('@/data/lib/creators/monitoring', () => ({ captureError: vi.fn(), setMonitoringTags: vi.fn() }))
-vi.mock('@/data/lib/creators/connectionSpeed', () => ({ measureDownlinkMbps: () => Promise.resolve(null) }))
+vi.mock('@web-core/connection-speed', () => ({ measureDownlinkMbps: () => Promise.resolve(null) }))
 
 const validate = vi.fn(async (_source: ValidationSource, _ctx: ValidationContext) => ({ issues: [] }))
 vi.mock('@/data/lib/creators/validation', async () => {
@@ -161,7 +161,8 @@ describe('LivePreviewPage', () => {
     await screen.findByTestId('avatar-preview')
     expect(screen.getByTestId('live-preview-animation')).toBeInTheDocument()
     expect(screen.queryByTestId('live-preview-properties')).not.toBeInTheDocument()
-    expect(screen.getByTestId('ui2-emote-controls')).toBeInTheDocument()
+    // The overlay mounts after the renderer is picked; `avatar-preview` also marks the loader.
+    expect(await screen.findByTestId('ui2-emote-controls')).toBeInTheDocument()
   })
 
   it('explains a blocked local network connection and offers a retry', async () => {

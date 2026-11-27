@@ -1,4 +1,4 @@
-// The Shop's item panel, beside the grid while an item is selected: the item on its rarity art, its
+// The Shop's item panel, beside the grid while an item is selected: the item on its rarity's glow, its
 // price (and, for a buyer shown MANA, its MANA equivalent under it), rarity and stock, creator, description
 // and what it hides, and what can be done with it here.
 // A primary sale priced in credits is bought in-world; anything else (a resale, MANA only, not for
@@ -6,11 +6,9 @@
 
 import type { CardPrice } from '@shop/discovery/cardPrice'
 import { formatMana, formatManaPrice, type ManaWei } from '@shop/model/money'
-import { GeneralPolygonMana } from '@dcl/one-ui'
-import { Close, MaskIcon, rarityPanel } from '@hud/design'
+import { GeneralClose, GeneralFavorites, GeneralPolygonMana, MaskIcon } from '@dcl/one-ui'
 import hiddenIcon from '@hud/assets/backpack/icon-hidden.webp'
 import cartIcon from '../assets/cart.svg'
-import favoriteIcon from '../assets/favorite.svg'
 import externalIcon from '../assets/external.svg'
 import { buyableInWorld, PriceTag } from './PriceTag'
 import { pressedWith, type PressedWith } from './pressedWith'
@@ -64,12 +62,12 @@ export function ShopItemPanel({
   onAddToCart
 }: ShopItemPanelProps): React.JSX.Element {
   return (
-    <aside className={styles.panel} data-rarity={rarity} aria-label={name} style={{ '--panel-art': `url(${rarityPanel(rarity)})` } as React.CSSProperties}>
+    <aside className={styles.panel} data-rarity={rarity} aria-label={name}>
       <button type="button" className={styles.favourite} aria-label="Add to favourites" disabled title="Favourites are coming soon">
-        <MaskIcon src={favoriteIcon} size={24} />
+        <GeneralFavorites size={30} aria-hidden="true" />
       </button>
       <button type="button" className={styles.close} aria-label="Close item" onClick={onClose}>
-        <Close size={20} />
+        <GeneralClose size={30} aria-hidden="true" />
       </button>
       <div className={styles.image}>{thumbnail && <img src={thumbnail} alt="" />}</div>
       <div className={styles.info}>
@@ -80,7 +78,8 @@ export function ShopItemPanel({
           </span>
           <span className={styles.prices}>
             <span className={styles.price}>
-              <PriceTag price={price} size={24} />
+              {/* Credits with the design's full-colour coin (Figma shop/credits-coin). */}
+              <PriceTag price={price} size={24} coin="full" />
             </span>
             {price.kind === 'credits' && manaPrice != null && manaPrice > 0n && (
               <span className={styles.manaPrice} title={`${formatMana(manaPrice, { group: true })} MANA`}>
@@ -89,14 +88,19 @@ export function ShopItemPanel({
             )}
           </span>
         </div>
+        {/* Two words 8px apart, as the design's tag; the space between them keeps them two words when read. */}
         <span className={styles.rarity}>
-          {rarity}
-          {stock != null ? ` ${stock}` : ''}
+          <span>{rarity}</span>
+          {stock != null && (
+            <>
+              {' '}
+              <span>{stock}</span>
+            </>
+          )}
         </span>
-        <hr className={styles.rule} />
         <span className={styles.creator}>
           {creator.picture ? <img className={styles.face} src={creator.picture} alt="" /> : <span className={styles.face} aria-hidden="true" />}
-          <span>
+          <span className={styles.by}>
             {/* The creator's name colour is the HUD's per-user one, known only at run time. */}
             By <span className={styles.creatorName} style={{ '--creator-color': creator.color } as React.CSSProperties}>{creator.name}</span>
           </span>
@@ -129,7 +133,7 @@ export function ShopItemPanel({
         {buyableInWorld(price) ? (
           <>
             <button type="button" className={styles.cart} disabled={onAddToCart == null} onClick={onAddToCart}>
-              <MaskIcon src={cartIcon} size={22} />
+              <MaskIcon src={cartIcon} size={24} />
               Add to cart
             </button>
             <button type="button" className={styles.buy} disabled={onBuy == null} onClick={onBuy && ((e) => onBuy(pressedWith(e)))}>

@@ -1,30 +1,32 @@
 import { redirect } from "react-router";
 import { dehydrate, HydrationBoundary, QueryClient } from "@tanstack/react-query";
 
-import SitesChrome from "@ui/web/frames/SitesChrome";
-
 import { latestPostsQuery } from "@/data/lib/create-landing/blog-posts";
 import { latestPosts } from "@/data/lib/create-landing/blog-posts.server";
 import { liveScenesQuery } from "@/data/lib/create-landing/live-scenes";
 import { heroDownloads, loadLatestRelease } from "@/data/lib/download/creator-hub.server";
 import { sidLoader } from "@/core/lib/telemetry/page-loader";
+import SitesLayout from "@/features/components/chrome/SitesLayout";
 import CreateLanding from "@/features/create-landing/CreateLanding";
 import { CREATOR_HUB_DOWNLOAD } from "@/features/create-landing/HeroDownload";
 import { SubNav } from "@/features/creators/components/SubNav";
+import { useAnalyticsSid, useAnalyticsUserId } from "@/core/lib/telemetry/page-view";
 
-import { canonicalLink } from "../lib/canonical";
+import { absoluteUrl, publicBase, socialMeta } from "../lib/social-meta";
 import type { Route } from "./+types/create._index";
 
+// decentraland.org serves /create from creators-website, whose shell carries this card.
+const CREATE_SOCIAL_IMAGE =
+  "https://images.ctfassets.net/ea2ybdmmn1kv/3fZB29mbYNJdp7sv1y2SJ2/108e55d6d3e23cd11e7d75563d81caf5/hero.webp?fm=jpg&q=85";
+
 export function meta({ matches }: Route.MetaArgs) {
-  return [
-    { title: "Create in Decentraland | Wearables, Emotes, Scenes & Worlds" },
-    {
-      name: "description",
-      content:
-        "Everything you need to create in Decentraland: build Wearables, Emotes, Scenes and Worlds, manage your collections and join the creator community.",
-    },
-    ...canonicalLink(matches[0]?.loaderData?.publicPageBase, "/create"),
-  ];
+  return socialMeta({
+    title: "Create in Decentraland | Wearables, Emotes, Scenes & Worlds",
+    description:
+      "Everything you need to create in Decentraland: build Wearables, Emotes, Scenes and Worlds, manage your collections and join the creator community.",
+    image: CREATE_SOCIAL_IMAGE,
+    url: absoluteUrl(publicBase(matches), "/create"),
+  });
 }
 
 // The landing never waits long for the release: without it the hero links to the download page, which does.
@@ -67,12 +69,15 @@ export async function clientLoader(): Promise<null> {
 }
 
 export default function CreateRoute({ loaderData }: Route.ComponentProps) {
+  const userId = useAnalyticsUserId();
+  // A client navigation runs the clientLoader, which carries no sid: the root's session stands in.
+  const rootSid = useAnalyticsSid();
   return (
     <HydrationBoundary state={loaderData?.dehydratedState}>
-      <SitesChrome active="create" overlayNav>
+      <SitesLayout active="create" overlayNav>
         <SubNav landing />
-        <CreateLanding downloads={loaderData?.downloads} sid={loaderData?.sid} />
-      </SitesChrome>
+        <CreateLanding downloads={loaderData?.downloads} sid={loaderData?.sid || rootSid} userId={userId} />
+      </SitesLayout>
     </HydrationBoundary>
   );
 }

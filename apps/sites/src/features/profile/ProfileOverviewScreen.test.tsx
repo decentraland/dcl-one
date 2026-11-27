@@ -1,3 +1,4 @@
+import { ChromeNavContext } from "@dcl/one-ui";
 // @vitest-environment jsdom
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
@@ -50,7 +51,9 @@ function show(vm: ProfileVM, own = false, onTab = vi.fn(), hasProfile = false) {
   );
   render(
     <QueryClientProvider client={client}>
-      <RouterProvider router={router} />
+      <ChromeNavContext.Provider value={{ headerLayout: "native" }}>
+        <RouterProvider router={router} />
+      </ChromeNavContext.Provider>
     </QueryClientProvider>,
   );
   return router;
@@ -94,8 +97,9 @@ describe("ProfileOverviewScreen header", () => {
     });
 
     it("should keep the global header in the layout flow above Profile", () => {
-      const layout = screen.getByRole("heading", { level: 1, name: "Alice" }).closest(".site-layout");
-      expect(layout?.classList.contains("site-layout--overlay")).toBe(false);
+      const layout = screen.getByRole("heading", { level: 1, name: "Alice" }).closest("[data-site-layout]");
+      expect(layout?.getAttribute("data-header-layout")).toBe("native");
+      expect(layout?.hasAttribute("data-header-overlay")).toBe(false);
     });
   });
 
@@ -442,9 +446,11 @@ describe("ProfileOverviewScreen badges", () => {
       show(profile(), false, vi.fn(), true);
     });
 
-    it("should show each badge with its tier, blurb and unlock date", async () => {
-      expect(await screen.findByAltText("Explorer")).toBeTruthy();
-      const tip = screen.getByRole("tooltip", { hidden: true });
+    it("should show each badge with its tier, blurb and unlock date on hover", async () => {
+      const badge = await screen.findByAltText("Explorer");
+      expect(screen.queryByRole("tooltip")).toBeNull();
+      fireEvent.mouseEnter(badge.parentElement!);
+      const tip = screen.getByRole("tooltip");
       expect(tip.textContent).toContain("Gold");
       expect(tip.textContent).toContain("Visit 100 scenes");
       expect(tip.textContent).toContain("Unlocked on Mar 3, 2026");

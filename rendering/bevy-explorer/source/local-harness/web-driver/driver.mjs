@@ -36,6 +36,10 @@ const DEFAULT_TIMEOUT_MS = 120_000;
 const CLOSE_TIMEOUT_MS = 5_000;
 const POLL_MS = 100;
 const PRESENT_TIMEOUT_MS = 5_000;
+/** A frame's viewport, as JSON. */
+const VIEWPORT = 'JSON.stringify([window.innerWidth, window.innerHeight])';
+/** Resolves with true once the frame has run two animation frames. */
+const ANIMATION_FRAMES = 'new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(() => done(true))))';
 
 // The bits of the `modifiers` field of CDP's input events.
 const MODIFIER_BITS = { Alt: 1, Control: 2, Meta: 4, Shift: 8 };
@@ -206,6 +210,11 @@ const debug = process.env.DCL_WEB_DRIVER_DEBUG
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
+// Whether two [width, height] pairs are equal.
+function sameSize(a, b) {
+  return a[0] === b[0] && a[1] === b[1];
+}
+
 // `promise`, or a rejection with `message` after `ms`.
 async function within(promise, ms, message) {
   let timer;
@@ -298,6 +307,8 @@ class Driver {
   #ends = new Map();
   #page = null;
   #app = null;
+  // the page's viewport at the window's size, and whether the app frame fills it (resizeView)
+  #windowView = null;
   #held = new Set();
   // each document's first drawn frame, as #presented waits for it
   #shown = new WeakMap();
@@ -505,6 +516,56 @@ class Driver {
     return Buffer.from(data, 'base64');
   }
 
+  /** Lay the page out at `width` x `height` CSS px, inside the same window; `null` returns it to
+   *  the window's size. Resolves once the page is at that size, the app frame too when it filled
+   *  the page at the window's size, and the app frame has run two animation frames since. Rejects
+   *  once `timeout` has passed. */
+  async resizeView(size, { timeout = PRESENT_TIMEOUT_MS } = {}) {
+    const deadline = Date.now() + timeout;
+    const late = () => `the app frame did not settle at ${size ? size.join('x') : "the window's size"} within ${timeout} ms`;
+    // the window's own view, and whether the app frame fills it: read once, before any override
+    while (this.#windowView == null) {
+      const view = await within(this.#readView(), Math.max(1, deadline - Date.now()), late);
+      if (view) this.#windowView = { size: view.page, fills: sameSize(view.page, view.app) };
+      else if (Date.now() >= deadline) throw new Error(late());
+      else await sleep(POLL_MS);
+    }
+    if (size === null) await this.#send('Emulation.clearDeviceMetricsOverride', {}, this.#page);
+    else await this.#send('Emulation.setDeviceMetricsOverride', { width: size[0], height: size[1], deviceScaleFactor: 0, mobile: false }, this.#page);
+    const want = size ?? this.#windowView.size;
+    for (;;) {
+      // retries until the deadline: one read can find the page and the app frame at different sizes
+      const left = () => Math.max(1, deadline - Date.now());
+      const view = await within(this.#readView(), left(), late);
+      const settled = view && sameSize(view.page, want) && (!this.#windowView.fills || sameSize(view.app, want));
+      if (settled && (await within(this.#evaluateInApp(view.context, ANIMATION_FRAMES, true), left(), late)) === true) return;
+      if (Date.now() >= deadline) throw new Error(late());
+      await sleep(POLL_MS);
+    }
+  }
+
+  /** The page's and the app frame's viewports, and the app frame's context; null while there is
+   *  no app frame to ask. */
+  async #readView() {
+    const page = await this.#send('Runtime.evaluate', { expression: VIEWPORT, returnByValue: true }, this.#page);
+    const context = await this.#findApp();
+    const app = context && (await this.#evaluateInApp(context, VIEWPORT, false));
+    return app == null ? null : { page: JSON.parse(page.result.value), app: JSON.parse(app), context };
+  }
+
+  /** `expression`'s value in the app frame's `context`; undefined when the evaluate fails or the
+   *  context goes away first, without waiting for its answer. */
+  async #evaluateInApp(context, expression, awaitPromise) {
+    const gone = this.#gone(context);
+    try {
+      const evaluated = this.#send('Runtime.evaluate', { expression, contextId: context.id, awaitPromise, returnByValue: true }, context.session);
+      const answer = await Promise.race([evaluated, gone.promise]).catch(() => undefined);
+      return answer?.result?.value;
+    } finally {
+      gone.cancel();
+    }
+  }
+
   // --- the app frame: ready and console commands ---
 
   #forget(key) {
@@ -532,37 +593,44 @@ class Driver {
     return { promise, cancel: () => this.#ends.get(key)?.delete(end) };
   }
 
-  // The context that has the console and the binding: the app frame's, not the shell's.
-  async #findApp() {
+  // The context that has the console and the binding: the app frame's, not the shell's. With
+  // `startScreen`, the page's own commands stand in for the console, which the engine adds later.
+  async #findApp({ startScreen = false } = {}) {
     if (this.#app && this.#contexts.has(`${this.#app.session.id}:${this.#app.id}`)) return this.#app;
     this.#app = null;
+    const hasConsole = startScreen
+      ? `(typeof window.engine_console_command === 'function' || typeof window.__dclPageCommands === 'object')`
+      : `typeof window.engine_console_command === 'function'`;
     for (const context of [...this.#contexts.values()]) {
       if (!acceptsBinding(context, this.#origin)) continue;
       const answer = await this.#send(
         'Runtime.evaluate',
         {
-          expression: `typeof window.engine_console_command === 'function' && typeof window.${BINDING} === 'function'`,
+          expression: `${hasConsole} && typeof window.${BINDING} === 'function'`,
           contextId: context.id,
           returnByValue: true
         },
         context.session
       ).catch(() => null); // a context that went away while asking
-      if (answer?.result?.value === true) return (this.#app = context);
+      // a start-screen match is not kept: a later call without the opt-in waits for the console
+      if (answer?.result?.value === true) return startScreen ? context : (this.#app = context);
     }
     return null;
   }
 
   /** Resolves once a context of the page's origin has both `window.engine_console_command` and
    *  `window.__dclTrustedInput`, and the page has drawn that document (`#presented`): input
-   *  can then be aimed at it. */
-  async ready({ timeout = DEFAULT_TIMEOUT_MS } = {}) {
+   *  can then be aimed at it. With `startScreen`, the page's own commands
+   *  (`window.__dclPageCommands`) do in place of the console, so `/hud_login` can run before the
+   *  engine starts. */
+  async ready({ timeout = DEFAULT_TIMEOUT_MS, startScreen = false } = {}) {
     const deadline = Date.now() + timeout;
     const exited = this.#exit.then((info) => {
       throw new Error(this.#goneMessage(info));
     });
     exited.catch(() => {});
     for (;;) {
-      const app = await Promise.race([this.#findApp(), exited]);
+      const app = await Promise.race([this.#findApp({ startScreen }), exited]);
       if (app) {
         const left = Math.max(1, deadline - Date.now());
         await within(
@@ -577,7 +645,7 @@ class Driver {
           .filter((context) => context.isDefault)
           .map((context) => context.origin);
         throw new Error(
-          `${this.url} did not get window.engine_console_command and window.${BINDING} in a ${this.#origin} frame within ${timeout} ms (frames: ${seen.join(', ') || 'none'})`
+          `${this.url} did not get ${startScreen ? 'window.engine_console_command or window.__dclPageCommands' : 'window.engine_console_command'} and window.${BINDING} in a ${this.#origin} frame within ${timeout} ms (frames: ${seen.join(', ') || 'none'})`
         );
       }
       await Promise.race([sleep(POLL_MS), exited]);
@@ -585,17 +653,22 @@ class Driver {
   }
 
   /** `await window.engine_console_command(line)` in the app frame: what it resolves with, or a
-   *  rejection with the message the page failed with. */
-  async console(line, { timeout = DEFAULT_TIMEOUT_MS } = {}) {
+   *  rejection with the message the page failed with. With `startScreen`, a page command runs
+   *  before the engine starts, as `ready({ startScreen })` allows. */
+  async console(line, { timeout = DEFAULT_TIMEOUT_MS, startScreen = false } = {}) {
     const started = Date.now();
     for (const secret of secretsOf(line)) this.#secrets.add(secret);
-    await this.ready({ timeout });
-    const context = await this.#findApp();
+    await this.ready({ timeout, startScreen });
+    const context = await this.#findApp({ startScreen });
     if (!context) throw new Error('the app frame went away');
     // a rejection arrives as a value, so the page's message is not wrapped in a protocol error
     const expression = `(async (line) => {
       try {
-        return { ok: true, value: await window.engine_console_command(line) };
+        if (typeof window.engine_console_command === 'function') return { ok: true, value: await window.engine_console_command(line) };
+        const name = line.trim().split(/\\s+/, 1)[0] || '';
+        const command = window.__dclPageCommands?.[name.startsWith('/') ? name : \`/\${name}\`];
+        if (!command) throw new Error(\`the engine has not started, and \${name} is not a page command\`);
+        return { ok: true, value: await command.run(line.trim().slice(name.length)) };
       } catch (e) {
         const error = e instanceof Error ? e.message : typeof e === 'string' ? e : JSON.stringify(e);
         return { ok: false, error: error ?? String(e) };

@@ -23,14 +23,19 @@ build test prepare`). Its `.github`, agent files and editor configuration were l
 It installs with pnpm as one workspace with a single lockfile
 ([decision](2026-11-13-pnpm-default-package-manager.md)).
 
-- `@dcl/protocol` is `link:../protocol` (root) and `link:../../../../protocol` (`sdk-commands`):
+- `@dcl/protocol` is `link:../protocol` in the root manifest:
   the install links `library/protocol`, so the generated components, scene APIs and `out-ts` types come
   from the one proto source. `make install` builds the protocol package first; `update-protocol`
   is gone, since there is nothing to bump.
-- `make prepare` pins `@dcl/protocol` in the packed manifests to `PROTOCOL_VERSION`, which the
-  caller must set (the publish job's value; `sdk.yml` packs with a `0.0.0-unpublished.<sha>` that
-  says what it is), so a tarball never names a local link or a version that is not on npm
-  (`scripts/check-no-local-packages.cjs`, run by `sdk.yml`).
+- No published package depends on `@dcl/protocol`. `@dcl/sdk-commands`, the one that used it at
+  runtime, generates the two messages it needs (`local_development`, realm `about`) into
+  `src/generated` during `make build`, with the options `@dcl/protocol`'s own `out-ts` uses, so the
+  SDK ships the protocol at its commit and never waits on a protocol release.
+- `make prepare` pins `@dcl/hashing` in the packed `sdk-commands` manifest to `HASHING_VERSION`,
+  which the caller must set. `sdk.yml` sets it to the version on npm whose `hashV1`, the one
+  function `sdk-commands` uses, returns what `library/hashing` does; the pin moves when that
+  changes, after the library is published. A tarball never names a local link or a version that is
+  not on npm (`scripts/check-no-local-packages.cjs`, run by `sdk.yml`).
 - `AvatarShape` and `AvatarEquippedData` keep `forceRender` optional for scenes: the protocol's
   `repeated` field would otherwise make the generated type require it, so the two extended
   components from the SDK's `experimental-bevy` branch serialize an omitted value as `[]`, and a
@@ -40,12 +45,37 @@ It installs with pnpm as one workspace with a single lockfile
   on `PBGltfContainerLoadingState` are new required fields, and `PBMaterial`, `PBMeshCollider` and
   `PBMeshRenderer` gain a `$case: 'gltf'` variant (an exhaustive `switch` stops compiling). The
   first release from here lists these.
+- The SDK here is `decentraland/js-sdk-toolchain` `main` plus the part of its `experimental-bevy`
+  layer the bridge scene uses: pointer drag events and the react-ecs drag listeners, `videoTexture`
+  on a UI background and `getPlayer().forceRender`, each documented as supported only by the Bevy
+  Explorer. The rest of that layer (react-ecs scroll and render-to-texture, `setGltfMesh`, shaped
+  raycasts) has no helper here; its fields stay in `library/protocol` and the generated components.
+- Nine components only the Bevy Explorer implements are not exported by the SDK: `GltfNode`,
+  `GltfNodeState`, `UiScrollResult`, `UiCanvas`, `GlobalLight`, `AvatarMovement`,
+  `AvatarMovementInfo`, `UiLayoutFeedback` and `ExplorerConfiguration`. Their ids are in
+  `NON_EXPOSED_LIST` (`scripts/protocol-buffer-generation/index.ts`), beside `MapPin`; the
+  protocol still defines them. A scene that needs one builds with the `experimental-bevy` SDK.
 - `protoc` comes from `SDK_PROTOC` when set: a name on `PATH` (`SDK_PROTOC=protoc` in the Nix
   shell, or brew's on a Mac without Rosetta) or a path, resolved to an absolute path. It is not
   `PROTOC`, which prost reads for the Rust crates. CI leaves it unset and uses the SDK's download
   of 3.20.1, so generated code in a PR comes from that version.
-- `.github/workflows/sdk.yml` runs lint, build, test, the CLI smoke test and `prepare` on changes
-  under `library/js-sdk-toolchain` or `library/protocol`. It publishes nothing.
+- `.github/workflows/sdk.yml` runs lint, build, test, the CLI smoke test and `prepare` on pull
+  requests that change `library/js-sdk-toolchain` or `library/protocol`.
+  `.github/workflows/sdk-release.yml` calls the same jobs on a push to `main` and, when the push
+  changed `library/js-sdk-toolchain` or `library/protocol`, publishes `ecs`,
+  `js-runtime`, `react-ecs`, `sdk-commands` and `sdk` (`playground-assets` is built and tested, not
+  published) as `@dcl/*` under the `next` dist-tag, as `<latest patch+1>-<run>.commit-<sha>`
+  (oddish derives the version from the registry's `latest`; the manifests keep `7.0.0` as upstream
+  does, and `npm publish` ships the tarballs through trusted publishing).
+  Versioned releases are cut by hand ([releases ADR](2026-11-09-releases-per-scope.md)). The
+  manifests name this repository, which trusted publishing requires.
+- A pull request from this repository publishes the tarballs its run built as
+  `@dcl-regenesislabs/*` under the shared `pr` dist-tag, one tag for every PR, and the PR's CI
+  status comment names the exact version to install; fork pull requests publish nothing. The run
+  renames the five manifests before packing. The code and the dependency keys keep the `@dcl`
+  names, and `pnpm pack` writes a `workspace:*` sibling whose name differs from its key as an npm
+  alias (`npm:@dcl-regenesislabs/ecs@<version>`). A scene
+  installs `@dcl/sdk@npm:@dcl-regenesislabs/sdk@<version>` and keeps importing `@dcl/sdk`.
 - Snapshots (`test/snapshots/**`, `playground-assets.api.md`) are regenerated locally
   (`make update-snapshots`) whenever `library/protocol` changes what `@dcl/ecs` generates; the
   snapshot test fails on a stale one (with `UPDATE_SNAPSHOTS` it also rewrites it) and the
@@ -55,23 +85,25 @@ It installs with pnpm as one workspace with a single lockfile
 
 - One pull request can change a proto, the engine and the SDK together; the SDK release that
   follows ships the protocol at that commit.
-- `@dcl/sdk@next` describes the Explorer dcl-one ships once publishing moves here; the bridge and
-  movement scenes stop needing the `experimental-bevy` dist-tag.
+- `@dcl/sdk@next` describes the Explorer dcl-one ships once publishing moves here; the bridge
+  scene stops needing the `experimental-bevy` dist-tag.
 - `library/` holds a second JavaScript project that is not a `dcl-*` crate (as `catalyst-api/` and
   `protocol/` already are); its lockfile and `node_modules` stay its own.
 
 ## Follow-ups
 
-1. Publish the SDK packages from here (oddish, trusted publishing re-pointed, `next` on `main`,
-   `sdk/<version>` releases) and stop publishing from `decentraland/js-sdk-toolchain`; the PR-build
-   tooling (S3 tarballs, the "Test this pull request" comment, the e2e realm, the playground).
-   The first release notes carry the narrowed types above.
-2. The `auth-server` branch as a dcl-one branch published through a manual `publish-tag` run.
-3. Fold the rest of the SDK's `experimental-bevy` layer (react-ecs scroll and render-to-texture,
-   drag events, `setGltfMesh`, …) into `main` here.
+1. PR previews publish from here. Releases and `next` are wired in `sdk-release.yml` and still
+   need: the `npm-release` environment, a trusted publisher on each `@dcl` package naming that
+   workflow and environment, and `decentraland/js-sdk-toolchain` to stop publishing. Then the rest of the PR tooling (the e2e realm, the playground). The first
+   release notes carry the narrowed types above.
+2. The `auth-server` branch is a dcl-one branch: `main` plus the authoritative-server SDK. A push
+   to it publishes `@dcl/*` under the `auth-server` dist-tag from `sdk-release.yml`. Still needed:
+   `decentraland/js-sdk-toolchain` to stop publishing that tag, and a scheduled merge of `main`
+   into the branch.
+3. Build the bridge scene from the SDK here, in place of the pinned snapshot published from
+   `decentraland/js-sdk-toolchain`'s `experimental-bevy`.
 4. `make lint-packages` (inherited) checks only the root manifest: its `packages/*/package.json`
    glob does not match `packages/@dcl/*`.
 5. Sites, the template games, the editor scene and the scene CLI templates consume one SDK version.
-6. Catch up with what `decentraland/js-sdk-toolchain` `main` merged after the snapshot: the
-   skybox, sun and fog components (its #1638) need `library/protocol` to carry the protocol's
-   #495 first; `TouchScreenControls.showDefault()` (its #1649) does not.
+6. A commit `decentraland/js-sdk-toolchain` lands on `main` or `experimental-bevy` is missing here
+   until it is ported, for as long as that repository takes changes.

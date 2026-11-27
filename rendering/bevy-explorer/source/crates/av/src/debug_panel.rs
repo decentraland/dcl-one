@@ -59,6 +59,8 @@ fn media_retry_delay(mut cmd: ConsoleCommand<MediaRetryDelay>) {
 
 /// One scene media player as `/media_state` reads it, with or without `--audio`.
 pub(crate) struct MediaRead<'a, T: AVPlayer> {
+    /// the player's own entity
+    pub(crate) id: Entity,
     pub(crate) entity: &'a SceneEntity,
     pub(crate) player: &'a T,
     /// its scene is one the player stands in
@@ -97,19 +99,18 @@ impl<T: AVPlayer> MediaPlayers<'_, '_, T> {
     }
 
     pub(crate) fn iter(&self) -> impl Iterator<Item = MediaRead<'_, T>> + '_ {
-        self.players
-            .iter()
-            .map(
-                |(_ent, player, entity, in_scene, scheduled, transform)| MediaRead {
-                    entity,
-                    player,
-                    in_scene,
-                    scheduled,
-                    transform,
-                    #[cfg(any(feature = "ffmpeg", feature = "html"))]
-                    sinks: self.sinks.get(_ent).ok(),
-                },
-            )
+        self.players.iter().map(
+            |(id, player, entity, in_scene, scheduled, transform)| MediaRead {
+                id,
+                entity,
+                player,
+                in_scene,
+                scheduled,
+                transform,
+                #[cfg(any(feature = "ffmpeg", feature = "html"))]
+                sinks: self.sinks.get(id).ok(),
+            },
+        )
     }
 }
 
@@ -136,6 +137,7 @@ fn media_state(
     player: Query<Entity, With<PrimaryUser>>,
     containing: ContainingScene,
     emitters: crate::audio_state::Emitters,
+    receivers: Query<&livestream_manager::ReceiverImage>,
     #[cfg(any(feature = "ffmpeg", feature = "html"))] images: Res<Assets<Image>>,
 ) {
     let Some(Ok(command)) = cmd.take() else {
@@ -186,6 +188,16 @@ fn media_state(
         item["source"] = json!(source_label(read.player.url()));
         #[cfg(any(feature = "ffmpeg", feature = "html"))]
         add_sink(&mut item, read.sinks, &images);
+        // a LiveKit video stream plays through its receiver, not the backend's sinks
+        if let Ok(receiver) = receivers.get(read.id) {
+            item["lastPlaybackState"] = json!(receiver.state.borrow().as_str_name());
+            #[cfg(any(feature = "ffmpeg", feature = "html"))]
+            {
+                item["textureSize"] = json!(images
+                    .get(&receiver.image)
+                    .map(|image| [image.width(), image.height()]));
+            }
+        }
         rows.push(item);
     }
     for read in audio.iter() {
@@ -220,6 +232,9 @@ fn media_state(
 // identifies the source without exposing playback credentials in the panel or console logs.
 pub(crate) fn source_label(source: &str) -> String {
     let source = source.trim();
+    if livestream_manager::is_livekit_video(source) {
+        return String::from("livekit-video stream");
+    }
     if source.starts_with("//") {
         return String::from("remote media");
     }
@@ -281,6 +296,10 @@ mod tests {
             assert!(!source_label(source).contains("private"));
         }
         assert_eq!(source_label("videos/intro.mp4"), "videos/intro.mp4");
+        assert_eq!(
+            source_label("livekit-video://stream:private/TR_private"),
+            "livekit-video stream"
+        );
     }
 
     #[test]

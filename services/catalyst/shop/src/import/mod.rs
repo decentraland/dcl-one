@@ -36,8 +36,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use sqlx::{PgPool, Row};
 
+use super::market::catalogue::{self, Access, Purpose};
 use super::market::listings::offchain_marketplace_v3;
-use super::market::mirrors::{Mirror, require_ready};
+use super::market::mirrors::Mirror;
 use super::market::signed::{require_not_scene_signer, require_signer};
 use super::market::wire::ApiError;
 use super::market::{MarketplaceState, SharedState, is_valid_eth_address};
@@ -45,7 +46,7 @@ use super::policy::{Authoritative, Facts, Reason, Refusal, eligibility, guard_cr
 use super::types::{
     AssetKind, ChainId, ContractRef, ContractRole, EvmAddress, ItemKind, ItemRecord, Lookup,
     ManaUsdRate, ManaWei, Offer, PaymentMethod, SaleKind, Session, SettlementOperation,
-    SignedTrade, TradeAsset, TradeAssetType, parse_decimal,
+    SignedTrade, TradeAsset, TradeAssetType, chain_id_column, parse_decimal,
 };
 
 pub const CHECK_PATH: &str = "/v1/import-checks";
@@ -209,11 +210,17 @@ pub async fn stored_listing(
     let venue_text: String = first.get("venue");
     let venue =
         EvmAddress::parse(&venue_text).unwrap_or(EvmAddress::new(alloy_primitives::Address::ZERO));
-    let chain_id = ChainId(first.get::<i32, _>("chain_id") as u64);
+    let chain_id = ChainId(
+        u64::try_from(first.get::<i32, _>("chain_id"))
+            .map_err(|_| ApiError::internal("stored chain id is negative"))?,
+    );
     let mut sent = Vec::new();
     let mut received = None;
     for r in &rows {
-        let asset_type = TradeAssetType::from_code(r.get::<i16, _>("asset_type") as u64);
+        let asset_type = TradeAssetType::from_code(
+            u64::try_from(r.get::<i16, _>("asset_type"))
+                .map_err(|_| ApiError::internal("stored asset type is negative"))?,
+        );
         let contract = EvmAddress::parse(&r.get::<String, _>("contract_address"))
             .map_err(|e| ApiError::internal(format!("stored asset contract: {e}")))?;
         let value = parse_decimal(&r.get::<Option<String>, _>("value").unwrap_or_default())
@@ -250,7 +257,7 @@ pub struct MirrorFacts {
 }
 
 pub async fn mirror_facts(
-    pool: &PgPool,
+    conn: &mut sqlx::PgConnection,
     chain_id: ChainId,
     contract: EvmAddress,
     item_id: Option<alloy_primitives::U256>,
@@ -258,8 +265,8 @@ pub async fn mirror_facts(
     let contract_text = contract.to_string().to_lowercase();
     let collection = sqlx::query("SELECT creator, minters, managers FROM shop.collections WHERE contract_address = $1 ORDER BY (chain_id = $2) DESC LIMIT 1")
         .bind(&contract_text)
-        .bind(chain_id.0 as i32)
-        .fetch_optional(pool)
+        .bind(chain_id_column::<i32>(chain_id.0).map_err(|e| ApiError::internal(e.to_string()))?)
+        .fetch_optional(&mut *conn)
         .await?;
     let mut sellers = Vec::new();
     let role = match &collection {
@@ -280,8 +287,11 @@ pub async fn mirror_facts(
             let row = sqlx::query("SELECT creator, item_type, chain_id FROM shop.items WHERE contract_address = $1 AND item_id = $2::numeric ORDER BY (chain_id = $3) DESC LIMIT 1")
                 .bind(&contract_text)
                 .bind(item_id.to_string())
-                .bind(chain_id.0 as i32)
-                .fetch_optional(pool)
+                .bind(
+                    chain_id_column::<i32>(chain_id.0)
+                        .map_err(|e| ApiError::internal(e.to_string()))?,
+                )
+                .fetch_optional(&mut *conn)
                 .await?;
             match row {
                 Some(r) => {
@@ -297,7 +307,10 @@ pub async fn mirror_facts(
                         ItemKind::Wearable
                     };
                     Lookup::Found(ItemRecord {
-                        chain_id: ChainId(r.get::<i32, _>("chain_id") as u64),
+                        chain_id: ChainId(
+                            u64::try_from(r.get::<i32, _>("chain_id"))
+                                .map_err(|_| ApiError::internal("mirrored chain id is negative"))?,
+                        ),
                         collection: contract,
                         item_id,
                         kind,
@@ -323,7 +336,7 @@ pub fn proposed_trade(
     signer: EvmAddress,
     sent: Vec<TradeAsset>,
 ) -> Option<SignedTrade> {
-    let market = offchain_marketplace_v3(chain_id.0 as i64)?;
+    let market = offchain_marketplace_v3(i64::try_from(chain_id.0).ok()?)?;
     let venue = ContractRef {
         chain_id,
         contract: EvmAddress::parse(market.address).ok()?,
@@ -482,13 +495,16 @@ async fn check_inner(
     body: ImportCheckBody,
 ) -> Result<Response, Response> {
     require_not_scene_signer(headers).map_err(IntoResponse::into_response)?;
-    let signer_text = require_signer(headers, "post", CHECK_PATH)
-        .await
-        .map_err(IntoResponse::into_response)?;
+    let signer_text = require_signer(
+        super::market::signed::fresh(state.eip1654.as_deref()),
+        headers,
+        "post",
+        CHECK_PATH,
+    )
+    .await
+    .map_err(IntoResponse::into_response)?;
     let signer =
         EvmAddress::parse(&signer_text).map_err(|_| bad("the signer is not an address"))?;
-    require_ready(state, Mirror::Collections).await?;
-    require_ready(state, Mirror::Items).await?;
     let listing = match &body.old_trade_id {
         Some(id) => {
             let listing = stored_listing(&state.pool, id)
@@ -541,14 +557,28 @@ async fn check_inner(
         return Err(bad("the listing sends no asset"));
     };
     let item_id = (first.asset_type == TradeAssetType::CollectionItem).then_some(first.value);
-    let facts = mirror_facts(&state.pool, chain_id, first.contract, item_id)
-        .await
-        .map_err(IntoResponse::into_response)?;
+    // An unsupported chain is the caller's error, refused before any read.
     let Some(trade) = proposed_trade(chain_id, signer, sent) else {
         return Err(bad(format!(
             "no off-chain marketplace is deployed on chain {}",
             chain_id.0
         )));
+    };
+    // Eligibility authorizes a listing: the catalogue's authorize read, whose
+    // snapshot the facts are read in. It opens after the listing's own read
+    // and closes before the rate's, so no pool work waits on its connection.
+    let facts = {
+        let mut read = catalogue::begin(
+            state,
+            Purpose::Authorize,
+            &[Mirror::Collections, Mirror::Items],
+            None,
+            Access::ReadOnly,
+        )
+        .await?;
+        mirror_facts(&mut read.tx, chain_id, first.contract, item_id)
+            .await
+            .map_err(IntoResponse::into_response)?
     };
     let mut check = decide(signer, trade, &facts);
     match current_rate(&state.pool)

@@ -52,8 +52,8 @@ use super::metrics as worlds_metrics;
 use super::partial;
 use super::store::{self, SceneDeployment};
 use super::upload_limits::DeployRejection;
-use super::upload_spool::{self, SpooledFile};
 use super::{SharedState, upload_limits};
+use catalyst_storage::upload_spool::SpooledFile;
 
 /// Payload cap for a deployment: every file chunk and field value, multipart framing excluded.
 pub const MAX_UPLOAD_SIZE_BYTES: usize = 350 * 1024 * 1024;
@@ -247,7 +247,7 @@ pub async fn deploy_entity(State(state): State<SharedState>, request: Request) -
 
     let mut bytes_lease = upload_limits::reserve_in_flight();
     let mut files_lease = upload_limits::reserve_in_flight_files();
-    let spool_root = upload_spool::spool_root(&state.storage);
+    let spool_root = super::spool_root(&state.storage);
     let receiving = Instant::now();
     let received = |outcome: &'static str, bytes: u64| {
         worlds_metrics::upload_received(
@@ -644,10 +644,25 @@ async fn authenticate(
     .await
     {
         Ok(()) => Address::parse(&signer).map_err(|_| refused(format!("Invalid signer: {signer}"))),
-        Err(AuthError::Eip1654ValidationFailed(e)) => Err(unavailable(format!(
+        Err(e) => Err(chain_refusal(e, &chain, entity_id, refused)),
+    }
+}
+
+/// A chain the verifier did not pass: 503 when a contract-wallet check could
+/// not run, 429 when the client source's budget refused one before the RPC,
+/// otherwise `refused` with `@dcl/crypto`'s words.
+fn chain_refusal(
+    err: AuthError,
+    chain: &AuthChain,
+    entity_id: &str,
+    refused: impl FnOnce(String) -> Refusal,
+) -> Refusal {
+    match err {
+        AuthError::Eip1654ValidationFailed(e) => unavailable(format!(
             "The auth chain could not be verified right now: {e}"
-        ))),
-        Err(e) => Err(refused(crypto_message(&chain, entity_id, &e))),
+        )),
+        e @ AuthError::Eip1654RateLimited => Refusal(StatusCode::TOO_MANY_REQUESTS, e.to_string()),
+        e => refused(crypto_message(chain, entity_id, &e)),
     }
 }
 
@@ -681,6 +696,7 @@ pub(super) enum Check<'a> {
 
 /// The publish checks in the old service's order. `anchor_ms` dates the timestamp window:
 /// now, or a partial upload's first batch.
+#[allow(clippy::too_many_arguments, reason = "shared publish path")]
 pub(super) async fn validate(
     state: &SharedState,
     mut conn: Option<&mut sqlx::PgConnection>,
@@ -847,7 +863,11 @@ pub(super) async fn validate(
     let name_owner = match &replacement {
         None => None,
         Some(Deploy::Owner) => Some(signer.clone()),
-        Some(Deploy::Scoped(_)) => match state.policy.live_name_owner(&world).await {
+        Some(Deploy::Scoped(_)) => match state
+            .policy
+            .live_name_owner_using(conn.as_deref_mut(), &world)
+            .await
+        {
             Ok(Some(owner)) => Some(owner),
             Ok(None) => {
                 return Err(Refusal(
@@ -923,7 +943,7 @@ pub(super) async fn validate(
     }
     let size: i64 = sizes.values().copied().fold(0, i64::saturating_add);
     // A staging batch that skipped the permission resolves the owner here; it is refused alike.
-    let cap = match conn.as_deref_mut() {
+    let cap = match conn {
         Some(conn) => {
             state
                 .scene_cap_on(
@@ -968,7 +988,10 @@ pub(super) async fn validate(
 }
 
 /// A publish the store refused, or the scene row's creation time (ms).
-#[allow(clippy::result_large_err, clippy::too_many_arguments)] // The refusal is the answer itself.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the publish carries the request, the entity and its validation"
+)]
 pub(super) async fn publish(
     state: &SharedState,
     headers: &HeaderMap,
@@ -1010,7 +1033,10 @@ pub(super) async fn publish(
     .await)
 }
 
-#[allow(clippy::result_large_err, clippy::too_many_arguments)]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the publish carries the request, the entity and its validation"
+)]
 pub(super) async fn persist_publish_on(
     state: &SharedState,
     conn: &mut sqlx::PgConnection,
@@ -1258,7 +1284,6 @@ async fn deploy_entity_inner(
 }
 
 /// The entity JSON of an uploaded or stored entity file, at most [`MAX_ENTITY_FILE_SIZE_BYTES`].
-#[allow(clippy::result_large_err)] // The refusal is the answer itself.
 pub(super) async fn read_entity_file(file: &SpooledFile) -> Result<Value, Response> {
     if file.len() > MAX_ENTITY_FILE_SIZE_BYTES {
         return Err(err_one(entity_file_too_large_error()));
@@ -1270,7 +1295,6 @@ pub(super) async fn read_entity_file(file: &SpooledFile) -> Result<Value, Respon
 }
 
 /// The entity JSON of entity file bytes.
-#[allow(clippy::result_large_err)] // The refusal is the answer itself.
 pub(super) fn parse_entity(bytes: &[u8]) -> Result<Value, Response> {
     if bytes.len() > MAX_ENTITY_FILE_SIZE_BYTES {
         return Err(err_one(entity_file_too_large_error()));
@@ -1285,6 +1309,34 @@ mod tests {
     use serde_json::json;
 
     const NOW_MS: i64 = 1_700_000_000_000;
+
+    /// A contract-wallet check that could not run is a 503, one the client
+    /// source's budget refused a 429, and any other failure the refusal.
+    #[test]
+    fn a_chain_refusal_keeps_unverifiable_and_rate_limited_apart() {
+        let refusal = |err: AuthError| {
+            let Refusal(status, message) = chain_refusal(err, &AuthChain::new(), "bafy", failed);
+            (status, message)
+        };
+        assert_eq!(
+            refusal(AuthError::Eip1654ValidationFailed("rpc down".into())).0,
+            StatusCode::SERVICE_UNAVAILABLE
+        );
+        assert_eq!(
+            refusal(AuthError::Eip1654RateLimited),
+            (
+                StatusCode::TOO_MANY_REQUESTS,
+                "Too many contract-wallet signature checks from this client; retry later".into()
+            )
+        );
+        assert_eq!(
+            refusal(AuthError::Eip1654Rejected {
+                contract: "0x00000000000000000000000000000000000c0de1".into()
+            })
+            .0,
+            StatusCode::BAD_REQUEST
+        );
+    }
 
     #[test]
     fn upload_precheck_compares_against_the_wire_cap() {

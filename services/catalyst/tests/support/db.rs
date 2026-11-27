@@ -20,7 +20,7 @@ pub async fn scratch_database() -> Option<ScratchDb> {
 
 /// A scratch database outside the swept family, for a run that keeps it
 /// (`EXPLORE_PARITY_KEEP_DB`); a later run reuses it by name.
-#[allow(dead_code)]
+#[allow(dead_code, reason = "only the explore parity tests use it")]
 pub async fn kept_database() -> Option<ScratchDb> {
     create("catalyst_kept").await
 }
@@ -52,7 +52,7 @@ async fn create(prefix: &str) -> Option<ScratchDb> {
 
 /// A database an earlier run kept (`EXPLORE_PARITY_KEEP_DB`), with its schema
 /// and data as they are; `teardown` drops it like any scratch database.
-#[allow(dead_code)]
+#[allow(dead_code, reason = "only the explore parity tests use it")]
 pub async fn existing_database(name: &str) -> Option<ScratchDb> {
     let url = std::env::var("CATALYST_TEST_DATABASE_URL").ok()?;
     let base: PgConnectOptions = url

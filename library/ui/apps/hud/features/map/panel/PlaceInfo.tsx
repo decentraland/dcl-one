@@ -21,13 +21,13 @@ import type { DiscoverPlace } from '@explorer-core/features/places/placesApi'
 import { parcelKey, parseParcel, type Vec2 } from '@explorer-core/features/map/mapCoords'
 import type { PlaceView } from '@explorer-core/features/map/navmap'
 import { eventSchedule, eventShareLinks, placeShareLinks } from '@explorer-core/features/map/shareLinks'
-import { MaskIcon } from '../../../design/MaskIcon'
 import tipIcon from '../../../assets/donate/tip.png'
 import { useDonate } from '../../donate/useDonate'
 import { CAT_ICONS, PANEL_ART } from '../mapArt'
 import { ShareMenu } from './ShareMenu'
 import { TextWithLinks } from './TextWithLinks'
 import styles from './MapPanel.module.css'
+import { MaskIcon } from '@dcl/one-ui'
 
 type Tab = 'overview' | 'photos' | 'events'
 
@@ -204,8 +204,8 @@ export interface PlaceInfoProps {
   /** The route the player follows ends at this place. */
   navigating: boolean
   onPlaceChange: (place: DiscoverPlace) => void
-  /** Make this place home; it stays home until another place is set. */
-  onHome: () => void
+  /** Make this place home, or take the home back when it is this place. */
+  onHome?: () => void
   onStartNavigation: () => void
   onStopNavigation: () => void
   onJumpIn: () => void
@@ -335,7 +335,7 @@ export function PlaceInfo({ view, referrer, isHome, navigating, onPlaceChange, o
             size={26}
             onClick={favourite}
           />
-          <ActionButton label="Set as Home" on={isHome} icon={PANEL_ART.homeOutline} iconOn={PANEL_ART.homeSolid} size={26} onClick={() => !isHome && onHome()} />
+          {onHome != null && <ActionButton label="Set as Home" on={isHome} icon={PANEL_ART.homeOutline} iconOn={PANEL_ART.homeSolid} size={26} onClick={onHome} />}
           {donate.visible && (
             <button type="button" className={styles.action} aria-label="Donate" onClick={(e) => donate.open(e.detail === 0 ? 'keyboard' : 'pointer')}>
               <MaskIcon src={tipIcon} size={26} />

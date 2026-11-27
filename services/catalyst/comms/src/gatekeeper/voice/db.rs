@@ -95,6 +95,21 @@ impl VoiceDbConfig {
     }
 }
 
+const ACTIVE_CALL_OF_SQL: &str = "SELECT call_id FROM social.private_voice_chat_participants WHERE address = $3 AND ( \
+                status = 'connected' \
+                OR (status = 'connection_interrupted' AND status_updated_at > $1) \
+                OR (status = 'not_connected' AND joined_at > $2) \
+             ) \
+             ORDER BY CASE status WHEN 'connected' THEN 1 WHEN 'connection_interrupted' THEN 2 WHEN 'not_connected' THEN 3 ELSE 4 END, \
+                      status_updated_at DESC \
+             LIMIT 1";
+
+fn community_voice_presence_sql() -> String {
+    format!(
+        "SELECT EXISTS (SELECT 1 FROM social.community_voice_chat_users WHERE address = $3 AND {CONNECTED_SQL})"
+    )
+}
+
 /// The "still counts as present" predicate over `$1` = the interrupted
 /// cutoff and `$2` = the initial-connection cutoff.
 const CONNECTED_SQL: &str = "(status = 'connected' \
@@ -560,21 +575,12 @@ impl VoiceDb {
     /// The call `address` is currently present in, if any.
     pub async fn active_call_of(&self, address: &Address) -> Result<Option<Uuid>, sqlx::Error> {
         let c = self.cfg.cutoffs();
-        let row: Option<(Uuid,)> = sqlx::query_as(
-            "SELECT call_id FROM social.private_voice_chat_participants WHERE address = $3 AND ( \
-                status = 'connected' \
-                OR (status = 'connection_interrupted' AND status_updated_at > $1) \
-                OR (status = 'not_connected' AND joined_at > $2) \
-             ) \
-             ORDER BY CASE status WHEN 'connected' THEN 1 WHEN 'connection_interrupted' THEN 2 WHEN 'not_connected' THEN 3 ELSE 4 END, \
-                      status_updated_at DESC \
-             LIMIT 1",
-        )
-        .bind(c.interrupted)
-        .bind(c.initial)
-        .bind(address)
-        .fetch_optional(&self.pool)
-        .await?;
+        let row: Option<(Uuid,)> = sqlx::query_as(ACTIVE_CALL_OF_SQL)
+            .bind(c.interrupted)
+            .bind(c.initial)
+            .bind(address)
+            .fetch_optional(&self.pool)
+            .await?;
         Ok(row.map(|(id,)| id))
     }
 
@@ -903,14 +909,12 @@ impl VoiceDb {
         address: &Address,
     ) -> Result<bool, sqlx::Error> {
         let c = self.cfg.cutoffs();
-        sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
-            "SELECT EXISTS (SELECT 1 FROM social.community_voice_chat_users WHERE address = $3 AND {CONNECTED_SQL})"
-        )))
-        .bind(c.interrupted)
-        .bind(c.initial)
-        .bind(address)
-        .fetch_one(&self.pool)
-        .await
+        sqlx::query_scalar(sqlx::AssertSqlSafe(community_voice_presence_sql()))
+            .bind(c.interrupted)
+            .bind(c.initial)
+            .bind(address)
+            .fetch_one(&self.pool)
+            .await
     }
 
     /// Row count per room that still has a present moderator (what the
@@ -988,6 +992,39 @@ pub(crate) fn is_private_room_active(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn lookup_indexes_support_wallet_presence_queries() {
+        let Some(pool) = crate::db::scratch::pool(1).await else {
+            return;
+        };
+        let mut tx = pool.begin().await.unwrap();
+        sqlx::query("SET LOCAL enable_seqscan = off")
+            .execute(&mut *tx)
+            .await
+            .unwrap();
+        let cutoffs = VoiceDbConfig::default().cutoffs();
+        for (statement, index) in [
+            (
+                ACTIVE_CALL_OF_SQL.to_owned(),
+                "private_voice_chat_participants_address_idx",
+            ),
+            (
+                community_voice_presence_sql(),
+                "community_voice_chat_users_address_idx",
+            ),
+        ] {
+            let plan: Vec<String> =
+                sqlx::query_scalar(sqlx::AssertSqlSafe(format!("EXPLAIN {statement}")))
+                    .bind(cutoffs.interrupted)
+                    .bind(cutoffs.initial)
+                    .bind("wallet")
+                    .fetch_all(&mut *tx)
+                    .await
+                    .unwrap();
+            assert!(plan.iter().any(|line| line.contains(index)), "{plan:?}");
+        }
+    }
 
     async fn waiting_on(pool: &PgPool, blocker: i32) -> i32 {
         tokio::time::timeout(std::time::Duration::from_secs(10), async {

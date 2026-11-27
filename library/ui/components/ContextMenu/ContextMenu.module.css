@@ -1,0 +1,217 @@
+/* Figma's bold/menu surface and its bold/menu-item rows (Menu page), as the Explorer HUD draws them: the context
+   menu, the row that opens a list beside it, the menu a kebab button opens and the one opened from a point. These
+   rules sit outside the cascade layer: its rows are native buttons, which a host's own reset would otherwise restyle.
+   No token holds the 2px border, the 36px row, the overlay shadow (Figma elevation/overlay), the pressed row's 5 %
+   white (Figma bg/pressed: --dcl-bg-pressed still holds an older 20 %) or the header's 45 % white. */
+.ctx {
+  /* How far a row's edge sits from the surface's outer edge: a list opened beside a row lines up with it. */
+  --menu-edge: calc(var(--dcl-space-8) + 2px);
+  /* The switch row's small switch (Figma switch, sm): 28 × 18, white 10 % off and the primary action on. */
+  --toggle-w: 28px;
+  --toggle-h: 18px;
+  --toggle-pad: 2px;
+  --toggle-off: var(--dcl-transparencies-white-10);
+  --toggle-on: var(--dcl-action-primary);
+  --toggle-knob: var(--dcl-neutrals-snow);
+  --toggle-knob-shadow: none;
+  box-sizing: border-box;
+  /* As wide as its rows, whatever room it is placed in (a kebab's menu hangs from a button), up to the maximum. */
+  width: var(--menu-width, max-content);
+  min-width: var(--menu-width, 180px);
+  max-width: var(--menu-width, 280px);
+  padding: var(--dcl-space-8);
+  background: var(--dcl-bg-page);
+  border: 2px solid var(--dcl-border-subtle);
+  border-radius: var(--dcl-radius-md);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5);
+  color: var(--dcl-text-primary);
+  font-family: 'Inter Variable', 'Inter', system-ui, -apple-system, sans-serif; /* = HUD --font-family */
+}
+
+/* A long list scrolls past this height. */
+.scroll {
+  max-height: 600px;
+  overflow-y: auto;
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  gap: var(--dcl-space-12);
+  padding: 10px var(--dcl-space-12) var(--dcl-space-12);
+}
+.hinfo {
+  min-width: 0;
+}
+.hname {
+  font-size: 15px;
+  font-weight: 800;
+  color: var(--dcl-text-primary);
+}
+.htag {
+  color: rgba(255, 255, 255, 0.45); /* = HUD --ink-45 */
+  font-weight: 600;
+}
+.wallet {
+  margin-top: 3px;
+  display: inline-block;
+  max-width: 100%;
+  vertical-align: bottom;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  color: var(--dcl-transparencies-white-60);
+  font-size: var(--dcl-font-size-body-xs);
+}
+
+/* Figma's section-title row: label/xs-caps in the secondary text colour. */
+.title {
+  display: flex;
+  align-items: center;
+  min-height: 36px;
+  padding: 0 var(--dcl-space-12);
+  color: var(--dcl-text-secondary);
+  font-size: var(--dcl-font-size-label-xs-caps);
+  font-weight: 600;
+  line-height: 1.25;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+}
+
+.caption {
+  display: flex;
+  align-items: center;
+  gap: var(--dcl-space-8);
+  min-height: 36px;
+  padding: 0 var(--dcl-space-12);
+}
+.captionLabel {
+  min-width: 0;
+  color: var(--dcl-text-secondary);
+  font-size: var(--dcl-font-size-body-xs);
+  font-weight: 600;
+}
+
+/* Figma's divider row: a 1px rule across the rows, in a 10px band. */
+.sep {
+  height: 1px;
+  margin: var(--dcl-space-4) 0 5px;
+  background: var(--dcl-border-subtle);
+}
+
+/* Figma's option row: a 20px icon, the label (body/sm-strong) and what trails it, 36px high. A label too long for
+   one line wraps and the row grows: names people choose (a community's) are never cut. */
+.item {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 36px;
+  display: flex;
+  align-items: center;
+  gap: var(--dcl-space-8);
+  padding: var(--dcl-space-4) var(--dcl-space-12);
+  text-align: left;
+  background: none;
+  border: none;
+  border-radius: var(--dcl-radius-sm);
+  cursor: pointer;
+  color: var(--dcl-text-primary);
+  font-family: inherit;
+  font-size: var(--dcl-font-size-body-sm-strong);
+  font-weight: 600;
+  line-height: 1.5;
+  transition: background 0.1s ease;
+}
+.item:hover {
+  background: var(--dcl-bg-hover);
+}
+.item:active {
+  background: rgba(255, 255, 255, 0.05);
+}
+.icon {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  color: var(--dcl-icon-default);
+}
+.label {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.chev {
+  flex: none;
+  display: flex;
+  color: var(--dcl-text-secondary);
+}
+/* Figma's destructive tone: the label in the system red, the icon in the primary action's. */
+.itemDanger {
+  color: var(--dcl-feedback-error);
+}
+.itemDanger .icon {
+  color: var(--dcl-action-primary);
+}
+
+/* A row that opens a list beside it. The row takes the host menu's row class too: in a ContextMenu its icon and
+   chevron take the menu's look (above), and elsewhere they keep the look of the host row's. */
+.subWrap {
+  position: relative;
+}
+.subRow {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  text-align: left;
+}
+.subIcon {
+  display: inline-flex;
+  flex: none;
+}
+.subChev {
+  flex: none;
+  color: rgba(255, 255, 255, 0.45); /* = HUD --ink-45 */
+  font-size: 1.05rem; /* = HUD --fs-lg */
+}
+/* Beside the row, a 4px gap from the surface it opens from, its first row level with the row. */
+.flyout {
+  --menu-width: initial;
+  position: absolute;
+  top: calc(-1 * var(--menu-edge, 0px));
+  left: calc(100% + var(--menu-edge, 0px));
+  padding-left: var(--dcl-space-4);
+  z-index: 10000; /* = HUD --z-popup */
+}
+/* No room on the right: the list opens on the row's left. */
+.flyoutLeft {
+  left: auto;
+  right: calc(100% + var(--menu-edge, 0px));
+  padding-left: 0;
+  padding-right: var(--dcl-space-4);
+}
+/* No room below: the list's last row lines up with the row. */
+.flyoutUp {
+  top: auto;
+  bottom: calc(-1 * var(--menu-edge, 0px));
+}
+
+/* The menu a kebab button opens: below it, right-aligned. */
+.kebabWrap {
+  position: relative;
+}
+.kebabMenu {
+  position: absolute;
+  top: 100%;
+  right: 0;
+  margin-top: var(--dcl-space-4);
+  z-index: 1;
+}
+
+/* Opened from a point and portaled to the body, so it re-applies the scale its opener is drawn at. */
+.anchored {
+  position: fixed;
+  z-index: 10001; /* = HUD --z-popup + 1 */
+  transform: scale(var(--ui-scale, 1));
+  transform-origin: top left;
+}

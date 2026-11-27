@@ -2,8 +2,9 @@
 // your own passport. Drafts locally and saves once — the engine deploys a new profile version per
 // save, so a field-by-field save would deploy eleven times for one visit.
 
+import { DateField } from '@dcl/one-ui'
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Button, DateField, FieldLabel, Select, TextArea, TextInput, Trash } from '../../design'
+import { Select, TextArea, TextInput, Trash } from '../../design'
 import type { Profile, ProfileEdit, ProfileInfo } from '@explorer-core/engine/protocol'
 import { FIELD_OPTIONS } from '@explorer-core/features/profile/profileFieldOptions'
 import {
@@ -15,6 +16,7 @@ import {
 } from '@explorer-core/features/profile/profileFields'
 import passportStyles from './ProfilePassport.module.css'
 import styles from './ProfileEditForm.module.css'
+import { Button, FieldLabel } from '@dcl/one-ui'
 
 type LinkDraft = { title: string; url: string }
 
@@ -29,16 +31,6 @@ const draftOf = (profile: Profile): Draft => ({
   info: { ...(profile.info ?? {}) },
   links: (profile.links ?? []).map((l) => ({ ...l }))
 })
-
-const trimmedInfo = (info: ProfileInfo): ProfileInfo => {
-  const out: ProfileInfo = {}
-  for (const [key, value] of (Object.entries(info) as [keyof ProfileInfo, string | undefined][]).sort(([a], [b]) =>
-    a.localeCompare(b)
-  )) {
-    if (value != null && value.trim() !== '') out[key] = value.trim()
-  }
-  return out
-}
 
 /** Links as they would be saved: empties dropped, values trimmed, keys in a fixed order — so the
  *  comparison below can't see a difference that is really just the shape the profile came in. */
@@ -56,8 +48,12 @@ function editOf(base: Draft, draft: Draft): ProfileEdit {
   if (draft.description.trim() !== base.description.trim()) edit.description = draft.description.trim()
   const links = trimmedLinks(draft.links)
   if (JSON.stringify(links) !== JSON.stringify(trimmedLinks(base.links))) edit.links = links
-  const info = trimmedInfo(draft.info)
-  if (JSON.stringify(info) !== JSON.stringify(trimmedInfo(base.info))) edit.info = info
+  const info: ProfileInfo = {}
+  for (const { key } of PROFILE_FIELDS) {
+    const value = draft.info[key]?.trim() ?? ''
+    if (value !== (base.info[key]?.trim() ?? '')) info[key] = value
+  }
+  if (Object.keys(info).length > 0) edit.infoPatch = info
   return edit
 }
 
@@ -81,8 +77,9 @@ export function ProfileEditForm({
   /** Filled with the save trigger, so the header's button can fire this form's save. */
   saveRef?: React.MutableRefObject<(() => void) | null>
 }): React.JSX.Element {
-  const [draft, setDraft] = useState<Draft>(() => draftOf(profile))
-  const edit = useMemo(() => editOf(draftOf(profile), draft), [profile, draft])
+  const [base] = useState(() => draftOf(profile))
+  const [draft, setDraft] = useState(base)
+  const edit = useMemo(() => editOf(base, draft), [base, draft])
   const dirty = Object.keys(edit).length > 0
 
   const badLinks = draft.links.some((l) => l.url.trim() !== '' && !isValidLinkUrl(l.url.trim()))
@@ -207,7 +204,7 @@ export function ProfileEditForm({
         })}
       </div>
       {draft.links.length < MAX_LINKS && (
-        <Button
+        <Button appearance="hud"
           variant="secondary"
           size="sm"
           disabled={saving}

@@ -21,6 +21,7 @@ mod room_event;
 mod track_sid;
 mod track_source;
 
+use common::sync::MutexExt;
 use std::{
     error::Error,
     fmt::{Display, Formatter},
@@ -31,6 +32,7 @@ use std::{
 };
 
 use bevy::{platform::collections::HashMap, prelude::*};
+use common::structs::{MicrophoneDevices, MicrophoneInput};
 use futures_channel::mpsc::{UnboundedReceiver, UnboundedSender};
 use media::MediaId;
 use once_cell::sync::OnceCell;
@@ -184,6 +186,8 @@ impl Default for TrackPublishOptions {
 
 #[derive(Debug, Default)]
 pub struct AudioCaptureOptions {
+    /// Preferred over other inputs while present.
+    pub device_id: Option<String>,
     pub auto_gain_control: Option<bool>,
     pub channel_count: Option<u64>,
     pub echo_cancellation: Option<bool>,
@@ -312,6 +316,11 @@ pub enum LivekitCommand {
         track: ObjectId,
         enabled: bool,
     },
+    /// Moves a live track to another input in place (`None`: the system default).
+    SetLocalAudioDevice {
+        track: ObjectId,
+        device: Option<String>,
+    },
     StopLocalAudio {
         request: RequestId,
         track: ObjectId,
@@ -349,6 +358,37 @@ pub enum LivekitEvent {
         available: bool,
         permission: String,
     },
+    /// The browser's audio inputs changed.
+    MicrophoneDevices(Vec<MicrophoneInput>),
+    /// A local audio track captures from this input: after it is created and after each
+    /// restart, including livekit's fallback when its input ends.
+    MicrophoneTrackInput {
+        track: ObjectId,
+        input: TrackInput,
+    },
+    /// A local audio track was stopped.
+    MicrophoneTrackStopped {
+        track: ObjectId,
+    },
+}
+
+/// The input a local audio track captures from.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TrackInput {
+    /// The browser's device id; `"default"` follows the system default.
+    pub device: String,
+    pub label: String,
+}
+
+/// The input each local audio track captures from, by track, from
+/// [`LivekitEvent::MicrophoneTrackInput`].
+#[derive(Resource, Default, Debug)]
+pub struct MicrophoneTrackInputs(HashMap<ObjectId, TrackInput>);
+
+impl MicrophoneTrackInputs {
+    pub fn get(&self, track: ObjectId) -> Option<&TrackInput> {
+        self.0.get(&track)
+    }
 }
 
 /// The page's answer to a request.
@@ -395,7 +435,7 @@ struct PendingGuard(RequestId);
 
 impl Drop for PendingGuard {
     fn drop(&mut self) {
-        PENDING.lock().unwrap().remove(&self.0);
+        PENDING.lock_ignore_poison().remove(&self.0);
     }
 }
 
@@ -415,7 +455,7 @@ async fn request(command: impl FnOnce(RequestId) -> LivekitCommand) -> RoomResul
     };
     let request = NEXT_REQUEST_ID.fetch_add(1, Ordering::Relaxed);
     let (sender, receiver) = oneshot::channel();
-    PENDING.lock().unwrap().insert(request, sender);
+    PENDING.lock_ignore_poison().insert(request, sender);
     let _pending = PendingGuard(request);
     if host.commands.unbounded_send(command(request)).is_err() {
         return Err(RoomError::from("livekit host is gone".to_owned()));
@@ -428,7 +468,7 @@ async fn request(command: impl FnOnce(RequestId) -> LivekitCommand) -> RoomResul
 fn register_room_events(room: RoomId) -> (mpsc::UnboundedReceiver<RoomEvent>, Arc<Mutex<String>>) {
     let (sender, receiver) = mpsc::unbounded_channel();
     let metadata = Arc::new(Mutex::new(String::new()));
-    ROOM_EVENTS.lock().unwrap().insert(
+    ROOM_EVENTS.lock_ignore_poison().insert(
         room,
         RoomChannel {
             events: sender,
@@ -440,13 +480,13 @@ fn register_room_events(room: RoomId) -> (mpsc::UnboundedReceiver<RoomEvent>, Ar
 
 /// Records the metadata the page reported for `room` at connect.
 fn set_room_metadata(room: RoomId, metadata: &str) {
-    if let Some(channel) = ROOM_EVENTS.lock().unwrap().get(&room) {
-        metadata.clone_into(&mut channel.metadata.lock().unwrap());
+    if let Some(channel) = ROOM_EVENTS.lock_ignore_poison().get(&room) {
+        metadata.clone_into(&mut channel.metadata.lock_ignore_poison());
     }
 }
 
 fn unregister_room_events(room: RoomId) {
-    ROOM_EVENTS.lock().unwrap().remove(&room);
+    ROOM_EVENTS.lock_ignore_poison().remove(&room);
 }
 
 pub fn setup_microphone_permission() {
@@ -481,7 +521,7 @@ pub struct LivekitEventReceiver(Option<UnboundedReceiver<LivekitEvent>>);
 pub fn take_event_receiver() -> LivekitEventReceiver {
     let events = HOST
         .get()
-        .and_then(|host| host.events.lock().unwrap().take());
+        .and_then(|host| host.events.lock_ignore_poison().take());
     if events.is_none() {
         warn!("no livekit host: livekit rooms will not connect");
     }
@@ -492,6 +532,8 @@ pub fn take_event_receiver() -> LivekitEventReceiver {
 pub fn dispatch_page_events(
     mut receiver: ResMut<LivekitEventReceiver>,
     mut microphone: ResMut<MicrophoneStatus>,
+    mut microphone_devices: ResMut<MicrophoneDevices>,
+    mut track_inputs: ResMut<MicrophoneTrackInputs>,
 ) {
     let Some(receiver) = receiver.0.as_mut() else {
         return;
@@ -502,7 +544,7 @@ pub fn dispatch_page_events(
                 if let Reply::Connect(Ok(connected)) = &reply {
                     set_room_metadata(connected.room, &connected.metadata);
                 }
-                let sender = PENDING.lock().unwrap().remove(&request);
+                let sender = PENDING.lock_ignore_poison().remove(&request);
                 match sender {
                     Some(sender) => {
                         // the requester may have been aborted
@@ -512,14 +554,14 @@ pub fn dispatch_page_events(
                 }
             }
             LivekitEvent::Room { room, event } => {
-                let mut rooms = ROOM_EVENTS.lock().unwrap();
+                let mut rooms = ROOM_EVENTS.lock_ignore_poison();
                 let Some(channel) = rooms.get(&room) else {
                     debug!("event for unknown room {room}: {event:?}");
                     continue;
                 };
                 // the metadata is written before the event that reports it is forwarded
                 if let RoomEvent::RoomMetadataChanged { metadata } = &event {
-                    channel.metadata.lock().unwrap().clone_from(metadata);
+                    channel.metadata.lock_ignore_poison().clone_from(metadata);
                 }
                 if channel.events.send(event).is_err() {
                     // the engine's LivekitRoom is gone
@@ -532,6 +574,15 @@ pub fn dispatch_page_events(
             } => {
                 microphone.available = available;
                 microphone.permission = permission;
+            }
+            LivekitEvent::MicrophoneDevices(devices) => {
+                microphone_devices.replace(devices);
+            }
+            LivekitEvent::MicrophoneTrackInput { track, input } => {
+                track_inputs.0.insert(track, input);
+            }
+            LivekitEvent::MicrophoneTrackStopped { track } => {
+                track_inputs.0.remove(&track);
             }
         }
     }

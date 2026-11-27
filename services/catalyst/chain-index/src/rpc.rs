@@ -9,15 +9,25 @@ pub const HEADER_BATCH: usize = 100;
 
 #[derive(Debug, thiserror::Error)]
 pub enum RpcError {
+    #[error("{source}")]
+    Counted {
+        requests: usize,
+        source: Box<RpcError>,
+    },
     #[error("RPC request budget exhausted at range ending {upper}")]
     Budget { upper: u64, requests: usize },
     #[error("rpc transport: {0}")]
     Transport(String),
     #[error("rpc returned an error that carries no usable block range: {0}")]
     Rpc(String),
+    /// An answer whose result is not the shape the method returns.
+    #[error("rpc returned a malformed answer: {0}")]
+    Malformed(String),
+    #[error(transparent)]
+    Provider(#[from] crate::http::jsonrpc::RpcError),
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 pub struct RpcLog {
     pub address: String,
     pub topics: Vec<String>,
@@ -80,19 +90,61 @@ pub struct BlockHeader {
 }
 
 /// Ethereum logs and headers over the shared outbound client.
+#[derive(Clone, Copy)]
 pub struct Rpc<'a> {
     http: &'a crate::http::Outbound,
     url: &'a str,
+    /// Counts every HTTP request as it is sent, whatever its outcome.
+    sent: Option<&'a std::sync::atomic::AtomicUsize>,
+    /// One read's own count, kept the same way beside `sent`.
+    also: Option<&'a std::sync::atomic::AtomicUsize>,
+    strict_status: bool,
 }
 
 impl<'a> Rpc<'a> {
     /// The client over another endpoint, for callers that pass their own
     /// filter to [`Rpc::get_logs_matching`].
     pub fn at(http: &'a crate::http::Outbound, url: &'a str) -> Self {
-        Self { http, url }
+        Self {
+            http,
+            url,
+            sent: None,
+            also: None,
+            strict_status: false,
+        }
     }
 
+    /// Preserve HTTP errors for callers that do not need range hints from their bodies.
+    pub fn with_strict_status(mut self) -> Self {
+        self.strict_status = true;
+        self
+    }
+
+    /// The same client, adding one to `sent` for every HTTP request it sends
+    /// (a call or a batch), before the request goes out: a read that fails
+    /// after several requests has still spent them.
+    pub fn counting(self, sent: &'a std::sync::atomic::AtomicUsize) -> Self {
+        Self {
+            sent: Some(sent),
+            ..self
+        }
+    }
+
+    /// The same client, also adding one to `sent` for every HTTP request it
+    /// sends, beside the counter [`Rpc::counting`] gave it: one read's own
+    /// count, retries and failures included.
+    pub fn also_counting(self, sent: &'a std::sync::atomic::AtomicUsize) -> Self {
+        Self {
+            also: Some(sent),
+            ..self
+        }
+    }
+
+    /// One HTTP request about to be sent.
     fn jsonrpc(&self) -> crate::http::jsonrpc::Rpc<'a> {
+        for sent in [self.sent, self.also].into_iter().flatten() {
+            sent.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        }
         crate::http::jsonrpc::Rpc::new(self.http, self.url)
             .with_timeout(RPC_TIMEOUT)
             .with_body_cap(RPC_BODY_CAP)
@@ -109,8 +161,11 @@ impl<'a> Rpc<'a> {
     /// The whole envelope: the log readers act on the `error` message (a
     /// range hint), so the shared client hands it over unread.
     pub async fn call(&self, method: &str, params: Value) -> Result<Value, RpcError> {
-        self.jsonrpc()
-            .envelope(method, params)
+        let rpc = self.jsonrpc();
+        if self.strict_status {
+            return Ok(rpc.envelope_strict_status(method, params).await?);
+        }
+        rpc.envelope(method, params)
             .await
             .map_err(|e| RpcError::Transport(format!("{method}: {e}")))
     }
@@ -131,9 +186,8 @@ impl<'a> Rpc<'a> {
         let number = block["number"]
             .as_str()
             .and_then(hex_to_i64)
-            .filter(|n| *n >= 0)
-            .ok_or_else(|| RpcError::Rpc("invalid finalized number".into()))?
-            as u64;
+            .and_then(|n| u64::try_from(n).ok())
+            .ok_or_else(|| RpcError::Rpc("invalid finalized number".into()))?;
         let hash = block["hash"]
             .as_str()
             .filter(|h| {
@@ -236,27 +290,8 @@ impl<'a> Rpc<'a> {
                     let Some(block) = item.get("result").filter(|r| !r.is_null()) else {
                         continue;
                     };
-                    let number = block
-                        .get("number")
-                        .and_then(Value::as_str)
-                        .and_then(hex_to_i64);
-                    let hash = block
-                        .get("hash")
-                        .and_then(Value::as_str)
-                        .map(str::to_ascii_lowercase);
-                    let timestamp = block
-                        .get("timestamp")
-                        .and_then(Value::as_str)
-                        .and_then(hex_to_i64);
-                    if let (Some(number), Some(hash), Some(timestamp)) = (number, hash, timestamp) {
-                        out.insert(
-                            number as u64,
-                            BlockHeader {
-                                number: number as u64,
-                                hash,
-                                timestamp,
-                            },
-                        );
+                    if let Some(header) = batch_header(block) {
+                        out.insert(header.number, header);
                     }
                 }
             }
@@ -337,9 +372,38 @@ impl<'a> Rpc<'a> {
     }
 }
 
+/// One batched `eth_getBlockByNumber` result; `None` drops it (a negative
+/// number included), and the single-block fallback refetches it.
+fn batch_header(block: &Value) -> Option<BlockHeader> {
+    let field = |k: &str| block.get(k).and_then(Value::as_str);
+    Some(BlockHeader {
+        number: field("number")
+            .and_then(hex_to_i64)
+            .and_then(|n| u64::try_from(n).ok())?,
+        hash: field("hash")?.to_ascii_lowercase(),
+        timestamp: field("timestamp").and_then(hex_to_i64)?,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_batched_header_with_a_negative_number_is_dropped() {
+        let header = |number: &str| {
+            batch_header(&json!({ "number": number, "hash": "0xAB", "timestamp": "0x10" }))
+        };
+        assert_eq!(header("0x-5"), None);
+        assert_eq!(
+            header("0x5"),
+            Some(BlockHeader {
+                number: 5,
+                hash: "0xab".into(),
+                timestamp: 16,
+            })
+        );
+    }
 
     #[test]
     fn reads_the_upper_bound_the_rpc_suggests() {

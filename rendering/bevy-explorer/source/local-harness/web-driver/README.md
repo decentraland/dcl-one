@@ -5,7 +5,9 @@ launches Chrome over the DevTools protocol and gives a test what the standalone'
 and CEF input give it:
 
 - **Console commands.** `console(line)` runs `await window.engine_console_command(line)` in the
-  app frame and returns what it resolves with, or rejects with the page's message. A command whose
+  app frame and returns what it resolves with, or rejects with the page's message. With
+  `{ startScreen: true }` it runs a page command from `window.__dclPageCommands` before the engine
+  starts (the start screen, where `/hud_login` signs in), and rejects any other. A command whose
   document is replaced or closed before it answers (a click that loads the page again) rejects at
   once with the exported `APP_GONE` message; the next command runs in the new document once it is
   ready.
@@ -50,7 +52,8 @@ directory for Chrome's profile that `close()` leaves in place, so the page's sto
 carry over to the next launch with it (one Chrome at a time). Without it each launch has a
 temporary profile that `close()` removes. `ready()` waits for
 a frame of the page's origin with both `window.engine_console_command` and
-`window.__dclTrustedInput`, and for the page to draw it (see "Wire protocol"); it rejects when its
+`window.__dclTrustedInput` (with `{ startScreen: true }`, the page's commands do in place of the
+console), and for the page to draw it (see "Wire protocol"); it rejects when its
 `timeout` (default 120 s) passes first. A page that never draws, such as a minimised headed window,
 makes `ready()` reject at that timeout. `frameTargets()` lists the page and the out-of-process
 iframes.
@@ -60,7 +63,11 @@ iframes.
 exceptions, the browser's own log entries (a request that failed, a worker that would not
 register) and a target that crashed, oldest first, the last 300, each cut at 2000 characters once
 the credentials of the lines run were replaced. `screenshot()` is the page as a
-JPEG. Both are for a boot that does not become ready: what `ready()`'s timeout cannot say. An
+JPEG. Both are for a boot that does not become ready: what `ready()`'s timeout cannot say.
+`resizeView([width, height])` lays the page out at that size in CSS px inside the same window,
+as a resized window would, and `resizeView(null)` returns it to the window's size. It resolves once
+the app frame has drawn two frames at the new size (an app frame that filled the page fills it
+again first, out of process or not), or rejects after `timeout` (default 5 s). An
 error `launch` throws carries the same messages as its `console`. A first navigation the browser
 aborts (`net::ERR_ABORTED`, seen on a browser's first start on a machine) is made once more.
 

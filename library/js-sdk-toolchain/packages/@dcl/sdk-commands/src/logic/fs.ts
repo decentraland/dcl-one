@@ -1,8 +1,9 @@
-import extractZip from 'extract-zip'
-import { resolve } from 'path'
-import { IFileSystemComponent } from '../components/fs'
-import { IFetchComponent } from '../components/fetch'
-import { CliComponents } from '../components'
+import { promises as fsPromises } from 'fs'
+import { dirname, join, resolve, sep } from 'path'
+import { readZip } from './zip'
+import type { IFileSystemComponent } from '../components/fs'
+import type { IFetchComponent } from '../components/fetch'
+import type { CliComponents } from '../components'
 
 /**
  * Check's if directory is empty
@@ -37,15 +38,51 @@ export async function download(
  */
 export async function extract(path: string, dest: string): Promise<{ destPath: string; topLevelFolders: string[] }> {
   const destPath = resolve(dest)
-  const topLevelFolders = new Set<string>()
-  await extractZip(resolve(path), {
-    dir: destPath,
-    onEntry(entry, _zipfile) {
-      const topLevel = entry.fileName.split('/')[0]
-      topLevelFolders.add(topLevel)
+  // All names are checked before the first write, so a bad entry leaves no file behind. Links are skipped.
+  const entries = readZip(await fsPromises.readFile(resolve(path)))
+    .map((entry) => ({ ...entry, parts: entryParts(entry.name) }))
+    .filter((entry) => entry.parts.length > 0 && (entry.mode & TYPE_MASK) !== TYPE_LINK)
+  await fsPromises.mkdir(destPath, { recursive: true })
+  const root = await fsPromises.realpath(destPath)
+  for (const entry of entries) {
+    const target = join(root, ...entry.parts)
+    const folder = entry.name.endsWith('/') || (entry.mode & TYPE_MASK) === TYPE_FOLDER
+    await makeFolder(root, folder ? target : dirname(target), entry.name)
+    if (folder) continue
+    if ((await fsPromises.lstat(target).catch(() => undefined))?.isFile() === false) {
+      throw new Error(`zip entry would replace something that is not a file: ${entry.name}`)
     }
-  })
-  return { destPath, topLevelFolders: Array.from(topLevelFolders) }
+    await fsPromises.writeFile(target, entry.data, { mode: entry.mode & 0o777 || 0o666 })
+  }
+  return { destPath, topLevelFolders: Array.from(new Set(entries.map((entry) => entry.parts[0]))) }
+}
+
+const TYPE_MASK = 0o170000
+const TYPE_LINK = 0o120000
+const TYPE_FOLDER = 0o040000
+
+/**
+ * The path parts of a zip entry name, which must be relative and `/`-separated. Windows drops the
+ * dots and spaces at the end of a name, so a part of only dots and spaces is `.` or `..` there.
+ */
+function entryParts(name: string): string[] {
+  if (name === '' || /[\\\0]/.test(name) || name.startsWith('/') || /^[a-zA-Z]:/.test(name)) {
+    throw new Error(`invalid zip entry name: ${name}`)
+  }
+  const parts = name.split('/').filter((part) => part !== '' && part !== '.')
+  if (parts.some((part) => /^[. ]+$/.test(part))) throw new Error(`zip entry escapes the destination: ${name}`)
+  return parts
+}
+
+/** Only the nearest folder that exists can be a link: extract makes the folders below it, and no link. */
+async function makeFolder(root: string, folder: string, name: string) {
+  let existing = folder
+  while (!(await fsPromises.lstat(existing).catch(() => undefined))) existing = dirname(existing)
+  const real = await fsPromises.realpath(existing)
+  if (real !== root && !real.startsWith(root + sep)) {
+    throw new Error(`zip entry goes through a link out of the destination: ${name}`)
+  }
+  await fsPromises.mkdir(folder, { recursive: true })
 }
 
 /**

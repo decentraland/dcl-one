@@ -187,9 +187,9 @@
 }
 
 .person {
-  display: flex;
-  align-items: center;
-  gap: var(--dcl-space-12);
+  display: grid;
+  gap: var(--dcl-space-8);
+  min-width: 0;
   padding: var(--dcl-space-12) var(--dcl-space-24);
   border-top: 1px solid var(--dcl-transparencies-white-10);
 }
@@ -252,4 +252,88 @@
   .details {
     max-height: none;
   }
+}
+
+.pageMedia {
+  min-height: 45svh;
+}
+
+.pageImage {
+  max-height: 85svh;
+}
+
+.pageDetails {
+  max-height: none;
+}
+
+.pageDetailsScroll {
+  overflow: visible;
+}
+
+.photoUnavailable {
+  display: grid;
+  justify-items: center;
+  gap: var(--dcl-space-12);
+  padding: var(--dcl-space-48) var(--dcl-space-24);
+}
+
+.personIdentity {
+  display: flex;
+  align-items: center;
+  gap: var(--dcl-space-12);
+  min-width: 0;
+}
+
+.wearableSummary {
+  margin: var(--dcl-space-8) 0;
+  color: var(--dcl-text-link);
+  cursor: pointer;
+}
+
+.wearableSummary:focus-visible {
+  outline: 2px solid var(--dcl-neutrals-snow);
+  outline-offset: 2px;
+}
+
+.wearables {
+  display: grid;
+  gap: var(--dcl-space-8);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.wearable {
+  display: flex;
+  align-items: center;
+  gap: var(--dcl-space-8);
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.wearableImage {
+  width: var(--dcl-space-32);
+  height: var(--dcl-space-32);
+  flex-shrink: 0;
+}
+
+.announcement {
+  position: absolute;
+  z-index: 1;
+  right: var(--dcl-space-16);
+  bottom: var(--dcl-space-16);
+  display: grid;
+  gap: var(--dcl-space-4);
+  max-width: calc(100% - 2 * var(--dcl-space-16));
+  overflow-wrap: anywhere;
+}
+
+.announcementVisible {
+  padding: var(--dcl-space-8) var(--dcl-space-12);
+  border-radius: var(--dcl-radius-md);
+  background: var(--dcl-neutrals-pale-black);
+}
+
+.copyFallback {
+  user-select: all;
 }

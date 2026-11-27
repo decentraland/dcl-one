@@ -82,6 +82,21 @@ module.exports.setSetting = async function(name, value) {
     await op_set_setting(name, value);
 }
 
+// the settings list (as getSettings): the list now, then again whenever a value or choice changes
+module.exports.getSettingsStream = async function() {
+  const rid = await Deno.core.ops.op_get_settings_stream();
+
+  async function* streamGenerator() {
+    while (true) {
+      const next = await Deno.core.ops.op_read_settings_stream(rid);
+      if (next === null) break;
+      yield next;
+    }
+  }
+
+  return streamGenerator();
+}
+
 module.exports.kernelFetch = async function (body) { 
     const headers = await Deno.core.ops.op_kernel_fetch_headers(body.url, body.init?.method, body.meta);
 
@@ -116,9 +131,16 @@ module.exports.kernelFetch = async function (body) {
 //   profileExtras?: {field: value}
 //   nameColor: Color3
 // }
-// => deployed version
+// Resolves with the saved version. An engine rejection carries its last confirmed profile.
 module.exports.setAvatar = async function(avatar) {
-    return await Deno.core.ops.op_set_avatar(avatar)
+    const owner = op_get_current_login()
+    if (!owner) throw Object.assign(new Error("No player profile to edit"), { accountChanged: true })
+    const result = await Deno.core.ops.op_set_avatar(owner, avatar)
+    if ('Err' in result) {
+        const { message, profile, accountChanged } = result.Err
+        throw Object.assign(new Error(message), { profile, accountChanged })
+    }
+    return result.Ok
 }
 
 // signs and deploys the local player's catalyst `outfits` entity; refused when `address` is not
@@ -247,6 +269,7 @@ module.exports.liveSceneInfo = async function() {
 // { 
 //   realm: string, // about_url (e.g. `realm-provider.decentraland.org/main`)
 //   parcel: Vector2,
+//   pinned: bool, // false = the signed-in account has no home
 // }
 module.exports.getHomeScene = async function() {
     return await Deno.core.ops.op_get_home_scene()
@@ -260,6 +283,10 @@ module.exports.setHomeScene = async function(args) {
     await Deno.core.ops.op_set_home_scene(args.realm, args.parcel)
 }
 
+module.exports.clearHomeScene = async function() {
+    await Deno.core.ops.op_clear_home_scene()
+}
+
 // { preset: string, layer: number, feet: Vector3 } draws the lobby's stage around the preview
 // avatar for the camera on that layer; null takes it down. Bridge (super-user) scene only.
 module.exports.setLobbyStage = async function(stage) {
@@ -270,6 +297,11 @@ module.exports.setLobbyStage = async function(stage) {
 // the engine: the service's override, else its composition from the base domain
 module.exports.getServiceUrls = async function() {
     return Object.fromEntries(await Deno.core.ops.op_get_service_urls())
+}
+
+// string[]: the official wallets the nametags mark, lowercase 0x addresses
+module.exports.getOfficialWallets = async function() {
+    return await Deno.core.ops.op_get_official_wallets()
 }
 
 // {
@@ -392,6 +424,32 @@ module.exports.sendChatReaction = function(channel, messageId, emoji, remove) {
   Deno.core.ops.op_send_chat_reaction(channel, messageId, emoji, remove ?? false)
 }
 
+// get situational reactions as they play (the local user's included) as a stream; nothing
+// arrives while the "Chat Reactions" setting is off
+// type Reaction = {
+//   from: string,
+//   emoji: string,
+// }
+module.exports.getReactionStream = async function() {
+  const rid = await Deno.core.ops.op_get_reaction_stream();
+
+  async function* streamGenerator() {
+    while (true) {
+      const next = await Deno.core.ops.op_read_reaction_stream(rid);
+      if (next === null) break;
+      yield next;
+    }
+  }
+
+  return streamGenerator();
+}
+
+// the local user reacts with an emoji, shown over their avatar; an emoji the wire has no
+// index for does nothing
+module.exports.sendReaction = function(emoji) {
+  Deno.core.ops.op_send_reaction(emoji)
+}
+
 module.exports.quit = function() {
     Deno.core.ops.op_quit();
 }
@@ -507,7 +565,8 @@ module.exports.setMicEnabled = function(enabled) {
     Deno.core.ops.op_set_mic_enabled(enabled);
 }
 
-// [{ userId: string, hideAvatar: bool, hideProfile: bool }]
+// [{ userId: string, hideAvatar: bool, hideProfile: bool, pulseAbsent: bool }]
+// An entry can report Pulse absence with both hide flags false.
 module.exports.getAvatarModifiers = async function() {
     return await Deno.core.ops.op_get_avatar_modifiers();
 }

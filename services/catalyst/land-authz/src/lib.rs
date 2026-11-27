@@ -13,37 +13,28 @@
 //! earlier ones. Consumers: the content deploy validator and `worlds::policy`
 //! through [`can_deploy`] / [`can_deploy_batch`] / [`owns_land_at`], comms'
 //! scene permissions and the `lands-permissions` route through the old
-//! lambdas paths.
+//! lambdas paths. Shop's `/v1/activity` reads the log's transfers, with their
+//! senders and transactions, by shared SQL.
 //!
-//! Where each consumer reads:
+//! Where each consumer reads: the **index** alone, once it is ready
+//! ([`indexer::index_ready`]); before that, or with no published fold, no
+//! source answers (there is no subgraph fallback):
 //! - `GET /lambdas/parcels/{x}/{y}/operators` (comms' `COMMS_LAND_OPERATORS_URL`
-//!   shape): **index** once [`indexer::index_ready`]; before that the
-//!   land-manager subgraph (`LAND_SUBGRAPH_URL`, `chain_index::land_graph`),
-//!   never owner-only presented as the operators; the unavailable envelope
-//!   (`Source::LandAuthzIndex`) without it.
-//! - `GET /lambdas/users/{address}/lands-permissions`: **index** (the
-//!   `token_right_update_operator_idx` reverse lookup, paged); before
-//!   readiness the land-manager subgraph, else the envelope.
+//!   shape): the index; the unavailable envelope (`Source::LandAuthzIndex`)
+//!   before it is ready.
+//! - `GET /lambdas/users/{address}/lands-permissions`: the index (the
+//!   `token_right_update_operator_idx` reverse lookup, paged); the envelope
+//!   before it is ready.
 //! - `GET /lambdas/users/{address}/parcels/{x}/{y}/permissions`: five
-//!   booleans from the **index** once ready; before that from the
-//!   land-manager subgraph's operators, as lamb2 computes them; with
-//!   neither, lamb2's bare 500. The `x-land-authz-source` header names the
-//!   source.
-//! - `POST .../parcels/permissions` (the batch, this tree's own): **index**
-//!   for every leg once ready; before that the owner leg from the
-//!   marketplace subgraph reader (`chain_index::graph::parcels_at`) and the
-//!   four operator legs undecided: denied for the write decision
-//!   (fail-closed, the old validator's behaviour with no resolver attached)
-//!   and serialized as `null` (the marketplace subgraph's Parcel and Estate
-//!   carry no operator, updateOperator, updateManager or approvedForAll);
-//!   the `x-land-authz-source` header says which. Envelope when neither
-//!   source exists.
+//!   booleans from the index; the envelope before it is ready. The
+//!   `x-land-authz-source` header names the source.
+//! - `POST .../parcels/permissions` (the batch, this tree's own): every leg
+//!   from the index; the envelope before it is ready.
 //! - `GET /lambdas/land-authz/status`: the cursor row, readiness and lag.
 //! - [`can_deploy`]: the decision the batch route reports, for the write
-//!   paths; once the index is ready, the single permissions route's flags
-//!   too. Before that the write paths stay owner-only and fail-closed, so a
-//!   subgraph-reported operator leg does not yet grant a deploy;
-//!   [`owns_land_at`]: the LAND leg of `worlds::policy`.
+//!   paths, and [`owns_land_at`]: the LAND leg of `worlds::policy`. Before
+//!   the index is ready both answer [`Unavailable::NotReady`] and the write
+//!   is refused (fail-closed).
 //!
 //! What changed against the old crate: its resolver joined
 //! `squid_marketplace.parcel` and `.estate` for coordinates, ownership and
@@ -54,12 +45,15 @@
 //! The publish rule is the old one: a reader uses this index only after
 //! `index_cursor.folded_block` is set (a completed full replay, folded within
 //! 25 blocks of the confirmed head, which trails the chain head by
-//! `LAND_AUTHZ_CONFIRMATIONS`) and `folded_at` is at most 30 minutes old;
-//! until then the marketplace subgraph reader (`marketplace::graph::parcels_at`,
-//! `owns_land_at`) answers the owner leg for the write paths and the
-//! land-manager subgraph answers the read routes above. The job runs only
-//! with `LAND_AUTHZ_INDEX_ENABLED=true` and `ETH_RPC_URL`; off, the readers
-//! keep using the fallbacks.
+//! `LAND_AUTHZ_CONFIRMATIONS`, 12 by default). The fold job runs every
+//! `LAND_AUTHZ_INDEX_INTERVAL_SECS` (120 by default). The public LAND Lambdas
+//! routes use folds up to ten minutes old on the database clock;
+//! `/lambdas/land-authz/status` reports their window and the fold's age;
+//! outside it they answer the unavailable envelope. Deploy authorization and
+//! its batch permissions preview use the 30-minute fold window. The job runs
+//! only with `LAND_AUTHZ_INDEX_ENABLED=true` and `ETH_RPC_URL`; off, the
+//! readers answer from a fold another process publishes into the same
+//! database, and are unavailable without one.
 
 // The crates this one builds on, under their module names (AGENTS.md).
 pub(crate) use catalyst_chain_index as chain_index;
@@ -71,6 +65,7 @@ pub(crate) use dcl_http as http;
 
 pub mod events;
 pub mod indexer;
+pub mod lands_access;
 pub mod resolve;
 pub mod routes;
 
@@ -83,9 +78,19 @@ use std::time::Duration;
 
 use sqlx::PgPool;
 
-use crate::chain_index::ChainIndex;
 use crate::jobs::{Jobs, PeriodicCfg};
 pub use indexer::{Cursor, HEAD_LAG_BLOCKS, READY_WINDOW, index_ready};
+
+// Public reads allow ten minutes. At the maximum configured interval,
+// 240 seconds to the first pass and two retries capped at 150 seconds
+// leave one minute for pass execution. Sustained failures age out the fold.
+const LAMBDAS_FOLD_WINDOW: chrono::Duration = chrono::Duration::minutes(10);
+
+fn index_schedule(interval: Duration) -> PeriodicCfg {
+    PeriodicCfg::every(interval)
+        .with_jitter(Duration::from_secs(15))
+        .with_error_backoff(Duration::from_secs(150))
+}
 pub use resolve::{LandRightLeg, ParcelPermissionFlags, ParcelRights, Store};
 
 pub const SCHEMA: &str = "land_authz";
@@ -243,14 +248,11 @@ impl Settings {
     }
 }
 
-/// The module's state: the ONE pool and client, the settings, and the
-/// marketplace reader that answers the owner leg while the index is not
-/// ready (`None`: no fallback, the readers answer unavailable).
+/// The module's state: the ONE pool and client, and the settings.
 pub struct LandAuthzState {
     pub pool: PgPool,
     pub http: crate::http::Outbound,
     pub settings: Settings,
-    pub market: Option<Arc<ChainIndex>>,
     pub(crate) replay_requested: AtomicBool,
     // Retry range hint only; losing it on restart cannot advance durable progress.
     pub(crate) retry_upper: AtomicU64,
@@ -260,22 +262,25 @@ pub struct LandAuthzState {
 
 pub type SharedState = Arc<LandAuthzState>;
 
-/// Which source decided.
+/// The source every LAND answer names: the `x-land-authz-source` header and
+/// the unavailable envelope's `source`.
+pub const INDEX_SOURCE: &str = "land-authz-index";
+
+/// What a LAND answer says while the index has no fresh published fold.
+pub const NOT_READY_MSG: &str =
+    "LAND rights are unavailable on this node: the land-authz index has no fresh published fold";
+
+/// Which source decided: the local index, the only one.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum DecisionSource {
     /// The local index, folded at this block.
     Index { folded_block: i64 },
-    /// The marketplace subgraph reader: the owner leg only; the four
-    /// operator legs are undecided (denied for a write, `null` on the wire)
-    /// because nothing can answer them yet.
-    SubgraphOwnerOnly,
 }
 
 impl DecisionSource {
     pub fn header_value(&self) -> &'static str {
         match self {
-            Self::Index { .. } => "land-authz-index",
-            Self::SubgraphOwnerOnly => "marketplace-subgraph:owner-only",
+            Self::Index { .. } => INDEX_SOURCE,
         }
     }
 }
@@ -337,27 +342,19 @@ pub enum DissolvedEstate {
 #[derive(Debug, thiserror::Error)]
 pub enum Unavailable {
     #[error(
-        "no LAND rights source: the land-authz index is not ready and no marketplace subgraph is configured"
+        "no LAND rights source: the land-authz index has no published fold (replaying, rewound, or not yet indexed)"
     )]
-    NoSource,
+    NotReady,
     #[error("land-authz index: {0}")]
     Index(#[from] sqlx::Error),
-    #[error("marketplace LAND reader: {0}")]
-    Reader(String),
 }
 
 impl LandAuthzState {
-    pub fn new(
-        pool: PgPool,
-        http: crate::http::Outbound,
-        settings: Settings,
-        market: Option<Arc<ChainIndex>>,
-    ) -> Self {
+    pub fn new(pool: PgPool, http: crate::http::Outbound, settings: Settings) -> Self {
         Self {
             pool,
             http,
             settings,
-            market,
             replay_requested: AtomicBool::new(false),
             retry_upper: AtomicU64::new(u64::MAX),
             single_timestamp_headers: AtomicUsize::new(0),
@@ -388,20 +385,28 @@ impl LandAuthzState {
     /// The configured registries' index when it may answer, as a snapshot
     /// the dependent reads run on ([`indexer::ReadySnapshot`]): the check and
     /// the reads see one state, so a rebind between them cannot mix two
-    /// registries' rows. A database error reads as not ready (the fallback,
+    /// registries' rows. A database error reads as not ready (unavailable,
     /// never a grant).
     pub async fn ready_snapshot(&self) -> Option<indexer::ReadySnapshot> {
-        match indexer::ready_snapshot(
+        self.ready_snapshot_within(READY_WINDOW).await
+    }
+
+    async fn ready_snapshot_within(
+        &self,
+        max_age: chrono::Duration,
+    ) -> Option<indexer::ReadySnapshot> {
+        match indexer::ready_snapshot_within(
             &self.pool,
             &self.settings.network,
             &self.settings.land_registry,
             &self.settings.estate_registry,
+            max_age,
         )
         .await
         {
             Ok(snapshot) => snapshot,
             Err(e) => {
-                tracing::warn!(error = %e, "land-authz: cannot open the index snapshot; using the fallback reader");
+                tracing::warn!(error = %e, "land-authz: cannot open the index snapshot; LAND rights are unavailable");
                 None
             }
         }
@@ -472,21 +477,14 @@ impl LandAuthzState {
         }
     }
 
-    /// The marketplace reader, when one with a subgraph URL is attached.
-    fn fallback_reader(&self) -> Option<&Arc<ChainIndex>> {
-        self.market
-            .as_ref()
-            .filter(|m| m.settings.marketplace_subgraph_url.is_some())
-    }
-
     /// Attaches the indexer when `LAND_AUTHZ_INDEX_ENABLED` and `ETH_RPC_URL`
     /// are set: one periodic job with a 15 s first-fire jitter and a 1 h
     /// error cap (an RPC outage doubles the pause, never hammers).
     pub fn spawn_jobs(self: &Arc<Self>, jobs: &Jobs) {
         if !self.settings.index_enabled {
             tracing::info!(
-                "LAND_AUTHZ_INDEX_ENABLED is false: the LAND authorization indexer is off; the readers use the \
-                 marketplace subgraph for the owner leg and no operator leg is granted"
+                "LAND_AUTHZ_INDEX_ENABLED is false: the LAND authorization indexer is off; the readers answer \
+                 from the fold another process publishes into this database, and are unavailable without one"
             );
             return;
         }
@@ -499,9 +497,7 @@ impl LandAuthzState {
         let state = self.clone();
         jobs.spawn_periodic_leased(
             "land-authz-index",
-            PeriodicCfg::every(self.settings.interval)
-                .with_jitter(Duration::from_secs(15))
-                .with_error_backoff(Duration::from_secs(3600)),
+            index_schedule(self.settings.interval),
             move |ctx| {
                 let state = state.clone();
                 async move { indexer::run_pass(&state, &ctx).await.map(|_| ()) }
@@ -511,84 +507,48 @@ impl LandAuthzState {
 }
 
 /// Positional by `parcels`: for every parcel, whether `actor` holds a
-/// deploy-granting leg. The index answers every leg once ready;
-/// otherwise the marketplace reader answers the owner leg and the operator
-/// legs are denied (fail-closed, the old validator with no resolver).
+/// deploy-granting leg, from the index once it is ready. Before that no
+/// source answers: [`Unavailable::NotReady`], and the caller refuses the
+/// write (fail-closed).
 pub async fn can_deploy_batch(
     state: &LandAuthzState,
     parcels: &[(i32, i32)],
     actor: &str,
 ) -> Result<Vec<Decision>, Unavailable> {
+    let Some(mut snapshot) = state.ready_snapshot().await else {
+        return Err(Unavailable::NotReady);
+    };
+    // An empty set reads no row, and still waits for the index.
     if parcels.is_empty() {
         return Ok(Vec::new());
     }
-    if let Some(mut snapshot) = state.ready_snapshot().await {
-        let cursor = &snapshot.cursor;
-        let source = DecisionSource::Index {
-            folded_block: cursor.folded_block.unwrap_or(cursor.last_block),
-        };
-        let rights = state
-            .store()
-            .deploy_rights_batch_on(&mut snapshot.tx, parcels)
-            .await?;
-        return Ok(rights
-            .into_iter()
-            .map(|r| match r {
-                Some(rights) => {
-                    let flags = rights.deploy_flags_for(actor);
-                    let verdict = flags
-                        .granting_leg()
-                        .map_or(Verdict::Denied, Verdict::Granted);
-                    Decision {
-                        verdict,
-                        source: source.clone(),
-                        flags,
-                    }
-                }
-                None => Decision {
-                    verdict: Verdict::Unknown,
-                    source: source.clone(),
-                    flags: ParcelPermissionFlags::default(),
-                },
-            })
-            .collect());
-    }
-    let Some(market) = state.fallback_reader() else {
-        return Err(Unavailable::NoSource);
+    let cursor = &snapshot.cursor;
+    let source = DecisionSource::Index {
+        folded_block: cursor.folded_block.unwrap_or(cursor.last_block),
     };
-    let found = crate::chain_index::graph::parcels_at(market, parcels)
-        .await
-        .map_err(Unavailable::Reader)?;
-    let actor_lower = actor.to_ascii_lowercase();
-    Ok(parcels
-        .iter()
-        .map(|&(x, y)| {
-            let parcel = found.iter().find(|p| p.x == x && p.y == y);
-            let (verdict, flags) = match parcel {
-                None => (Verdict::Unknown, ParcelPermissionFlags::default()),
-                Some(p) => {
-                    let owner = is_address(actor)
-                        && (p.owner == actor_lower
-                            || p.estate_owner.as_deref() == Some(actor_lower.as_str()));
-                    let flags = ParcelPermissionFlags {
-                        owner,
-                        ..Default::default()
-                    };
-                    (
-                        if owner {
-                            Verdict::Granted(LandRightLeg::Owner)
-                        } else {
-                            Verdict::Denied
-                        },
-                        flags,
-                    )
+    let rights = state
+        .store()
+        .deploy_rights_batch_on(&mut snapshot.tx, parcels)
+        .await?;
+    Ok(rights
+        .into_iter()
+        .map(|r| match r {
+            Some(rights) => {
+                let flags = rights.deploy_flags_for(actor);
+                let verdict = flags
+                    .granting_leg()
+                    .map_or(Verdict::Denied, Verdict::Granted);
+                Decision {
+                    verdict,
+                    source: source.clone(),
+                    flags,
                 }
-            };
-            Decision {
-                verdict,
-                source: DecisionSource::SubgraphOwnerOnly,
-                flags,
             }
+            None => Decision {
+                verdict: Verdict::Unknown,
+                source: source.clone(),
+                flags: ParcelPermissionFlags::default(),
+            },
         })
         .collect())
 }
@@ -606,8 +566,8 @@ pub async fn can_deploy(
 }
 
 /// The LAND leg of `worlds::policy`: whether `owner` holds any of `coords`,
-/// directly or through an estate, from the index when ready, else the
-/// marketplace reader (the same rule `can_deploy` applies to the owner leg).
+/// directly or through an estate, from the index once it is ready;
+/// [`Unavailable::NotReady`] before that (the same rule as `can_deploy`).
 pub async fn owns_land_at(
     state: &LandAuthzState,
     owner: &str,
@@ -619,12 +579,7 @@ pub async fn owns_land_at(
             .owns_land_at_on(&mut snapshot.tx, owner, coords)
             .await?);
     }
-    let Some(market) = state.fallback_reader() else {
-        return Err(Unavailable::NoSource);
-    };
-    crate::chain_index::graph::owns_land_at(market, owner, coords)
-        .await
-        .map_err(Unavailable::Reader)
+    Err(Unavailable::NotReady)
 }
 
 /// The routes this module serves under the old lambdas paths; `main.rs`

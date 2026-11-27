@@ -25,9 +25,14 @@ bs58.workspace = true
 data-encoding.workspace = true
 reqwest.workspace = true
 getrandom.workspace = true
-k256.workspace = true
+# 0.14, not the workspace's 0.13: off crypto-bigint 0.5 (RUSTSEC-2026-0387).
+k256 = { version = "0.14", features = ["ecdsa"] }
+zeroize = "1"
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["test-util"] }
 alloy.workspace = true
 futures.workspace = true
+
+[lints]
+workspace = true

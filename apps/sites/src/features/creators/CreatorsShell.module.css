@@ -1,7 +1,7 @@
 .root {
   /* The heights the pages offset against: Sites' top bar, and the tabs under it. */
   --nav-h: var(--site-header-h, 92px);
-  --sub-nav-h: 56px;
+  --sub-nav-h: 44px;
 
   display: flex;
   flex-direction: column;
@@ -20,7 +20,7 @@
   font-family: var(--creators-font);
   -webkit-font-smoothing: antialiased;
 
-  @media (min-width: 1024px) {
+  @media (min-width: 768px) {
     --sub-nav-h: 64px;
   }
 
@@ -64,7 +64,7 @@
 }
 
 /* The section's field also sits behind Sites' top bar, which is drawn outside the page (as the Shop's does). */
-:global(.site-layout):has(.root) {
+:global([data-site-layout]):has(.root) {
   background: radial-gradient(61.64% 109.58% at 50% 54.49%, #952dc6 0%, #7c27a8 25%, #642089 50%, #4b1a6b 75%, #32134c 100%)
     fixed;
   background-color: #32134c;

@@ -1,10 +1,12 @@
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import {
   BackpackUpperBody,
   BlogBanner,
   BlogCard,
+  Button,
   CardActionButton,
   CommunityCard,
+  EquippedItemCard,
   EventCard,
   EventCardAction,
   EventCardActionLink,
@@ -16,7 +18,9 @@ import {
   ShopCard,
   ShopCardPrice,
   ShopCardSkeleton,
-  type ShopCardRarity
+  WearableCard,
+  type ShopCardRarity,
+  type WearableCardRarity
 } from '@dcl/one-ui'
 import type { GalleryEntry } from '../registry'
 import { covers, people } from './data'
@@ -32,6 +36,42 @@ const rarities: ShopCardRarity[] = [
   'mythic',
   'unique'
 ]
+
+const itemRarities: WearableCardRarity[] = [
+  'common',
+  'uncommon',
+  'rare',
+  'epic',
+  'legendary',
+  'mythic',
+  'unique',
+  'exotic',
+  'base'
+]
+const glyph = <BackpackUpperBody size={16} aria-hidden="true" />
+const titled = (rarity: string) => `${rarity.charAt(0).toUpperCase()}${rarity.slice(1)}`
+
+function SelectableWearableCards() {
+  const [selected, setSelected] = useState('rare')
+  return (
+    <div className={layout.tiles}>
+      {(['epic', 'rare', 'common'] as const).map((rarity, index) => (
+        <WearableCard
+          key={rarity}
+          pick
+          name={`${titled(rarity)} gloves`}
+          thumbnail={covers.wearable}
+          rarity={rarity}
+          categoryIcon={glyph}
+          count={index === 0 ? 3 : undefined}
+          coverNote={index === 2 ? 'Equipped' : undefined}
+          selected={selected === rarity}
+          onClick={() => setSelected(rarity)}
+        />
+      ))}
+    </div>
+  )
+}
 
 const dayActions = (
   <>
@@ -52,13 +92,71 @@ function SelectableShopCard() {
   const [selected, setSelected] = useState(false)
   return (
     <ShopCard
-      name="Selectable hoodie"
+      name="Selectable gloves"
       image={covers.wearable}
       rarity="rare"
       selected={selected}
       onSelect={() => setSelected((value) => !value)}
       price={<ShopCardPrice kind="credits" amount="120" />}
     />
+  )
+}
+
+const blogPosts = [
+  {
+    title: "What's new in Decentraland this season",
+    cover: covers.blog,
+    category: 'Announcements',
+    date: 'Jan 2, 2026'
+  },
+  {
+    title: 'A walk through Genesis Plaza',
+    cover: covers.plaza,
+    category: 'Guides',
+    date: 'Dec 18, 2025'
+  },
+  {
+    title: 'Career Mondays: meet the builders',
+    cover: covers.festival,
+    category: 'Events',
+    date: 'Dec 4, 2025'
+  }
+]
+
+// A title that takes two lines in every grid column, from a phone to the widest desktop: what a loading card reserves.
+const loadedTitle = 'Creator Fund: rewards for indie game creators'
+
+// Keyboard focus draws the card's hover treatment. The page never moves focus on its own: the reviewer asks for it, as
+// keyboard users reach the card by Tab.
+function FocusedBlogCard() {
+  const card = useRef<HTMLUListElement>(null)
+  return (
+    <div className={layout.blogGrids}>
+      <div className={layout.row}>
+        <Button
+          variant="secondary"
+          size="sm"
+          label="Focus the card"
+          onClick={() =>
+            card.current
+              ?.querySelector<HTMLAnchorElement>('h3 a')
+              ?.focus({ preventScroll: true, focusVisible: true } as FocusOptions)
+          }
+        />
+      </div>
+      <ul ref={card} className={layout.blogIndex}>
+        <li>
+          <BlogCard
+            title="Focused like a hovered card"
+            href="#post"
+            cover={<img src={covers.gallery} alt="" />}
+            category="Events"
+            metadata="Nov 20, 2025"
+            author={people.grace.name}
+          />
+        </li>
+      </ul>
+    </div>
   )
 }
 
@@ -308,7 +406,7 @@ export const cardEntries: GalleryEntry[] = [
             {rarities.map((rarity) => (
               <ShopCard
                 key={rarity}
-                name={`${rarity} hoodie`}
+                name={`${rarity} gloves`}
                 image={covers.wearable}
                 rarity={rarity}
                 categoryIcon={<BackpackUpperBody size={16} aria-hidden="true" />}
@@ -357,7 +455,7 @@ export const cardEntries: GalleryEntry[] = [
           <div className={layout.cards}>
             <ShopCard
               variant="catalogue"
-              name="Catalogue hoodie"
+              name="Catalogue gloves"
               image={covers.wearable}
               rarity="uncommon"
               creator={people.grace}
@@ -381,34 +479,265 @@ export const cardEntries: GalleryEntry[] = [
     ]
   },
   {
+    name: 'WearableCard',
+    group: 'Cards',
+    summary:
+      'An item tile of the Explorer HUD backpack: its thumbnail on its rarity, an equipped ring, and an action on hover.',
+    components: ['WearableCard'],
+    examples: [
+      {
+        id: 'rarities',
+        title: 'Every rarity and none, drawn without a host picture',
+        note: 'Point at a card for its lift and its EQUIP action. A host passes its own tile, flap, ring and panel pictures.',
+        render: () => (
+          <div className={layout.tiles}>
+            {itemRarities.map((rarity) => (
+              <WearableCard
+                key={rarity}
+                name={`${titled(rarity)} gloves`}
+                thumbnail={covers.wearable}
+                rarity={rarity}
+                categoryIcon={glyph}
+              />
+            ))}
+          </div>
+        )
+      },
+      {
+        id: 'states',
+        title:
+          'Equipped, selected, new, smart, in an emote slot, incompatible, one that cannot be taken off, and without a picture',
+        note: 'The incompatible card says why on hover. A missing thumbnail leaves the tile alone.',
+        render: () => (
+          <div className={layout.tiles}>
+            <WearableCard
+              name="Equipped gloves"
+              thumbnail={covers.wearable}
+              rarity="legendary"
+              categoryIcon={glyph}
+              equipped
+            />
+            <WearableCard
+              name="Selected gloves"
+              thumbnail={covers.wearable}
+              rarity="epic"
+              categoryIcon={glyph}
+              selected
+            />
+            <WearableCard
+              name="New gloves"
+              thumbnail={covers.wearable}
+              rarity="uncommon"
+              categoryIcon={glyph}
+              isNew
+            />
+            <WearableCard
+              name="Smart gloves"
+              thumbnail={covers.wearable}
+              rarity="mythic"
+              categoryIcon={glyph}
+              isSmart
+            />
+            <WearableCard
+              name="Unicycle"
+              thumbnail={covers.emote}
+              rarity="rare"
+              categoryIcon={glyph}
+              equipped
+              slotNumber={3}
+            />
+            <WearableCard
+              name="Incompatible gloves"
+              thumbnail={covers.wearable}
+              rarity="common"
+              categoryIcon={glyph}
+              incompatible
+            />
+            <WearableCard
+              name="Body shape"
+              thumbnail={covers.wearable}
+              categoryIcon={glyph}
+              equipped
+              unequippable={false}
+            />
+            <WearableCard name="No picture" rarity="unique" categoryIcon={glyph} />
+          </div>
+        )
+      },
+      {
+        id: 'pick',
+        title: 'Tiles to pick: a count, the chosen one ringed, and one a note covers',
+        note: 'Press a tile to choose it. The covered one takes no press.',
+        render: () => <SelectableWearableCards />
+      }
+    ]
+  },
+  {
+    name: 'EquippedItemCard',
+    group: 'Cards',
+    summary:
+      'An item a profile shows: its thumbnail on its rarity, its name, a rarity tag and a link to its sale.',
+    components: ['EquippedItemCard'],
+    examples: [
+      {
+        id: 'rarities',
+        title: 'Every rarity, none, and one the foundations do not colour',
+        note: 'Every other card is on sale: point at it for its frame and its link.',
+        render: () => (
+          <div className={layout.itemCards}>
+            {[...itemRarities.slice(0, 8), undefined, 'golden'].map((rarity, index) => (
+              <EquippedItemCard
+                key={rarity ?? 'none'}
+                name={rarity ? `${titled(rarity)} gloves` : 'Plain gloves'}
+                thumbnail={covers.wearable}
+                rarity={rarity}
+                shopUrl={index % 2 === 0 ? '#item' : undefined}
+                categoryIcon={glyph}
+              />
+            ))}
+          </div>
+        )
+      },
+      {
+        id: 'pinned',
+        title: 'The link kept in the card, with a price, a long name and no picture',
+        render: () => (
+          <div className={layout.itemCards}>
+            <EquippedItemCard
+              name="Epic gloves"
+              thumbnail={covers.wearable}
+              rarity="epic"
+              shopUrl="#item"
+              shopLabel="Buy"
+              price="25 Credits"
+              pinShop
+              categoryIcon={glyph}
+            />
+            <EquippedItemCard
+              name="A pair of gloves whose name is far too long for one line"
+              thumbnail={covers.wearable}
+              rarity="legendary"
+              shopUrl="#item"
+              shopLabel="View"
+              pinShop
+              categoryIcon={glyph}
+            />
+            <EquippedItemCard name="No picture" rarity="rare" shopUrl="#item" pinShop />
+            <EquippedItemCard rarity="unique" price="120 MANA" />
+          </div>
+        )
+      }
+    ]
+  },
+  {
     name: 'BlogCard',
     group: 'Cards',
     summary: 'A blog post in a list, standard or related.',
     components: ['BlogCard'],
     examples: [
       {
-        id: 'variants',
-        title: 'Standard and related',
+        id: 'index',
+        title: 'Blog index grid',
+        note: "In the Blog index's grid: three columns up to 1312px, two below 1024px, one below 768px. Hover a card with a pointer at 768px or wider.",
         render: () => (
-          <div className={layout.cards}>
-            <BlogCard
-              title="What's new in Decentraland"
-              href="#post"
-              cover={<img src={covers.blog} alt="" />}
-              category="Announcements"
-              metadata="Jan 2, 2026"
-              author={people.ada.name}
-            />
-            <BlogCard
-              variant="related"
-              title="A related post"
-              href="#post"
-              cover={<img src={covers.plaza} alt="" />}
-              category="Guides"
-            />
-            <BlogCard title="Without a cover" href="#post" metadata="5 min read" />
+          <ul className={layout.blogIndex}>
+            {blogPosts.map((post) => (
+              <li key={post.title}>
+                <BlogCard
+                  title={post.title}
+                  href="#post"
+                  cover={<img src={post.cover} alt="" />}
+                  category={post.category}
+                  metadata={post.date}
+                  author={people.ada.name}
+                />
+              </li>
+            ))}
+          </ul>
+        )
+      },
+      {
+        id: 'related',
+        title: 'Related posts',
+        note: 'variant="related" in an article\'s related grid, up to 1180px.',
+        render: () => (
+          <ul className={layout.blogRelated}>
+            {blogPosts.map((post) => (
+              <li key={post.title}>
+                <BlogCard
+                  variant="related"
+                  title={post.title}
+                  href="#post"
+                  cover={<img src={post.cover} alt="" />}
+                  category={post.category}
+                  metadata={post.date}
+                />
+              </li>
+            ))}
+          </ul>
+        )
+      },
+      {
+        id: 'no-cover',
+        title: 'Without a cover',
+        render: () => (
+          <ul className={layout.blogIndex}>
+            <li>
+              <BlogCard title="Release notes" href="#post" metadata="5 min read" />
+            </li>
+          </ul>
+        )
+      },
+      {
+        id: 'loading',
+        title: 'Loading',
+        note: 'loading draws a busy skeleton sized for a post with a two-line title and a 24px category badge, as Sites cards carry; the loaded card beside it has that content, so the two match.',
+        render: () => (
+          <div className={layout.blogGrids}>
+            <ul className={layout.blogIndex}>
+              <li>
+                <BlogCard
+                  title={loadedTitle}
+                  href="#post"
+                  cover={<img src={blogPosts[0]!.cover} alt="" />}
+                  category={<span className={layout.blogBadge}>Announcements</span>}
+                  metadata={blogPosts[0]!.date}
+                  author={people.ada.name}
+                />
+              </li>
+              <li>
+                <BlogCard loading loadingLabel="Loading a post" />
+              </li>
+              <li>
+                <BlogCard loading loadingLabel="Loading a post" />
+              </li>
+            </ul>
+            <ul className={layout.blogRelated}>
+              <li>
+                <BlogCard
+                  variant="related"
+                  title={loadedTitle}
+                  href="#post"
+                  cover={<img src={blogPosts[1]!.cover} alt="" />}
+                  category={<span className={layout.blogBadge}>Guides</span>}
+                  metadata={blogPosts[1]!.date}
+                />
+              </li>
+              <li>
+                <BlogCard variant="related" loading loadingLabel="Loading a related post" />
+              </li>
+              <li>
+                <BlogCard variant="related" loading loadingLabel="Loading a related post" />
+              </li>
+            </ul>
           </div>
         )
+      },
+      {
+        id: 'focus',
+        title: 'Hover and keyboard focus',
+        note: 'At 768px or wider, hover or keyboard focus raises the card, strengthens its border and underlines the title. Focus the card shows it through keyboard focus, without a pointer.',
+        render: () => <FocusedBlogCard />
       }
     ]
   },

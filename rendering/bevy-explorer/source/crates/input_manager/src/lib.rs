@@ -247,6 +247,13 @@ impl InputManager<'_, '_> {
             || !self.axis_data.current.is_empty()
     }
 
+    /// A mouse button or key went down this frame. Unlike a gamepad press, such a press gives a
+    /// web page user activation.
+    pub fn any_button_just_pressed(&self) -> bool {
+        self.mouse_input.get_just_pressed().len() != 0
+            || self.key_input.get_just_pressed().len() != 0
+    }
+
     fn inputs(&self, action: Action) -> impl Iterator<Item = &InputIdentifier> {
         self.map
             .inputs

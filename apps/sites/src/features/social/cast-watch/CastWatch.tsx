@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useState, type ReactNode } from "react";
 
-import StCastWatcher from "@ui/web/pages/StCastWatcher";
+import { Button, StCastWatcher } from "@dcl/one-ui";
 
 import { track, type TrackContext } from "@/core/lib/telemetry/track";
 import type { WatchResult } from "@/data/lib/catalyst/landings/cast-watcher";
+import SitesLayout from "../../components/chrome/SitesLayout";
 
 const JOIN_CLASS = "stcastwatcher__join";
 const LEAVE_CLASS = "stcastwatcher__leave";
@@ -24,6 +25,10 @@ export type WatchJoin = { roomId: string; refused?: undefined } | { refused: Wat
 /** A real LiveKit session behind the watcher page; the story page leaves it out. */
 export type WatchLive = {
   join: () => Promise<WatchJoin>;
+  chooseScene?: {
+    scenes: Array<{ base: string; title: string }>;
+    onChoose: (base: string) => void;
+  };
   leave: () => void;
   stage: (muted: boolean) => ReactNode;
   participantCount: number;
@@ -182,43 +187,61 @@ export default function CastWatch({
     toasts?: Array<{ title: ReactNode; message: ReactNode; action?: { label?: string; onClick?: () => void } }>;
   }>;
 
+  const chooseScene = live?.chooseScene;
+  const shownState = chooseScene ? "waiting" : state;
   const chatFooter = `Jump into ${placeName} in Decentraland to participate in the chat.`;
 
   return (
     <div
       className="cast-watch"
-      data-state={state}
+      data-state={shownState}
       data-status={watch.status}
       data-location={watch.location}
       onClickCapture={onClickCapture}
     >
-      <Watcher
-        streamName={placeName}
-        state={state}
-        sidebarOpen={state === "live" && sidebarOpen}
-        isTabMuted={isTabMuted}
-        chatFooter={chatFooter}
-        participantCount={live ? live.participantCount : participantCount}
-        unreadCount={state === "live" && !sidebarOpen && !live ? unreadCount : 0}
-        stage={live && state === "live" ? live.stage(isTabMuted) : undefined}
-        messages={live ? [] : undefined}
-        watcherTitle={refusal?.kind === "waiting" ? refusal.title : undefined}
-        watcherMessage={refusal?.kind === "waiting" ? refusal.message : undefined}
-        toasts={[
-          ...(refusal?.kind === "error"
-            ? [{ title: refusal.title, message: refusal.message, action: { label: "Retry", onClick: join } }]
-            : []),
-          ...(live?.audioBlocked && state === "live"
-            ? [
-                {
-                  title: "Audio is paused",
-                  message: "Your browser needs a click before the Cast can play sound.",
-                  action: { label: "Enable audio", onClick: live.enableAudio },
-                },
-              ]
-            : []),
-        ]}
-      />
+      <SitesLayout active="legal">
+        <Watcher
+          streamName={placeName}
+          state={shownState}
+          sidebarOpen={state === "live" && sidebarOpen}
+          isTabMuted={isTabMuted}
+          chatFooter={chatFooter}
+          participantCount={live ? live.participantCount : participantCount}
+          unreadCount={state === "live" && !sidebarOpen && !live ? unreadCount : 0}
+          stage={live && state === "live" ? live.stage(isTabMuted) : undefined}
+          messages={live ? [] : undefined}
+          watcherTitle={chooseScene ? "Choose a scene to watch" : refusal?.kind === "waiting" ? refusal.title : undefined}
+          watcherMessage={chooseScene ? (
+            <>
+              This world has several scenes. Pick the one that is casting.
+              <br />
+              {chooseScene.scenes.map((scene) => (
+                <Button key={scene.base} type="button" variant="secondary" size="sm" className="cast-watch__scene" onClick={() => {
+                  setRefusal(null);
+                  setState("onboarding");
+                  chooseScene.onChoose(scene.base);
+                }}>
+                  {scene.title} {scene.base}
+                </Button>
+              ))}
+            </>
+          ) : refusal?.kind === "waiting" ? refusal.message : undefined}
+          toasts={[
+            ...(refusal?.kind === "error"
+              ? [{ title: refusal.title, message: refusal.message, action: { label: "Retry", onClick: join } }]
+              : []),
+            ...(live?.audioBlocked && state === "live"
+              ? [
+                  {
+                    title: "Audio is paused",
+                    message: "Your browser needs a click before the Cast can play sound.",
+                    action: { label: "Enable audio", onClick: live.enableAudio },
+                  },
+                ]
+              : []),
+          ]}
+        />
+      </SitesLayout>
       {demoMessages && demoMessages.length === 0 && null}
     </div>
   );

@@ -26,6 +26,7 @@ use crate::evm::handlers::{idempotency_key, require_broadcast_enabled};
 use crate::evm::oracle::{UsdPeggedExpectation, fetch_mana_usd_rate};
 use crate::evm::signer::{DirectSigner, Rebroadcast, ReceiptOutcome, SignedTx};
 use crate::types::ASSET_TYPE_USD_PEGGED_MANA;
+use crate::types::chain_id_column;
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -231,11 +232,16 @@ pub async fn buy(
             })?;
             build_primary(&contracts, collection, item_id, price_wei, relayer)
         }
-        PurchaseMode::Trade => build_trade_accept(validated_trade.as_ref().unwrap(), relayer),
+        PurchaseMode::Trade => build_trade_accept(
+            validated_trade
+                .as_ref()
+                .expect("trade mode always sets validated_trade or returns early"),
+            relayer,
+        ),
         _ => build_secondary(
             &contracts,
             collection,
-            token_id_for_secondary.unwrap(),
+            token_id_for_secondary.expect("secondary mode always parses tokenId or returns early"),
             price_wei,
         ),
     };
@@ -287,7 +293,7 @@ pub async fn buy(
             buyer_address: &buyer_hex,
             escrow_address: &escrow_hex,
             price_wei: &price_text,
-            chain_id: chain_id as i64,
+            chain_id: chain_id_column(chain_id)?,
             mode: mode.as_str(),
             trade_hashed_signature: trade_sig_hash.as_deref(),
             usd_amount_wei: usd_amount_text.as_deref(),
@@ -1110,7 +1116,7 @@ pub(crate) async fn release_dead_buy(
     .bind(key)
     .bind(tx_hash)
     .bind(crate::evm::now())
-    .bind(DEAD_CONFIRM_SECS as f64)
+    .bind(f64::from(DEAD_CONFIRM_SECS))
     .execute(&state.pool)
     .await?;
     if released.rows_affected() > 0 {
@@ -1122,12 +1128,12 @@ pub(crate) async fn release_dead_buy(
 /// How long apart two dead looks at a recorded leg must be before it is
 /// released: one lookup can be wrong (a lagging load-balanced backend), two
 /// minutes apart agreeing are taken as final.
-const DEAD_CONFIRM_SECS: i64 = 600;
+const DEAD_CONFIRM_SECS: u32 = 600;
 
 /// The oldest claim a dead look may release. Nodes may prune the lookup
 /// index of old transactions, so for an older claim a missing receipt is
 /// not evidence: it is logged and left for manual reconciliation.
-const DEAD_RELEASE_MAX_AGE_DAYS: i64 = 7;
+const DEAD_RELEASE_MAX_AGE_DAYS: i32 = 7;
 
 /// Records a dead look at the recorded leg `tx_hash` and decides: `Ok` when
 /// an earlier look at least [`DEAD_CONFIRM_SECS`] ago agrees (release it);
@@ -1145,8 +1151,8 @@ async fn dead_look(state: &SharedState, key: &str, tx_hash: &str) -> Result<(), 
     .bind(key)
     .bind(tx_hash)
     .bind(now)
-    .bind(DEAD_CONFIRM_SECS as f64)
-    .bind(DEAD_RELEASE_MAX_AGE_DAYS as i32)
+    .bind(f64::from(DEAD_CONFIRM_SECS))
+    .bind(DEAD_RELEASE_MAX_AGE_DAYS)
     .fetch_optional(&state.pool)
     .await?;
     match looked {
@@ -1200,7 +1206,7 @@ pub(crate) async fn release_dead_forward(
     .bind(key)
     .bind(fwd_tx)
     .bind(crate::evm::now())
-    .bind(DEAD_CONFIRM_SECS as f64)
+    .bind(f64::from(DEAD_CONFIRM_SECS))
     .execute(&state.pool)
     .await?;
     if released.rows_affected() > 0 {
@@ -1221,7 +1227,7 @@ async fn release_stale_pending(state: &SharedState, key: &str) -> Result<bool, A
     )
     .bind(key)
     .bind(crate::evm::now())
-    .bind(BROKER_PENDING_TAKEOVER_SECS as f64)
+    .bind(f64::from(BROKER_PENDING_TAKEOVER_SECS))
     .execute(&state.pool)
     .await?;
     Ok(released.rows_affected() > 0)

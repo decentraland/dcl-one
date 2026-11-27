@@ -26,6 +26,7 @@ interface WebDriver {
   frameTargets(): unknown[]
   consoleMessages(): { at: number; target: string; kind: string; text: string }[]
   screenshot(): Promise<Buffer>
+  resizeView(size: [number, number] | null, options?: { timeout?: number }): Promise<void>
   close(): Promise<void> | void
   readonly product?: string
 }
@@ -87,11 +88,11 @@ export const BOOT_ABANDONED = 'the boot was abandoned'
 export class WebConsole implements Console {
   readonly kind = 'web' as const
   readonly #driver: WebDriver
-  readonly #commandTimeoutMs: number
+  readonly commandTimeoutMs: number
 
   private constructor(driver: WebDriver, commandTimeoutMs: number) {
     this.#driver = driver
-    this.#commandTimeoutMs = commandTimeoutMs
+    this.commandTimeoutMs = commandTimeoutMs
   }
 
   /** Start Chrome on `url` and wait until the app frame answers console commands. */
@@ -136,7 +137,7 @@ export class WebConsole implements Console {
   async run(line: string): Promise<string> {
     const normalized = normalizeLine(line)
     try {
-      return await this.#driver.console(normalized, { timeout: this.#commandTimeoutMs })
+      return await this.#driver.console(normalized, { timeout: this.commandTimeoutMs })
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
       if (message === (await webDriverModule()).APP_GONE) throw new DocumentGoneError(normalized, message)
@@ -150,6 +151,11 @@ export class WebConsole implements Console {
       console: this.#driver.consoleMessages().map(consoleLine),
       screenshot: await this.#driver.screenshot().catch(() => undefined)
     }
+  }
+
+  /** Allows 20 s for the app frame to draw at the new size, past the driver's 5 s default. */
+  async resizeView(size: [number, number] | null): Promise<void> {
+    await this.#driver.resizeView(size, { timeout: 20_000 })
   }
 
   async close(): Promise<void> {

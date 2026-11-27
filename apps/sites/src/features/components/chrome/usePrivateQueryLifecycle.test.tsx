@@ -1,3 +1,4 @@
+import { CREDITS_BALANCE_QUERY_KEY } from "@shop/credits/balance-query";
 // @vitest-environment jsdom
 import { act, cleanup, renderHook, waitFor } from "@testing-library/react";
 import {
@@ -33,6 +34,8 @@ describe("when the Sites host changes authenticated identity", () => {
     aborted = undefined;
     client.setQueryData(["blog", "categories"], ["Announcements"]);
     client.setQueryData(["private", "0xa", "cached"], "old private value");
+    client.setQueryData([CREDITS_BALANCE_QUERY_KEY, "0xa"], "old balance");
+    client.setQueryData([CREDITS_BALANCE_QUERY_KEY, "0xb"], "new balance");
     client.setQueryData(["legacy", "0xa"], "legacy owner retains this entry");
     wrapper = ({ children }) => (
       <QueryClientProvider client={client}>{children}</QueryClientProvider>
@@ -80,6 +83,11 @@ describe("when the Sites host changes authenticated identity", () => {
 
     it("should remove the previous account's private entries", () => {
       expect(client.getQueriesData({ queryKey: ["private", "0xa"] })).toEqual([]);
+    });
+
+    it("should clear only the previous account's Credits balance", () => {
+      expect(client.getQueryData([CREDITS_BALANCE_QUERY_KEY, "0xa"])).toBeUndefined();
+      expect(client.getQueryData([CREDITS_BALANCE_QUERY_KEY, "0xb"])).toBe("new balance");
     });
 
     it("should retain public data", () => {
@@ -156,5 +164,29 @@ describe("when the Sites host changes authenticated identity", () => {
         "Announcements",
       ]);
     });
+  });
+  it("should treat an empty address as signed out", () => {
+    const { rerender } = renderHook(
+      ({ account }: { account: string | null }) =>
+        usePrivateQueryLifecycle(account),
+      { initialProps: { account: "0xa" as string | null }, wrapper },
+    );
+    rerender({ account: "" });
+    expect(client.getQueriesData({ queryKey: ["private"] })).toEqual([]);
+    expect(client.getQueriesData({ queryKey: [CREDITS_BALANCE_QUERY_KEY] })).toEqual([]);
+  });
+  it("should remove every declared private account on sign-out and leave public data intact", () => {
+    client.setQueryData(["private", "0xb", "cached"], "another private value");
+    const { rerender } = renderHook(
+      ({ account }: { account: string | null }) =>
+        usePrivateQueryLifecycle(account),
+      { initialProps: { account: "0xa" as string | null }, wrapper },
+    );
+    rerender({ account: null });
+    expect(client.getQueriesData({ queryKey: ["private"] })).toEqual([]);
+    expect(client.getQueriesData({ queryKey: [CREDITS_BALANCE_QUERY_KEY] })).toEqual([]);
+    expect(client.getQueryData(["blog", "categories"])).toEqual([
+      "Announcements",
+    ]);
   });
 });

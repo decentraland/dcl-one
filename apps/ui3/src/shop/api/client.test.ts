@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
-import { generateEphemeralKey, type AuthIdentity } from "../../data/auth/identity";
+import { generateEphemeralKey, type AuthIdentity } from "@web-core/auth/identity";
 import { createShopApi, creditsDisabled, insufficientCredits, ShopApiError, tooManyLiveCredits } from "@shop/api/client";
 import { ENDPOINTS } from "@shop/api/endpoints";
 import { setupServer } from "msw/node";
@@ -33,6 +33,7 @@ const SHOP_UI_ROUTES: readonly [route: string, legacyAliases: string[]][] = [
   ["GET /shop-api/v1/contracts", ["GET /marketplace-api/v1/contracts"]],
   ["GET /shop-api/v1/coupons", ["GET /marketplace-api/v1/coupons"]],
   ["GET /shop-api/v1/coupons/{}", ["GET /marketplace-api/v1/coupons/{}"]],
+  ["GET /shop-api/v1/credit-authorizations/{}", ["GET /credits/credits/authorize/{}"]],
   ["GET /shop-api/v1/credit-program/season", ["GET /credits/season"]],
   ["GET /shop-api/v1/credit-program/seasons", ["GET /credits/seasons"]],
   ["GET /shop-api/v1/credit-topups/mana/balance/{}", ["GET /transactions-api/v1/payments/balance/{}", "GET /v1/payments/balance/{}"]],
@@ -65,6 +66,7 @@ const SHOP_UI_ROUTES: readonly [route: string, legacyAliases: string[]][] = [
   ["GET /shop-api/v1/rentals-listings", ["GET /signatures-api/v1/rentals-listings", "GET /v1/rentals-listings"]],
   ["GET /shop-api/v1/sales", ["GET /marketplace-api/v1/sales"]],
   ["GET /shop-api/v1/sales/summary", ["GET /marketplace-api/v1/sales/summary"]],
+  ["GET /shop-api/v1/rates/mana-usd", ["GET /marketplace-api/v1/rates/mana-usd"]],
   ["GET /shop-api/v1/stats/{}/{}", ["GET /marketplace-api/v1/stats/{}/{}"]],
   ["GET /shop-api/v1/trades", ["GET /marketplace-api/v1/trades", "GET /v1/trades"]],
   ["GET /shop-api/v1/trades-mirror", ["GET /marketplace-api/v1/trades-mirror", "GET /v1/trades-mirror"]],

@@ -1,7 +1,9 @@
 // from: shop@94584a5c:app/src/config/index.ts (chainId, rpcUrl, ethereumChainId, ethereumRpcUrl, relayerUrl),
 //       app/src/config/env/{prod,dev}.json, app/src/lib/gasless-config.ts
 import { catalystBase } from "../../../data/catalyst/client";
+import { selectEthereumChain, selectSettlementChain } from "@shop/checkout/chain/selection";
 import { CHAIN, type ChainId } from "@shop/model/chain";
+import { parseShopChainId, shopChainEnvironment } from "@web-core/shop-chain-env";
 import { pageOverride } from "../../pageOverride";
 
 export type ShopChainOverrides = {
@@ -19,8 +21,31 @@ const DEFAULT_RPC: Record<number, string> = {
   [CHAIN.SEPOLIA]: "https://rpc.decentraland.org/sepolia",
 };
 
-function env(name: string): string | undefined {
-  const value = typeof import.meta !== "undefined" ? (import.meta.env?.[name] as string | undefined) : undefined;
+type ShopEnvKey =
+  | "VITE_SHOP_RPC_POLYGON"
+  | "VITE_SHOP_RPC_ETHEREUM"
+  | "VITE_SHOP_RPC_AMOY"
+  | "VITE_SHOP_RPC_SEPOLIA"
+  | "VITE_SHOP_CREDITS_MANAGER"
+  | "VITE_SHOP_CHAIN_ID"
+  | "VITE_SHOP_RELAYER_URL"
+  | "VITE_SHOP_GASLESS";
+
+// One static read per key: Vite inlines `import.meta.env.X` as that value alone, but a computed
+// `import.meta.env[key]` as the whole env object, every build-time `VITE_*` value, into the bundle.
+function env(name: ShopEnvKey): string | undefined {
+  if (typeof import.meta === "undefined") return undefined;
+  const values: Record<ShopEnvKey, string | undefined> = {
+    VITE_SHOP_RPC_POLYGON: import.meta.env?.VITE_SHOP_RPC_POLYGON,
+    VITE_SHOP_RPC_ETHEREUM: import.meta.env?.VITE_SHOP_RPC_ETHEREUM,
+    VITE_SHOP_RPC_AMOY: import.meta.env?.VITE_SHOP_RPC_AMOY,
+    VITE_SHOP_RPC_SEPOLIA: import.meta.env?.VITE_SHOP_RPC_SEPOLIA,
+    VITE_SHOP_CREDITS_MANAGER: import.meta.env?.VITE_SHOP_CREDITS_MANAGER,
+    VITE_SHOP_CHAIN_ID: import.meta.env?.VITE_SHOP_CHAIN_ID,
+    VITE_SHOP_RELAYER_URL: import.meta.env?.VITE_SHOP_RELAYER_URL,
+    VITE_SHOP_GASLESS: import.meta.env?.VITE_SHOP_GASLESS,
+  };
+  const value = values[name];
   return value && value.trim() ? value.trim() : undefined;
 }
 
@@ -33,19 +58,12 @@ function overrides(): ShopChainOverrides {
   return fromWindow();
 }
 
-function numberFrom(value: string | undefined): number | undefined {
-  const n = value === undefined ? NaN : Number(value);
-  return Number.isSafeInteger(n) && n > 0 ? n : undefined;
-}
-
 export function settlementChainId(): ChainId {
-  return overrides().settlementChainId ?? numberFrom(env("VITE_SHOP_CHAIN_ID")) ?? CHAIN.POLYGON;
+  return selectSettlementChain(shopChainEnvironment());
 }
 
 export function ethereumChainId(): ChainId {
-  const settle = settlementChainId();
-  const fallback = settle === CHAIN.AMOY ? CHAIN.SEPOLIA : CHAIN.ETHEREUM;
-  return overrides().ethereumChainId ?? numberFrom(env("VITE_SHOP_ETHEREUM_CHAIN_ID")) ?? fallback;
+  return selectEthereumChain(shopChainEnvironment());
 }
 
 export function rpcUrl(chainId: ChainId): string | null {
@@ -73,7 +91,7 @@ export function rpcUrl(chainId: ChainId): string | null {
 export function configuredCreditsManager(chainId: ChainId): string | null {
   const value = env("VITE_SHOP_CREDITS_MANAGER");
   if (!value || !/^0x[0-9a-fA-F]{40}$/.test(value)) return null;
-  return numberFrom(env("VITE_SHOP_CHAIN_ID")) === chainId ? value.toLowerCase() : null;
+  return parseShopChainId(env("VITE_SHOP_CHAIN_ID")) === chainId ? value.toLowerCase() : null;
 }
 
 export function relayerUrl(): string {

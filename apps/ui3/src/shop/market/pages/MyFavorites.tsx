@@ -7,9 +7,8 @@ import { useQuery } from "@tanstack/react-query";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router";
 
-import Button from "../../../atoms/Button";
+import { Button, ShopSkeletonCards } from "@dcl/one-ui";
 import LoadMore from "../../discovery/components/LoadMore";
-import SkeletonCards from "../../discovery/components/SkeletonCards";
 import SuggestedForYouRow from "../../discovery/components/SuggestedForYouRow";
 import { useSeo } from "../../discovery/hooks";
 import { shopPath } from "../../routes";
@@ -82,7 +81,7 @@ export function SavedItems({ head }: { head?: ReactNode }) {
       {picking ? <SaveToLists itemKey={picking.key} itemName={picking.name} onClose={() => setPicking(null)} /> : null}
       <div className="shop-fav__grid" data-testid={loading ? "favorites-loading" : undefined}>
         {loading ? (
-          <SkeletonCards count={8} />
+          <ShopSkeletonCards count={8} />
         ) : (
           list.slice(0, visible).map((item) => (
             <ItemCard
@@ -126,7 +125,7 @@ export function ListsOverview({ account }: { account: string }) {
       {creating ? <ListEditor onCancel={() => setCreating(false)} onSaved={(list) => navigate(shopPath("favoriteList", { listId: list.id }))} /> : null}
       {lists.isPending ? (
         <div className="shop-fav__grid" aria-busy>
-          <SkeletonCards count={4} />
+          <ShopSkeletonCards count={4} />
         </div>
       ) : lists.isError ? (
         <LoadFailure error={lists.error} what="Your lists" onRetry={() => void lists.refetch()} />

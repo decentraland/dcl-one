@@ -8,6 +8,14 @@
 //! over a ready and a stale index and the reconciler's CreditUsed pass. The
 //! old test's `sql_capture` lock count is not carried (no capture hook).
 
+#![allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    clippy::cast_possible_wrap,
+    clippy::cast_precision_loss,
+    reason = "test fixtures use small literal values"
+)]
+
 use std::sync::Arc;
 
 use axum::http::{HeaderMap, StatusCode};
@@ -110,11 +118,11 @@ fn credit_used_log(
     })
 }
 
-fn salt() -> String {
+pub(super) fn salt() -> String {
     format!("0x{}", uuid::Uuid::new_v4().simple().to_string().repeat(2))
 }
 
-fn usage_settings(
+pub(super) fn usage_settings(
     rpc: &str,
     chain_id: i64,
     contract: &str,
@@ -131,7 +139,7 @@ fn usage_settings(
     }
 }
 
-async fn authorization(
+pub(super) async fn authorization(
     pool: &PgPool,
     id: &str,
     addr: &str,
@@ -159,7 +167,7 @@ async fn balance_is(pool: &PgPool, addr: &str, want: &str) -> bool {
         .unwrap()
 }
 
-async fn auth_status(pool: &PgPool, id: &str) -> String {
+pub(super) async fn auth_status(pool: &PgPool, id: &str) -> String {
     sqlx::query_scalar("SELECT status FROM credits.authorizations WHERE id = $1")
         .bind(id)
         .fetch_one(pool)
@@ -937,10 +945,20 @@ async fn the_usage_pass_folds_and_publishes_only_while_the_switch_lets_it() {
 
 /// A usage index over a chain stub holding one CreditUsed log of `pledge`
 /// (10 MANA at block 1_500), for `wallet`.
-async fn one_used_credit_index(
+pub(super) async fn one_used_credit_index(
     pool: &PgPool,
     wallet: &str,
     pledge: &str,
+) -> super::usage::UsageIndex {
+    used_credit_index(pool, wallet, pledge, 10u128.pow(19)).await
+}
+
+/// [`one_used_credit_index`] with `used` wei consumed.
+pub(super) async fn used_credit_index(
+    pool: &PgPool,
+    wallet: &str,
+    pledge: &str,
+    used: u128,
 ) -> super::usage::UsageIndex {
     let chain_id: i64 = 137;
     let contract = format!("0x{}", &uuid::Uuid::new_v4().simple().to_string()[..32]) + "00000000";
@@ -957,7 +975,7 @@ async fn one_used_credit_index(
             wallet,
             pledge,
             10u128.pow(19),
-            10u128.pow(19),
+            used,
         )],
         get_logs: 0,
     }));

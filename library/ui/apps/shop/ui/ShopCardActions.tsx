@@ -1,10 +1,10 @@
 // A Shop card's actions, shown on hover in place of its price row: trying it on (TAKE OFF or STOP while
 // it is on), then BUY when it is bought in-world, else VIEW on the web Shop.
 
-import { Button, MaskIcon } from '@hud/design'
 import externalIcon from '../assets/external.svg'
 import { pressedWith, type PressedWith } from './pressedWith'
 import styles from './ShopCardActions.module.css'
+import { Button, MaskIcon } from '@dcl/one-ui'
 
 export function ShopCardActions({
   tryOn,
@@ -23,17 +23,17 @@ export function ShopCardActions({
   return (
     <>
       {tryOn != null && (
-        <Button variant="secondary" size="card" className={styles.action} disabled={tryOn.disabled} title={tryOn.title} onClick={tryOn.onClick}>
+        <Button appearance="hud" variant="secondary" size="card" className={styles.action} disabled={tryOn.disabled} title={tryOn.title} onClick={tryOn.onClick}>
           {tryOn.label}
         </Button>
       )}
       {buyInWorld ? (
-        <Button size="card" className={styles.action} onClick={(e) => onBuy(pressedWith(e))}>
+        <Button appearance="hud" size="card" className={styles.action} onClick={(e) => onBuy(pressedWith(e))}>
           BUY
         </Button>
       ) : (
         onView != null && (
-          <Button variant="secondary" size="card" className={styles.action} onClick={onView}>
+          <Button appearance="hud" variant="secondary" size="card" className={styles.action} onClick={onView}>
             VIEW
             <MaskIcon src={externalIcon} size={20} />
           </Button>

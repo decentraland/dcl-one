@@ -7,6 +7,7 @@ publish = false
 
 [dependencies]
 dcl-auth.workspace = true
+dcl-metrics.workspace = true
 catalyst-shared = { path = "../shared" }
 catalyst-storage = { path = "../storage" }
 catalyst-content = { path = "../content" }
@@ -22,6 +23,7 @@ serde_json.workspace = true
 serde_html_form = "=0.2.4"
 mime = "=0.3.17"
 moka.workspace = true
+parking_lot.workspace = true
 chrono.workspace = true
 tracing.workspace = true
 thiserror.workspace = true
@@ -49,3 +51,6 @@ catalyst-social = { path = "../social", features = ["test-support"] }
 catalyst-db = { path = "../db", features = ["test-support"] }
 tokio = { workspace = true, features = ["test-util"] }
 alloy = { version = "2", default-features = false, features = ["std", "signer-local"] }
+
+[lints]
+workspace = true

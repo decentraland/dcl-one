@@ -1,7 +1,9 @@
 // The typed API specs use. Every method is one console command (or a command and the wait that
 // makes its effect observable), with the reply parsed as rendering/bevy-explorer/docs/guidelines/
 // running.md ("Test commands") describes it. Specs never see which transport carries the line.
-import { type Console, ConsoleError, redact, redactLine, replaceSecrets, secretsOf } from './console.ts'
+import { mkdir, writeFile } from 'node:fs/promises'
+import path from 'node:path'
+import { type Console, ConsoleError, quoteWord, redact, redactLine, replaceSecrets, secretsOf } from './console.ts'
 import { type AuthIdentity, encodeIdentity } from './identity.ts'
 import { type Selector, describeSelector, selectorArg, toSelectorObject } from './selectors.ts'
 import { sleep, until } from './wait.ts'
@@ -48,6 +50,82 @@ export interface WorldState {
   keyboardClaimed?: boolean | null
 }
 
+/** A scene's lifecycle state as `/scene_loading_state` and the settling waits name it: `none` on a
+ *  parcel with no scene, `refused` on one whose scene refuses the player (a scene or world ban; it
+ *  is not loaded for them). */
+export type SceneLifecycle = 'loading' | 'failed' | 'starting' | 'blocked' | 'broken' | 'running' | 'none' | 'refused'
+
+/** What `/teleport --wait` and `/reload --wait` report: the scene settled (it runs, its content is
+ *  shown and a frame with it was presented) or the wait ended, and why in `warning`. */
+export interface SettleReport {
+  /** null on a parcel with no scene or one whose scene refuses the player; absent when a
+   *  teleport's wait ended before the landing */
+  sceneHash?: string | null
+  title?: string
+  sceneState: SceneLifecycle
+  /** scene ticks run during the wait */
+  ticksWaited?: number
+  /** frames drawn since the scene was ready: 2 when the reply settled on a ready scene (the first
+   *  of them has been presented); 0 when it settled on a parcel with no scene or a refused one, or
+   *  ended before the scene was ready */
+  renderedFrames: number
+  settleMs: number
+  settled: boolean
+  /** what holds a blocked scene (`frozen`, `gltfs loading`, ...) */
+  blocked?: string[]
+  warning?: string
+}
+
+export interface TeleportReport extends SettleReport {
+  location: [number, number]
+  realm?: string
+  arrived: boolean
+  sceneReady: boolean
+}
+
+export interface ReloadReport extends SettleReport {
+  reloaded: true
+  hint?: string
+}
+
+/** What `/scene_loading_state` reports: the parcel scene under the player, then counts of every
+ *  scene by stage. */
+export interface SceneStateReport {
+  /** null until the player has a position */
+  playerParcel: [number, number] | null
+  /** the player has not landed yet (the scene under them loads first); null until the player has
+   *  a position */
+  outOfWorld: boolean | null
+  /** the parcel's scene, known once its pointer has resolved, before the scene spawns; null on a
+   *  parcel with no scene or one whose scene refuses the player, or until then */
+  sceneHash: string | null
+  state: SceneLifecycle
+  /** the scene readiness `/teleport --wait` and `/reload --wait` wait for: `state` is `running`.
+   *  A teleport's wait also needs the player landed (`outOfWorld` false) */
+  isReady: boolean
+  /** the load stage of the scene under the player, or why there is none */
+  stage: string
+  /** what holds the scene under the player (`frozen`, `gltfs loading`, ...), sorted */
+  blockedBy: string[]
+  /** why each null reading above is null */
+  unavailable: Record<string, string>
+  /** the player's own scene is still loading, which holds the others back */
+  current: boolean
+  spawned: number
+  definition: number
+  crdt: number
+  javascript: number
+  failed: number
+  running: number
+  blocked: number
+  broken: number
+  gltf: number
+  preloads: number
+  texturePreloads: number
+  /** `--wait` commands still waiting for a scene to settle */
+  settleWaits: number
+}
+
 /**
  * What `/hover_entity` and `/click_entity` report. A hit on an avatar or on another scene's
  * entity reports `entity` and `container` as 4294967295.
@@ -76,6 +154,7 @@ export interface MediaPlayerRow {
   scene: string | null
   source: string
   lastPlaybackState?: string | null
+  textureSize?: [number, number] | null
   retryAttempt?: number | null
   retryFailures?: number | null
   retryDelaySeconds?: number | null
@@ -224,6 +303,11 @@ export interface NametagTag {
   player: string | null
   /** The tag is over an avatar a scene made (`AvatarShape`): its suffix is the end of the avatar's id. */
   sceneAvatar: boolean
+  /** False for a tag that is its plate alone: the avatar has no name, or a scene's area hides it. */
+  nameShown: boolean
+  /** The plate a scene put over the name with `AvatarNametag`; its colours are `#RRGGBB`. */
+  plate: { label: string; labelColor: string; backgroundColor: string; borderColor: string } | null
+  /** Empty, as `suffix` is, for an avatar with no name. */
   name: string
   suffix: string
   verified: boolean
@@ -245,6 +329,8 @@ export interface NametagState {
   shown: number
   /** Of those shown, the tags over a scene's avatars. */
   sceneAvatars: number
+  /** Of those shown, the tags with a scene's plate. */
+  plates: number
   /** Tags whose names don't show: out of range, blocked, or hidden by the scene or a setting. */
   hidden: number
   /** The glyph atlas' distance-field and colour page sizes, in pixels. */
@@ -367,6 +453,8 @@ export interface BanBlockState {
     scope: 'platform' | 'world' | 'scene' | null
     message: string | null
     sceneId: string | null
+    /** Known refusals in this wallet/realm session; retryDue is elapsed engine seconds. */
+    retainedRefusals: { sceneId: string; scope: 'world' | 'scene'; retryDue: number }[]
   }
   sceneRoom: {
     state: 'not_connected' | 'connected'
@@ -565,6 +653,115 @@ export const KEYBOARD_TIMEOUT_MS = 10_000
 
 export type MouseButton = 'left' | 'right' | 'middle'
 
+/** `/screenshot` options; any of them makes the reply JSON (`CapturedShot`). The engine has no
+ *  flag for the JSON reply alone, so `screenshot({})` sends `--max-width 1920`: a frame wider
+ *  than 1920 px (a HiDPI window) comes back scaled down, and `frame` names the size captured.
+ *  The bare `screenshot()` is the full-size PNG. */
+export interface ScreenshotOptions {
+  /** 64 to 1920 */
+  maxWidth?: number
+  jpg?: boolean
+  /** hides the HUD and the scenes' window UI for the frame */
+  worldOnly?: boolean
+}
+
+interface Size {
+  width: number
+  height: number
+}
+
+/** A `/screenshot` with options: the image and what it was scaled from. */
+export interface CapturedShot {
+  /** `640x325 (screen 1600x813, frame 3200x1626) full-view capture at parcel (149,149)[, waited N ms for the camera blend]` */
+  caption: string
+  format: 'png' | 'jpg'
+  width: number
+  height: number
+  frame: Size
+  screen: (Size & { scale: number }) | null
+  parcel: { x: number; y: number } | null
+  worldOnly: boolean
+  blendWaitMs: number
+  image: Buffer
+  info?: string
+}
+
+export interface CaptureSequenceOptions extends ScreenshotOptions {
+  /** 1 to 20; 5 when not given */
+  count?: number
+  /** 0.05 to 2, default 0.5 */
+  intervalSeconds?: number
+  /** native only: the folder the engine writes to; give each sequence its own, or read
+   *  `staleFrames` */
+  dir?: string
+  /** where frames kept in the engine's memory (the web client's) are written; `savedTo` names each file */
+  saveTo?: string
+}
+
+export interface CapturedFrame {
+  index: number
+  /** a file natively, `capture://<sequence>/frame-<index>.<ext>` in the web client's memory */
+  path: string
+  width: number
+  height: number
+  bytes: number
+  atSeconds: number
+  intervalFromPreviousSeconds: number | null
+  engineFrame: number
+  /** the scene's tick when the frame was rendered */
+  tick: number | null
+  late: boolean
+  savedTo?: string
+}
+
+/** A `/screenshot --count` reply: paths, never images. */
+export interface CaptureSequence {
+  directory: string
+  stored: 'disk' | 'memory'
+  count: number
+  format: 'png' | 'jpg'
+  worldOnly: boolean
+  requestedIntervalSeconds: number
+  meanIntervalSeconds: number | null
+  late: number
+  screen: (Size & { scale: number }) | null
+  parcel: { x: number; y: number } | null
+  frames: CapturedFrame[]
+  note: string
+  info?: string
+  /** frame files in `directory` this sequence did not write (a reused `dir`); absent when none */
+  staleFrames?: number
+  warning?: string
+}
+
+/** `/screenshot --state`: the capture gate. */
+export interface CaptureState {
+  holder: 'screenshot' | 'screenshot --count' | 'none'
+  framesTaken: number
+  count: number
+  worldOnly: boolean
+  framesInMemory: number
+  bytesInMemory: number
+}
+
+function captureFlags(options: ScreenshotOptions): string {
+  return `${options.maxWidth === undefined ? '' : ` --max-width ${options.maxWidth}`}${options.jpg ? ' --jpg' : ''}${options.worldOnly ? ' --world-only' : ''}`
+}
+
+/** Writes the frames a sequence kept in the engine's memory (`stored: "memory"`) into `dir`, read
+ *  with `/screenshot --frame`, and names each file in its `savedTo`. A sequence on disk is returned as is. */
+export async function saveCaptureFrames(explorer: Pick<Explorer, 'run'>, sequence: CaptureSequence, dir: string): Promise<CaptureSequence> {
+  if (sequence.stored !== 'memory') return sequence
+  await mkdir(dir, { recursive: true })
+  const frames: CapturedFrame[] = []
+  for (const frame of sequence.frames) {
+    const file = path.join(dir, path.posix.basename(frame.path))
+    await writeFile(file, Buffer.from(await explorer.run(`/screenshot --frame ${quoteWord(frame.path)}`), 'base64'))
+    frames.push({ ...frame, savedTo: file })
+  }
+  return { ...sequence, frames }
+}
+
 /** Why a client whose `/world_state` has no `keyboardClaimed` cannot run the scenarios. */
 export const OLDER_CLIENT =
   "the client's /world_state has no keyboardClaimed: it is older than this suite, which waits on it; run the suite against a web build of its own commit"
@@ -575,6 +772,15 @@ const DEFAULT_HUD_TIMEOUT_MS = 10_000
 const ACTIONABLE_TIMEOUT_MS = 10_000
 
 const DEFAULT_ARRIVAL_TIMEOUT_MS = 180_000
+/** A transport's command timeout when it names none (the fake). */
+const DEFAULT_COMMAND_TIMEOUT_MS = 120_000
+/** What a settling command's wait inside the engine stays under the transport's command timeout
+ *  by, so a slow load is reported by the engine rather than cut by the transport. */
+const SETTLE_MARGIN_MS = 20_000
+/** `--timeout-seconds` of `--wait` when the flag is left out. */
+const ENGINE_SETTLE_MS = 60_000
+/** The longest `--timeout-seconds` the engine takes. */
+const ENGINE_MAX_SETTLE_MS = 300_000
 
 /** The error as it may be rethrown: a transport's own error (a timeout, a closed driver) can
  *  quote the line, and the test runner prints the message and the stack. */
@@ -703,12 +909,48 @@ export class Explorer {
     return until(() => this.worldState(), (state) => state.inWorld, { timeoutMs, what: 'the player to be in the world' })
   }
 
-  /** Teleport to a parcel and wait for the arrival: every teleport takes the player out of the
-   *  world first, so the wait is for `arrivals` to grow, then `inWorld`. */
-  async teleport(x: number, y: number, options: { timeoutMs?: number } = {}): Promise<WorldState> {
+  /** Teleport to a parcel and wait inside the engine for the arrival and the scene:
+   *  `/teleport --wait` replies once the player has landed and the parcel's scene settled, or its
+   *  wait ended (`teleport.settled` false, `teleport.warning` says why), and the world state is
+   *  read once after it. Only a wait the engine ended before the landing (it waits less than the
+   *  transport's command timeout) is followed by a poll for `arrivals` to grow and `inWorld`, for
+   *  what is left of `timeoutMs`. */
+  async teleport(x: number, y: number, options: { timeoutMs?: number } = {}): Promise<WorldState & { teleport: TeleportReport }> {
+    const timeoutMs = options.timeoutMs ?? DEFAULT_ARRIVAL_TIMEOUT_MS
+    const seconds = this.#settleSeconds(timeoutMs)
+    const startedAt = Date.now()
     const before = (await this.worldState()).arrivals
-    await this.run(`/teleport ${x} ${y}`)
-    return this.#waitArrival(before, options.timeoutMs ?? DEFAULT_ARRIVAL_TIMEOUT_MS, `the arrival at ${x},${y}`)
+    const teleport = await this.json<TeleportReport>(`/teleport ${x} ${y} --wait --timeout-seconds ${seconds}`)
+    if (teleport.arrived) return { ...(await this.worldState()), teleport }
+    const left = Math.max(0, timeoutMs - (Date.now() - startedAt))
+    return { ...(await this.#waitArrival(before, left, `the arrival at ${x},${y}`)), teleport }
+  }
+
+  /** Reload the parcel scene under the player and wait for the new one to settle
+   *  (`/reload --current --wait`); `settled` false with a `warning` when it did not in time. */
+  async reload(options: { timeoutMs?: number } = {}): Promise<ReloadReport> {
+    // the engine's own default, unless the transport would cut it
+    const timeout = options.timeoutMs === undefined && this.#maxSettleMs() >= ENGINE_SETTLE_MS ? '' : ` --timeout-seconds ${this.#settleSeconds(options.timeoutMs ?? ENGINE_SETTLE_MS)}`
+    return this.json<ReloadReport>(`/reload --current --wait${timeout}`)
+  }
+
+  /** The longest a settling command waits inside the engine: under the transport's command timeout. */
+  #maxSettleMs(): number {
+    return Math.max(1000, (this.console.commandTimeoutMs ?? DEFAULT_COMMAND_TIMEOUT_MS) - SETTLE_MARGIN_MS)
+  }
+
+  /** `--timeout-seconds` for a wait of `timeoutMs`, inside the engine's range (above 0, at most
+   *  300 s) and under the transport's command timeout. A `timeoutMs` that is not above 0 is refused
+   *  here, as the engine would. */
+  #settleSeconds(timeoutMs: number): number {
+    if (!(timeoutMs > 0)) throw new RangeError(`a settling wait needs a timeout above 0 ms; got ${timeoutMs}`)
+    return Math.min(timeoutMs, this.#maxSettleMs(), ENGINE_MAX_SETTLE_MS) / 1000
+  }
+
+  /** The parcel scene under the player (its hash, state, what blocks it and whether it is ready)
+   *  and the counts of every scene by load stage. */
+  sceneState(): Promise<SceneStateReport> {
+    return this.json<SceneStateReport>('/scene_loading_state')
   }
 
   /** Change realm (a realm URL or a world name) and wait for the arrival in it. */
@@ -959,9 +1201,41 @@ export class Explorer {
     return { before: match[1]!, after: match[2]!, speed: Number(match[3]) }
   }
 
-  /** The engine's frame as PNG bytes (the canvas on the web, the HUD included natively). */
-  async screenshot(): Promise<Buffer> {
-    return Buffer.from(await this.run('/screenshot'), 'base64')
+  /** The engine's frame as PNG bytes at full size (the canvas on the web, the HUD included
+   *  natively); with options, the scaled image and its caption, and with an empty options object
+   *  the image at most 1920 px wide (see `ScreenshotOptions`). Refused while another capture runs. */
+  async screenshot(): Promise<Buffer>
+  async screenshot(options: ScreenshotOptions): Promise<CapturedShot>
+  async screenshot(options?: ScreenshotOptions): Promise<Buffer | CapturedShot> {
+    if (!options) return Buffer.from(await this.run('/screenshot'), 'base64')
+    const flags = captureFlags(options)
+    const shot = await this.json<Omit<CapturedShot, 'image'> & { image: string }>(`/screenshot${flags === '' ? ' --max-width 1920' : flags}`)
+    return { ...shot, image: Buffer.from(shot.image, 'base64') }
+  }
+
+  /** `count` frames `intervalSeconds` apart, as paths; with `saveTo`, frames the engine kept in
+   *  memory (the web client) are written there too. */
+  async captureSequence(options: CaptureSequenceOptions = {}): Promise<CaptureSequence> {
+    const flags = ` --count ${options.count ?? 5}${options.intervalSeconds === undefined ? '' : ` --interval-seconds ${options.intervalSeconds}`}${captureFlags(options)}${options.dir ? ` --dir ${quoteWord(options.dir)}` : ''}`
+    const sequence = await this.json<CaptureSequence>(`/screenshot${flags}`)
+    return options.saveTo ? saveCaptureFrames(this, sequence, options.saveTo) : sequence
+  }
+
+  /** The capture running now, if any, and what the last in-memory sequence keeps. */
+  async captureState(): Promise<CaptureState> {
+    return this.json<CaptureState>('/screenshot --state')
+  }
+
+  /** One frame of the last in-memory sequence, by its `path`. */
+  async captureFrame(framePath: string): Promise<Buffer> {
+    return Buffer.from(await this.run(`/screenshot --frame ${quoteWord(framePath)}`), 'base64')
+  }
+
+  /** Lay the HUD out at `[width, height]` CSS px, or at the window's size again with `null`, and
+   *  resolve once it has drawn at that size. Throws on a transport without `resizeView`. */
+  async resizeView(size: [number, number] | null): Promise<void> {
+    if (!this.console.resizeView) throw new Error(`the ${this.console.kind} transport cannot resize the view`)
+    await this.console.resizeView(size)
   }
 
   // --- input --------------------------------------------------------------------------------

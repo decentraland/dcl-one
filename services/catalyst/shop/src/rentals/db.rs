@@ -3,8 +3,9 @@
 //! old crate's SQL: `metadata` is `rental_assets` keyed by
 //! `(contract_address, token_id numeric)` with the wire's `nft_id` as a
 //! UNIQUE (so a listing's asset is the chain identity, not a string), the
-//! asset row is refreshed on conflict (the reader just fetched it), every
-//! row-stamping clock is a bound parameter (`now`), never `now()`, and the
+//! asset row is refreshed on conflict (the reader just fetched it;
+//! `nft_updated_at` keeps the greater time, block versions guard detail
+//! writes), every row-stamping clock is a bound parameter (`now`), never `now()`, and the
 //! status values and numeric filters are validated before they reach the
 //! statement (the old crate let Postgres answer 500 on a bad `status` or
 //! `tokenId`).
@@ -72,7 +73,10 @@ pub struct ListingMetadata<'a> {
     pub distance_to_plaza: Option<i32>,
     pub adjacent_to_road: Option<bool>,
     pub estate_size: Option<i32>,
-    /// The subgraph's `updatedAt`.
+    pub membership_block: i64,
+    /// Published block for the source snapshot that supplied this metadata.
+    pub metadata_block: i64,
+    /// The asset's indexed update time.
     pub updated_at: NaiveDateTime,
 }
 
@@ -150,8 +154,10 @@ impl Database {
 
     /// The asset upsert, the rental, its listing row and its periods in one
     /// statement: a conflict on the one-open-listing index rolls every row
-    /// back. `now` stamps `fetched_at`, `created_at` and `updated_at`.
-    #[allow(clippy::too_many_arguments)]
+    /// back. `now` stamps `fetched_at`, `created_at` and `updated_at`. A
+    /// reader row older than the stored asset row (`nft_updated_at`) creates
+    /// the listing and leaves the asset row as it is, `fetched_at` included;
+    /// the reply then carries the stored category and search text.
     pub async fn insert_listing(
         &self,
         nft_id: &str,
@@ -161,9 +167,45 @@ impl Database {
         lessor: &str,
         now: NaiveDateTime,
     ) -> Result<RentalListing, sqlx::Error> {
+        let mut conn = self.pool.acquire().await?;
+        Self::insert_listing_on(
+            &mut conn,
+            nft_id,
+            metadata,
+            nft_created_at,
+            rental,
+            lessor,
+            now,
+        )
+        .await
+    }
+
+    pub(super) async fn insert_listing_on(
+        conn: &mut sqlx::PgConnection,
+        nft_id: &str,
+        metadata: &ListingMetadata<'_>,
+        nft_created_at: NaiveDateTime,
+        rental: &RentalListingCreation,
+        lessor: &str,
+        now: NaiveDateTime,
+    ) -> Result<RentalListing, sqlx::Error> {
         let expiration = millis_to_naive(rental.expiration, now);
-        let min_days: Vec<i32> = rental.periods.iter().map(|p| p.min_days as i32).collect();
-        let max_days: Vec<i32> = rental.periods.iter().map(|p| p.max_days as i32).collect();
+        let column = |v: i64, field: &str| {
+            i32::try_from(v).map_err(|_| {
+                sqlx::Error::Encode(format!("{field} {v} does not fit its column").into())
+            })
+        };
+        let min_days = rental
+            .periods
+            .iter()
+            .map(|p| column(p.min_days, "minDays"))
+            .collect::<Result<Vec<i32>, _>>()?;
+        let max_days = rental
+            .periods
+            .iter()
+            .map(|p| column(p.max_days, "maxDays"))
+            .collect::<Result<Vec<i32>, _>>()?;
+        let chain_id = column(rental.chain_id, "chainId")?;
         let prices: Vec<String> = rental
             .periods
             .iter()
@@ -175,7 +217,7 @@ impl Database {
             .bind(&rental.token_id)
             .bind(nft_id)
             .bind(&rental.network)
-            .bind(rental.chain_id as i32)
+            .bind(chain_id)
             .bind(metadata.category)
             .bind(metadata.search_text)
             .bind(metadata.distance_to_plaza)
@@ -193,9 +235,33 @@ impl Database {
             .bind(min_days)
             .bind(max_days)
             .bind(prices)
-            .fetch_one(&self.pool)
+            .bind(metadata.membership_block)
+            .bind(metadata.metadata_block)
+            .fetch_one(conn)
             .await?;
         Ok(row_to_listing(&row))
+    }
+
+    pub(super) async fn open_listing_conflict(
+        &self,
+        listing: &RentalListingCreation,
+    ) -> Result<Option<Conflict>, sqlx::Error> {
+        let signature: Option<String> = sqlx::query_scalar(
+            "SELECT signature FROM signatures.rentals WHERE contract_address=lower($1) \
+             AND token_id=$2::numeric AND chain_id=$3 AND status='open'",
+        )
+        .bind(&listing.contract_address)
+        .bind(&listing.token_id)
+        .bind(listing.chain_id)
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(signature.map(|existing| {
+            if existing.eq_ignore_ascii_case(&listing.signature) {
+                Conflict::Signature
+            } else {
+                Conflict::OpenListing
+            }
+        }))
     }
 
     /// The 409s of the create route: `rentals_open_asset_key` (a second open
@@ -216,12 +282,15 @@ impl Database {
         Self::conflict(err) == Some(Conflict::OpenListing)
     }
 
-    pub async fn listing_asset(&self, id: &str) -> Result<Option<(String, String)>, sqlx::Error> {
+    pub async fn listing_asset(
+        &self,
+        id: &str,
+    ) -> Result<Option<(i64, String, String)>, sqlx::Error> {
         let Ok(uuid) = Uuid::parse_str(id) else {
             return Ok(None);
         };
         sqlx::query_as(
-            "SELECT contract_address, token_id::text FROM signatures.rentals WHERE id = $1",
+            "SELECT chain_id::bigint, contract_address, token_id::text FROM signatures.rentals WHERE id = $1",
         )
         .bind(uuid)
         .fetch_optional(&self.pool)
@@ -230,7 +299,10 @@ impl Database {
 
     /// Updates the listing's asset row from a fresh reader row and returns
     /// the refreshed listing in one statement; `None` when the rental (or
-    /// its periods) is missing.
+    /// its periods) is missing, or when the reader row is older than the
+    /// stored one (`nft_updated_at`): a reader answering from an older block
+    /// replaces nothing, so the stored time never moves backwards and
+    /// [`super::status::sync_listing`] keeps ignoring rows that old.
     pub async fn refresh_metadata_for_rental(
         &self,
         rental_id: &str,
@@ -249,6 +321,8 @@ impl Database {
             .bind(metadata.estate_size)
             .bind(metadata.updated_at)
             .bind(now)
+            .bind(metadata.membership_block)
+            .bind(metadata.metadata_block)
             .fetch_optional(&self.pool)
             .await?;
         Ok(row.map(|r| row_to_listing(&r)))
@@ -271,7 +345,7 @@ impl Database {
     ) -> Result<PaginatedResponse<RentalListing>, sqlx::Error> {
         let f = &q.filter;
         let mut qb: QueryBuilder<Postgres> = QueryBuilder::new(format!(
-            "SELECT {LISTING_OUTER_COLUMNS}, COUNT(*) OVER() AS rentals_listings_count \
+            "WITH filtered AS (SELECT {LISTING_OUTER_COLUMNS}, rentals.max_price_per_day, rentals.min_price_per_day \
              FROM signatures.rental_assets a JOIN ("
         ));
         qb.push(LISTING_INNER_SELECT.replace(
@@ -358,7 +432,7 @@ impl Database {
         }
 
         qb.push(
-            "ORDER BY r.contract_address, r.token_id, r.created_at DESC) AS rentals \
+            "ORDER BY r.contract_address, r.token_id, r.created_at DESC, r.id) AS rentals \
              ON a.contract_address = rentals.contract_address AND a.token_id = rentals.token_id \
              WHERE TRUE ",
         );
@@ -402,25 +476,32 @@ impl Database {
             Some("desc") => "desc",
             _ => "asc",
         };
-        let order = match q.sort_by.as_deref() {
-            Some("land_creation_date") => format!("ORDER BY a.nft_created_at {dir} "),
-            Some("name") => format!("ORDER BY a.search_text {dir} "),
-            Some("max_rental_price") => format!("ORDER BY rentals.max_price_per_day {dir} "),
-            Some("min_rental_price") => format!("ORDER BY rentals.min_price_per_day {dir} "),
-            _ => format!("ORDER BY rentals.created_at {dir} "),
+        let sort_column = match q.sort_by.as_deref() {
+            Some("land_creation_date") => "page.metadata_created_at",
+            Some("name") => "page.search_text",
+            Some("max_rental_price") => "page.max_price_per_day",
+            Some("min_rental_price") => "page.min_price_per_day",
+            _ => "page.created_at",
         };
-        qb.push(order);
+        let order = format!("ORDER BY {sort_column} {dir}, page.id ASC ");
+        qb.push(") SELECT page.*, counted.rentals_listings_count FROM (SELECT count(*) AS rentals_listings_count FROM filtered) counted LEFT JOIN LATERAL (SELECT page.*, true AS page_present FROM filtered page ");
+        qb.push(&order);
         qb.push("LIMIT ")
             .push_bind(q.limit)
             .push(" OFFSET ")
             .push_bind(q.offset);
+        qb.push(") page ON true ").push(order);
 
         let rows = qb.build().fetch_all(&self.pool).await?;
         let total: i64 = rows
             .first()
             .map(|r| r.try_get::<i64, _>("rentals_listings_count").unwrap_or(0))
             .unwrap_or(0);
-        let results: Vec<RentalListing> = rows.iter().map(row_to_listing).collect();
+        let results: Vec<RentalListing> = rows
+            .iter()
+            .filter(|r| r.get::<Option<bool>, _>("page_present") == Some(true))
+            .map(row_to_listing)
+            .collect();
         Ok(PaginatedResponse::new(results, total, q.limit, q.offset))
     }
 
@@ -500,12 +581,21 @@ const INSERT_LISTING_SQL: &str = "\
 WITH a AS ( \
   INSERT INTO signatures.rental_assets \
     (contract_address, token_id, nft_id, network, chain_id, category, search_text, distance_to_plaza, \
-     adjacent_to_road, estate_size, nft_created_at, nft_updated_at, fetched_at) \
-  VALUES ($1, $2::numeric, $3, $4, $5, $6, $7, $8::smallint, $9, $10::smallint, $11, $12, $13) \
-  ON CONFLICT (contract_address, token_id) DO UPDATE SET \
-    category = EXCLUDED.category, search_text = EXCLUDED.search_text, \
-    distance_to_plaza = EXCLUDED.distance_to_plaza, adjacent_to_road = EXCLUDED.adjacent_to_road, \
-    estate_size = EXCLUDED.estate_size, nft_updated_at = EXCLUDED.nft_updated_at, fetched_at = EXCLUDED.fetched_at \
+     adjacent_to_road, estate_size, nft_created_at, nft_updated_at, fetched_at, membership_block, metadata_block) \
+  VALUES ($1, $2::numeric, $3, $4, $5, $6, $7, $8::smallint, $9, $10::smallint, $11, $12, $13, $23, $24) \
+  ON CONFLICT (contract_address, token_id) DO UPDATE SET
+    (category, search_text, distance_to_plaza, adjacent_to_road, estate_size, fetched_at, nft_updated_at, membership_block, metadata_block) = (
+      SELECT CASE WHEN fresh THEN EXCLUDED.category ELSE rental_assets.category END,
+             CASE WHEN fresh THEN EXCLUDED.search_text ELSE rental_assets.search_text END,
+             CASE WHEN fresh THEN EXCLUDED.distance_to_plaza ELSE rental_assets.distance_to_plaza END,
+             CASE WHEN fresh THEN EXCLUDED.adjacent_to_road ELSE rental_assets.adjacent_to_road END,
+             CASE WHEN fresh THEN EXCLUDED.estate_size ELSE rental_assets.estate_size END,
+             CASE WHEN fresh THEN EXCLUDED.fetched_at ELSE rental_assets.fetched_at END,
+             GREATEST(EXCLUDED.nft_updated_at, rental_assets.nft_updated_at),
+             CASE WHEN fresh THEN EXCLUDED.membership_block ELSE rental_assets.membership_block END,
+             CASE WHEN fresh THEN EXCLUDED.metadata_block ELSE rental_assets.metadata_block END
+      FROM (SELECT EXCLUDED.metadata_block >= rental_assets.metadata_block
+                   AND EXCLUDED.membership_block >= rental_assets.membership_block AS fresh) AS evidence)
   RETURNING contract_address, token_id, nft_id, category, search_text, nft_created_at \
 ), r AS ( \
   INSERT INTO signatures.rentals \
@@ -533,9 +623,11 @@ const REFRESH_LISTING_SQL: &str = "\
 WITH upd AS ( \
   UPDATE signatures.rental_assets a SET \
     category = $2, search_text = $3, distance_to_plaza = $4::smallint, \
-    adjacent_to_road = $5, estate_size = $6::smallint, nft_updated_at = $7, fetched_at = $8 \
+    adjacent_to_road = $5, estate_size = $6::smallint, \
+    nft_updated_at = GREATEST(a.nft_updated_at, $7), fetched_at = $8, membership_block = $9, metadata_block = $10 \
   FROM signatures.rentals r \
   WHERE r.id = $1 AND a.contract_address = r.contract_address AND a.token_id = r.token_id \
+    AND a.metadata_block <= $10 AND a.membership_block <= $9 \
   RETURNING a.contract_address, a.token_id, a.nft_id, a.category, a.search_text, a.nft_created_at \
 ) \
 SELECT rentals.id, rentals.contract_address, rentals.token_id::text AS token_id, rentals.network, rentals.chain_id, \

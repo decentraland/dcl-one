@@ -6,7 +6,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { Link, useNavigate } from "react-router";
 
-import Button from "../../../atoms/Button";
+import { Button } from "@dcl/one-ui";
 import { shopPath } from "../../routes";
 import { useShopWallet } from "../../wallet/context";
 import { markListingCancelled } from "../../market/lib/dead-listings";
@@ -69,9 +69,9 @@ export function RemoveListing({ token }: { token: TokenRecord }) {
         <button type="button" className="seller-btn" disabled={write.busy} onClick={() => navigate(shopPath("tokenDetail", { contractAddress: token.contractAddress, tokenId: token.tokenId }))}>
           Cancel
         </button>
-        <button type="button" className="seller-btn seller-btn--primary" disabled={write.busy} onClick={() => void cancel(tradeId ? "gasless-only" : "direct")}>
+        <Button size="md" tone="danger" disabled={write.busy} onClick={() => void cancel(tradeId ? "gasless-only" : "direct")}>
           {write.busy ? "Removing…" : "Confirm"}
-        </button>
+        </Button>
       </div>
       <WriteStatus state={write.state} />
       {gaslessFailed ? (
@@ -94,9 +94,9 @@ function DisabledActions({ token }: { token: TokenRecord }) {
       <button type="button" className="seller-btn" onClick={() => navigate(shopPath("tokenDetail", { contractAddress: token.contractAddress, tokenId: token.tokenId }))}>
         Cancel
       </button>
-      <button type="button" className="seller-btn seller-btn--primary" disabled>
+      <Button size="md" tone="danger" disabled>
         Confirm
-      </button>
+      </Button>
     </div>
   );
 }

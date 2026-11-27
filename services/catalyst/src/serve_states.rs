@@ -16,6 +16,9 @@ pub(super) struct OpsSources<'a> {
     pub(super) economy: &'a Arc<shop::evm::State>,
     pub(super) eip1654: Option<Arc<dyn crate::auth::eip1654::Eip1654Validator>>,
     pub(super) public_url: &'a str,
+    /// The analytics client `serve` builds once; the credits revenue events
+    /// go to it under credits-server's context.
+    pub(super) analytics: Option<&'a social::analytics::Analytics>,
 }
 
 /// The operator-plane states, one per old unit, with their jobs attached.
@@ -45,6 +48,12 @@ pub(super) async fn ops_states(
         },
         sources.eip1654.clone(),
     ));
+    // Before the jobs, so the first settlement is reported too.
+    if let Some(analytics) = sources.analytics {
+        credits.attach_revenue_events(Arc::new(super::adapters::CreditsRevenueEvents::new(
+            analytics,
+        )));
+    }
     credits.spawn_jobs(jobs);
     shop::credits::goals::spawn_job(&credits, jobs);
 
@@ -128,7 +137,10 @@ pub(super) fn worlds_comms_online(livekit: &shared::livekit::LiveKit) -> bool {
 
 /// The upstream forwarder of one lane when `var` names an upstream (a public
 /// http(s) base URL that is not this node), its job spawned; `None` when unset.
-#[allow(clippy::too_many_arguments)]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the forwarder wires the shared node handles"
+)]
 pub(super) fn forwarder(
     var: &str,
     url: Option<&str>,
@@ -185,7 +197,10 @@ pub(super) fn reprocess_converter(
 /// permission core and job lifecycle; `worlds::app_router` owns their
 /// routes. `catalyst pulse` is the realtime process beside this one; they
 /// meet on `NATS_URL` and the room authority comms mounts.
-#[allow(clippy::too_many_arguments)]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the worlds state wires the shared node handles"
+)]
 pub(super) async fn worlds_states(
     config: &Config,
     pool: &sqlx::PgPool,
@@ -445,7 +460,10 @@ pub(super) struct CommsStage {
     pub(super) gatekeeper: crate::comms::gatekeeper::SharedState,
 }
 
-#[allow(clippy::too_many_arguments)]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the comms state wires the shared node handles"
+)]
 pub(super) async fn comms_states(
     config: &Config,
     pool: &sqlx::PgPool,
@@ -494,6 +512,7 @@ pub(super) async fn comms_states(
     )
     .with_ban_status(ban_status.clone())
     .with_name_owner_reader(Arc::new(super::adapters::ShopNameOwners(market.clone())))
+    .with_name_authority(market.name_authority.clone())
     .with_deny_list_url(config.worlds.deny_list())
     .with_content_denylist(content_denylist)
     .with_cluster(comms::gatekeeper::admission::cluster::ClusterConfig {
@@ -526,6 +545,10 @@ pub(super) async fn comms_states(
     let archipelago = archipelago::build_state(archipelago_settings, gatekeeper.clone(), jobs)
         .await
         .context("wiring archipelago")?;
+    // Social reads the union of Pulse islands and World presence from events and recovery.
+    gatekeeper
+        .presence
+        .attach_topology(archipelago.feed.topology.clone());
     if primary {
         gatekeeper.start_island_feed(jobs, archipelago.clone());
     }
@@ -595,7 +618,10 @@ pub(super) fn social_analytics(
 /// `comms_states`) is also the social socket's voice runtime
 /// (`comms::gatekeeper::voice::rooms`), the local call that replaced the old
 /// `COMMS_GATEKEEPER_URL` hop.
-#[allow(clippy::too_many_arguments)]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the social state wires the shared node handles"
+)]
 pub(super) fn social_states(
     config: &Config,
     pool: &sqlx::PgPool,
@@ -607,7 +633,7 @@ pub(super) fn social_states(
     eip1654: Option<Arc<dyn crate::auth::eip1654::Eip1654Validator>>,
     explore: &explore::SharedState,
     onboarding: Arc<explore::api::onboarding::OnboardingState>,
-    metrics_handle: comms::metrics::PrometheusHandle,
+    analytics: Option<social::analytics::Analytics>,
 ) -> anyhow::Result<social::States> {
     config
         .social
@@ -714,7 +740,6 @@ pub(super) fn social_states(
         explore.clone(),
     ));
 
-    let analytics = social_analytics(config, http_client)?;
     if let Some(analytics) = &analytics {
         communities.set_analytics(analytics.clone());
     }
@@ -723,7 +748,7 @@ pub(super) fn social_states(
         pool.clone(),
         notifications::Settings {
             admin_token: non_empty(&config.social.catalyrst_notifications_admin_token),
-            events_base_url: public_url.clone(),
+            events_base_url: config.explore.events_site_url.clone(),
             events_asset_base_url: explore.settings.events_asset_base_url.clone(),
             events_public_base: explore.settings.configured_public_base.clone(),
             signing_key: non_empty(&config.social.signing_key),
@@ -806,6 +831,10 @@ pub(super) fn social_states(
                 deployment_max_lag: (config.social.badges_deployment_max_lag_secs > 0)
                     .then(|| Duration::from_secs(config.social.badges_deployment_max_lag_secs)),
                 items_mirror_enabled: config.marketplace.marketplace_mirrors_enabled,
+                polygon_owned: crate::settings::collections_owned(
+                    &config.marketplace.marketplace_collections_index_owns,
+                )
+                .is_ok_and(|owned| owned.contains(&shop::market::chain_walk::ChainNet::Matic)),
                 ..badges::jobs::ProcessorSettings::default()
             },
         },
@@ -927,11 +956,6 @@ pub(super) fn social_states(
             writes_enabled: config.writes.social_writes_enabled,
             commit_hash: config.node.commit_hash.clone(),
             current_version: config.social.social_rpc_current_version.clone(),
-            metrics_path: config.social.wkc_metrics_public_path.clone(),
-            metrics_bearer_token: config.social.wkc_metrics_bearer_token.clone(),
-            metrics_reset_at_night: config.social.wkc_metrics_reset_at_night.as_deref()
-                == Some("true"),
-            metrics_handle: Some(metrics_handle),
             profile_source: Some(communities.profiles.registry()),
         },
         eip1654,
@@ -960,4 +984,97 @@ pub(super) fn social_states(
         rpc,
         segment_webhooks,
     })
+}
+
+#[cfg(test)]
+mod event_notice_configuration_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn event_email_origins_follow_the_public_site_and_keep_images_and_jump_links() {
+        let pool = crate::db::scratch::isolated_pool(4)
+            .await
+            .expect("real PostgreSQL required");
+        let directory =
+            std::env::temp_dir().join(format!("event-email-origins-{}", uuid::Uuid::new_v4()));
+        let storage = Arc::new(storage::Storage::from_config(&directory).await.unwrap());
+        let http = http::Outbound::for_tests();
+        for custom in [false, true] {
+            let mut vars = vec![("DATABASE_URL", "postgres://unused@127.0.0.1:1/postgres")];
+            if custom {
+                vars.extend([
+                    ("PUBLIC_URL", "https://node.example.org"),
+                    ("EVENTS_BASE_URL", "https://legacy-events.example.org"),
+                    ("EVENTS_SITE_URL", "https://site.example.org"),
+                    ("JUMP_IN_SITE_URL", "https://jump.example.org"),
+                ]);
+            }
+            let config = Config::parse_env_for_tests(vars).unwrap();
+            let content = Arc::new(content::ContentState::new(
+                pool.clone(),
+                content::Settings::for_tests(),
+                storage.clone(),
+            ));
+            let market = Arc::new(shop::market::MarketplaceState::new(
+                pool.clone(),
+                http.clone(),
+                shop::market::Settings::for_tests(),
+            ));
+            let comms = Arc::new(comms::gatekeeper::CommsState::new(
+                pool.clone(),
+                http.clone(),
+                comms::gatekeeper::Settings::for_tests(),
+                None,
+                None,
+                Arc::new(comms::interfaces::test_support::StubPolicy::default()),
+                Arc::new(comms::interfaces::test_support::StubScenes::default()),
+                Arc::new(comms::presence::Presence::new()),
+                Arc::new(comms::interfaces::test_support::StubDirectory::default()),
+            ));
+            let mut settings = explore::Settings::for_tests();
+            settings.events_base_url = config.explore.events_base_url.clone();
+            settings.configured_public_base = config.node.public_url.clone();
+            settings.events_asset_base_url = "https://node.example.org/events".into();
+            settings.jump_in_site_url = config.explore.jump_in_site_url.clone();
+            let explore = Arc::new(explore::ExploreState::new(pool.clone(), settings, None));
+            let onboarding = Arc::new(explore::api::onboarding::OnboardingState::new(pool.clone()));
+            let social = social_states(
+                &config, &pool, &storage, &http, &content, &market, comms, None, &explore,
+                onboarding, None,
+            )
+            .unwrap();
+            let settings = &social.notifications.settings;
+            assert_eq!(
+                settings.events_base_url,
+                if custom {
+                    "https://site.example.org"
+                } else {
+                    "https://decentraland.org"
+                }
+            );
+            assert_eq!(
+                explore.settings.events_base_url,
+                if custom {
+                    "https://legacy-events.example.org"
+                } else {
+                    "https://events.decentraland.org"
+                }
+            );
+            assert_eq!(settings.events_public_base, config.node.public_url);
+            assert_eq!(
+                settings.events_asset_base_url,
+                "https://node.example.org/events"
+            );
+            assert_eq!(
+                settings.jump_in_site_url,
+                if custom {
+                    "https://jump.example.org"
+                } else {
+                    "https://decentraland.org/jump"
+                }
+            );
+            drop(social);
+        }
+        std::fs::remove_dir_all(directory).unwrap();
+    }
 }

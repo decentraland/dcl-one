@@ -137,9 +137,16 @@ struct PageEnvelope(serde_json::Value);
 #[derive(Component)]
 struct HudUiNode;
 
-/// The HUD texture is part of the window, so it is hidden for the frame a photo is read from.
+/// A photo, or a `--world-only` `/screenshot` (one frame or a sequence), is being captured.
+type Capturing = Or<(
+    With<camera_reel::CapturingPhoto>,
+    With<scene_inspector::WorldOnlyCapture>,
+)>;
+
+/// The HUD texture is part of the window, so it is hidden for the frame a photo is read from, and
+/// while a `--world-only` capture runs.
 fn hide_hud_for_photo_capture(
-    capturing: Query<(), With<camera_reel::CapturingPhoto>>,
+    capturing: Query<(), Capturing>,
     mut hud: Query<&mut Visibility, With<HudUiNode>>,
 ) {
     let visibility = if capturing.is_empty() {

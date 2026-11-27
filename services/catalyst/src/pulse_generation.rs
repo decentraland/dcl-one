@@ -70,6 +70,7 @@ impl HeldPulseGeneration {
         }
     }
     #[cfg(any(test, feature = "test-support"))]
+    #[allow(clippy::unwrap_used, reason = "test support")]
     pub async fn end_lease_backend_for_test(&self, admin: &PgPool) {
         let pid = self.leases.backend_pid().await.unwrap();
         sqlx::query("SELECT pg_terminate_backend($1)")
@@ -116,7 +117,11 @@ pub async fn run_from_env() -> anyhow::Result<()> {
     )
     .await?;
     let authority = HeldPulseGeneration::acquire(pool.clone(), audience.trim().into()).await?;
-    let pulse = crate::comms::pulse::env::run_from_env_with_generation(Some(authority.clone()));
+    let shutdown = crate::serve::shutdown_signal();
+    let pulse = crate::comms::pulse::env::run_from_env_with_generation_until(
+        Some(authority.clone()),
+        shutdown,
+    );
     tokio::pin!(pulse);
     let result = tokio::select! {
         result = &mut pulse => result,

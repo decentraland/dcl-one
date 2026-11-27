@@ -1,0 +1,542 @@
+/* The popup's scaled canvas without its scrim or its scale-in: the viewer fills it and fades in. */
+.photoLayer.photoLayer {
+  padding: 0;
+  background: none;
+  backdrop-filter: none;
+}
+.photoLayer.photoLayer > div {
+  animation: none;
+}
+/* Sized on the 1920×1080 reference canvas. The info panel hangs off the image panel's right edge, so
+   moving that edge to the screen's edge slides the panel out with it. */
+.viewer {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  background: var(--black);
+  color: var(--text);
+  font-family: var(--font-family);
+  animation: viewerIn var(--dur-fast) ease;
+}
+@keyframes viewerIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.imagePanel {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  right: 480px;
+  background: var(--black);
+  transition: right var(--dur-photo-panel) var(--ease-outquad);
+}
+.imagePanelFull {
+  right: 0;
+}
+.image {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  opacity: 0;
+  transition: opacity var(--dur-mid) var(--ease-outquad);
+}
+.imageShown {
+  opacity: 1;
+}
+.imageSpinner {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  display: flex;
+  transform: translate(-50%, -50%);
+}
+.gradient {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 133px;
+  background: linear-gradient(var(--black-90), transparent);
+  pointer-events: none;
+}
+
+.viewer .square {
+  width: 46px;
+  height: 46px;
+  padding: 0;
+  border-radius: var(--r-md);
+}
+.viewer .close {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+}
+.viewer .close,
+.viewer .infoToggle {
+  background: var(--photo-close);
+}
+.viewer .close:hover:not(:disabled),
+.viewer .infoToggle:hover:not(:disabled) {
+  background: var(--photo-close-hover);
+}
+.viewer .close:active:not(:disabled),
+.viewer .infoToggle:active:not(:disabled),
+.viewer .action:active:not(:disabled) {
+  background: var(--black-40);
+}
+.viewer .nav {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  background: var(--black-60);
+}
+.viewer .nav:hover:not(:disabled) {
+  background: var(--black-80);
+}
+.viewer .nav:active:not(:disabled) {
+  background: var(--black);
+}
+.navPrev {
+  left: 12px;
+}
+.navNext {
+  right: 12px;
+}
+
+.actions {
+  position: absolute;
+  top: 18px;
+  right: 24px;
+  display: flex;
+  height: 46px;
+}
+.viewer .action {
+  background: transparent;
+}
+.viewer .action:hover:not(:disabled) {
+  background: var(--white-3);
+}
+.publicToggle {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding-right: 7px;
+  font-size: var(--type-14);
+  font-weight: var(--fw-semibold);
+  cursor: pointer;
+  --toggle-w: 32px;
+  --toggle-h: 18px;
+  --toggle-pad: 2px;
+  --toggle-off: var(--ink-muted);
+  --toggle-on: var(--brand);
+  --toggle-knob: var(--text);
+  --toggle-knob-shadow: none;
+}
+.separator {
+  position: relative;
+  flex: none;
+  width: 30px;
+}
+.separator::after {
+  content: '';
+  position: absolute;
+  top: 11px;
+  left: 14.5px;
+  width: 1px;
+  height: 24px;
+  background: var(--white-10);
+}
+/* its line sits 5px left of the gap's middle */
+.infoToggle {
+  margin-left: -5px;
+}
+.infoIcon,
+.infoIconFlipped {
+  transition: transform var(--dur-photo-panel) var(--ease-outquad);
+}
+.infoIconFlipped {
+  transform: scaleX(-1);
+}
+
+.info {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 100%;
+  width: 480px;
+  overflow: hidden;
+  background: var(--panel);
+}
+.dateRow {
+  position: absolute;
+  top: 30.7px;
+  left: 20px;
+  display: flex;
+  align-items: center;
+  width: 440px;
+  height: 22px;
+  font-size: var(--type-16);
+  line-height: 22px;
+  white-space: nowrap;
+}
+.takenBy {
+  flex: none;
+}
+.owner {
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  font-weight: var(--fw-semibold);
+  overflow: hidden;
+  text-overflow: clip;
+  cursor: pointer;
+}
+.owner:disabled {
+  cursor: default;
+}
+.label {
+  position: absolute;
+  left: 20px;
+  height: 20px;
+  color: var(--silver);
+  font-size: var(--type-14);
+  line-height: 20px;
+}
+.placeLabel {
+  top: 70.1px;
+}
+.jumpIn {
+  position: absolute;
+  top: 99.4px;
+  left: 20px;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  max-width: 440px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--text);
+  font: inherit;
+  font-size: var(--type-16);
+  font-weight: var(--fw-semibold);
+  cursor: pointer;
+}
+.sceneText {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.jumpIcon {
+  flex: none;
+  margin-left: 6px;
+}
+.divider {
+  position: absolute;
+  top: 141.5px;
+  left: 0;
+  right: 0;
+  height: 1px;
+  background: var(--pale-black);
+}
+.peoplePanel {
+  position: absolute;
+  top: 142.5px;
+  bottom: 9.9px;
+  left: 0;
+  right: 0;
+}
+.peopleLabel {
+  top: 18px;
+}
+.peopleList {
+  position: absolute;
+  top: 52.5px;
+  bottom: 0;
+  left: 0;
+  right: 0;
+}
+.peopleScroll {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  height: 100%;
+  padding: 0 20px 0 24px;
+  overflow-y: auto;
+  scrollbar-width: none;
+}
+.peopleScroll::-webkit-scrollbar {
+  display: none;
+}
+.info .peopleThumb {
+  right: 8px;
+  --scroll-thumb-w: 12px;
+}
+
+.person {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  gap: 14px;
+}
+.personCard {
+  display: flex;
+  height: 40px;
+}
+.personName {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  padding: 0 0 0 5px;
+  border: 0;
+  background: none;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.personName:disabled {
+  cursor: default;
+}
+.personAvatar {
+  flex: none;
+  --avatar-inset-x: 2.2px;
+  --avatar-inset-y: 2.2px;
+  --avatar-ring-width: 1px;
+  --avatar-ring: var(--photo-avatar-ring);
+}
+.nameLine {
+  display: flex;
+  align-items: center;
+  gap: 1px;
+  min-width: 0;
+  max-width: 346px;
+  font-size: var(--type-16);
+  line-height: 20px;
+}
+.nameText {
+  min-width: 0;
+  overflow: hidden;
+  font-weight: var(--fw-semibold);
+  white-space: nowrap;
+}
+.nameTag {
+  flex: none;
+  color: var(--photo-tag);
+}
+.official {
+  display: inline-flex;
+  flex: none;
+  margin-left: 1px;
+}
+.expand {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--text);
+  cursor: pointer;
+}
+.expandIcon,
+.expandOpen {
+  transition: transform var(--dur-mid) var(--ease-outquad);
+}
+.expandOpen {
+  transform: scaleY(-1);
+}
+.personSeparator {
+  display: block;
+  flex: none;
+  width: 450px;
+  height: 1px;
+  margin-left: -7px;
+  background: var(--pale-black);
+}
+.wearables {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  margin-top: -14px;
+  padding: 6px 0 10px;
+}
+.wearablesLoading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 436px;
+  height: 70px;
+}
+.wearablesEmpty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 436px;
+  height: 50px;
+  margin: 0;
+  padding: 0 74px;
+  color: var(--photo-empty);
+  font-size: var(--type-16);
+  line-height: 20px;
+  text-align: center;
+}
+
+.wearable {
+  position: relative;
+  flex: none;
+  width: 426px;
+  height: 92px;
+  border-radius: var(--r-md);
+  background: var(--white-3);
+}
+.wearableThumb {
+  position: absolute;
+  top: 3px;
+  left: 6px;
+  width: 80px;
+  height: 86px;
+  overflow: hidden;
+  border-radius: var(--r-sm);
+  background-position: center;
+  background-size: cover;
+}
+.wearableImg {
+  position: absolute;
+  top: 1.1px;
+  left: 1.2px;
+  width: calc(100% - 2.4px);
+  height: calc(100% - 6.7px);
+  object-fit: contain;
+}
+.wearableFlap {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 31px;
+  height: 30.5px;
+  filter: drop-shadow(0 1px 2px var(--black-30));
+}
+.wearableFlapTint {
+  position: absolute;
+  inset: 0;
+  background: var(--rm);
+  mask: url('../../assets/backpack/corner-flap.webp') center / 100% 100% no-repeat;
+}
+.wearableFlapIcon {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  display: flex;
+  color: var(--text);
+}
+.wearableName {
+  position: absolute;
+  top: 50%;
+  left: 96px;
+  display: -webkit-box;
+  width: 220px;
+  max-height: 50px;
+  overflow: hidden;
+  font-size: var(--type-16);
+  font-weight: var(--fw-semibold);
+  line-height: 19px;
+  transform: translateY(-50%);
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+.wearable .buy {
+  position: absolute;
+  top: 26px;
+  left: 340px;
+  width: 66px;
+  height: 40px;
+  border-radius: var(--photo-buy-radius);
+  color: var(--text);
+  font-size: var(--type-16);
+  transition:
+    transform var(--dur-hover) linear,
+    background var(--dur-tap) linear;
+}
+.wearable .buy.buy:hover:not(:disabled),
+.wearable .buy.buy:focus-visible {
+  background: var(--brand);
+  transform: scale(1.04);
+}
+.wearable .buy.buyPressed {
+  animation: buyPress 567ms linear;
+}
+@keyframes buyPress {
+  0% {
+    transform: scale(1.04);
+    background: var(--brand);
+  }
+  14.6% {
+    transform: scale(0.9);
+    background: var(--photo-buy-pressed);
+  }
+  23.5% {
+    transform: scale(0.9);
+  }
+  44.1% {
+    transform: scale(1.1);
+    background: var(--brand);
+  }
+  70.5% {
+    transform: scale(0.9);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+
+.loading {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  background: var(--panel);
+  transition: opacity var(--dur-mid) var(--ease-outquad);
+}
+.loadingDone {
+  opacity: 0;
+  pointer-events: none;
+}
+.loading .skel,
+.loading .skelCircle {
+  position: absolute;
+  background: var(--photo-skeleton);
+  --skeleton-band: var(--photo-skeleton-band);
+}
+.skel {
+  height: 18px;
+  border-radius: var(--r-pill);
+}
+.skelCircle {
+  width: 40px;
+  height: 40px;
+  border-radius: var(--r-pill);
+}
+.skelLine {
+  position: absolute;
+  height: 1px;
+  background: var(--pale-black);
+}

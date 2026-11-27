@@ -2,6 +2,7 @@
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from "vitest";
 
+import { GeneralMana, GeneralPolygonMana } from "@dcl/one-ui";
 import { shopCart } from "../cart/store";
 import { invalidateShopQueries } from "../discovery/query";
 import { COLLECTION, ITEM_ID, ITEM_META, RESALE_WEARABLE, RESELLER, ShopHarness, TOKEN_ID, catalogClient, catalogTransport, defaultAnswers, fixtureHost, type CatalogAnswers, type CatalogScenario, type SessionKind } from "../discovery/fixtures";
@@ -92,6 +93,18 @@ describe("the item route (a collection item, sold by its creator)", () => {
     expect(screen.queryByTestId("buy-modal")).toBeNull();
   });
 
+  it("opens the rarity hint on hover and dismisses it with Escape", async () => {
+    itemPage({ offers: { kind: "storeMint" } });
+    const link = await screen.findByRole("link", { name: /^epic$/i });
+    fireEvent.mouseEnter(link);
+    const hint = await screen.findByRole("tooltip");
+    expect(link).toHaveAccessibleDescription(hint.textContent!);
+    expect(link).toHaveAccessibleName(/^epic$/i);
+    fireEvent.keyDown(link, { key: "Escape" });
+    expect(screen.queryByRole("tooltip")).toBeNull();
+    expect(link).not.toHaveAttribute("aria-describedby");
+  });
+
   it("lists the item's resales as MANA-only offers, never with their feed credit figure", async () => {
     onTestFinished(marketplaceOn());
     itemPage({ offers: { kind: "storeMint" } });
@@ -117,6 +130,8 @@ describe("the item route (a collection item, sold by its creator)", () => {
       invalidateShopQueries();
       const view = itemPage({ session, overrides: resaleOnly, offers: { kind: "resale" } });
       expect(await screen.findByText("Not for sale")).toBeTruthy();
+      const info = screen.getByRole("img", { name: "Availability information" });
+      expect(info).toHaveAttribute("aria-description", "This item isn't listed for sale right now. Get notified when it becomes available.");
       expect(screen.queryByTestId("price-mana")).toBeNull();
       expect(asked.length).toBeGreaterThan(0);
       expect(asked.every((t) => t === "primary")).toBe(true);
@@ -496,6 +511,45 @@ describe("a LAND legacy order, bought from its token page", () => {
       restore();
     }
   });
+
+  it("web3: a bought order keeps its success up, and the page reads the token again only once it closes", async () => {
+    const wallet = fakeWallet({ chainId: 1 });
+    const restore = fakeChain({ contracts: { [manaToken(CHAIN.ETHEREUM).address]: { abi: ERC20_ABI, answer: () => 0n } } });
+    let tokenReads = 0;
+    try {
+      const nfts = (url: URL) => {
+        if (url.searchParams.get("tokenId")) tokenReads += 1;
+        return url.searchParams.get("owner") && url.searchParams.get("owner") !== RESELLER ? { data: [], total: 0 } : { data: [PARCEL_ROW], total: 1 };
+      };
+      const client = catalogClient("ok", { "/v1/nfts": nfts, "/v1/items": { data: [], total: 0 }, "/v3/catalog/unified": { data: [], total: 0 } });
+      const host = fixtureHost("web3", wallet.address as EvmAddress, { provider: () => wallet });
+      render(
+        <ShopHarness path="/shop/token/:contractAddress/:tokenId" entry={`/shop/token/${BOOK.land}/${TOKEN_ID}`} session="web3" host={host} client={client} offers={fixtureOfferSource({ kind: "parcel" })}>
+          <ItemDetailRoute />
+        </ShopHarness>,
+      );
+      const buy = await screen.findByTestId("cta-buy");
+      await waitFor(() => expect(buy).toBeEnabled());
+      fireEvent.click(buy);
+      const dialog = await screen.findByTestId("legacy-order-buy");
+      const confirm = within(dialog).getByTestId("order-buy");
+      await waitFor(() => expect(confirm).toBeEnabled());
+      const before = tokenReads;
+      await act(async () => fireEvent.click(confirm));
+      expect(await within(dialog).findByText(/Purchase complete/)).toBeTruthy();
+      // Not read under the success: the read drops the token until it answers, and would take the dialog with it.
+      // A whole task later (the page's reads answer as promises), still none.
+      await act(() => new Promise((resolve) => setTimeout(resolve, 0)));
+      expect(tokenReads).toBe(before);
+      expect(screen.getByTestId("legacy-order-buy")).toBeTruthy();
+
+      fireEvent.click(within(dialog).getByRole("button", { name: "Done" }));
+      await waitFor(() => expect(tokenReads).toBeGreaterThan(before));
+      expect(screen.queryByTestId("legacy-order-buy")).toBeNull();
+    } finally {
+      restore();
+    }
+  });
 });
 
 describe("the seed a card passes", () => {
@@ -622,8 +676,10 @@ describe("latest sales and owners", () => {
     const seen = { sales: [] as URL[], owners: [] as URL[] };
     itemPage({ overrides: { ...answers(seen), "/v1/sales": () => ({ data: [{ ...sale(1), chainId: 1, network: "ETHEREUM" }, sale(2)], total: 2 }) } });
     const rows = within(await screen.findByTestId("latest-sales")).getAllByTestId("sale-row");
-    expect(rows[0]!.querySelector("svg")!.getAttribute("viewBox")).toBe("0 0 13 14");
-    expect(rows[1]!.querySelector("svg")!.getAttribute("viewBox")).toBe("0 0 24 24");
+    const ethereum = render(<GeneralMana />).container.firstElementChild!;
+    const polygon = render(<GeneralPolygonMana />).container.firstElementChild!;
+    expect(rows[0]!.querySelector("svg")?.innerHTML).toBe(ethereum.innerHTML);
+    expect(rows[1]!.querySelector("svg")?.innerHTML).toBe(polygon.innerHTML);
   });
 
   it("says a later page failed, with a retry, instead of an empty table", async () => {

@@ -1,10 +1,9 @@
 import type { ReactNode } from "react";
 import { Link, useLocation, useNavigate } from "react-router";
 
-import SitesChrome from "@ui/web/frames/SitesChrome";
+import SitesLayout from "../components/chrome/SitesLayout";
 
-import { Button, Spinner } from "@dcl/one-ui";
-import { GeneralClose, GeneralLeftArrow } from "@dcl/one-ui/foundations/icons";
+import { CloseButton, GeneralLeftArrow, Button, Spinner } from "@dcl/one-ui";
 
 import type { AuthIdentity } from "@/data/lib/auth/types";
 import { openSignIn } from "../components/auth/signin-store";
@@ -67,7 +66,7 @@ export function AccountLayout({ active, children }: AccountLayoutProps) {
   const { linkState, close } = useAccountEntry();
 
   return (
-    <SitesChrome active="play" overlayNav>
+    <SitesLayout active="play" overlayNav>
       <div className={styles.root} data-view={account.state === "signed-in" && !active ? "menu" : "section"}>
         {account.state === "signed-in" ? (
           <div className={styles.frame}>
@@ -91,9 +90,7 @@ export function AccountLayout({ active, children }: AccountLayoutProps) {
                       {ACCOUNT_COPY.sections[active]}
                     </Link>
                   </h1>
-                  <button type="button" className={styles.close} aria-label={ACCOUNT_COPY.close} onClick={close}>
-                    <GeneralClose size={20} aria-hidden="true" />
-                  </button>
+                  <CloseButton variant="plain" aria-label={ACCOUNT_COPY.close} onClick={close} />
                 </div>
               ) : null}
               <div key={account.identity.signer.toLowerCase()}>{children(account.identity)}</div>
@@ -113,6 +110,6 @@ export function AccountLayout({ active, children }: AccountLayoutProps) {
           </div>
         )}
       </div>
-    </SitesChrome>
+    </SitesLayout>
   );
 }

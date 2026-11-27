@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { renderHook } from "@testing-library/react";
+import { cleanup, renderHook } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { primeRemoteFlags } from "@ui/shop/discovery/lib/remoteFlags";
@@ -21,6 +21,7 @@ const ON = { "dapps-shop-marketplace-features": true };
 const LATER = new Date(Date.now() + 86_400_000).toISOString();
 
 afterEach(() => {
+  cleanup();
   facts.identity = null;
   facts.kind = null;
   facts.usable = true;

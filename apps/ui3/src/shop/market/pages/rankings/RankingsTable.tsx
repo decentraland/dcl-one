@@ -5,11 +5,11 @@
 //       decentraland-ui@RarityBadge (small) and AssetImage's rarity wash; @dcl/schemas rarity colours.
 // Copyright 2020 Metaverse Holdings Ltd. (marketplace, decentraland-ui, schemas), Apache-2.0.
 
+import { ShopManaMark } from "@dcl/one-ui";
 import { useQuery } from "@tanstack/react-query";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Link, useLocation, useNavigate } from "react-router";
 
-import ManaMark from "../../../../atoms/ManaMark";
 import { useMediaQuery } from "../../../../data/hooks/useMediaQuery";
 import { fetchProfile, profileFaceUrl } from "../../../../data/catalyst/profile";
 import Blockie from "../../../checkout/settings/Blockie";
@@ -92,7 +92,7 @@ function Mana({ wei, network = "polygon", fiat = true }: { wei: string; network?
   return (
     <span className="shop-rk__mana">
       <span className="shop-rk__mana-amount">
-        <ManaMark size={14} network={network} />
+        <ShopManaMark size={14} network={network} />
         {manaText(wei)}
         <span className="u-sr-only"> MANA</span>
       </span>

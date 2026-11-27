@@ -7,8 +7,7 @@ import { MAX_SUPPLY } from '@shop/discovery/lib/rarity'
 import { saleDiscountPct } from '@shop/discovery/lib/sale'
 import { parseManaWei } from '@shop/model/money'
 import { SIGNED_OUT } from '@shop/model/settlement'
-import { ShopCard as CatalogueCard } from '@dcl/one-ui'
-import { MaskIcon } from '@hud/design'
+import { MaskIcon, ShopCard as CatalogueCard } from '@dcl/one-ui'
 import { shortAddr, userColor } from '@explorer-core/lib/identity'
 import emotesIcon from '@hud/assets/backpack/icon-emotes.webp'
 import { CategoryIcon } from '@hud/features/backpack/categoryIcons'
@@ -137,7 +136,7 @@ export function SelectedItemPanel({
       stock={item.available != null && max != null ? `${item.available}/${max}` : undefined}
       creator={{ name: creatorName, picture: creator?.picture, color: userColor(item.creator, creatorName, creator?.hasClaimedName) }}
       description={entity.data?.description}
-      hides={(entity.data?.hides ?? []).map((h) => ({ key: h, label: categoryName(h), icon: <CategoryIcon category={h} size={22} /> }))}
+      hides={(entity.data?.hides ?? []).map((h) => ({ key: h, label: categoryName(h), icon: <CategoryIcon category={h} size={16} /> }))}
       onClose={onClose}
       onOpenOnWeb={webShopUrl(item) != null ? onOpenOnWeb : undefined}
       onBuy={onBuy}

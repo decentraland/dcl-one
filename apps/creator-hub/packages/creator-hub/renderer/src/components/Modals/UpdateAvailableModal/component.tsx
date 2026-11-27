@@ -1,3 +1,4 @@
+import { useCallback, useEffect } from 'react';
 import Button from '@ui/atoms/Button';
 import IconButton from '@ui/atoms/IconButton';
 import { CloseIcon, InfoOutlinedIcon } from '@ui/atoms/icons-material';
@@ -7,6 +8,7 @@ import { t } from '/@/modules/store/translation/utils';
 import InfluencePng from '/assets/images/influence.png';
 
 import { actions } from '/@/modules/store/settings';
+import { analytics } from '#preload';
 import { useDispatch } from '#store';
 import { Modal } from '../index';
 import { Row } from '../../Row';
@@ -20,6 +22,16 @@ interface Props {
 
 export function UpdateAvailableModal({ open, onClose, version }: Props) {
   const dispatch = useDispatch();
+
+  useEffect(() => {
+    if (open) void analytics.track('Update Prompt', { action: 'shown', version });
+  }, [open]);
+
+  const handleDismiss = useCallback(() => {
+    void analytics.track('Update Prompt', { action: 'dismiss', version });
+    onClose();
+  }, [onClose, version]);
+
   return (
     <Modal
       size="tiny"
@@ -29,7 +41,7 @@ export function UpdateAvailableModal({ open, onClose, version }: Props) {
         <div className="CloseButtonContainer">
           <IconButton
             aria-label={t('modal.close')}
-            onClick={onClose}
+            onClick={handleDismiss}
           >
             <CloseIcon fontSize="medium" />
           </IconButton>
@@ -51,6 +63,7 @@ export function UpdateAvailableModal({ open, onClose, version }: Props) {
               variant="primary"
               className="actionButton"
               onClick={() => {
+                void analytics.track('Update Prompt', { action: 'install', version });
                 dispatch(actions.installUpdate());
               }}
             >

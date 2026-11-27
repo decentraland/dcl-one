@@ -10,10 +10,10 @@ fn hot_scene_fields_preserve_null_coercion_duplicate_counts_and_raw_urls() {
         json!({"id":"z","metadata":{"scene":{"base":"  -12x,+3,wat,0x10","parcels":["1,2","1,2"]},"display":{"title":null,"navmapThumbnail":"thumb","description":false},"contact":{"name":7},"source":{"projectId":["raw"]}},"content":[{"file":"thumb","hash":"first"},{"file":"thumb","hash":"second"}]}),
         json!({"id":"a","metadata":{"scene":{"base":"4","parcels":[]}}}),
     ];
-    let out = content::hot_scenes(&scenes, &[("1,2".into(), 2)], "https://content/").unwrap();
+    let out = content::hot_scenes(&scenes, &[("1,2".into(), 2)], "https://content").unwrap();
     assert_eq!(
         out,
-        r#"[{"id":"z","name":null,"baseCoords":[-12,3,null,0],"usersTotalCount":4,"parcels":[[1,2],[1,2]],"thumbnail":"https://content//contents/first","creator":7,"projectId":["raw"],"description":false},{"id":"a","baseCoords":[4],"usersTotalCount":0,"parcels":[]}]"#
+        r#"[{"id":"z","name":null,"baseCoords":[-12,3,null,0],"usersTotalCount":4,"parcels":[[1,2],[1,2]],"thumbnail":"https://content/contents/first","creator":7,"projectId":["raw"],"description":false},{"id":"a","baseCoords":[4],"usersTotalCount":0,"parcels":[]}]"#
     );
 }
 #[test]
@@ -32,27 +32,32 @@ fn hot_scenes_stably_sort_then_take_100_and_throw_on_invalid_truthy_metadata() {
     ] {
         assert!(content::hot_scenes(&[json!({"metadata":{"scene":scene}})], &[], "url").is_err());
     }
-    for thumbnail in [
-        serde_json::json!(3),
-        serde_json::json!(true),
-        serde_json::json!([]),
-    ] {
-        assert!(content::hot_scenes(&[json!({"metadata":{"scene":{"base":"0","parcels":[]},"display":{"navmapThumbnail":thumbnail}}})],&[],"url").is_err());
-    }
 }
 #[test]
-fn thumbnail_undefined_null_false_empty_http_and_unmatched_are_distinct() {
+fn thumbnail_resolves_only_through_scene_content() {
+    let content_files = serde_json::json!([{"file":"thumb.png","hash":"h1"},{"file":"https://x/t.png","hash":"h2"}]);
     for (thumb, want) in [
-        (serde_json::json!(null), Some(serde_json::json!(null))),
-        (serde_json::json!(false), Some(serde_json::json!(false))),
-        (serde_json::json!(""), Some(serde_json::json!(""))),
-        (
-            serde_json::json!("http-ish"),
-            Some(serde_json::json!("http-ish")),
-        ),
+        (serde_json::json!(null), None),
+        (serde_json::json!(false), None),
+        (serde_json::json!(""), None),
+        (serde_json::json!(3), None),
+        (serde_json::json!(true), None),
+        (serde_json::json!([]), None),
+        (serde_json::json!({}), None),
+        (serde_json::json!("missing.png"), None),
+        (serde_json::json!("http-ish"), None),
         (serde_json::json!("HTTP://x"), None),
+        (serde_json::json!("https://y/t.png"), None),
+        (
+            serde_json::json!("thumb.png"),
+            Some(serde_json::json!("url/contents/h1")),
+        ),
+        (
+            serde_json::json!("https://x/t.png"),
+            Some(serde_json::json!("url/contents/h2")),
+        ),
     ] {
-        let scene = json!({"id":"s","metadata":{"scene":{"base":"0","parcels":[]},"display":{"navmapThumbnail":thumb}}});
+        let scene = json!({"id":"s","metadata":{"scene":{"base":"0","parcels":[]},"display":{"navmapThumbnail":thumb}},"content":content_files.clone()});
         let out: Value =
             serde_json::from_str(&content::hot_scenes(&[scene], &[], "url").unwrap()).unwrap();
         assert_eq!(out[0].get("thumbnail"), want.as_ref());
@@ -211,10 +216,10 @@ async fn database_projection_matches_active_entities_order_and_sees_immediate_ch
     let hot = content::hot_scenes(
         &docs,
         &[(pointers[0].clone(), 1), (pointers[1].clone(), 1)],
-        "content/",
+        "content",
     )
     .unwrap();
-    assert!(hot.contains("content//contents/hash"));
+    assert!(hot.contains("content/contents/hash"));
     sqlx::query("UPDATE content.deployments SET entity_metadata=jsonb_set(entity_metadata::jsonb,'{v,display,title}','\"after\"'::jsonb)::json WHERE entity_id=$1").bind(&ids[0]).execute(&pool).await.unwrap();
     assert_eq!(
         source.fetch(&wanted).await.unwrap()[0]
@@ -331,12 +336,12 @@ fn selected_metadata_keeps_index_key_order_and_distinguishes_omitted_fields() {
             "https://content.example/content/"
         )
         .unwrap(),
-        r#"[{"id":"ordered","name":{"0":0,"2":2,"10":10,"01":1,"4294967295":5,"z":9007199254740992},"baseCoords":[-1,0],"usersTotalCount":1,"parcels":[[-1,0]],"creator":"","projectId":false,"description":null},{"id":"empty","baseCoords":[0,0],"usersTotalCount":0,"parcels":[],"thumbnail":false}]"#
+        r#"[{"id":"ordered","name":{"0":0,"2":2,"10":10,"01":1,"4294967295":5,"z":9007199254740992},"baseCoords":[-1,0],"usersTotalCount":1,"parcels":[[-1,0]],"creator":"","projectId":false,"description":null},{"id":"empty","baseCoords":[0,0],"usersTotalCount":0,"parcels":[]}]"#
     );
 }
 
 struct CountingSource {
-    calls: std::sync::Mutex<Vec<Vec<String>>>,
+    calls: parking_lot::Mutex<Vec<Vec<String>>>,
 }
 #[async_trait::async_trait]
 impl content::Source for CountingSource {
@@ -344,7 +349,7 @@ impl content::Source for CountingSource {
         &self,
         pointers: &[String],
     ) -> Result<Vec<crate::content::OrderedJson>, content::Error> {
-        self.calls.lock().unwrap().push(pointers.to_vec());
+        self.calls.lock().push(pointers.to_vec());
         Ok(vec![json!({"id":"scene"})])
     }
 }
@@ -355,13 +360,13 @@ async fn tile_documents_skips_fetch_for_empty_tiles_and_fetches_once_in_tile_ord
     };
     let docs = content::tile_documents(&source, &[]).await.unwrap();
     assert!(docs.is_empty());
-    assert!(source.calls.lock().unwrap().is_empty());
+    assert!(source.calls.lock().is_empty());
 
     let tiles = [("3,4".to_string(), 2), ("1,2".to_string(), 5)];
     let docs = content::tile_documents(&source, &tiles).await.unwrap();
     assert_eq!(docs, vec![json!({"id":"scene"})]);
     assert_eq!(
-        *source.calls.lock().unwrap(),
+        *source.calls.lock(),
         vec![vec!["3,4".to_string(), "1,2".to_string()]]
     );
 }

@@ -86,6 +86,11 @@ impl Address {
         Self(signer.as_str().to_ascii_lowercase())
     }
 
+    /// The SIGNER of a request `dcl_auth::request::verify_request` accepted.
+    pub fn from_verified(request: &crate::auth::request::VerifiedRequest) -> Self {
+        Self(request.signer.to_ascii_lowercase())
+    }
+
     /// The lowercase text: the SQL bind value and the wire's canonical form.
     pub fn as_str(&self) -> &str {
         &self.0
@@ -500,7 +505,27 @@ impl AuthorityNotEstablished {
             reason_for_operators: error.to_string(),
         }
     }
+
+    /// An attached land-authz index with no fresh published fold:
+    /// undetermined, naming [`LAND_INDEX_SOURCE`], with no other LAND source
+    /// standing in.
+    pub fn land_index_not_ready() -> Self {
+        Self::UndeterminedStoreUnavailable {
+            store: LAND_INDEX_SOURCE,
+            reason_for_operators: "the land-authz index has no fresh published fold".to_string(),
+        }
+    }
+
+    /// Whether this is [`Self::land_index_not_ready`].
+    pub fn is_land_index_not_ready(&self) -> bool {
+        matches!(self, Self::UndeterminedStoreUnavailable { store, .. } if *store == LAND_INDEX_SOURCE)
+    }
 }
+
+/// The store an authority decision names while an attached land-authz index
+/// has no fresh published fold: the identifier its unavailable envelope
+/// carries.
+pub const LAND_INDEX_SOURCE: &str = "land-authz-index";
 
 /// The answer to "may WHO do WHAT to WHOM": a yes, or exactly why there is no
 /// yes. A permission check returns this, never a bare `bool`, so an outage

@@ -8,28 +8,24 @@ pub fn to_etag(hash: &str) -> String {
 
 pub fn check_not_modified(headers: &HeaderMap, hash: &str) -> Option<Vec<(&'static str, String)>> {
     let etag = to_etag(hash);
-    let if_none_match = headers.get("if-none-match")?.to_str().ok()?;
+    if_none_match_matches(headers, &etag).then(|| {
+        vec![
+            ("ETag", etag),
+            ("Cache-Control", IMMUTABLE_CACHE_CONTROL.to_string()),
+            ("Access-Control-Expose-Headers", "ETag".to_string()),
+        ]
+    })
+}
 
-    let not_modified_headers = vec![
-        ("ETag", etag.clone()),
-        ("Cache-Control", IMMUTABLE_CACHE_CONTROL.to_string()),
-        ("Access-Control-Expose-Headers", "ETag".to_string()),
-    ];
-
-    if if_none_match == "*" {
-        return Some(not_modified_headers);
-    }
-
-    let tags: Vec<String> = if_none_match
-        .split(',')
-        .map(|t| t.trim().trim_start_matches("W/").to_string())
-        .collect();
-
-    if tags.contains(&etag) {
-        return Some(not_modified_headers);
-    }
-
-    None
+/// Whether the request's `If-None-Match` names `etag` (quoted, a weak `W/` one too) or is `*`.
+pub fn if_none_match_matches(headers: &HeaderMap, etag: &str) -> bool {
+    let Some(if_none_match) = headers.get("if-none-match").and_then(|v| v.to_str().ok()) else {
+        return false;
+    };
+    if_none_match == "*"
+        || if_none_match
+            .split(',')
+            .any(|t| t.trim().trim_start_matches("W/") == etag)
 }
 
 #[derive(Debug, Clone)]
@@ -92,9 +88,13 @@ pub fn parse_range_header(
     None
 }
 
+/// A stored file's headers. A file opened as a page on the node's origin runs sandboxed, and its
+/// declared type is the only one a browser reads.
 pub fn content_file_headers(hash: &str, size: Option<u64>) -> Vec<(&'static str, String)> {
     let mut headers = vec![
         ("Content-Type", "application/octet-stream".to_string()),
+        ("Content-Security-Policy", "sandbox".to_string()),
+        ("X-Content-Type-Options", "nosniff".to_string()),
         ("ETag", to_etag(hash)),
         (
             "Access-Control-Expose-Headers",

@@ -230,7 +230,9 @@ impl CouponChainReader for RpcCouponChainReader {
         let mut decoded = Vec::with_capacity(slots.len());
         for (uses_word, cancelled_word) in slots {
             decoded.push((
-                word_to_u64(&uses_word?)? as i64,
+                i64::try_from(word_to_u64(&uses_word?)?).map_err(|_| {
+                    ChainReadError::Rpc("the coupon manager returned uses past i64".into())
+                })?,
                 word_to_bool(&cancelled_word?)?,
             ));
         }

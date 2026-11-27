@@ -1,6 +1,6 @@
 //! The tile types as api.decentraland.org serves them, and `/v2/tiles`
 //! (bbox + `include`/`exclude` projection), `/v1/tiles` (the legacy numeric
-//! shape) and `/v2/tiles/info` over the mirrored grid.
+//! shape) and `/v2/tiles/info` over the built grid.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -335,17 +335,6 @@ pub fn to_legacy(tile: &Tile) -> LegacyTile {
     }
 }
 
-fn not_ready(last: i64) -> Response {
-    let mut resp = (StatusCode::SERVICE_UNAVAILABLE, "Not ready").into_response();
-    http_cache::apply(
-        &mut resp,
-        last,
-        http_cache::DEFAULT_MAX_AGE,
-        http_cache::DEFAULT_SWR,
-    );
-    resp
-}
-
 fn cached_json(body: Arc<Vec<u8>>, last: i64, key: &str) -> Response {
     let mut resp = (
         StatusCode::OK,
@@ -371,14 +360,17 @@ async fn serve_tiles(
     legacy: bool,
 ) -> Response {
     // One grid for the key, the stamp and the body, so a concurrent swap
-    // cannot key one grid's body under the other's tag.
-    let grid = state.map.snapshot();
-    let last = grid.as_ref().map_or(0, |g| g.last_updated_at);
+    // cannot key one grid's body under the other's tag. Without a grid, the
+    // envelope as it is: never a 304 for a stamp no grid carries.
+    let Some(grid) = state.map.snapshot() else {
+        return state.map.unavailable();
+    };
+    let last = grid.last_updated_at;
     let key = canonical_key(
         if legacy { "v1" } else { "v2" },
         q,
-        grid.as_ref().and_then(|g| g.bounds),
-        grid.as_ref().map_or(0, |g| g.content_tag),
+        grid.bounds,
+        grid.content_tag,
     );
     if let Some(r) = http_cache::not_modified_etag(
         headers,
@@ -389,9 +381,6 @@ async fn serve_tiles(
     ) {
         return r;
     }
-    let Some(grid) = grid else {
-        return not_ready(last);
-    };
     if let Some(body) = state.map.cached_tiles(&key) {
         return cached_json(body, last, &key);
     }
@@ -437,19 +426,33 @@ pub async fn get_legacy_tiles(
     serve_tiles(&state, &headers, &q, true).await
 }
 
+/// `/v2/tiles/info`: the grid's content stamp, and when the build last
+/// found it current against its sources (`checkedAt`, ms; absent before any
+/// check), what the map's age label reads.
+/// `/v2/tiles/info`'s body. `serverNow` is this process's clock when it
+/// answers (ms), so a client measures `checkedAt`'s age on the server's
+/// clock without reading the `Date` header, which a cross-origin client may
+/// not be allowed to.
+fn info_body(last_updated_at: i64, checked_at: i64, server_now: i64) -> Value {
+    let mut body = json!({ "lastUpdatedAt": last_updated_at, "serverNow": server_now });
+    if checked_at > 0 {
+        body["checkedAt"] = json!(checked_at);
+    }
+    body
+}
+
 pub async fn tiles_info(State(state): State<Shared>) -> Response {
     if !state.map.is_ready() {
-        return (
-            StatusCode::SERVICE_UNAVAILABLE,
-            [("cache-control", "no-cache")],
-            "Not ready",
-        )
-            .into_response();
+        return state.map.unavailable();
     }
     (
         StatusCode::OK,
         [("cache-control", "no-cache")],
-        Json(json!({ "lastUpdatedAt": state.map.last_updated_at() })),
+        Json(info_body(
+            state.map.last_updated_at(),
+            state.map.checked_at(),
+            chrono::Utc::now().timestamp_millis(),
+        )),
     )
         .into_response()
 }
@@ -681,7 +684,6 @@ mod tests {
         state.map.set(super::super::Grid::from_tiles(
             tiles,
             1,
-            None,
             chrono::Utc::now().naive_utc(),
         ));
         let barrier = Arc::new(tokio::sync::Barrier::new(16));

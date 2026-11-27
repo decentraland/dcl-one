@@ -5,7 +5,7 @@ import type { ReactNode } from "react";
 import { Link } from "react-router";
 
 import { Coin } from "../../../atoms/icons";
-import ThumbnailImage from "../../../components/ThumbnailImage";
+import { ShopThumbnailImage } from "@dcl/one-ui";
 import { publicThumbnail, publicThumbnailSet, useThumbnailPublicBase } from "../../../data/thumbnail";
 import Icon from "../../discovery/components/Icon";
 import { CreditsAmount } from "../../discovery/components/PriceTag";
@@ -73,7 +73,7 @@ export default function ItemCard({ item, saved, onToggleSave, actions }: { item:
         ) : null}
         <div className="shop-card__media" style={{ backgroundImage: rarityMedia(item.rarity) }}>
           {item.thumbnail ? (
-            <ThumbnailImage className="shop-card__img" src={publicThumbnail(item.thumbnail, 320, thumbnailBase)} srcSet={publicThumbnailSet(item.thumbnail, [320, 640], thumbnailBase)}
+            <ShopThumbnailImage className="shop-card__img" src={publicThumbnail(item.thumbnail, 320, thumbnailBase)} srcSet={publicThumbnailSet(item.thumbnail, [320, 640], thumbnailBase)}
               sizes="(max-width: 640px) 45vw, 240px" fallbackSrc={item.thumbnail} alt="" loading="lazy" decoding="async" />
           ) : null}
         </div>

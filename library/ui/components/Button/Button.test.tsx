@@ -153,7 +153,7 @@ describe('when a native Button becomes unavailable', () => {
 })
 
 describe('when using the native Button contract', () => {
-  it.each(['primary', 'secondary', 'tertiary', 'quaternary', 'inverse'] as const)(
+  it.each(['primary', 'secondary', 'secondaryLight', 'tertiary', 'quaternary', 'inverse'] as const)(
     'should render %s with consumer content and a leading icon',
     (variant) => {
       render(
@@ -162,6 +162,24 @@ describe('when using the native Button contract', () => {
         </Button>
       )
       expect(screen.getByRole('button', { name: 'Join the world' })).toHaveClass('wide')
+    }
+  )
+
+  describe.each(['primary', 'outline'] as const)(
+    'when a destructive %s button is disabled',
+    (variant) => {
+      it('should preserve the destructive tone and block activation', async () => {
+        const click = vi.fn()
+        render(
+          <Button variant={variant} tone="danger" disabled onClick={click}>
+            Remove
+          </Button>
+        )
+        const button = screen.getByRole('button', { name: 'Remove' })
+        expect(button).toHaveAttribute('data-tone', 'danger')
+        await userEvent.click(button)
+        expect(click).not.toHaveBeenCalled()
+      })
     }
   )
 
@@ -589,5 +607,291 @@ describe('when an untyped caller passes dangerouslySetInnerHTML', () => {
           .dangerouslySetInnerHTML
       ).toEqual({ __html: injected })
     })
+  })
+})
+
+describe('when a Button takes the hud appearance', () => {
+  describe('and it renders a button', () => {
+    it('should default to the primary variant and the md size, with no radius override', () => {
+      render(<Button appearance="hud">Save</Button>)
+      const button = screen.getByRole('button', { name: 'Save' })
+      expect(button).toHaveAttribute('type', 'button')
+      expect(button).toHaveAttribute('data-variant', 'primary')
+      expect(button).toHaveAttribute('data-size', 'md')
+      expect(button).not.toHaveAttribute('data-radius')
+      expect(button).not.toHaveAttribute('appearance')
+    })
+
+    it("should carry its variant, size and radius and keep the caller's class", () => {
+      render(
+        <Button appearance="hud" variant="ghost" size="bare" radius="pill" className="mine">
+          Close
+        </Button>
+      )
+      const button = screen.getByRole('button', { name: 'Close' })
+      expect(button).toHaveAttribute('data-variant', 'ghost')
+      expect(button).toHaveAttribute('data-size', 'bare')
+      expect(button).toHaveAttribute('data-radius', 'pill')
+      expect(button).toHaveClass('mine')
+    })
+
+    it('should lay its children out as its own children, with no wrapper', () => {
+      render(
+        <Button appearance="hud">
+          <i data-testid="glyph" />
+          <span>Jump in</span>
+        </Button>
+      )
+      const button = screen.getByRole('button', { name: 'Jump in' })
+      expect(screen.getByTestId('glyph').parentElement).toBe(button)
+      expect(button.querySelector('[data-button-label]')).toBeNull()
+    })
+
+    it('should name itself from label when it has no children', () => {
+      render(<Button appearance="hud" label="Retry" />)
+      expect(screen.getByRole('button', { name: 'Retry' })).toBeInTheDocument()
+    })
+
+    it('should hand its element to a ref', () => {
+      const ref = createRef<HTMLButtonElement>()
+      render(
+        <Button appearance="hud" ref={ref}>
+          Save
+        </Button>
+      )
+      expect(ref.current).toBe(screen.getByRole('button', { name: 'Save' }))
+    })
+
+    it('should submit its form only as a submit button', async () => {
+      const submit = preventSubmit()
+      render(
+        <form onSubmit={submit}>
+          <Button appearance="hud">Plain</Button>
+          <Button appearance="hud" type="submit">
+            Send
+          </Button>
+        </form>
+      )
+      await userEvent.click(screen.getByRole('button', { name: 'Plain' }))
+      expect(submit).not.toHaveBeenCalled()
+      await userEvent.click(screen.getByRole('button', { name: 'Send' }))
+      expect(submit).toHaveBeenCalledTimes(1)
+    })
+
+    it('should not answer a click while disabled', async () => {
+      const onClick = vi.fn()
+      render(
+        <Button appearance="hud" disabled onClick={onClick}>
+          Send
+        </Button>
+      )
+      const button = screen.getByRole('button', { name: 'Send' })
+      expect(button).toBeDisabled()
+      await userEvent.click(button)
+      expect(onClick).not.toHaveBeenCalled()
+    })
+
+    it('should stay enabled and answer a click while only announced as disabled', async () => {
+      const onClick = vi.fn()
+      render(
+        <Button appearance="hud" aria-disabled="true" onClick={onClick}>
+          Send
+        </Button>
+      )
+      const button = screen.getByRole('button', { name: 'Send' })
+      expect(button).not.toBeDisabled()
+      await userEvent.click(button)
+      expect(onClick).toHaveBeenCalledTimes(1)
+    })
+  })
+
+  describe('and it renders a link', () => {
+    it('should render an anchor with the same look', () => {
+      render(
+        <Button appearance="hud" href="/shop" size="sm">
+          Shop
+        </Button>
+      )
+      const link = screen.getByRole('link', { name: 'Shop' })
+      expect(link).toHaveAttribute('href', '/shop')
+      expect(link).toHaveAttribute('data-size', 'sm')
+      expect(link).not.toHaveAttribute('type')
+    })
+
+    it('should protect a link that opens another tab', () => {
+      render(
+        <Button appearance="hud" href="https://example.com" target="_blank" rel="noopener">
+          Open
+        </Button>
+      )
+      expect(screen.getByRole('link', { name: 'Open' })).toHaveAttribute(
+        'rel',
+        'noopener noreferrer'
+      )
+    })
+
+    it('should keep a disabled link a link that answers no click', () => {
+      const onClick = vi.fn()
+      render(
+        <Button appearance="hud" href="/shop" disabled onClick={onClick}>
+          Shop
+        </Button>
+      )
+      const link = screen.getByRole('link', { name: 'Shop' })
+      expect(link).toHaveAttribute('data-disabled')
+      expect(fireEvent.click(link)).toBe(false)
+      expect(onClick).not.toHaveBeenCalled()
+    })
+
+    it('should run the click of an enabled link and mark it with no disabled hook', async () => {
+      const onClick = vi.fn((event: { preventDefault: () => void }) => event.preventDefault())
+      render(
+        <Button appearance="hud" href="/shop" onClick={onClick}>
+          Shop
+        </Button>
+      )
+      const link = screen.getByRole('link', { name: 'Shop' })
+      expect(link).not.toHaveAttribute('data-disabled')
+      await userEvent.click(link)
+      expect(onClick).toHaveBeenCalledTimes(1)
+    })
+
+    it('should drop the destination of a disabled link', () => {
+      render(
+        <Button appearance="hud" href="/shop" disabled>
+          Shop
+        </Button>
+      )
+      const link = screen.getByText('Shop')
+      expect(link).not.toHaveAttribute('href')
+      expect(link).toHaveAttribute('aria-disabled', 'true')
+    })
+  })
+})
+
+describe('when a hud Button is an icon control', () => {
+  it('should default to the ghost fill and the md size, and report that it is not pressed', () => {
+    render(<Button appearance="hud" control="square" aria-label="Close" />)
+    const button = screen.getByRole('button', { name: 'Close' })
+    expect(button).toHaveAttribute('type', 'button')
+    expect(button).toHaveAttribute('data-shape', 'square')
+    expect(button).toHaveAttribute('data-variant', 'ghost')
+    expect(button).toHaveAttribute('data-size', 'md')
+    expect(button).not.toHaveAttribute('data-active')
+    expect(button).toHaveAttribute('aria-pressed', 'false')
+    expect(button).not.toHaveAttribute('control')
+  })
+
+  it("should carry its shape, fill and size and keep the caller's class", () => {
+    render(
+      <Button appearance="hud" control="pill" variant="faint" size="sm" className="mine">
+        3 online
+      </Button>
+    )
+    const button = screen.getByRole('button', { name: '3 online' })
+    expect(button).toHaveAttribute('data-shape', 'pill')
+    expect(button).toHaveAttribute('data-variant', 'faint')
+    expect(button).toHaveAttribute('data-size', 'sm')
+    expect(button).toHaveClass('mine')
+  })
+
+  it('should carry a shape, which the plain hud button does not', () => {
+    render(
+      <>
+        <Button appearance="hud">Plain</Button>
+        <Button appearance="hud" control="circle" aria-label="Menu" />
+      </>
+    )
+    expect(screen.getByRole('button', { name: 'Plain' })).not.toHaveAttribute('data-shape')
+    expect(screen.getByRole('button', { name: 'Menu' })).toHaveAttribute('data-shape', 'circle')
+  })
+
+  it('should not report a link as pressed', () => {
+    render(
+      <Button appearance="hud" control="pill" href="/shop" active>
+        Shop
+      </Button>
+    )
+    const link = screen.getByRole('link', { name: 'Shop' })
+    expect(link).not.toHaveAttribute('aria-pressed')
+    expect(link).toHaveAttribute('data-active')
+  })
+
+  it('should mark an active control and report it as pressed', () => {
+    render(<Button appearance="hud" control="circle" active aria-label="People" />)
+    const button = screen.getByRole('button', { name: 'People' })
+    expect(button).toHaveAttribute('data-active')
+    expect(button).toHaveAttribute('aria-pressed', 'true')
+  })
+
+  it('should drop aria-pressed when the caller clears it', () => {
+    render(
+      <Button
+        appearance="hud"
+        control="square"
+        active
+        aria-pressed={undefined}
+        aria-expanded
+        aria-label="More options"
+      />
+    )
+    const button = screen.getByRole('button', { name: 'More options' })
+    expect(button).not.toHaveAttribute('aria-pressed')
+    expect(button).toHaveAttribute('data-active')
+  })
+
+  it('should not call onClick while disabled', async () => {
+    const onClick = vi.fn()
+    render(
+      <Button appearance="hud" control="circle" disabled onClick={onClick} aria-label="Mute" />
+    )
+    const button = screen.getByRole('button', { name: 'Mute' })
+    expect(button).toBeDisabled()
+    await userEvent.click(button)
+    expect(onClick).not.toHaveBeenCalled()
+  })
+
+  it('should drop the destination of a disabled link', () => {
+    render(
+      <Button appearance="hud" control="pill" href="/shop" disabled>
+        Shop
+      </Button>
+    )
+    const link = screen.getByText('Shop')
+    expect(link).not.toHaveAttribute('href')
+    expect(link).toHaveAttribute('data-disabled')
+  })
+})
+
+describe('when a hud Button is a header button', () => {
+  it('should render a circle with no fill, size or pressed state', () => {
+    render(<Button appearance="hud" control="header" aria-label="Close" />)
+    const button = screen.getByRole('button', { name: 'Close' })
+    expect(button).toHaveAttribute('data-shape', 'circle')
+    expect(button).not.toHaveAttribute('data-variant')
+    expect(button).not.toHaveAttribute('data-size')
+    expect(button).not.toHaveAttribute('aria-pressed')
+  })
+
+  it('should render a pill around its children', () => {
+    render(
+      <Button appearance="hud" control="headerPill" className="mine">
+        <span>Ada</span>
+      </Button>
+    )
+    const button = screen.getByRole('button', { name: 'Ada' })
+    expect(button).toHaveAttribute('data-shape', 'pill')
+    expect(button).toHaveClass('mine')
+    expect(button.querySelector('[data-button-label]')).toBeNull()
+  })
+})
+
+describe('when a Button names the default appearance', () => {
+  it('should render as it does without the prop', () => {
+    render(<Button appearance="default">Join</Button>)
+    const button = screen.getByRole('button', { name: 'Join' })
+    expect(button).toHaveAttribute('data-size', 'xl')
+    expect(button).not.toHaveAttribute('appearance')
+    expect(button.querySelector('[data-button-label]')).not.toBeNull()
   })
 })

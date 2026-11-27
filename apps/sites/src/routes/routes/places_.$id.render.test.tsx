@@ -1,7 +1,7 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import type { PlaceDetailProps } from "@dcl/one-ui/apps/sites/places/PlaceDetail";
+import type { PlaceDetailProps } from "@dcl/one-ui";
 import { renderToString } from "react-dom/server";
-import { createMemoryRouter, RouterProvider } from "react-router";
+import { createMemoryRouter, RouterProvider, useNavigation } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { AuthIdentity } from "@/data/lib/auth/types";
@@ -14,12 +14,18 @@ import PlaceDetailRoute from "./places_.$id";
 
 const seen: { props: PlaceDetailProps | null } = { props: null };
 
-vi.mock("@dcl/one-ui/apps/sites/places/PlaceDetail", () => ({
+vi.mock("@dcl/one-ui", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@dcl/one-ui")>()),
   PlaceDetail: (props: PlaceDetailProps) => {
     seen.props = props;
     return null;
   },
 }));
+// The route's own navigation state, so a test can hold it while a retry loads; the real hook otherwise.
+vi.mock("react-router", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("react-router")>();
+  return { ...actual, useNavigation: vi.fn(actual.useNavigation) };
+});
 vi.mock("@/core/lib/telemetry/track", () => ({ track: vi.fn() }));
 vi.mock("@/features/components/auth/signin-store", () => ({ openSignIn: vi.fn() }));
 vi.mock("@/features/explorer/scene-chat/useSceneChat", () => ({ useSceneChat: vi.fn(() => ({ status: "loading", messages: [] })) }));
@@ -57,7 +63,7 @@ function renderRoute(travel: PlaceTravel = { playBase: "/play/", jumpHref: "/pla
     [{ id: "place", path: "/places/:id", Component: PlaceDetailRoute as never }],
     { initialEntries: [`/places/${PLACE_ID}`], hydrationData: { loaderData: { place: loaderData } } },
   );
-  const client = new QueryClient();
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   renderToString(<QueryClientProvider client={client}><RouterProvider router={router} /></QueryClientProvider>);
   return seen.props!;
 }
@@ -180,6 +186,31 @@ describe("when handing off place travel", () => {
       expect(props.jumpHref).toBeUndefined();
       expect(track).toHaveBeenCalledWith("jump_in_failed", { place_id: PLACE_ID, error: "Travel is temporarily unavailable. Please retry." }, expect.anything());
       expect(track).not.toHaveBeenCalledWith("jump_in_completed", expect.anything(), expect.anything());
+    });
+    it("should offer Retry travel as the shared secondary Button, enabled while nothing loads", () => {
+      const retry = /<button[^>]*>.*?Retry travel.*?<\/button>/.exec(renderToString(<>{props.detailSlot}</>))?.[0] ?? "";
+      expect(retry).toContain('data-variant="secondary"');
+      expect(retry).toContain('data-size="md"');
+      expect(retry).not.toMatch(/\sdisabled=""/);
+    });
+    describe("and a retry is already loading", () => {
+      beforeEach(() => {
+        vi.mocked(useNavigation).mockReturnValue({ state: "loading" } as ReturnType<typeof useNavigation>);
+        props = renderRoute({ playBase: "/play/", launchError: "Travel is temporarily unavailable. Please retry." });
+      });
+      afterEach(async () => {
+        const actual = await vi.importActual<typeof import("react-router")>("react-router");
+        vi.mocked(useNavigation).mockImplementation(actual.useNavigation);
+      });
+      it("should disable Retry travel", () => {
+        const retry = /<button[^>]*>.*?Retry travel.*?<\/button>/.exec(renderToString(<>{props.detailSlot}</>))?.[0] ?? "";
+        expect(retry).toMatch(/\sdisabled=""/);
+      });
+    });
+  });
+  describe("and travel resolved", () => {
+    it("should show no Retry travel", () => {
+      expect(props.detailSlot).toBeUndefined();
     });
   });
 });

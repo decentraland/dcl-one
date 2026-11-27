@@ -345,9 +345,8 @@ impl EmailSender {
                 .map(|s| s.to_string());
             return Ok(message_id);
         }
-        let detail = resp.text().await.unwrap_or_default();
-        let detail: String = detail.chars().take(200).collect();
-        tracing::error!(status = %status, detail = %detail, "SendGrid send failed");
+        let detail = refusal_fields(&resp.text().await.unwrap_or_default());
+        tracing::error!(status = %status, fields = %detail, "SendGrid send failed");
         if status.as_u16() == 429 || status.is_server_error() {
             Err(SendFailure::Transient(format!("sendgrid {status}")))
         } else {
@@ -772,9 +771,89 @@ pub fn common_email_data(subject: &str, content: &str, title: &str, highlight: &
     })
 }
 
+/// What a SendGrid refusal may say in a log, a stored error or a response:
+/// the request fields its `errors[]` blame (`personalizations.0.to.0.email`),
+/// never their messages or the raw body, which can echo the recipient.
+pub fn refusal_fields(body: &str) -> String {
+    let fields: Vec<String> = serde_json::from_str::<Json>(body)
+        .ok()
+        .and_then(|v| v.get("errors")?.as_array().cloned())
+        .unwrap_or_default()
+        .iter()
+        .filter_map(|e| e.get("field")?.as_str().map(str::to_string))
+        .filter(|f| {
+            !f.is_empty()
+                && f.len() <= 64
+                && f.bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || b"._-[]".contains(&b))
+        })
+        .collect();
+    if fields.is_empty() {
+        "no field named".to_string()
+    } else {
+        format!("fields {}", fields.join(", "))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A refusal names only the request fields SendGrid blames: never the
+    /// message or the body, which can echo the recipient.
+    #[test]
+    fn a_refusal_keeps_its_fields_and_drops_the_recipient() {
+        let echoed = r#"{"errors":[{"message":"Does not contain a valid address: buyer@example.org","field":"personalizations.0.to.0.email","help":null},{"message":"x","field":"bad field buyer@example.org"}]}"#;
+        assert_eq!(
+            refusal_fields(echoed),
+            "fields personalizations.0.to.0.email"
+        );
+        for body in [
+            "buyer@example.org is not allowed",
+            "",
+            "{}",
+            r#"{"errors":"buyer@example.org"}"#,
+        ] {
+            assert_eq!(refusal_fields(body), "no field named", "{body}");
+        }
+    }
+
+    /// A SendGrid refusal that echoes the recipient comes back, and is
+    /// logged, naming only the field it blames.
+    #[tokio::test]
+    async fn a_sendgrid_refusal_never_carries_the_recipient() {
+        let app = axum::Router::new().route(
+            "/v3/mail/send",
+            axum::routing::post(|| async {
+                (
+                    axum::http::StatusCode::BAD_REQUEST,
+                    axum::Json(json!({ "errors": [{ "message": "Invalid recipient buyer@example.org", "field": "personalizations.0.to.0.email" }] })),
+                )
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let api_url = format!("http://{}", listener.local_addr().unwrap());
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let sender = EmailSender::new(
+            EmailConfig {
+                sendgrid_api_key: Some("SG.example".into()),
+                from_email: Some("noreply@example.org".into()),
+                api_url,
+                ..Default::default()
+            },
+            Outbound::for_tests(),
+        );
+        let err = sender
+            .send_html("buyer@example.org", "s", "<p>h</p>", "t", &json!({}))
+            .await
+            .unwrap_err();
+        assert_eq!(
+            err,
+            SendFailure::Permanent(
+                "sendgrid 400 Bad Request: fields personalizations.0.to.0.email".into()
+            )
+        );
+    }
 
     fn sender() -> EmailSender {
         EmailSender::new(
@@ -792,6 +871,7 @@ mod tests {
     fn dapps(flags: Json, variants: Json) -> DappsFlags {
         DappsFlags(Arc::new(Snapshot::from_document(
             json!({"flags": flags, "variants": variants}),
+            true,
         )))
     }
 

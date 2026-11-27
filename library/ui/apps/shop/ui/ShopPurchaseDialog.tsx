@@ -27,8 +27,8 @@
 import { useRef, useState } from 'react'
 import { formatCreditsFull } from '@shop/checkout/lib/currency'
 import { formatMana, formatManaPrice, type ManaWei } from '@shop/model/money'
-import { GeneralDecentralandColor, GeneralPolygonMana } from '@dcl/one-ui'
-import { ArmedButton, Button, ScrollThumb, Spinner } from '@hud/design'
+import { Button, GeneralDecentralandColor, GeneralPolygonMana, ScrollThumb, Spinner } from '@dcl/one-ui'
+import { ArmedButton } from '@hud/design'
 import balanceCredit from '../assets/modal/balance-credit-small.svg'
 import creditsCoin from '../assets/modal/credits-coin.svg'
 import illustrationCredits from '../assets/modal/illustration-credits.png'
@@ -64,8 +64,11 @@ export interface ShopPurchaseItem {
 /** A simulated NAME purchase's step: nothing is bought (see the header). */
 type Simulated = { simulation?: true }
 
-/** How the buyer pays a purchase: from the Credits balance, or in Polygon MANA. */
-export type ShopPaymentMethod = 'credits' | 'mana'
+/**
+ * How the buyer pays a purchase: from the Credits balance, in Polygon MANA, or `split`, both together: the Credits balance
+ * pays part and MANA the rest (the method step's `split`).
+ */
+export type ShopPaymentMethod = 'credits' | 'mana' | 'split'
 
 /** The Credits option of Buy Item. */
 export interface ShopCreditsChoice {
@@ -83,6 +86,15 @@ export interface ShopManaChoice {
   balance: bigint
   /** Whether the buyer's MANA pays it now. */
   pays: boolean
+}
+
+/**
+ * Credits and MANA together, where the Credits balance pays part of the price and MANA the rest: `credits`, the whole
+ * credits the balance pays; `mana`, what the rest comes to in MANA (wei).
+ */
+export interface ShopSplitChoice {
+  credits: number
+  mana: bigint
 }
 
 /** Which of a checkout's payments a step is for: the `at`th of `of`, counted from 1. Said only when there are several. */
@@ -104,15 +116,38 @@ export type ShopPurchaseStep =
   | ({ step: 'success'; items: ShopPurchaseItem[] } & Simulated)
   /**
    * Buy Item with its payment options. `initial`: the buyer's earlier pick (the step shown again after a failure),
-   * picked again while it still pays.
+   * picked again while it still pays. `split`: where offered, both options may be ticked together, and then pay it
+   * together. `notice`: a sentence over the options, saying why they changed (a split read anew).
    */
-  | { step: 'method'; items: ShopPurchaseItem[]; credits: ShopCreditsChoice; mana: ShopManaChoice; initial?: ShopPaymentMethod }
+  | {
+      step: 'method'
+      items: ShopPurchaseItem[]
+      credits: ShopCreditsChoice
+      mana: ShopManaChoice
+      split?: ShopSplitChoice
+      initial?: ShopPaymentMethod
+      notice?: string
+    }
   /**
    * Authorize MANA. `venue`: what the allowance is for, named ("the Marketplace"); `network`: its chain, named;
    * `required`: the MANA this purchase needs, in wei. `waiting`: the wallet or the chain is confirming it; `failed`:
    * it didn't go through (`message` says why), and AUTHORIZE tries again.
    */
-  | { step: 'authorize'; venue: string; network: string; required: bigint; state: 'ready' | 'waiting' | 'failed'; message?: string; progress?: ShopPaymentProgress }
+  | {
+      step: 'authorize'
+      venue: string
+      network: string
+      required: bigint
+      state: 'ready' | 'waiting' | 'failed'
+      message?: string
+      progress?: ShopPaymentProgress
+      /**
+       * `exact`: the allowance asked is exactly `required` (Credits and MANA together). Nothing revokes what a purchase that
+       * doesn't go through leaves unspent (only a signed purchase spends it, and the next exact approval replaces it), so the
+       * copy never promises it is for this purchase alone. Else unlimited.
+       */
+      allowance?: 'exact'
+    }
   /**
    * Confirm in your wallet: the buyer's own wallet is asking them to sign. `close`: the label of the button the step it
    * covers offered to leave it (CANCEL on Authorize MANA), which leaves it the same way here; absent, nothing to press.
@@ -202,7 +237,7 @@ export function ShopPurchaseDialog({
   onCheckAgain
 }: ShopPurchaseDialogProps): React.JSX.Element {
   const cancel = (
-    <Button variant="dark" size="dialog" onClick={onClose}>
+    <Button appearance="hud" variant="dark" size="dialog" onClick={onClose}>
       Cancel
     </Button>
   )
@@ -217,7 +252,7 @@ export function ShopPurchaseDialog({
           actions={
             <>
               {cancel}
-              <Button size="dialog" disabled>
+              <Button appearance="hud" size="dialog" disabled>
                 {buyLabel(count, name, view.simulation)}
               </Button>
             </>
@@ -265,7 +300,7 @@ export function ShopPurchaseDialog({
           actions={
             <>
               {cancel}
-              <Button size="dialog" onClick={onBuyCredits}>
+              <Button appearance="hud" size="dialog" onClick={onBuyCredits}>
                 Buy credits
               </Button>
             </>
@@ -290,7 +325,7 @@ export function ShopPurchaseDialog({
             <PaymentOptions
               credits={{ price: view.balance + view.need, balance: view.balance, pays: false }}
               mana={{ price: mana.price, balance: mana.balance, pays: false }}
-              picked={null}
+              ticked={NONE}
             />
           )}
           {mana && view.items.length > 1 && <OrderSummary count={view.items.length} credits={view.balance + view.need} />}
@@ -304,7 +339,7 @@ export function ShopPurchaseDialog({
           label={buyTitle(view.count ?? 1, view.subject === 'name')}
           busy
           actions={
-            <Button size="dialog" disabled>
+            <Button appearance="hud" size="dialog" disabled>
               Processing...
             </Button>
           }
@@ -325,15 +360,15 @@ export function ShopPurchaseDialog({
           label={title}
           actions={
             <>
-              <Button variant="dark" size="dialog" onClick={onClose}>
+              <Button appearance="hud" variant="dark" size="dialog" onClick={onClose}>
                 Continue shopping
               </Button>
               {view.simulation ? (
-                <Button size="dialog" onClick={onPreview}>
+                <Button appearance="hud" size="dialog" onClick={onPreview}>
                   Preview on avatar
                 </Button>
               ) : isName(view.items) ? null : (
-                <Button size="dialog" onClick={onBackpack}>
+                <Button appearance="hud" size="dialog" onClick={onBackpack}>
                   Go to backpack
                 </Button>
               )}
@@ -380,10 +415,17 @@ export function ShopPurchaseDialog({
               To buy with MANA, allow <strong>{view.venue}</strong> on {view.network} to spend MANA from your wallet. This purchase needs{' '}
               <strong>{formatMana(view.required as ManaWei, { group: true })} MANA</strong>.
             </p>
-            <p className={styles.text}>
-              The allowance is unlimited and stays after this purchase, so buying there again won’t ask for it. You can revoke it at any time in the Shop’s
-              Settings on the website.
-            </p>
+            {view.allowance === 'exact' ? (
+              <p className={styles.text}>
+                The allowance is exactly {formatMana(view.required as ManaWei, { group: true })} MANA. If this purchase doesn’t go through, what it
+                leaves unspent stays allowed until a purchase you sign uses it, a new approval replaces it, or you revoke it.
+              </p>
+            ) : (
+              <p className={styles.text}>
+                The allowance is unlimited and stays after this purchase, so buying there again won’t ask for it. You can revoke it at any time in the
+                Shop’s Settings on the website.
+              </p>
+            )}
           </div>
           {waiting && <Working label="Waiting for the authorization to confirm" size="small" />}
           {view.state === 'failed' && view.message && (
@@ -402,13 +444,13 @@ export function ShopPurchaseDialog({
           actions={
             <>
               {view.close && (
-                <Button variant="dark" size="dialog" onClick={onClose}>
+                <Button appearance="hud" variant="dark" size="dialog" onClick={onClose}>
                   {view.close}
                 </Button>
               )}
               {/* The design's button in its loading state: the label kept out of sight, the spinner in its place. */}
               <span className={styles.waiting} role="status" aria-label="Waiting for your wallet">
-                <Spinner variant="shop" size={22.667} />
+                <Spinner variant="thick" size={22.667} />
               </span>
             </>
           }
@@ -426,7 +468,7 @@ export function ShopPurchaseDialog({
           label="Purchase in progress"
           actions={
             <>
-              <Button variant="dark" size="dialog" onClick={onClose}>
+              <Button appearance="hud" variant="dark" size="dialog" onClick={onClose}>
                 Continue shopping
               </Button>
               {view.retry ? (
@@ -435,7 +477,7 @@ export function ShopPurchaseDialog({
                 </ArmedButton>
               ) : (
                 view.check && (
-                  <Button size="dialog" disabled={view.check === 'checking'} onClick={onCheckAgain}>
+                  <Button appearance="hud" size="dialog" disabled={view.check === 'checking'} onClick={onCheckAgain}>
                     {view.check === 'checking' ? 'Checking...' : 'Check again'}
                   </Button>
                 )
@@ -458,16 +500,16 @@ export function ShopPurchaseDialog({
           label="Oops! Something went wrong"
           actions={
             <>
-              <Button variant="dark" size="dialog" onClick={onClose}>
+              <Button appearance="hud" variant="dark" size="dialog" onClick={onClose}>
                 {view.retry || view.switchTo != null ? 'Cancel' : 'Close'}
               </Button>
               {view.switchTo != null ? (
-                <Button size="dialog" onClick={onSwitchNetwork}>
+                <Button appearance="hud" size="dialog" onClick={onSwitchNetwork}>
                   Switch to {view.switchTo} and retry
                 </Button>
               ) : (
                 view.retry && (
-                  <Button size="dialog" onClick={onRetry}>
+                  <Button appearance="hud" size="dialog" onClick={onRetry}>
                     Try again
                   </Button>
                 )
@@ -496,7 +538,7 @@ export function ShopPurchaseDialog({
           actions={
             <>
               {cancel}
-              <Button size="dialog" onClick={onSignIn}>
+              <Button appearance="hud" size="dialog" onClick={onSignIn}>
                 Sign in
               </Button>
             </>
@@ -703,17 +745,19 @@ function ItemRow({ item }: { item: ShopPurchaseItem }): React.JSX.Element {
 function Working({ label, size }: { label: string; size?: 'small' }): React.JSX.Element {
   return (
     <div className={`${styles.working} ${size === 'small' ? styles.workingSmall : ''}`.trim()} role="status" aria-label={label}>
-      <Spinner variant="shop" size={30} />
+      <Spinner variant="thick" size={30} />
     </div>
   )
 }
 
 /**
  * Buy Item with its payment options: the balance, the items, an option per currency, a cart's total, then CANCEL or BUY.
- * The step opens with a pick: the buyer's earlier one while it pays, else the Credits when they pay, else MANA. After
- * that only the buyer picks, one option at a time (radios): picking one moves the pick to it. A pick that stops
- * paying (a balance read again) is dropped, and BUY waits for the buyer to pick an option that pays: the same BUY never
- * spends another way than the one picked, and a later read where the dropped option pays again doesn't pick it back.
+ * The step opens with a pick: the buyer's earlier one while it pays, else the Credits when they pay, else both together
+ * where a split is offered (`split`), else MANA. After that only the buyer picks. Without a split it is one option at a
+ * time (radios): picking one moves the pick to it. With a split offered each option is its own checkbox, and both ticked
+ * pay together. A pick that stops paying (a balance read again) is dropped, and BUY waits for the buyer to pick a way
+ * that pays: the same BUY never spends another way than the one picked, and a later read where the dropped option pays
+ * again doesn't pick it back.
  */
 function MethodStep({
   view,
@@ -724,12 +768,20 @@ function MethodStep({
   cancel: React.ReactNode
   onPay?: (method: ShopPaymentMethod) => void
 }): React.JSX.Element {
-  const { credits, mana } = view
-  const pays = (method: ShopPaymentMethod): boolean => (method === 'credits' ? credits.pays : mana.pays)
-  const first = (): ShopPaymentMethod | null => (view.initial && pays(view.initial) ? view.initial : credits.pays ? 'credits' : mana.pays ? 'mana' : null)
-  const [picked, setPicked] = useState<ShopPaymentMethod | null>(first)
-  // Dropped as this render reads it (React renders again at once), so no later view sees the old pick come back.
-  if (picked && !pays(picked)) setPicked(null)
+  const { credits, mana, split } = view
+  const pays = (method: ShopPaymentMethod): boolean => (method === 'credits' ? credits.pays : method === 'mana' ? mana.pays : split != null)
+  // Credits first, then both together (the balance spent before any MANA), then MANA alone.
+  const first = (): Ticked => ticks(view.initial && pays(view.initial) ? view.initial : credits.pays ? 'credits' : split ? 'split' : mana.pays ? 'mana' : null)
+  const [ticked, setTicked] = useState<Ticked>(first)
+  const [seen, setSeen] = useState(view)
+  const picked = methodOf(ticked)
+  // A new view (a balance read again) drops a pick that stopped paying, as this render reads it (React renders again at
+  // once), so no later view sees the old pick come back. Within one view an unpaid tick stays: the buyer may be
+  // ticking the second option of a split.
+  if (seen !== view) {
+    setSeen(view)
+    if (picked && !pays(picked)) setTicked(NONE)
+  }
   const method = picked && pays(picked) ? picked : null
   const count = view.items.length
   return (
@@ -750,10 +802,29 @@ function MethodStep({
         <Balance credits={credits.balance} mana={mana.balance} />
       </ShopModalHeader>
       <ItemList items={view.items} />
-      <PaymentOptions credits={credits} mana={mana} picked={method} onPick={setPicked} />
+      {view.notice && (
+        <p className={styles.message} role="status">
+          {view.notice}
+        </p>
+      )}
+      <PaymentOptions credits={credits} mana={mana} split={split} ticked={ticked} onPick={(m) => setTicked((t) => tick(t, m, split != null))} />
       {count > 1 && <OrderSummary count={count} credits={method === 'mana' ? null : credits.price} mana={method === 'mana' ? mana.price : null} />}
     </ShopModal>
   )
+}
+
+/** Which options are ticked. */
+type Ticked = { credits: boolean; mana: boolean }
+const NONE: Ticked = { credits: false, mana: false }
+const ticks = (method: ShopPaymentMethod | null): Ticked =>
+  method === 'split' ? { credits: true, mana: true } : method ? { ...NONE, [method]: true } : NONE
+const methodOf = (t: Ticked): ShopPaymentMethod | null => (t.credits && t.mana ? 'split' : t.credits ? 'credits' : t.mana ? 'mana' : null)
+/**
+ * `option` ticked or unticked. Where both may go together (`together`) each box is its own; otherwise one is picked at
+ * a time (radios): picking one moves the pick to it.
+ */
+function tick(t: Ticked, option: 'credits' | 'mana', together: boolean): Ticked {
+  return together ? { ...t, [option]: !t[option] } : { ...NONE, [option]: true }
 }
 
 /** MANA per credit at the prices given ("10"), or null where the Credits can't price it. */
@@ -764,28 +835,36 @@ function manaPerCredit(mana: bigint, credits: number | null): string | null {
 
 /**
  * The design's payment options: one per currency, each with its mark, its name over the buyer's balance, and what it
- * pays (MANA with its rate to Credits). An option that can't pay is shown off. Radios, drawn as the design's
- * checkboxes; `onPick` absent: none may be picked (Insufficient Funds).
+ * pays (MANA with its rate to Credits). An option that can't pay, alone or in a `split`, is shown off. With both ticked
+ * (the split), each says its part: the Credits the balance pays and the MANA for the rest. Drawn as the design's
+ * checkboxes: real checkboxes where the two may go together (`split`), radios where one is picked at a time; `onPick`
+ * absent: none may be picked (Insufficient Funds).
  */
 function PaymentOptions({
   credits,
   mana,
-  picked,
+  split,
+  ticked,
   onPick
 }: {
   credits: ShopCreditsChoice
   mana: ShopManaChoice
-  picked: ShopPaymentMethod | null
-  onPick?: (method: ShopPaymentMethod) => void
+  split?: ShopSplitChoice
+  ticked: Ticked
+  onPick?: (option: 'credits' | 'mana') => void
 }): React.JSX.Element {
   const rate = manaPerCredit(mana.price, credits.price)
+  const both = split != null && ticked.credits && ticked.mana
+  const creditsFigure = both ? split.credits : credits.price
+  const manaFigure = both ? split.mana : mana.price
+  const kind = split != null ? 'checkbox' : 'radio'
   return (
-    // One is picked at a time: radios, drawn as the design's checkboxes.
-    <div className={styles.options} role="radiogroup" aria-label="Payment method">
+    <div className={styles.options} role={kind === 'radio' ? 'radiogroup' : 'group'} aria-label="Payment method">
       <PaymentOption
         label="Credits"
-        checked={picked === 'credits'}
-        disabled={onPick == null || !credits.pays}
+        kind={kind}
+        checked={ticked.credits}
+        disabled={onPick == null || (!credits.pays && split == null)}
         onChange={() => onPick?.('credits')}
         mark={<img src={creditsCoin} alt="" aria-hidden="true" width={32} height={32} />}
         balance={
@@ -798,18 +877,19 @@ function PaymentOptions({
           </>
         }
         price={
-          credits.price != null && (
-            <span className={styles.optionAmount} title={`${formatCreditsFull(credits.price)} Credits`}>
+          creditsFigure != null && (
+            <span className={styles.optionAmount} title={`${formatCreditsFull(creditsFigure)} Credits`}>
               <img src={priceCredit} alt="" aria-hidden="true" width={20} height={20} />
-              <span className={styles.optionFigure}>{formatCreditsFull(credits.price)}</span>
+              <span className={styles.optionFigure}>{formatCreditsFull(creditsFigure)}</span>
             </span>
           )
         }
       />
       <PaymentOption
         label="MANA"
-        checked={picked === 'mana'}
-        disabled={onPick == null || !mana.pays}
+        kind={kind}
+        checked={ticked.mana}
+        disabled={onPick == null || (!mana.pays && split == null)}
         onChange={() => onPick?.('mana')}
         mark={<GeneralDecentralandColor size={32} aria-hidden="true" />}
         balance={
@@ -821,9 +901,9 @@ function PaymentOptions({
         }
         price={
           <>
-            <span className={styles.optionAmount} title={`${formatMana(mana.price as ManaWei, { group: true })} MANA`}>
+            <span className={styles.optionAmount} title={`${formatMana(manaFigure as ManaWei, { group: true })} MANA`}>
               <GeneralPolygonMana size={20} aria-hidden="true" />
-              <span className={styles.optionFigure}>{formatManaPrice(mana.price as ManaWei)}</span>
+              <span className={styles.optionFigure}>{formatManaPrice(manaFigure as ManaWei)}</span>
             </span>
             {rate != null && <span className={styles.optionRate}>1 Credit = {rate} MANA</span>}
           </>
@@ -833,9 +913,10 @@ function PaymentOptions({
   )
 }
 
-/** One payment option: a native radio, out of sight, drawn as the design system's filled checkbox. */
+/** One payment option: a native radio or checkbox (`kind`), out of sight, drawn as the design system's filled checkbox. */
 function PaymentOption({
   label,
+  kind,
   checked,
   disabled,
   onChange,
@@ -844,6 +925,7 @@ function PaymentOption({
   price
 }: {
   label: string
+  kind: 'radio' | 'checkbox'
   checked: boolean
   disabled: boolean
   onChange: () => void
@@ -853,7 +935,7 @@ function PaymentOption({
 }): React.JSX.Element {
   return (
     <label className={styles.option} data-checked={checked || undefined} data-disabled={disabled || undefined}>
-      <input type="radio" name="shop-payment-method" className={styles.optionInput} checked={checked} disabled={disabled} onChange={onChange} />
+      <input type={kind} {...(kind === 'radio' ? { name: 'shop-payment-method' } : {})} className={styles.optionInput} checked={checked} disabled={disabled} onChange={onChange} />
       <span className={styles.check} aria-hidden="true">
         <span className={styles.checkBox}>{checked && <img src={paymentCheck} alt="" width={16} height={16} />}</span>
       </span>

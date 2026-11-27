@@ -3,6 +3,14 @@
 //! get-outfits,...}.spec.ts and test/unit/logic/outfits.spec.ts, re-expressed
 //! through the router), plus the pure checks.
 
+#![allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    clippy::cast_possible_wrap,
+    clippy::cast_precision_loss,
+    reason = "test fixtures use small literal values"
+)]
+
 use std::sync::Arc;
 
 use axum::Router;
@@ -802,4 +810,78 @@ async fn draft_visibility_follows_the_flag() {
         StatusCode::NOT_FOUND,
         "the flag is off"
     );
+}
+
+/// A thumbnail found stored is not unlinked before its row commits: the write
+/// waits while an unlink batch holds the exclusive store lock, then stores
+/// again what the batch removed.
+#[tokio::test]
+async fn a_thumbnail_waits_for_an_unlink_batch_and_stores_what_it_removed() {
+    let Some(pool) = crate::db::scratch::pool(3).await else {
+        return;
+    };
+    let dir = std::env::temp_dir().join(format!(
+        "catalyst-outfit-race-{}",
+        uuid::Uuid::new_v4().simple()
+    ));
+    let storage = Storage::from_config(&dir).await.unwrap();
+    let mut png = PNG.to_vec();
+    png.extend_from_slice(uuid::Uuid::new_v4().as_bytes());
+    let cid = crate::auth::hash_bytes_v1(&png);
+    storage.store(&cid, png.clone().into()).await.unwrap();
+    let thumbnail = store::OutfitThumbnail {
+        hash: hex::encode(Sha256::digest(&png)),
+        blob_cid: cid.clone(),
+        content_type: "image/png".into(),
+        size: png.len() as i32,
+    };
+
+    let outfits = store::Outfits::new(pool.clone());
+    let batch = crate::storage::gc::lock_store_exclusive(&pool)
+        .await
+        .unwrap();
+    {
+        let write = outfits.put_thumbnail(
+            &storage,
+            png.into(),
+            &thumbnail,
+            "0x00000000000000000000000000000000000000aa",
+        );
+        tokio::pin!(write);
+        assert!(
+            tokio::time::timeout(std::time::Duration::from_millis(300), &mut write)
+                .await
+                .is_err(),
+            "the write waits for the unlink batch"
+        );
+        storage.delete_strict(&cid).await.unwrap();
+        batch.commit().await.unwrap();
+        write.await.unwrap();
+    }
+    assert!(storage.exist(&cid).await.unwrap(), "stored again");
+    let named: Option<String> =
+        sqlx::query_scalar("SELECT blob_cid FROM shop.outfit_thumbnails WHERE hash = $1")
+            .bind(&thumbnail.hash)
+            .fetch_optional(&pool)
+            .await
+            .unwrap();
+    assert_eq!(named.as_deref(), Some(cid.as_str()));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A contract-wallet check the client source's budget refused is a 429 to
+/// retry later, not the static 401 that reads as a bad identity.
+#[tokio::test]
+async fn a_rate_limited_signature_check_is_a_429() {
+    use crate::shared::signed_fetch::SignedFetchError;
+    let resp = signed_fetch_error(SignedFetchError::RateLimited).into_response();
+    assert_eq!(resp.status(), StatusCode::TOO_MANY_REQUESTS);
+    let bytes = axum::body::to_bytes(resp.into_body(), 1024).await.unwrap();
+    let v: Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(
+        v,
+        json!({ "ok": false, "error": "rate_limited", "message": "Too many contract-wallet signature checks; retry later" })
+    );
+    let resp = signed_fetch_error(SignedFetchError::InvalidSignature("x".into())).into_response();
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
 }

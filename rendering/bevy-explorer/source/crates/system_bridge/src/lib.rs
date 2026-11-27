@@ -16,8 +16,9 @@ use bevy::{
 use bevy_console::{ConsoleCommandEntered, ConsoleConfiguration, ConsoleResponder};
 use common::{
     inputs::{BindingsData, HudPanel, InputIdentifier, SystemActionEvent},
+    profile::SerializedProfile,
     rpc::{RpcResultSender, RpcStreamSender},
-    structs::{AppConfig, CurrentRealm, MicState, PermissionUsed},
+    structs::{CurrentRealm, MicState, PermissionUsed},
 };
 use serde::{Deserialize, Serialize};
 use settings::SettingBridgePlugin;
@@ -36,7 +37,6 @@ impl Plugin for SystemBridgePlugin {
             Update,
             (
                 post_events,
-                handle_home_scene,
                 handle_service_urls,
                 handle_satellite_view,
                 handle_exit,
@@ -67,6 +67,19 @@ pub struct NewAccountPick {
     pub look: Option<u32>,
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct SetAvatarError {
+    pub message: String,
+    #[serde(default, rename = "accountChanged")]
+    pub account_changed: bool,
+    /// Last confirmed profile for the account that submitted the edit.
+    pub profile: Option<Box<SerializedProfile>>,
+}
+
+pub type SetAvatarResult = Result<u32, SetAvatarError>;
+
+// SetAvatar is a rare call, and boxing it only moves the lint to the enums that hold a SystemApi
+#[allow(clippy::large_enum_variant)]
 #[derive(Event, Clone, Debug, Serialize, Deserialize)]
 pub enum SystemApi {
     ConsoleCommand(String, Vec<String>, RpcResultSender<Result<String, String>>),
@@ -111,6 +124,8 @@ pub enum SystemApi {
     ForgetLogin,
     GetSettings(RpcResultSender<Vec<SettingInfo>>),
     SetSetting(String, f32),
+    /// The settings list now, then again whenever a setting's value or choices change.
+    GetSettingsStream(RpcStreamSender<Vec<SettingInfo>>),
     /// Sign a request with the engine wallet, with caller-supplied metadata. Scene-originated
     /// signing goes through `RpcCall::SignRequest`, whose metadata the engine builds.
     SignRequest {
@@ -119,7 +134,13 @@ pub enum SystemApi {
         meta: Option<String>,
         response: RpcResultSender<Result<Vec<(String, String)>, String>>,
     },
-    SetAvatar(SetAvatarData, RpcResultSender<Result<u32, String>>),
+    /// Full system-scene view. The local player is read at the last confirmed version.
+    GetUserProfile {
+        address: String,
+        response: RpcResultSender<Result<SerializedProfile, ()>>,
+    },
+    /// The address belongs to the player the system scene observed when it submitted the edit.
+    SetAvatar(String, SetAvatarData, RpcResultSender<SetAvatarResult>),
     /// Signs and deploys the local player's `outfits` entity. The address is the account the
     /// caller expects; the engine refuses when another one is signed in.
     DeployOutfits(String, OutfitsData, RpcResultSender<Result<(), String>>),
@@ -148,12 +169,15 @@ pub enum SystemApi {
     LiveSceneInfo(RpcResultSender<Vec<LiveSceneInfo>>),
     GetHomeScene(RpcResultSender<HomeScene>),
     SetHomeScene(HomeScene),
+    ClearHomeScene,
     /// None takes the lobby stage down.
     SetLobbyStage(Option<LobbyStage>),
     /// Whether the local user may enter the named world (`name.dcl.eth`).
     GetWorldAccess(String, RpcResultSender<WorldAccessVerdict>),
     /// Credential-free resolved service endpoints.
     GetServiceUrls(RpcResultSender<Vec<(String, String)>>),
+    /// The official wallets the nametags mark, lowercase `0x` addresses.
+    GetOfficialWallets(RpcResultSender<Vec<String>>),
     GetWelcome(RpcResultSender<WelcomeState>),
     AcceptTerms(RpcResultSender<()>),
     GetSatelliteView(RpcResultSender<Option<SatelliteView>>),
@@ -190,6 +214,10 @@ pub enum SystemApi {
         remove: bool,
     },
     GetChatReactionStream(RpcStreamSender<ChatReactionData>),
+    /// The local user reacts with an emoji, shown over their avatar.
+    SendReaction(String),
+    /// Situational reactions as they play, the local user's included.
+    GetReactionStream(RpcStreamSender<ReactionData>),
     Quit,
     GetPermissionRequestStream(RpcStreamSender<PermissionRequestEvent>),
     SetSinglePermission(SetSinglePermission),
@@ -338,23 +366,6 @@ fn handle_satellite_view(mut ev: EventReader<SystemApi>, realm: Res<CurrentRealm
                     .as_ref()
                     .and_then(|map| map.satellite_view.clone()),
             );
-        }
-    }
-}
-
-fn handle_home_scene(mut ev: EventReader<SystemApi>, mut config: ResMut<AppConfig>) {
-    for ev in ev.read() {
-        match ev {
-            SystemApi::GetHomeScene(rpc_result_sender) => rpc_result_sender.send(HomeScene {
-                realm: config.home_realm(),
-                parcel: config.home_location().as_vec2().into(),
-            }),
-            SystemApi::SetHomeScene(home_scene) => {
-                config.home_realm = Some(home_scene.realm.clone());
-                config.home_location = Some(bevy::math::Vec2::from(&home_scene.parcel).as_ivec2());
-                platform::write_config_file(&*config);
-            }
-            _ => (),
         }
     }
 }

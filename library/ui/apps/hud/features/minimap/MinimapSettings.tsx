@@ -3,9 +3,9 @@
 // settings", which opens the rotation mode and the visualisation style. Which markers show is the
 // full map's Layers panel's.
 
+import { MaskIcon, Switch } from '@dcl/one-ui'
 import { useState } from 'react'
-import { Check, ChevronDown, ChevronRight, Toggle } from '../../design'
-import { MaskIcon } from '../../design/MaskIcon'
+import { Check, ChevronDown, ChevronRight } from '../../design'
 import reloadIcon from '../../assets/minimap/reload.png'
 import type { MinimapRotation, MinimapStyle } from '@explorer-core/engine/protocol'
 import { LinkMark } from './icons'
@@ -38,10 +38,10 @@ export function MinimapSettings({
   onStyle: (s: MinimapStyle) => void
   /** True outside Genesis City, where only the Camera style can render anything. */
   hideStyle: boolean
-  /** Set as Home: on where the player stands in their home. Home can be set, not cleared, so the
-   *  switch only turns on (turning it off does nothing, as the place panel's Home button); absent
-   *  where the place has no link (a preview, a local realm). */
-  home?: { on: boolean; onSet: () => void }
+  /** Set as Home: on where the player stands in their home; turning it off takes the home back,
+   *  as the place panel's Home button does. Absent where the place has no link (a preview, a
+   *  local realm). */
+  home?: { on: boolean; onSet: () => void; onClear: () => void }
   /** Copy the link to the place the player stands in; absent where the place has none. */
   onCopyLink?: () => void
   onReloadScene: () => void
@@ -52,11 +52,15 @@ export function MinimapSettings({
     <div className={styles.menu} role="menu" aria-label="Minimap settings">
       {home != null && (
         <>
-          {/* the switch is the one control; the row's label only gives it a bigger target */}
-          <label className={`${styles.entry} ${styles.toggleEntry}`}>
-            Set as Home
-            <Toggle size="sm" checked={home.on} onChange={(on) => on && home.onSet()} aria-label="Set as Home" />
-          </label>
+          {/* the switch is the one control; its label is the row, which gives it a bigger target */}
+          <Switch
+            appearance="hud"
+            size="sm"
+            className={`${styles.entry} ${styles.toggleEntry}`}
+            label="Set as Home"
+            checked={home.on}
+            onCheckedChange={(on) => (on ? home.onSet() : home.onClear())}
+          />
           <div className={styles.separator} />
         </>
       )}

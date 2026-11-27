@@ -17,96 +17,13 @@ const LOGIN_PURPOSE = "Decentraland Login";
 const EPHEMERAL_ADDRESS_PREFIX = "Ephemeral address: ";
 const EXPIRATION_PREFIX = "Expiration: ";
 
-const MONTHS = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"];
-const WEEKDAYS = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"];
-const RFC2822_ZONES: Record<string, number> = {
-  ut: 0, gmt: 0, est: -300, edt: -240, cst: -360, cdt: -300, mst: -420, mdt: -360, pst: -480, pdt: -420,
-};
-const ISO_RE = /^(\d{4})-(\d{2})-(\d{2})([Tt ])(\d{2}):(\d{2}):(\d{2})(?:\.(\d+))?([Zz]|[+-]\d{2}:\d{2})?$/;
-const RFC2822_RE =
-  /^(?:([A-Za-z]{3})\s*,\s*)?(\d{1,2})\s+([A-Za-z]{3})\s+(\d{2,4})\s+(\d{2}):(\d{2})(?::(\d{2}))?\s+([A-Za-z]{1,3}|[+-]\d{4})(?:\s*\([^()]*\))?$/;
-const DATE_STRING_RE = /^([A-Za-z]{3})\s+(\d{1,2})\s+(\d{4})\s+(\d{1,2}):(\d{2}):(\d{2})\s+(?:GMT\s*)?([+-]\d{2}):?(\d{2})$/;
-
 /**
- * Milliseconds for a calendar-valid date-time at `offsetMinutes` from UTC, or null. A
- * second of 60 is the leap second and reads as the next minute.
- */
-function utcMillis(
-  year: number, month: number, day: number, hour: number, minute: number, second: number, ms: number, offsetMinutes: number,
-): number | null {
-  if (month < 1 || month > 12 || hour > 23 || minute > 59 || second > 60) return null;
-  if (day < 1 || day > utcDate(year, month, 0).getUTCDate()) return null;
-  const date = utcDate(year, month - 1, day);
-  date.setUTCHours(hour, minute, second, ms);
-  return date.getTime() - offsetMinutes * 60_000;
-}
-
-/** Midnight UTC of a day; unlike `Date.UTC`, years 0-99 stay as given. */
-function utcDate(year: number, monthIndex: number, day: number): Date {
-  const date = new Date(0);
-  date.setUTCFullYear(year, monthIndex, day);
-  return date;
-}
-
-/** `±HH` and `MM` as minutes east of UTC, or null past 23:59. */
-function offsetOf(signedHours: string, minutes: string): number | null {
-  const hours = Number(signedHours.slice(1));
-  if (hours > 23 || Number(minutes) > 59) return null;
-  const value = hours * 60 + Number(minutes);
-  return signedHours.startsWith("-") ? -value : value;
-}
-
-/** RFC 2822 zones: `±HHMM`, `UT`, `GMT`, the US zones, or a military letter (read as UTC). */
-function rfc2822Offset(zone: string): number | null {
-  if (/^[+-]/.test(zone)) return offsetOf(zone.slice(0, 3), zone.slice(3));
-  const lower = zone.toLowerCase();
-  if (lower in RFC2822_ZONES) return RFC2822_ZONES[lower];
-  return lower.length === 1 && lower !== "j" ? 0 : null;
-}
-
-/**
- * An ephemeral payload's expiration in the shapes `dcl-auth`'s `parse_expiration` accepts:
- * ISO 8601 with or without an offset or fractional seconds (no offset reads as UTC),
- * RFC 2822 (`Date.toUTCString()`) and `Date.toString()`. Null for anything else.
+ * An ephemeral payload's expiration as `@dcl/crypto` reads it: `Date.parse` of the text after
+ * `Expiration: `, untrimmed. Null where that is NaN.
  */
 export function parseExpiration(raw: string): number | null {
-  const s = raw.trim();
-  let m = ISO_RE.exec(s);
-  if (m && (m[9] !== undefined || m[4] === "T")) {
-    const zone = m[9];
-    const offset = !zone || zone === "Z" || zone === "z" ? 0 : offsetOf(zone.slice(0, 3), zone.slice(4));
-    if (offset === null) return null;
-    const ms = Number((m[8] ?? "").slice(0, 3).padEnd(3, "0"));
-    return utcMillis(+m[1], +m[2], +m[3], +m[5], +m[6], +m[7], ms, offset);
-  }
-  m = RFC2822_RE.exec(s);
-  if (m) {
-    const month = MONTHS.indexOf(m[3].toLowerCase()) + 1;
-    const offset = rfc2822Offset(m[8]);
-    if (offset === null) return null;
-    // Obsolete short years: two digits are 2000-2049 or 1950-1999, three count from 1900.
-    const short = Number(m[4]);
-    const year = m[4].length === 2 ? (short < 50 ? 2000 : 1900) + short : m[4].length === 3 ? 1900 + short : short;
-    const millis = utcMillis(year, month, +m[2], +m[5], +m[6], +(m[7] ?? 0), 0, offset);
-    if (millis === null) return null;
-    // A weekday, when present, must be the date's.
-    const weekday = utcDate(year, month - 1, +m[2]).getUTCDay();
-    if (m[1] !== undefined && m[1].toLowerCase() !== WEEKDAYS[weekday]) return null;
-    return millis;
-  }
-  // `Date.toString()`: the parenthesised zone name and a leading weekday are dropped.
-  const withoutZoneName = s.endsWith(")") && s.includes(" (") ? s.slice(0, s.lastIndexOf(" (")).trimEnd() : s;
-  const space = withoutZoneName.indexOf(" ");
-  const withoutWeekday =
-    space === 3 && /^[A-Za-z]{3}$/.test(withoutZoneName.slice(0, 3)) ? withoutZoneName.slice(4) : withoutZoneName;
-  m = DATE_STRING_RE.exec(withoutWeekday);
-  if (m) {
-    const month = MONTHS.indexOf(m[1].toLowerCase()) + 1;
-    const offset = offsetOf(m[7], m[8]);
-    if (offset === null) return null;
-    return utcMillis(+m[3], month, +m[2], +m[4], +m[5], +m[6], 0, offset);
-  }
-  return null;
+  const millis = Date.parse(raw);
+  return Number.isNaN(millis) ? null : millis;
 }
 
 /**
@@ -245,7 +162,8 @@ export async function verifyAuthChainRequest(
   const method = rawMethod === "HEAD" ? "GET" : rawMethod;
   const path = new URL(request.url).pathname;
   const expected = buildRequestPayload(method, path, timestampRaw, metadataStr);
-  if (finalPayload.toLowerCase() !== expected) {
+  // The 6.x payload, or the legacy one with everything folded.
+  if (finalPayload !== expected && finalPayload !== expected.toLowerCase()) {
     return {
       ok: false,
       status: 401,

@@ -6,13 +6,14 @@
 // (Mirrors unity-explorer's Edit Username dialog.)
 
 import { useEffect, useRef, useState } from 'react'
-import { Button, ModalShell, Select, Tabs, TextInput, openPopup, type TabItem } from '../../design'
+import { ModalShell, Select, Tabs, TextInput, openPopup, type TabItem } from '../../design'
 import { useSession } from '../session/SessionContext'
 import { splitName } from '@explorer-core/lib/identity'
 import { NAME_MAX, isValidName } from '@explorer-core/features/profile/profileFields'
 import { addressSuffix } from '@explorer-core/engine/profileEdit'
 import styles from './NameEditModal.module.css'
 import { siteUrl } from '@hud-host'
+import { Button } from '@dcl/one-ui'
 
 /** Where a NAME is bought. Same destination as the communities modal's "Get a NAME". */
 const NAMES_URL = siteUrl('/marketplace/names/claim')
@@ -23,10 +24,12 @@ const NAME_TABS: TabItem<Tab>[] = [
   { id: 'custom', label: 'NON-UNIQUE USERNAME' }
 ]
 
-export function NameEditModal({ onClose }: { onClose: () => void }): React.JSX.Element {
+export function NameEditModal({ onClose }: { onClose: () => void }): React.JSX.Element | null {
   const session = useSession()
   const { ownedNames, saving, saveError, save, dismissSaveError } = session.profile
   const profile = session.profile.data
+  const editorAddress = useRef(profile?.address.toLowerCase())
+  const accountChanged = profile != null && profile.address.toLowerCase() !== editorAddress.current
   const currentName = profile?.name ?? ''
   const { base } = splitName(currentName)
   // Derived from the address rather than read off the current name, which carries no suffix at all
@@ -53,9 +56,9 @@ export function NameEditModal({ onClose }: { onClose: () => void }): React.JSX.E
   // Close once a save has actually landed — a rejected deploy comes back as an error to show here.
   const wasSaving = useRef(false)
   useEffect(() => {
-    if (wasSaving.current && !saving && saveError == null) onClose()
+    if (accountChanged || (wasSaving.current && !saving && saveError == null)) onClose()
     wasSaving.current = saving
-  }, [saving, saveError, onClose])
+  }, [accountChanged, saving, saveError, onClose])
 
   // A claimed NAME can only be picked once the list has arrived; a typed one must be deployable.
   // The typed field holds only the part before the '#', so it is compared against that part of the
@@ -64,6 +67,12 @@ export function NameEditModal({ onClose }: { onClose: () => void }): React.JSX.E
   const valid = tab === 'unique' ? chosen !== '' : isValidName(chosen)
   const unchanged = chosen === (tab === 'unique' ? currentName : base)
   const canSave = valid && !unchanged && !saving
+  if (accountChanged) return null
+  if (profile == null) return saveError == null ? null : (
+    <ModalShell title="Edit Username" onClose={onClose} width={520} bodyClassName={styles.body}>
+      <p role="alert">{saveError}</p>
+    </ModalShell>
+  )
 
   return (
     <ModalShell
@@ -125,10 +134,10 @@ export function NameEditModal({ onClose }: { onClose: () => void }): React.JSX.E
       {/* The actions live in the body rather than the shell's footer: the claim panel sits BELOW
           them, filling the bottom of the dialog, and a footer would land under it. */}
       <div className={styles.actions}>
-        <Button variant="secondary" onClick={onClose} disabled={saving}>
+        <Button appearance="hud" variant="secondary" onClick={onClose} disabled={saving}>
           CANCEL
         </Button>
-        <Button variant="primary" onClick={() => save({ name: chosen })} disabled={!canSave}>
+        <Button appearance="hud" variant="primary" onClick={() => save({ name: chosen })} disabled={!canSave}>
           {saving ? 'SAVING…' : 'SAVE'}
         </Button>
       </div>
@@ -142,7 +151,7 @@ export function NameEditModal({ onClose }: { onClose: () => void }): React.JSX.E
             ? 'Each NAME adds a World to your collection and increases your overall World size limits. Plus, NAMEs are each worth 100 Voting Power!'
             : 'A NAME comes with a World you can build and host events in, and grants DAO Voting Power too!'}
         </p>
-        <Button variant="primary" onClick={() => window.open(NAMES_URL, '_blank', 'noopener')}>
+        <Button appearance="hud" variant="primary" onClick={() => window.open(NAMES_URL, '_blank', 'noopener')}>
           CLAIM NAME
         </Button>
       </div>

@@ -15,19 +15,36 @@
 //!   counted by its chain position).
 //!
 //! An item's category is its mirrored `shop.items.item_type`. Each log table
-//! is read only up to the block its index has published (`shop.chain_cursor`
-//! folded and fresh, shop's own readiness rule), from its own cursor
+//! is read only up to the block its index has published (the publish marker
+//! on `shop.chain_cursor`, the shop's own readiness rule), from its own cursor
 //! (`sales:<table>:matic`, block and log index), which starts at the
 //! published block.
 //!
 //! A sale of an item the items mirror does not hold yet holds its cursor
 //! (the logs are read in chain order, so the sales after it wait too) until
-//! the item appears or the mirror completes a pass [`ITEM_WAIT_SECS`] after
-//! the sale: a complete pass walks every item and at the defaults takes
+//! the item appears or the mirror completes a pass
+//! [`ITEM_WAIT_SECS`](crate::shared::collections::ITEM_WAIT_SECS) after the
+//! sale: a complete pass walks every item and at the defaults takes
 //! minutes, so an item still missing then is not a collection item the
 //! mirror will ever hold (a bid on a foreign ERC721), and the sale is passed
 //! without effect. A mirror that stops completing passes holds the sales,
-//! so the job runs only with `MARKETPLACE_MIRRORS_ENABLED`.
+//! so the job runs only with `MARKETPLACE_MIRRORS_ENABLED`, or once the
+//! collections index owns Polygon (`MARKETPLACE_COLLECTIONS_INDEX_OWNS`
+//! lists `matic`).
+//!
+//! Once the collections index owns Polygon, every sale with a good waits
+//! instead for the index's publication over its block, whether its item
+//! has a row or not: a row read before then may be a rewound branch's
+//! ([`ItemWait::decide`]). It waits however long that takes, so no sale is
+//! given up because the job fell behind; an index that refuses for good
+//! holds the job until it is fixed or Polygon is handed back to the mirrors
+//! (`MARKETPLACE_COLLECTIONS_INDEX_OWNS`), and it then drains under that
+//! rule. A held cursor shows as a growing `badges_processor_cursor_lag`
+//! (blocks behind the published block).
+//!
+//! A sale older than `max_event_age` gets no badge, so it never waits; one
+//! that grows older than it while it waits passes without a badge too, as
+//! under the mirrors.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 
@@ -36,9 +53,15 @@ use sqlx::PgConnection;
 
 use super::super::evaluators as ev;
 use super::{Pass, award, completed, init_cursor, lock_cursor};
+use crate::chain_index::catalogue::{self, ItemWait, Waited};
 use crate::identity::Address;
 
-pub(crate) use crate::shared::collections::{ITEM_SHIFT, ITEM_WAIT_SECS};
+pub(crate) use crate::shared::collections::ITEM_SHIFT;
+use crate::shared::collections::item_pass_after;
+/// The chain the publish marker asks of an `ethereum` cursor. Its value
+/// never matters here: the badge sales read only Polygon's cursors
+/// (`network = 'matic'`).
+const ETHEREUM_CHAIN: i64 = 1;
 const ASSET_TYPE_ERC721: i64 = 3;
 const ASSET_TYPE_COLLECTION_ITEM: i64 = 4;
 const ZERO_ADDRESS: &str = "0x0000000000000000000000000000000000000000";
@@ -233,17 +256,23 @@ async fn trade_item_types(
     Ok(rows.into_iter().map(|(c, v, t)| ((c, v), t)).collect())
 }
 
-/// The block `log`'s index has published, when it has (shop's readiness:
-/// full history folded through the last indexed block within 30 minutes).
-async fn published(conn: &mut PgConnection, log: Log) -> Result<Option<i64>, sqlx::Error> {
-    sqlx::query_scalar(
-        "SELECT folded_block FROM shop.chain_cursor \
-         WHERE indexer = $1 AND network = 'matic' AND full_history \
-           AND folded_block = last_block \
-           AND folded_at <= timezone('UTC', now()) \
-           AND folded_at >= timezone('UTC', now()) - interval '30 minutes'",
-    )
+/// The block `log`'s index has published at `now`, when it has: the publish
+/// marker ([`catalogue::published_sql_on`]: the whole history walked, a fold
+/// published within 30 minutes, bound to Polygon and out of quarantine). A
+/// pass walks past it before it folds, so every row is read up to it, in
+/// the snapshot that read it.
+async fn published(
+    conn: &mut PgConnection,
+    log: Log,
+    now: chrono::NaiveDateTime,
+) -> Result<Option<i64>, sqlx::Error> {
+    sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
+        "SELECT c.folded_block FROM shop.chain_cursor c \
+         WHERE c.indexer = $1 AND c.network = 'matic' AND {published}",
+        published = catalogue::published_sql_on("c", "$2", ETHEREUM_CHAIN, super::POLYGON_CHAIN)
+    )))
     .bind(log.indexer())
+    .bind(now)
     .fetch_optional(conn)
     .await
     .map(Option::flatten)
@@ -259,11 +288,18 @@ pub(super) async fn run(pass: &Pass) -> anyhow::Result<u64> {
 
 pub(crate) async fn batch(pass: &Pass, log: Log) -> Result<(u64, bool), sqlx::Error> {
     let mut tx = pass.pool.begin().await?;
-    let Some(until) = published(&mut tx, log).await? else {
+    let cursor = lock_cursor(&mut tx, log.source()).await?;
+    let now = crate::shared::now_utc();
+    // The publication, the page, its goods' item types and the catalogue's
+    // wait from one snapshot; the awards re-read each wallet's progress in
+    // `tx`.
+    let mut snap = catalogue::read_snapshot(&pass.pool).await?;
+    let Some(until) = published(&mut snap, log, now).await? else {
         tx.rollback().await?;
         return Ok((0, false));
     };
-    let Some((block, log_index)) = lock_cursor(&mut tx, log.source()).await? else {
+    let Some((block, log_index)) = cursor else {
+        drop(snap);
         init_cursor(&mut tx, log.source(), until, i32::MAX).await?;
         tx.commit().await?;
         return Ok((0, false));
@@ -275,29 +311,22 @@ pub(crate) async fn batch(pass: &Pass, log: Log) -> Result<(u64, bool), sqlx::Er
         .bind(log_index)
         .bind(until)
         .bind(limit)
-        .fetch_all(&mut *tx)
+        .fetch_all(&mut *snap)
         .await?;
     if rows.is_empty() {
         tx.rollback().await?;
         return Ok((0, false));
     }
-    // The last complete items pass, unix seconds.
-    let items_pass: Option<i64> = sqlx::query_scalar(
-        "SELECT extract(epoch FROM last_complete_pass_at)::bigint FROM shop.mirror_state \
-         WHERE mirror = 'items' AND network = 'matic'",
-    )
-    .fetch_optional(&mut *tx)
-    .await?
-    .flatten();
+    let wait = ItemWait::read(&mut snap, "matic", super::POLYGON_CHAIN, now.and_utc()).await?;
     // (buyer, tx key, sale time, badges)
     let mut sales: Vec<(String, String, i64, Vec<&'static str>)> = Vec::new();
-    let now = crate::shared::now_utc();
     let goods: Vec<Good> = if log == Log::Trade {
         rows.iter().flat_map(trade).map(|(_, g)| g).collect()
     } else {
         Vec::new()
     };
-    let traded = trade_item_types(&mut tx, &goods).await?;
+    let traded = trade_item_types(&mut snap, &goods).await?;
+    drop(snap);
     let mut passed = 0;
     for row in &rows {
         let at = chrono::DateTime::from_timestamp(row.block_time, 0)
@@ -322,24 +351,52 @@ pub(crate) async fn batch(pass: &Pass, log: Log) -> Result<(u64, bool), sqlx::Er
             let buys = row.buyer.clone().map(|b| (b, row.item_types.clone()));
             (buys.into_iter().collect(), missing)
         };
-        if unmirrored && !pass.too_old(at, now) {
-            let waited = items_pass
-                .is_some_and(|done| done >= row.block_time.saturating_add(ITEM_WAIT_SECS));
-            if !waited {
+        let decision = match wait {
+            // Under the mirrors, a sale of an item they lack waits until a
+            // complete items pass an hour after it, within the event age.
+            ItemWait::Mirror(items_pass) => {
+                if unmirrored && !pass.too_old(at, now) {
+                    if item_pass_after(items_pass, row.block_time) {
+                        tracing::debug!(
+                            source = log.source(),
+                            block = row.block_number,
+                            log = row.log_index,
+                            "sale of an item the mirror never held: passed"
+                        );
+                        Waited::Describe
+                    } else {
+                        Waited::Hold
+                    }
+                } else {
+                    Waited::Describe
+                }
+            }
+            // On a network the collections index owns, every sale with a
+            // good waits for the publication over its block: an item row
+            // read before then may be a rewound branch's. A sale too old for
+            // a badge never waits.
+            ItemWait::Index(_) if (unmirrored || !buys.is_empty()) && !pass.too_old(at, now) => {
+                wait.decide(
+                    false,
+                    !unmirrored,
+                    row.block_number,
+                    row.block_time,
+                    now.and_utc().timestamp(),
+                )
+            }
+            ItemWait::Index(_) => Waited::Describe,
+        };
+        match decision {
+            Waited::Hold => {
                 tracing::debug!(
                     source = log.source(),
                     block = row.block_number,
                     log = row.log_index,
-                    "sale of an item not mirrored yet: held"
+                    "sale of an item the catalogue does not describe yet: held"
                 );
                 break;
             }
-            tracing::debug!(
-                source = log.source(),
-                block = row.block_number,
-                log = row.log_index,
-                "sale of an item the mirror never held: passed"
-            );
+            Waited::Describe => {}
         }
         passed += 1;
         if pass.too_old(at, now) {

@@ -8,7 +8,7 @@
 
 import { useEffect, useRef, useState, type CSSProperties } from 'react'
 import { DEFAULT_REALM } from '@hud-host'
-import { Button, ContextMenu, MaskIcon, openPopup, showToast } from '../../design'
+import { ContextMenu, openPopup, showToast } from '../../design'
 import linkIcon from '../../assets/events/link-icn.png'
 import xIcon from '../../assets/events/x-icn.png'
 import dislikeOutline from '../../assets/map/panel/dislike-outline.png'
@@ -30,6 +30,7 @@ import { useSession } from '../session/SessionContext'
 import type { TravelOutcome } from '../session/useEngineSession'
 import { isWorldPlace, placeJumpLink, placeShareUrl } from './placeDetailFormat'
 import styles from './PlaceDetail.module.css'
+import { Button, MaskIcon } from '@dcl/one-ui'
 
 export type DetailPlace = DiscoverPlace & { connected_addresses?: string[] | null }
 
@@ -64,13 +65,15 @@ export interface PlaceActions {
   /** A World's access for the signed-in wallet; a parcel is always allowed. */
   access: WorldAccess | 'checking'
   isHome: boolean
+  /** Whether this session keeps a home; without one the home button is not shown. */
+  canPinHome: boolean
   /** The signed-in wallet, the referrer of a shared link. */
   referrer: string | null
   signingIn: boolean
   like: () => void
   dislike: () => void
   favorite: () => void
-  setHome: () => void
+  toggleHome: () => void
 }
 
 // A list of cards asks once per World and wallet for a while, not each time it shows again; one
@@ -220,8 +223,8 @@ export function usePlaceActions(place: DetailPlace, { readSigned: read = true, s
 
   const home = homeOf(session.homeScene())
   const isHome = isPlacePanelHome(home, place, null)
-  const setHome = (): void => {
-    if (isHome) return
+  const toggleHome = (): void => {
+    if (isHome) return session.map.clearHome()
     const target = placeHomeTarget(place, null)
     // `placeHomeTarget` reads a World with no name as a Genesis City parcel
     if (target == null || (world && target.realm == null)) return
@@ -236,12 +239,13 @@ export function usePlaceActions(place: DetailPlace, { readSigned: read = true, s
     counts,
     access,
     isHome,
+    canPinHome: session.map.canPinHome,
     referrer: wallet,
     signingIn: session.login.busy,
     like: () => vote(votes.like ? null : true, LIKE_ERROR),
     dislike: () => vote(votes.dislike ? null : false, DISLIKE_ERROR),
     favorite,
-    setHome
+    toggleHome
   }
 }
 
@@ -254,7 +258,7 @@ export function travelToPlace(place: DiscoverPlace, map: { teleportToPlace: (x: 
 
 function Toggle({ label, on, iconOn, iconOff, size, className, disabled, onClick }: { label: string; on: boolean; iconOn: string; iconOff: string; size: number; className: string; disabled?: boolean; onClick?: () => void }): React.JSX.Element {
   return (
-    <Button size="bare" radius="md" variant="faint" className={className} aria-label={label} aria-pressed={on} disabled={disabled} onClick={onClick}>
+    <Button appearance="hud" size="bare" radius="md" variant="faint" className={className} aria-label={label} aria-pressed={on} disabled={disabled} onClick={onClick}>
       <MaskIcon src={on ? iconOn : iconOff} size={size} />
     </Button>
   )
@@ -302,8 +306,8 @@ export function PlaceActionButtons({ actions, iconSize = 24, toggle, share }: { 
       <Toggle label="Like" on={votes.like} iconOn={likeSolid} iconOff={likeOutline} size={iconSize} className={toggle} disabled={busy.vote} onClick={actions.like} />
       <Toggle label="Dislike" on={votes.dislike} iconOn={dislikeSolid} iconOff={dislikeOutline} size={iconSize} className={toggle} disabled={busy.vote} onClick={actions.dislike} />
       <Toggle label="Favorite" on={votes.favorite} iconOn={favouriteSolid} iconOff={favouriteOutline} size={iconSize} className={toggle} disabled={busy.favorite} onClick={actions.favorite} />
-      <Toggle label="Set as Home" on={isHome} iconOn={homeSolid} iconOff={homeOutline} size={iconSize} className={toggle} onClick={actions.setHome} />
-      <Button size="bare" radius="md" variant="faint" className={share} aria-label="Share" aria-haspopup="menu" onClick={(e) => openShareMenu(e.currentTarget, place, referrer)}>
+      {actions.canPinHome && <Toggle label="Set as Home" on={isHome} iconOn={homeSolid} iconOff={homeOutline} size={iconSize} className={toggle} onClick={actions.toggleHome} />}
+      <Button appearance="hud" size="bare" radius="md" variant="faint" className={share} aria-label="Share" aria-haspopup="menu" onClick={(e) => openShareMenu(e.currentTarget, place, referrer)}>
         <MaskIcon src={shareIcon} size={iconSize} />
       </Button>
     </>
@@ -316,7 +320,7 @@ export function PlaceJumpIn({ actions, className, iconSize = 24, onJumpIn }: { a
   const { access, place, signingIn } = actions
   if (access === 'allowed' || access === 'invited' || access === 'failed') {
     return (
-      <Button size="bare" radius="md" variant="primary" className={className} aria-label={`Jump in to ${place.title}`} disabled={signingIn} onClick={onJumpIn}>
+      <Button appearance="hud" size="bare" radius="md" variant="primary" className={className} aria-label={`Jump in to ${place.title}`} disabled={signingIn} onClick={onJumpIn}>
         JUMP IN
         <MaskIcon src={jumpInIcon} size={iconSize} />
       </Button>
@@ -324,7 +328,7 @@ export function PlaceJumpIn({ actions, className, iconSize = 24, onJumpIn }: { a
   }
   if (access === 'password') {
     return (
-      <Button size="bare" radius="md" variant="primary" className={className} aria-label={`Enter password for ${place.title}`} disabled={signingIn} onClick={onJumpIn}>
+      <Button appearance="hud" size="bare" radius="md" variant="primary" className={className} aria-label={`Enter password for ${place.title}`} disabled={signingIn} onClick={onJumpIn}>
         ENTER PASSWORD
       </Button>
     )

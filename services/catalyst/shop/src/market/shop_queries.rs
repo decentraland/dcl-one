@@ -253,7 +253,7 @@ pub(crate) fn coupon_pairings() -> Vec<(i64, String, String)> {
 /// last on-chain read. Biggest discount wins, then the one ending soonest.
 /// Primaries only: the coupon contract mints collection items. The pairings
 /// are the static registry, inlined.
-fn coupon_join() -> String {
+fn coupon_join(now_p: &str) -> String {
     let pairings: Vec<String> = coupon_pairings()
         .into_iter()
         .map(|(chain, marketplace, manager)| format!("({chain}, '{marketplace}', '{manager}')"))
@@ -276,7 +276,7 @@ fn coupon_join() -> String {
              AND c.signer = lower(mv.signer) \
              AND c.chain_id = mv.chain_id \
              AND {paired} \
-             AND c.effective_since <= timezone('UTC', now()) AND c.expires_at > timezone('UTC', now()) \
+             AND c.effective_since <= {now_p} AND c.expires_at > {now_p} \
              AND lower(mv.contract_address) = ANY(c.collections) \
              AND c.discount_type = 1 AND c.discount_ppm > 0 AND c.discount_ppm < 1000000 \
              AND NOT COALESCE(cs.cancelled, false) AND NOT COALESCE(cs.revoked, false) \
@@ -308,6 +308,7 @@ pub(super) fn unified_branch(
     acquisition: UnifiedAcquisition,
     rate_p: Option<&str>,
     filters: &UnifiedCatalogFilters,
+    now_p: &str,
 ) -> String {
     let primary_only = source == UnifiedSource::Legacy
         && acquisition == UnifiedAcquisition::Trade
@@ -328,7 +329,7 @@ pub(super) fn unified_branch(
         (
             "CASE WHEN cp.id IS NOT NULL THEN mv.amount END",
             COUPON_COLUMNS,
-            coupon_join(),
+            coupon_join(now_p),
         )
     } else {
         ("NULL::numeric", NULL_COUPON_COLUMNS, String::new())
@@ -358,7 +359,12 @@ pub(super) fn unified_branch(
 }
 
 /// The branches the request's `source` keeps, joined by UNION ALL.
-fn unified_inner(b: &mut Builder, filters: &UnifiedCatalogFilters, rate: ManaUsdRate) -> String {
+fn unified_inner(
+    b: &mut Builder,
+    filters: &UnifiedCatalogFilters,
+    rate: ManaUsdRate,
+    now_p: &str,
+) -> String {
     let rate_p = (filters.source != Some(UnifiedSource::Native))
         .then(|| b.bind_string(rate_to_numeric_string(rate)));
     let branches = [
@@ -374,7 +380,7 @@ fn unified_inner(b: &mut Builder, filters: &UnifiedCatalogFilters, rate: ManaUsd
                 UnifiedSource::Native => None,
                 UnifiedSource::Legacy => rate_p.as_deref(),
             };
-            unified_branch(b, source, acquisition, rate, filters)
+            unified_branch(b, source, acquisition, rate, filters, now_p)
         })
         .collect::<Vec<_>>()
         .join(" UNION ALL ")
@@ -426,28 +432,58 @@ fn outer_page_clauses(
     )
 }
 
-/// The `unified_trades` CTE at now, counting mirrored trades from `since`,
-/// over the trades of `contracts` only when given ([`named_contracts`]).
+/// The `unified_trades` CTE at the clock's instant, counting mirrored
+/// trades from its floor, over the trades of `contracts` only when given
+/// ([`named_contracts`]). Answers the instant's parameter, which the coupon
+/// window binds too.
 fn with_trades(
     b: &mut Builder,
-    since: Option<chrono::NaiveDateTime>,
+    clock: FeedClock,
     contracts: Option<Vec<String>>,
-) {
-    let now_p = b.bind_time(Utc::now().naive_utc());
-    let since_p = b.bind_opt_time(since);
+    listing_type: Option<ShopListingType>,
+) -> String {
+    let now_p = b.bind_time(clock.now);
+    let since_p = b.bind_opt_time(clock.since);
     let contracts_p = contracts.map(|c| b.bind_strings(&c));
     b.push("WITH ");
-    b.push(&unified_trades_cte_of(
+    b.push(&unified_trades_cte_for_listing(
         &now_p,
         &since_p,
         contracts_p.as_deref(),
+        listing_type,
     ));
     b.push(" ");
+    now_p
 }
 
-/// The trades floor of a feed read now ([`super::super::trades::mirrored_since`]).
-pub(super) fn since(state: &MarketplaceState) -> Option<chrono::NaiveDateTime> {
-    super::super::trades::mirrored_since(&state.settings, Utc::now().naive_utc())
+/// The instant a feed is read at and the trades floor it sets
+/// ([`super::super::trades::mirrored_since`]). A catalogue read's clock: the
+/// trades check, the floor, the open trades and the coupon window of its rows
+/// all decide on one instant, every page of the read alike.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct FeedClock {
+    pub now: chrono::NaiveDateTime,
+    pub since: Option<chrono::NaiveDateTime>,
+}
+
+impl FeedClock {
+    /// The clock of a read taken at `now`.
+    pub(super) fn of(state: &MarketplaceState, now: chrono::DateTime<Utc>) -> Self {
+        let now = now.naive_utc();
+        Self {
+            now,
+            since: super::super::trades::mirrored_since(&state.settings, now),
+        }
+    }
+
+    /// Now, counting every mirrored trade.
+    #[cfg(test)]
+    pub fn unbounded() -> Self {
+        Self {
+            now: Utc::now().naive_utc(),
+            since: None,
+        }
+    }
 }
 
 fn compare_at_credits_expr(alias: &str) -> String {
@@ -456,10 +492,7 @@ fn compare_at_credits_expr(alias: &str) -> String {
     )
 }
 
-pub fn build_shop_listings_sql(
-    f: &ShopCatalogFilters,
-    since: Option<chrono::NaiveDateTime>,
-) -> Builder {
+pub fn build_shop_listings_sql(f: &ShopCatalogFilters, clock: FeedClock) -> Builder {
     let mut b = Builder::new();
     let unified = UnifiedCatalogFilters {
         base: f.clone(),
@@ -468,13 +501,14 @@ pub fn build_shop_listings_sql(
         item_ids: None,
         include_legacy_secondary: false,
     };
-    with_trades(&mut b, since, named_contracts(&unified));
+    let now_p = with_trades(&mut b, clock, named_contracts(&unified), None);
     let inner = unified_branch(
         &mut b,
         UnifiedSource::Native,
         UnifiedAcquisition::Trade,
         None,
         &unified,
+        &now_p,
     );
     let (where_clause, order, limit_p, offset_p) = outer_page_clauses(
         &mut b,
@@ -486,19 +520,19 @@ pub fn build_shop_listings_sql(
         ],
     );
     b.push(&format!(
-        "SELECT sub.*, CEIL(sub.usd_wei / {USD_WEI_PER_CREDIT}::numeric)::bigint AS price_credits, {compare_at} AS compare_at_credits, COUNT(*) OVER() AS total \
-         FROM ({inner}) sub {where_clause} {order} LIMIT {limit_p} OFFSET {offset_p}",
+        ", filtered AS (SELECT sub.*, CEIL(sub.usd_wei / {USD_WEI_PER_CREDIT}::numeric)::bigint AS price_credits, {compare_at} AS compare_at_credits \
+         FROM ({inner}) sub {where_clause}) \
+         SELECT page.*, counted.total FROM (SELECT count(*) AS total FROM filtered) counted \
+         LEFT JOIN LATERAL (SELECT sub.*, true AS page_present FROM filtered sub {order} LIMIT {limit_p} OFFSET {offset_p}) page ON true {page_order}",
         compare_at = compare_at_credits_expr("sub"),
+        page_order = order.replace("sub.", "page."),
     ));
     b
 }
 
-pub fn build_legacy_listings_sql(
-    f: &LegacyCatalogFilters,
-    since: Option<chrono::NaiveDateTime>,
-) -> Builder {
+pub fn build_legacy_listings_sql(f: &LegacyCatalogFilters, clock: FeedClock) -> Builder {
     let mut b = Builder::new();
-    with_trades(&mut b, since, None);
+    let now_p = with_trades(&mut b, clock, None, None);
     let unified = UnifiedCatalogFilters {
         base: ShopCatalogFilters {
             category: f.category.clone(),
@@ -519,6 +553,7 @@ pub fn build_legacy_listings_sql(
         UnifiedAcquisition::Trade,
         None,
         &unified,
+        &now_p,
     );
     let order = match f.sort_by {
         Some(ShopSortBy::Cheapest) => "ORDER BY sub.usd_wei ASC",
@@ -528,16 +563,13 @@ pub fn build_legacy_listings_sql(
     };
     let limit_p = b.bind_i64(shop_clamp_first(f.first));
     let offset_p = b.bind_i64(shop_clamp_skip(f.skip));
-    b.push(&format!("SELECT sub.*, COUNT(*) OVER() AS total FROM ({inner}) sub {order}, sub.trade_id LIMIT {limit_p} OFFSET {offset_p}"));
+    b.push(&format!(", filtered AS (SELECT sub.* FROM ({inner}) sub) SELECT page.*, counted.total FROM (SELECT count(*) AS total FROM filtered) counted LEFT JOIN LATERAL (SELECT sub.*, true AS page_present FROM filtered sub {order}, sub.trade_id LIMIT {limit_p} OFFSET {offset_p}) page ON true {page_order}, page.trade_id", page_order = order.replace("sub.", "page.")));
     b
 }
 
-pub fn build_importable_listings_sql(
-    seller: &str,
-    since: Option<chrono::NaiveDateTime>,
-) -> Builder {
+pub fn build_importable_listings_sql(seller: &str, clock: FeedClock) -> Builder {
     let mut b = Builder::new();
-    with_trades(&mut b, since, None);
+    let now_p = with_trades(&mut b, clock, None, None);
     let unified = UnifiedCatalogFilters {
         source: Some(UnifiedSource::Legacy),
         include_legacy_secondary: true,
@@ -549,6 +581,7 @@ pub fn build_importable_listings_sql(
         UnifiedAcquisition::Trade,
         None,
         &unified,
+        &now_p,
     );
     let seller_p = b.bind_string(seller.to_lowercase());
     let limit_p = b.bind_i64(SHOP_MAX_PAGE_SIZE);
@@ -559,11 +592,11 @@ pub fn build_importable_listings_sql(
 pub fn build_unified_listings_sql(
     f: &UnifiedCatalogFilters,
     rate: ManaUsdRate,
-    since: Option<chrono::NaiveDateTime>,
+    clock: FeedClock,
 ) -> Builder {
     let mut b = Builder::new();
-    with_trades(&mut b, since, named_contracts(f));
-    let inner = unified_inner(&mut b, f, rate);
+    let now_p = with_trades(&mut b, clock, named_contracts(f), None);
+    let inner = unified_inner(&mut b, f, rate, &now_p);
     let (where_clause, order, limit_p, offset_p) = outer_page_clauses(
         &mut b,
         "sub",
@@ -574,9 +607,12 @@ pub fn build_unified_listings_sql(
         ],
     );
     b.push(&format!(
-        "SELECT sub.*, CEIL(sub.usd_wei / {USD_WEI_PER_CREDIT}::numeric)::bigint AS price_credits, {compare_at} AS compare_at_credits, COUNT(*) OVER() AS total \
-         FROM ({inner}) sub {where_clause} {order} LIMIT {limit_p} OFFSET {offset_p}",
+        ", filtered AS (SELECT sub.*, CEIL(sub.usd_wei / {USD_WEI_PER_CREDIT}::numeric)::bigint AS price_credits, {compare_at} AS compare_at_credits \
+         FROM ({inner}) sub {where_clause}) \
+         SELECT page.*, counted.total FROM (SELECT count(*) AS total FROM filtered) counted \
+         LEFT JOIN LATERAL (SELECT sub.*, true AS page_present FROM filtered sub {order} LIMIT {limit_p} OFFSET {offset_p}) page ON true {page_order}",
         compare_at = compare_at_credits_expr("sub"),
+        page_order = order.replace("sub.", "page."),
     ));
     b
 }
@@ -584,8 +620,13 @@ pub fn build_unified_listings_sql(
 /// The UNION collapsed to one representative row per item: primary before
 /// secondary, native before legacy, cheapest, trade before store; with the
 /// per-item `listing_count` window. Callers wrap it as `d`.
-fn item_unified_core(b: &mut Builder, f: &UnifiedCatalogFilters, rate: ManaUsdRate) -> String {
-    let inner = unified_inner(b, f, rate);
+fn item_unified_core(
+    b: &mut Builder,
+    f: &UnifiedCatalogFilters,
+    rate: ManaUsdRate,
+    now_p: &str,
+) -> String {
+    let inner = unified_inner(b, f, rate, now_p);
     format!(
         "SELECT DISTINCT ON (f.contract_address, f.item_id) f.*, CEIL(f.usd_wei / {USD_WEI_PER_CREDIT}::numeric)::bigint AS price_credits, {compare_at} AS compare_at_credits \
          FROM (SELECT u.*, COUNT(*) OVER (PARTITION BY u.contract_address, u.item_id) AS listing_count FROM ({inner}) u WHERE u.usd_wei > 0 AND u.usd_wei <= {MAX_USD_WEI}::numeric) f \
@@ -598,14 +639,14 @@ fn item_unified_core(b: &mut Builder, f: &UnifiedCatalogFilters, rate: ManaUsdRa
 pub fn build_unified_items_sql(
     f: &UnifiedCatalogFilters,
     rate: ManaUsdRate,
-    since: Option<chrono::NaiveDateTime>,
+    clock: FeedClock,
 ) -> Builder {
     let mut b = Builder::new();
-    with_trades(&mut b, since, named_contracts(f));
-    let core = item_unified_core(&mut b, f, rate);
+    let now_p = with_trades(&mut b, clock, named_contracts(f), None);
+    let core = item_unified_core(&mut b, f, rate, &now_p);
     let (where_clause, order, limit_p, offset_p) =
         outer_page_clauses(&mut b, "d", &f.base, vec!["d.usd_wei > 0".to_string()]);
-    b.push(&format!("SELECT d.*, COUNT(*) OVER() AS total FROM ({core}) d {where_clause} {order} LIMIT {limit_p} OFFSET {offset_p}"));
+    b.push(&format!(", filtered AS (SELECT d.* FROM ({core}) d {where_clause}) SELECT page.*, counted.total FROM (SELECT count(*) AS total FROM filtered) counted LEFT JOIN LATERAL (SELECT d.*, true AS page_present FROM filtered d {order} LIMIT {limit_p} OFFSET {offset_p}) page ON true {page_order}", page_order = order.replace("d.", "page.")));
     b
 }
 
@@ -615,11 +656,11 @@ pub fn build_items_by_ids_sql(
     ids: &[String],
     f: &UnifiedCatalogFilters,
     rate: ManaUsdRate,
-    since: Option<chrono::NaiveDateTime>,
+    clock: FeedClock,
 ) -> Builder {
     let mut b = Builder::new();
-    with_trades(&mut b, since, Some(id_contracts(ids)));
-    let core = item_unified_core(&mut b, f, rate);
+    let now_p = with_trades(&mut b, clock, Some(id_contracts(ids)), None);
+    let core = item_unified_core(&mut b, f, rate, &now_p);
     let ids_p = b.bind_strings(ids);
     b.push(&format!("SELECT d.* FROM ({core}) d WHERE d.usd_wei > 0 AND (d.contract_address || '-' || d.item_id) = ANY({ids_p})"));
     b
@@ -673,10 +714,10 @@ pub fn build_related_items_sql(
     first: Option<i64>,
     rail: &RelatedItemsFilters,
     rate: ManaUsdRate,
-    since: Option<chrono::NaiveDateTime>,
+    clock: FeedClock,
 ) -> Builder {
     let mut b = Builder::new();
-    with_trades(&mut b, since, None);
+    let now_p = with_trades(&mut b, clock, None, rail.listing_type);
     let f = UnifiedCatalogFilters {
         base: ShopCatalogFilters {
             category: Some(reference_category.to_string()),
@@ -691,7 +732,7 @@ pub fn build_related_items_sql(
         item_ids: None,
         include_legacy_secondary: rail.include_legacy_secondary,
     };
-    let core = item_unified_core(&mut b, &f, rate);
+    let core = item_unified_core(&mut b, &f, rate, &now_p);
     let addr_p = b.bind_string(contract_address.to_lowercase());
     let item_p = b.bind_string(item_id.to_string());
     let limit_p = b.bind_i64(related_clamp_first(first));
@@ -701,4 +742,61 @@ pub fn build_related_items_sql(
     };
     b.push(&format!("SELECT d.* FROM ({core}) d WHERE d.usd_wei > 0 AND (d.contract_address <> {addr_p} OR COALESCE(d.item_id, '') <> {item_p}) {order} LIMIT {limit_p}"));
     b
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn related_limits_trade_proofs_to_the_requested_listing_type() {
+        for (listing_type, predicate) in [
+            (Some(ShopListingType::Primary), "= 'public_item_order'"),
+            (Some(ShopListingType::Secondary), "= 'public_nft_order'"),
+            (None, "IN ('public_item_order', 'public_nft_order')"),
+        ] {
+            let query = build_related_items_sql(
+                "0xabc",
+                "1",
+                "wearable",
+                Some("hat"),
+                Some("rare"),
+                Some(15),
+                &RelatedItemsFilters {
+                    listing_type,
+                    ..Default::default()
+                },
+                ManaUsdRate::parse_usd_per_mana("0.02").unwrap(),
+                FeedClock::unbounded(),
+            );
+            let (_, listing_filter) = query.sql.split_once("WHERE t.type ").unwrap();
+            assert!(
+                listing_filter.starts_with(&format!("{predicate} AND t.expires_at")),
+                "{listing_type:?}: {listing_filter}"
+            );
+        }
+    }
+
+    /// The open trades and the coupon window are decided at the clock's
+    /// instant, the one parameter `with_trades` binds and answers.
+    #[tokio::test]
+    async fn the_trades_and_coupons_bind_the_clocks_instant() {
+        let Some(pool) = crate::db::scratch::pool(1).await else {
+            return;
+        };
+        let now = chrono::DateTime::from_timestamp(1_700_000_000, 123_000)
+            .unwrap()
+            .naive_utc();
+        let mut b = Builder::new();
+        let now_p = with_trades(&mut b, FeedClock { now, since: None }, None, None);
+        assert_eq!(now_p, "$1");
+        assert!(coupon_join(&now_p).contains("c.expires_at > $1"));
+        assert!(!coupon_join(&now_p).contains("now()"));
+        let bound: chrono::NaiveDateTime =
+            sqlx::query_scalar_with("SELECT $1::timestamp WHERE $2::timestamp IS NULL", b.args)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(bound, now);
+    }
 }

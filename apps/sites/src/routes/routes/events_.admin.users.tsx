@@ -1,5 +1,6 @@
-import EventManagement from "@/features/explorer/event-management/EventManagement";
+import { EventsLocaleProvider } from "@/features/events/locale";
+import UsersAdminPage from "@/pages/events/UsersAdminPage";
 
 export default function EventUsersRoute() {
-  return <EventManagement mode="users" />;
+  return <EventsLocaleProvider><UsersAdminPage /></EventsLocaleProvider>;
 }

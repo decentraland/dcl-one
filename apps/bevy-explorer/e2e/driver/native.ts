@@ -57,7 +57,7 @@ export class NativeConsole implements Console {
   readonly url: string
   readonly #token: string
   readonly #pollMs: number
-  readonly #commandTimeoutMs: number
+  readonly commandTimeoutMs: number
   readonly #requestTimeoutMs: number
   #nextId = 1
   #process: ChildProcess | undefined
@@ -66,7 +66,7 @@ export class NativeConsole implements Console {
     this.url = `http://${options.host ?? '127.0.0.1'}:${options.port ?? DEFAULT_AUTOMATION_PORT}/`
     this.#token = options.token
     this.#pollMs = options.pollMs ?? 100
-    this.#commandTimeoutMs = options.commandTimeoutMs ?? 120_000
+    this.commandTimeoutMs = options.commandTimeoutMs ?? 120_000
     this.#requestTimeoutMs = options.requestTimeoutMs ?? 10_000
     this.#process = process
   }
@@ -90,7 +90,7 @@ export class NativeConsole implements Console {
     const result = await until(
       () => this.call<{ done: boolean; ok?: boolean; output?: string }>('dcl/console_result', { id }),
       (reply) => reply.done,
-      { timeoutMs: this.#commandTimeoutMs, intervalMs: this.#pollMs, what: `\`${redactLine(normalized)}\` to answer` }
+      { timeoutMs: this.commandTimeoutMs, intervalMs: this.#pollMs, what: `\`${redactLine(normalized)}\` to answer` }
     )
     if (!result.ok) throw new ConsoleError(normalized, result.output ?? '')
     return result.output ?? ''

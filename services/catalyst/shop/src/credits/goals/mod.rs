@@ -1,9 +1,12 @@
 // from: credits-server@d9c6a261fb7acf3beb926e10f03d1aed33e9771b:src/logic/goals-handlers/take-photo-handler.ts, src/logic/credits-granter.ts
-//! Seasonal MANA goals. Photo facts, receipts, progress, signatures and inbox
-//! delivery records share the existing database; paid USD balances are untouched.
+//! Seasonal MANA goals. Photo and room facts drive progress, signed grants
+//! and inbox delivery records in the existing database.
 pub mod flags;
+mod login;
 mod reads;
 mod reminders;
+pub mod rooms;
+mod stays;
 #[cfg(test)]
 pub(crate) mod tests;
 
@@ -14,7 +17,7 @@ use super::{
 };
 use crate::jobs::{Jobs, PeriodicCfg};
 use alloy_primitives::{Address, B256, U256, keccak256};
-use chrono::{Datelike, NaiveDateTime, TimeDelta, Timelike};
+use chrono::{Datelike, NaiveDateTime, NaiveTime, TimeDelta, Timelike};
 use serde_json::{Value, json};
 use sqlx::{PgConnection, Row};
 use std::{str::FromStr, sync::Arc, time::Duration};
@@ -22,7 +25,7 @@ use uuid::Uuid;
 
 pub use reads::{
     claim, claim_preflight, enroll, flag_reason, opt_out, progress, season_document, season_status,
-    status, user_credits,
+    status, user_credits, user_credits_on,
 };
 const GOAL: &str = "take-photo";
 const WEEKLY_CAP: &str = "40000000000000000000000";
@@ -38,12 +41,23 @@ struct Season {
     grace_days: i32,
 }
 impl Season {
+    fn grant_expires_at(&self) -> Result<NaiveDateTime, ApiError> {
+        TimeDelta::try_days(i64::from(self.grace_days))
+            .and_then(|grace| self.end_date.checked_add_signed(grace))
+            .and_then(|end| end.with_nanosecond(0))
+            .ok_or_else(|| ApiError::Internal("invalid goal expiry".into()))
+    }
+
     fn week(&self, now: NaiveDateTime) -> (i32, NaiveDateTime, NaiveDateTime) {
         fn monday(t: NaiveDateTime) -> NaiveDateTime {
-            t.date().and_hms_opt(0, 0, 0).unwrap()
+            t.date().and_time(NaiveTime::MIN)
                 - TimeDelta::days(i64::from(t.weekday().num_days_from_monday()))
         }
         let start = monday(now);
+        #[allow(
+            clippy::cast_possible_truncation,
+            reason = "chrono's date range spans under 2^31 weeks"
+        )]
         let number = ((start - monday(self.start_date)).num_days() / 7 + 1) as i32;
         (
             number,
@@ -159,7 +173,7 @@ async fn gate(state: &SharedState, conn: &mut PgConnection) -> Result<Gate, ApiE
     }
     let explorer = explorer
         .ok_or_else(|| ApiError::service_unavailable("credits explorer flags unavailable"))?;
-    let snapshot = crate::shared::feature_flags::Snapshot::from_document(explorer);
+    let snapshot = crate::shared::feature_flags::Snapshot::from_document(explorer, true);
     let allowlist = snapshot
         .variant_values("explorer", "alfa-marketplace-credits")
         .map(|list| {
@@ -198,6 +212,99 @@ async fn initialize(
     sqlx::query("INSERT INTO credits.goal_progress(address,season_id,week_id,goal_id,title,description,thumbnail,total_steps,reward_wei) SELECT $1,season_id,$3,goal_id,title,description,thumbnail,total_steps,reward_wei FROM credits.season_goals WHERE season_id=$2 AND $3 BETWEEN start_week AND end_week AND EXISTS(SELECT 1 FROM credits.wallets WHERE address=$1) ON CONFLICT DO NOTHING")
         .bind(address).bind(season).bind(week).execute(conn).await?;
     Ok(())
+}
+
+/// Shared eligibility for server-observed photo and room events. The caller
+/// holds the wallet lock so enrollment and opt-out cannot change mid-award.
+async fn wallet_refusal(
+    conn: &mut PgConnection,
+    address: &str,
+) -> Result<Option<&'static str>, ApiError> {
+    let (enrolled, blocked, subscribed): (bool, bool, bool) = sqlx::query_as(
+        "SELECT COALESCE((SELECT has_started_program FROM credits.wallets WHERE address=$1),false)
+           AND NOT EXISTS(SELECT 1 FROM credits.program_opt_outs WHERE address=$1),
+         EXISTS(SELECT 1 FROM credits.wallet_flags WHERE address=$1)
+           OR COALESCE((SELECT is_blocked_for_claiming FROM credits.wallets WHERE address=$1),false),
+         EXISTS(SELECT 1 FROM social.subscriptions WHERE address=$1)",
+    )
+    .bind(address)
+    .fetch_one(conn)
+    .await?;
+    Ok(if !enrolled {
+        Some("not-enrolled")
+    } else if blocked {
+        Some("flagged")
+    } else if !subscribed {
+        Some("no-subscription")
+    } else {
+        None
+    })
+}
+
+#[derive(sqlx::FromRow)]
+struct StepProgress {
+    completed_steps: i32,
+    total_steps: i32,
+    reward_wei: String,
+}
+
+#[derive(Clone, Copy)]
+struct Assignment<'a> {
+    address: &'a str,
+    season: &'a Season,
+    week: i32,
+    goal: &'a str,
+}
+
+impl Assignment<'_> {
+    async fn progress(self, conn: &mut PgConnection) -> Result<Option<StepProgress>, ApiError> {
+        Ok(sqlx::query_as(
+            "SELECT completed_steps, total_steps, reward_wei::text AS reward_wei
+             FROM credits.goal_progress WHERE address=$1 AND season_id=$2 AND week_id=$3 AND goal_id=$4
+             FOR UPDATE",
+        )
+        .bind(self.address)
+        .bind(self.season.id)
+        .bind(self.week)
+        .bind(self.goal)
+        .fetch_optional(conn)
+        .await?)
+    }
+
+    /// Completes progress, creates the signed grant and queues the notice in
+    /// the transaction that consumes the server-observed evidence.
+    async fn advance(
+        self,
+        conn: &mut PgConnection,
+        state: &SharedState,
+        progress: &StepProgress,
+        steps: i32,
+        now: NaiveDateTime,
+    ) -> Result<(), ApiError> {
+        let complete = steps == progress.total_steps;
+        sqlx::query(
+            "UPDATE credits.goal_progress SET completed_steps=$5,completed_at=$6
+             WHERE address=$1 AND season_id=$2 AND week_id=$3 AND goal_id=$4",
+        )
+        .bind(self.address)
+        .bind(self.season.id)
+        .bind(self.week)
+        .bind(self.goal)
+        .bind(steps)
+        .bind(complete.then_some(now))
+        .execute(&mut *conn)
+        .await?;
+        if complete {
+            let completed = Completed {
+                goal: self.goal,
+                season: self.season,
+                week: self.week,
+                amount: &progress.reward_wei,
+            };
+            grant(conn, state, self.address, completed, now).await?;
+        }
+        Ok(())
+    }
 }
 
 /// Receipts alone acknowledge events. Each bounded scan round captures a fixed
@@ -245,7 +352,8 @@ pub async fn process_batch(state: &SharedState, limit: i64) -> Result<u64, ApiEr
     let ids = select(after, horizon).await?;
     state.goal_scan_after.store(after, Ordering::Relaxed);
     state.goal_scan_horizon.store(horizon, Ordering::Relaxed);
-    let round_complete = ids.len() < limit as usize || ids.last().is_some_and(|id| *id >= horizon);
+    let round_complete = ids.len() < usize::try_from(limit).unwrap_or(usize::MAX)
+        || ids.last().is_some_and(|id| *id >= horizon);
     let mut processed = 0;
     let mut error = None;
     // A failed event keeps no receipt and is retried by the next round; the
@@ -303,49 +411,38 @@ async fn process_event(state: &SharedState, id: i64, now: NaiveDateTime) -> Resu
         policy(state, &mut tx, &address).await?
     };
     if outcome.is_none() {
-        let eligible = sqlx::query("SELECT COALESCE((SELECT has_started_program FROM credits.wallets WHERE address=$1),false) AND NOT EXISTS(SELECT 1 FROM credits.program_opt_outs WHERE address=$1) AS enrolled, EXISTS(SELECT 1 FROM credits.wallet_flags WHERE address=$1) OR COALESCE((SELECT is_blocked_for_claiming FROM credits.wallets WHERE address=$1),false) AS blocked, EXISTS(SELECT 1 FROM social.subscriptions WHERE address=$1) AS subscribed")
-            .bind(&address).fetch_one(&mut *tx).await?;
-        outcome = if !eligible.get::<bool, _>("enrolled") {
-            Some("not-enrolled")
-        } else if eligible.get::<bool, _>("blocked") {
-            Some("flagged")
-        } else if !eligible.get::<bool, _>("subscribed") {
-            Some("no-subscription")
-        } else if !qualifies(&event.get::<Value, _>("payload"), &address) {
-            Some("not-qualifying")
-        } else {
-            None
-        };
+        outcome = wallet_refusal(&mut tx, &address).await?;
+        if outcome.is_none() && !qualifies(&event.get::<Value, _>("payload"), &address) {
+            outcome = Some("not-qualifying");
+        }
     }
     let mut ordinal = None;
     let season_id = season.as_ref().map(|s| s.id);
     let week = season.as_ref().map(|s| s.week(occurred_at).0);
     if outcome.is_none() {
-        let season = season.as_ref().unwrap();
-        let week = week.unwrap();
+        // Roll back rather than write a "counted" receipt without progress.
+        let (Some(season), Some(week)) = (season.as_ref(), week) else {
+            return Err(ApiError::Internal(
+                "a photo goal passed the policy without a season".into(),
+            ));
+        };
         initialize(&mut tx, &address, season.id, week).await?;
-        let progress = sqlx::query("SELECT completed_steps,total_steps,reward_wei::text AS reward_wei FROM credits.goal_progress WHERE address=$1 AND season_id=$2 AND week_id=$3 AND goal_id=$4 FOR UPDATE")
-            .bind(&address).bind(season.id).bind(week).bind(GOAL).fetch_optional(&mut *tx).await?;
-        match progress {
+        let assignment = Assignment {
+            address: &address,
+            season,
+            week,
+            goal: GOAL,
+        };
+        match assignment.progress(&mut tx).await? {
             None => outcome = Some("no-goal"),
-            Some(p) if p.get::<i32, _>("completed_steps") == p.get::<i32, _>("total_steps") => {
+            Some(progress) if progress.completed_steps == progress.total_steps => {
                 outcome = Some("already-complete")
             }
-            Some(p) => {
-                let steps = p.get::<i32, _>("completed_steps") + 1;
-                let complete = steps == p.get::<i32, _>("total_steps");
-                sqlx::query("UPDATE credits.goal_progress SET completed_steps=$5,completed_at=$6 WHERE address=$1 AND season_id=$2 AND week_id=$3 AND goal_id=$4")
-                    .bind(&address).bind(season.id).bind(week).bind(GOAL).bind(steps).bind(complete.then_some(now)).execute(&mut *tx).await?;
-                if complete {
-                    let reward_wei: String = p.get("reward_wei");
-                    let completed = Completed {
-                        goal: GOAL,
-                        season,
-                        week,
-                        amount: &reward_wei,
-                    };
-                    grant(&mut tx, state, &address, completed, now).await?;
-                }
+            Some(progress) => {
+                let steps = progress.completed_steps + 1;
+                assignment
+                    .advance(&mut tx, state, &progress, steps, now)
+                    .await?;
                 ordinal = Some(steps);
             }
         }
@@ -430,9 +527,7 @@ async fn grant(
         .ok_or_else(|| ApiError::service_unavailable("invalid Credits chain"))?;
     // Progress snapshots the assignment so edits to its week range or reward
     // cannot strand an in-flight goal or change its promised payout.
-    let expires = (season.end_date + TimeDelta::days(i64::from(season.grace_days)))
-        .with_nanosecond(0)
-        .unwrap();
+    let expires = season.grant_expires_at()?;
     let expires_seconds = u64::try_from(expires.and_utc().timestamp())
         .map_err(|_| ApiError::Internal("invalid goal expiry".into()))?;
     if expires <= now {
@@ -443,7 +538,7 @@ async fn grant(
     let salt: B256 = keccak256(Uuid::new_v4().to_string().as_bytes());
     let credit = CreditIdentity {
         sender: Address::from_str(address)
-            .map_err(|_| ApiError::Internal("invalid photo owner".into()))?,
+            .map_err(|_| ApiError::Internal("invalid goal owner".into()))?,
         chain_id: chain,
         manager,
         value: uint(amount)?,
@@ -452,7 +547,7 @@ async fn grant(
     };
     let signature = signer.sign_credit(&credit).map_err(ApiError::Internal)?;
     sqlx::query("INSERT INTO credits.goal_grants(address,season_id,week_id,goal_id,salt,chain_id,contract,credit_hash,amount_wei,signature,created_at,expires_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9::numeric,$10,$11,$12)")
-        .bind(address).bind(season.id).bind(week).bind(goal).bind(format!("{salt:#x}")).bind(chain as i64).bind(format!("{manager:#x}"))
+        .bind(address).bind(season.id).bind(week).bind(goal).bind(format!("{salt:#x}")).bind(state.settings.usage.chain_id).bind(format!("{manager:#x}"))
         .bind(format!("{:#x}", credit.credit_hash())).bind(amount).bind(signature).bind(now).bind(expires).execute(&mut *conn).await?;
     let (key, notification) = goal_completed_notification(
         address,

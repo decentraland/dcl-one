@@ -1,0 +1,85 @@
+.submit-hangout {
+  position: relative;
+  min-height: 65vh;
+  padding: 32px 16px 64px;
+  color: #fcfcfc;
+  background: #160e24;
+}
+
+.submit-hangout__header {
+  max-width: 680px;
+  margin: 0 auto 24px;
+}
+
+.submit-hangout__header a {
+  color: #fcfcfc;
+}
+
+.submit-hangout__controls {
+  position: relative;
+  margin: 0 auto;
+  z-index: 30;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: min(680px, 100%);
+  box-sizing: border-box;
+  padding: 16px 20px;
+  border-radius: 16px;
+  background: rgba(20, 8, 32, 0.92);
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.45);
+  backdrop-filter: blur(8px);
+  color: #fcfcfc;
+}
+
+.submit-hangout__fields {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.submit-hangout__coords {
+  display: flex;
+  gap: 12px;
+}
+
+.submit-hangout__nav {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.submit-hangout__hint {
+  margin: 0;
+  font-size: 13px;
+  color: rgba(255, 255, 255, 0.78);
+}
+
+.submit-hangout__review {
+  font-size: 13px;
+}
+
+.submit-hangout__reviewtitle {
+  margin: 0 0 8px;
+  font-size: 15px;
+  font-weight: 800;
+}
+
+.submit-hangout__reviewlist {
+  display: grid;
+  grid-template-columns: 90px 1fr;
+  gap: 4px 12px;
+  margin: 0;
+}
+
+.submit-hangout__reviewlist dt {
+  font-weight: 700;
+  color: rgba(255, 255, 255, 0.6);
+}
+
+.submit-hangout__reviewlist dd {
+  margin: 0;
+  color: #fff;
+}

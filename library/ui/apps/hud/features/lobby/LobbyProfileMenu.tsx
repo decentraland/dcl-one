@@ -7,12 +7,14 @@ import playersIcon from '../../assets/map/panel/players.png'
 import settingsIcon from '../../assets/lobby/settings-icn.png'
 import signOutIcon from '../../assets/lobby/sign-out-icn.png'
 import verifiedIcon from '../../assets/lobby/icon-verified.png'
-import { MaskIcon, showConfirm } from '../../design'
+import { showConfirm } from '../../design'
 import { siteUrl } from '@hud-host'
 import { registerCancelLayer } from '@explorer-core/lib/cancelLayers'
+import { shortWallet } from '@explorer-core/lib/identity'
 import { profilePictureStyle } from './LobbyCards'
 import { moveFocus } from '../../lib/arrowKeys'
 import styles from './LobbyProfileMenu.module.css'
+import { MaskIcon } from '@dcl/one-ui'
 
 const COPIED_MS = 1000
 
@@ -21,8 +23,6 @@ function askSignOut(signOut: () => void): void {
     if (confirmed) signOut()
   })
 }
-
-export const menuAddress = (a: string): string => (a.length > 12 ? `${a.slice(0, 5)}...${a.slice(-5)}` : a)
 
 export function LobbyProfileMenu({
   name,
@@ -99,7 +99,7 @@ export function LobbyProfileMenu({
               <>
                 <span className={styles.caption}>User ID</span>
                 <span className={styles.addressRow}>
-                  <span className={styles.address}>{menuAddress(address)}</span>
+                  <span className={styles.address}>{shortWallet(address)}</span>
                   <button
                     type="button"
                     className={styles.copy}

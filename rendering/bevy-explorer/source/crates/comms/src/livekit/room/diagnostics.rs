@@ -4,6 +4,7 @@ use bevy::prelude::*;
 use bevy_console::ConsoleCommand;
 use common::util::AsH160;
 use console::{AddDebugSection, DebugInput, DebugInputKind, DebugSection, DoAddConsoleCommand};
+use livestream_manager::{AutomaticVideoShown, SelectedVideoTransmitter};
 use serde_json::json;
 
 use super::{
@@ -14,11 +15,12 @@ use crate::{
     global_crdt::ForeignPlayer,
     livekit::{
         participant::{ConnectionQuality, HostedBy, LivekitParticipant, Local, ParticipantIndex},
+        track::{LivekitTrack, PublishedBy, Subscribed, Subscribing, Unsubscribing, Video},
         ConnectionAvailability, LivekitTransport,
     },
     private_chat::PrivateChatRoom,
     room_connection::{RoomState, RoomStatus},
-    SceneRoom, Transport, TransportType,
+    SceneRoom, Transport,
 };
 use bevy::ecs::relationship::Relationship;
 
@@ -54,6 +56,7 @@ impl Plugin for RoomDiagnosticsPlugin {
                 fields.extend([
                     ("Scene ID", "room.scene"),
                     ("Associated base parcel (X / Y)", "room.baseParcelPosition"),
+                    ("Video tracks (first 32)", "room.videoTracks"),
                 ]);
             }
             let command = format!("/room_connection {scope} {{value}}");
@@ -172,6 +175,7 @@ fn room_diagnostics(
         Has<Local>,
         Option<&ConnectionQuality>,
     )>,
+    video_tracks: VideoTracks,
     players: Query<&ForeignPlayer>,
     indicators: Option<Res<RoomIndicators>>,
     definitions: Option<Res<Assets<ipfs::EntityDefinition>>>,
@@ -294,6 +298,14 @@ fn room_diagnostics(
                 "name": room.map(|r| r.name().to_string()), "sid": sid, "scene": scene.map(|s| s.0.as_str()),
                 "baseParcel": base, "baseParcelPosition": base_position, "attempts": status.recovery.retry.attempts,
                 "remoteCount": remote_count, "selfSid": local_sid, "quality": local_quality});
+            if kind == RoomKind::Scene {
+                let in_room = |participant: Entity| {
+                    participants
+                        .get(participant)
+                        .is_ok_and(|(_, hosted, ..)| hosted.get() == entity)
+                };
+                result["room"]["videoTracks"] = json!(video_track_rows(in_room, &video_tracks));
+            }
             result["unavailable"] = if connected {
                 json!({"room.quality": "Waiting for LiveKit to report connection quality",
                     "room.baseParcelPosition": "Scene metadata has no valid base parcel coordinates",
@@ -310,6 +322,51 @@ fn room_diagnostics(
         }
     }
     input.reply_ok(result.to_string());
+}
+
+/// The video tracks [`video_track_rows`] reads, as `room_diagnostics` queries them.
+type VideoTracks<'w, 's> = Query<
+    'w,
+    's,
+    (
+        &'static LivekitTrack,
+        &'static PublishedBy,
+        Has<Subscribed>,
+        Has<Subscribing>,
+        Has<Unsubscribing>,
+        Has<AutomaticVideoShown>,
+        Has<SelectedVideoTransmitter>,
+    ),
+    With<Video>,
+>;
+
+/// Each video track published by a participant `in_room`: its subscription and the outputs
+/// that want it.
+fn video_track_rows(in_room: impl Fn(Entity) -> bool, tracks: &VideoTracks) -> BTreeSet<String> {
+    let mut rows = BTreeSet::new();
+    for (track, publisher, subscribed, subscribing, unsubscribing, automatic, selected) in tracks {
+        if in_room(publisher.get()) {
+            let state = match (subscribed, subscribing, unsubscribing) {
+                (true, ..) => "subscribed",
+                (_, true, _) => "subscribing",
+                (.., true) => "unsubscribing",
+                _ => "unsubscribed",
+            };
+            let outputs: Vec<_> = [(automatic, "automatic"), (selected, "selected")]
+                .into_iter()
+                .filter_map(|(wanted, name)| wanted.then_some(name))
+                .collect();
+            rows.insert(if outputs.is_empty() {
+                format!("{}: {state}", track.sid())
+            } else {
+                format!("{}: {state}, {}", track.sid(), outputs.join(", "))
+            });
+            if rows.len() > 32 {
+                rows.pop_last();
+            }
+        }
+    }
+    rows
 }
 
 #[derive(clap::ValueEnum, Clone, Copy)]
@@ -376,11 +433,7 @@ fn draw_room_indicators(
                 }
             }
         }
-        let pulse = player.transports.iter().any(|t| {
-            transports
-                .get(*t)
-                .is_ok_and(|t| t.transport_type == TransportType::Pulse)
-        });
+        let pulse = player.has_pulse_transport(&transports);
         let top = transform.translation() + Vec3::Y * 2.35;
         for (i, (present, color)) in [
             (pulse, Color::srgb(1.0, 0.75, 0.0)),
@@ -407,8 +460,10 @@ mod tests {
     use crate::{
         livekit::room::Connecting,
         room_connection::{FailureKind, RoomRecovery, RoomSuspended},
+        TransportType,
     };
     use bevy_console::ConsoleCommandEntered;
+    use common::sync::MutexExt;
     use std::sync::{Arc, Mutex};
 
     fn spawn_island(app: &mut App) -> Entity {
@@ -433,11 +488,11 @@ mod tests {
             command_name: name.into(),
             args: args.iter().map(|arg| arg.to_string()).collect(),
             responder: Some(Arc::new(move |result| {
-                *writer.lock().unwrap() = Some(result)
+                *writer.lock_ignore_poison() = Some(result)
             })),
         });
         app.update();
-        let result = reply.lock().unwrap().take().unwrap();
+        let result = reply.lock_ignore_poison().take().unwrap();
         result
     }
 
@@ -455,6 +510,8 @@ mod tests {
             crate::automation::CommsAutomationPlugin,
         ))
         .init_resource::<common::structs::MicState>()
+        .init_resource::<common::structs::AudioSettings>()
+        .insert_resource(common::structs::ClientWindowFocus::Focused)
         .init_resource::<wallet::Wallet>()
         .add_event::<crate::global_crdt::ChatEvent>()
         .insert_resource(State::new(ConnectionAvailability::Available))

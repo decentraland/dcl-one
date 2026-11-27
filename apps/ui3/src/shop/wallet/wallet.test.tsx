@@ -2,7 +2,7 @@ import { act, fireEvent, render, renderHook, screen, waitFor } from "@testing-li
 import type { ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from "vitest";
 
-import type { AuthIdentity } from "../../data/auth/identity";
+import type { AuthIdentity } from "@web-core/auth/identity";
 import type { Eip1193Provider } from "../../data/auth/wallet";
 import { createCartStore } from "../cart/store";
 import { evmAddress } from "@shop/model/address";

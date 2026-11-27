@@ -16,7 +16,6 @@ const profile: Profile = {
   hasClaimedName: true,
   isGuest: false,
   description: 'old gamer in dcl',
-  mutuals: 30,
   links: [{ title: 'x account', url: 'https://x.com/kurd' }],
   badges: [
     { id: 'festive', name: 'Festive Trail', description: 'Followed the trail', image: 'https://x/festive.png', unlockedAt: Date.UTC(2024, 11, 4, 14, 16, 34) },
@@ -38,27 +37,95 @@ const profile: Profile = {
 }
 
 describe('profile passport', () => {
-  it('renders the overview: name, about, fields, links, mutuals', () => {
+  it('renders the overview: name, about, fields, links', () => {
     render(<ProfilePassport profile={profile} onClose={vi.fn()} />)
     expect(screen.getByText('kurd')).toBeInTheDocument()
     expect(screen.getByText('old gamer in dcl')).toBeInTheDocument()
     expect(screen.getByText('mohammad')).toBeInTheDocument() // Real Name field value
-    expect(screen.getByText('30 Mutual')).toBeInTheDocument()
     expect(screen.getByRole('link', { name: /x account/i })).toHaveAttribute('href', 'https://x.com/kurd')
+  })
+
+  it('shows up to three mutual friends and how many there are, on another user only', () => {
+    const mutuals = ['Ana', 'Bo', 'Cy', 'Di'].map((name, i) => ({ address: `0x${i}`, name }))
+    const { rerender } = render(<ProfilePassport profile={profile} mutuals={mutuals} onClose={vi.fn()} />)
+    const row = screen.getByText('4 Mutual').parentElement as HTMLElement
+    expect(Array.from(row.children).map((el) => el.textContent)).toEqual(['A', 'B', 'C', '4 Mutual'])
+    rerender(<ProfilePassport profile={profile} mutuals={[]} onClose={vi.fn()} />)
+    expect(screen.queryByText(/Mutual/)).toBeNull()
+    rerender(<ProfilePassport profile={profile} mutuals={mutuals} isSelf onClose={vi.fn()} />)
+    expect(screen.queryByText(/Mutual/)).toBeNull()
+  })
+
+  it('shortens the wallet to five and five characters and says what each copy button copied', async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined)
+    vi.stubGlobal('navigator', { ...navigator, clipboard: { writeText } })
+    render(<ProfilePassport profile={profile} onClose={vi.fn()} />)
+    expect(screen.getByText('0xkur...6b635')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Copy name' }))
+    expect(writeText).toHaveBeenLastCalledWith('kurd')
+    expect((await screen.findByText('Name copied!')).parentElement).toContainElement(screen.getByRole('button', { name: 'Copy name' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Copy address' }))
+    expect(writeText).toHaveBeenLastCalledWith(profile.address)
+    expect(await screen.findByText('User ID copied!')).toBeInTheDocument()
+    vi.unstubAllGlobals()
+  })
+
+  it('shows the #tag of an unclaimed name only, and copies the name with it', () => {
+    const writeText = vi.fn().mockResolvedValue(undefined)
+    vi.stubGlobal('navigator', { ...navigator, clipboard: { writeText } })
+    const { rerender } = render(<ProfilePassport profile={{ ...profile, name: 'kurd#b635', hasClaimedName: false }} onClose={vi.fn()} />)
+    expect(screen.getByText('#b635')).toBeInTheDocument()
+    expect(screen.queryByLabelText('verified')).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'Copy name' }))
+    expect(writeText).toHaveBeenLastCalledWith('kurd#b635')
+    rerender(<ProfilePassport profile={profile} onClose={vi.fn()} />)
+    expect(screen.queryByText(/^#/)).toBeNull()
+    expect(screen.getByLabelText('verified')).toBeInTheDocument()
+    vi.unstubAllGlobals()
+  })
+
+  it('marks an official wallet', () => {
+    const { rerender } = render(<ProfilePassport profile={profile} onClose={vi.fn()} />)
+    expect(screen.queryByText('DCL Foundation')).toBeNull()
+    rerender(<ProfilePassport profile={{ ...profile, official: true }} onClose={vi.fn()} />)
+    expect(screen.getByText('DCL Foundation')).toBeInTheDocument()
+  })
+
+  it('orders the header actions: friendship, Chat, Call, Jump to Location, the menu, Close', () => {
+    render(<ProfilePassport profile={profile} relationship="friend" onMessage={vi.fn()} onCall={vi.fn()} onJump={vi.fn()} onReport={vi.fn()} onClose={vi.fn()} />)
+    const actions = screen.getByRole('button', { name: 'Close' }).parentElement as HTMLElement
+    expect(within(actions).getAllByRole('button').map((b) => b.getAttribute('aria-label') ?? b.textContent)).toEqual([
+      'FRIENDREMOVE FRIEND',
+      'Chat',
+      'Call',
+      'Jump to Location',
+      'More options',
+      'Close'
+    ])
+  })
+
+  it('starts the options menu with the user, when it has anything to offer', async () => {
+    const { rerender } = render(<ProfilePassport profile={profile} onReport={vi.fn()} onClose={vi.fn()} />)
+    await userEvent.click(screen.getByRole('button', { name: 'More options' }))
+    const menu = screen.getByRole('menu')
+    expect(within(menu).getByText('kurd')).toBeInTheDocument()
+    expect(menu.firstElementChild).toContainElement(within(menu).getByText('kurd'))
+    rerender(<ProfilePassport profile={profile} onClose={vi.fn()} />)
+    expect(screen.queryByRole('button', { name: 'More options' })).toBeNull()
   })
 
   it("draws the user's picture with no online dot, as unity-explorer's passport does", () => {
     render(<ProfilePassport profile={profile} onClose={vi.fn()} />)
     const picture = screen.getAllByRole('img', { name: 'kurd' })[0]
-    expect(picture.parentElement?.querySelector('[class*="dot"]')).toBeNull()
+    expect(picture.parentElement?.querySelector('[class*="hudDot"]')).toBeNull()
   })
 
   it.each([
     ['none', 'ADD FRIEND', 'onAddFriend'],
     ['friend', 'FRIEND', 'onUnfriend'],
-    ['requested', 'CANCEL REQUEST', 'onCancelRequest'],
+    ['requested', 'REQUEST SENT', 'onCancelRequest'],
     ['incoming', 'ACCEPT FRIEND', 'onAcceptRequest'],
-    ['blocked', 'UNBLOCK', 'onUnblock']
+    ['blocked', 'BLOCKED', 'onUnblock']
   ] as const)('the friendship button for %s reads %s and calls %s', async (relationship, label, handler) => {
     const fn = vi.fn()
     render(<ProfilePassport profile={profile} relationship={relationship} {...{ [handler]: fn }} onClose={vi.fn()} />)
@@ -94,9 +161,27 @@ describe('profile passport', () => {
     expect(screen.queryByRole('button', { name: 'More options' })).toBeNull()
   })
 
-  it('offers no CHAT or friendship button when the user blocked you, but keeps Block and Report', async () => {
-    render(<ProfilePassport profile={profile} blockedBy onMessage={vi.fn()} onAddFriend={vi.fn()} onBlock={vi.fn()} onReport={vi.fn()} onClose={vi.fn()} />)
-    expect(screen.queryByRole('button', { name: 'CHAT' })).toBeNull()
+  it.each([
+    ['requested', 'REQUEST SENT', 'CANCEL REQUEST'],
+    ['friend', 'FRIEND', 'REMOVE FRIEND'],
+    ['blocked', 'BLOCKED', 'UNBLOCK']
+  ] as const)('the friendship button for %s reads %s and offers %s on hover', (relationship, idle, hover) => {
+    render(<ProfilePassport profile={profile} relationship={relationship} onClose={vi.fn()} />)
+    const button = screen.getByRole('button', { name: new RegExp(`^${idle}`) })
+    expect(within(button).getByText(idle)).toBeInTheDocument()
+    expect(within(button).getByText(hover)).toBeInTheDocument()
+  })
+
+  it('offers no Chat or Call for a user you blocked', () => {
+    render(<ProfilePassport profile={profile} relationship="blocked" onMessage={vi.fn()} onCall={vi.fn()} onUnblock={vi.fn()} onClose={vi.fn()} />)
+    expect(screen.queryByRole('button', { name: 'Chat' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Call' })).toBeNull()
+  })
+
+  it('offers no Chat, Call or friendship button when the user blocked you, but keeps Block and Report', async () => {
+    render(<ProfilePassport profile={profile} blockedBy onMessage={vi.fn()} onCall={vi.fn()} onAddFriend={vi.fn()} onBlock={vi.fn()} onReport={vi.fn()} onClose={vi.fn()} />)
+    expect(screen.queryByRole('button', { name: 'Chat' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Call' })).toBeNull()
     expect(screen.queryByRole('button', { name: /FRIEND/ })).toBeNull()
     await userEvent.click(screen.getByRole('button', { name: 'More options' }))
     expect(screen.getByRole('menuitem', { name: 'Block' })).toBeInTheDocument()
@@ -105,7 +190,7 @@ describe('profile passport', () => {
 
   it('still offers UNBLOCK when you blocked a user who also blocked you', () => {
     render(<ProfilePassport profile={profile} relationship="blocked" blockedBy onUnblock={vi.fn()} onClose={vi.fn()} />)
-    expect(screen.getByRole('button', { name: 'UNBLOCK' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /UNBLOCK$/ })).toBeInTheDocument()
   })
 
   it('hides the friend action on your own passport (isSelf)', () => {
@@ -236,7 +321,7 @@ describe('passport equipped items', () => {
     expect(shop.map((a) => a.getAttribute('href')).sort()).toEqual([SHOP_TIARA, SHOP_DISCO].sort())
     for (const a of shop) {
       expect(a).toHaveAttribute('target', '_blank')
-      expect(a).toHaveAttribute('rel', 'noopener')
+      expect(a).toHaveAttribute('rel', 'noopener noreferrer')
     }
   })
 
@@ -292,7 +377,8 @@ describe('passport photos', () => {
     remove: vi.fn(async () => ({ ok: true })),
     metas: {},
     loadPhoto: vi.fn(),
-    onTeleport: vi.fn(() => true)
+    loadWearables: vi.fn(async () => []),
+    onJumpIn: vi.fn(() => true)
   })
   async function openPhotos(isSelf: boolean, a = actions()): Promise<PassportPhotoActions> {
     const fetcher = vi.fn(async (_address: string, offset: number, limit: number) => ({ ok: true, photos: reel.slice(offset, offset + limit), total: reel.length, max: 500 }))
@@ -316,10 +402,10 @@ describe('passport photos', () => {
     expect(screen.queryByRole('button', { name: 'Photo options' })).toBeNull()
   })
 
-  it('the photo viewer covers the passport panel', async () => {
+  it('the photo viewer opens outside the passport panel', async () => {
     await openPhotos(false)
     await userEvent.click(screen.getAllByRole('button', { name: 'Open photo' })[0])
-    expect(screen.getByRole('dialog', { name: 'Photo' }).parentElement).toHaveAttribute('data-tab', 'photos')
+    expect(screen.getByRole('dialog', { name: 'Photo' }).closest('[data-tab]')).toBeNull()
   })
 
   it.each([

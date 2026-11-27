@@ -26,7 +26,7 @@ import { Menu, MenuItem, MenuSeparator } from '@ui/atoms/Menu';
 import { Select, SelectOption } from '@ui/atoms/Select';
 import Spinner from '@ui/atoms/Spinner';
 import TextField from '@ui/atoms/TextField';
-import Tooltip from '@ui/atoms/Tooltip';
+import { Tooltip } from '@dcl/one-ui';
 
 import type {
   AiAssetMention,
@@ -1043,6 +1043,9 @@ export function ChatView(props: ChatViewProps) {
               <>
                 <MenuSeparator />
                 <div className={styles.menuSectionLabel}>{t('editor.ai.history.title')}</div>
+                {sharing?.status === 'on' && (
+                  <div className={styles.menuNote}>{t('editor.ai.history.shared_stays')}</div>
+                )}
               </>
             )}
             {savedSessions.map(s => (

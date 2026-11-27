@@ -494,30 +494,24 @@ async fn import_one(
 
     let image_hash = crate::auth::hash_bytes_v1(&image);
     let thumbnail_hash = crate::auth::hash_bytes_v1(&thumbnail);
-    // The blobs land before the row, as an upload's do: a row never names
-    // a blob the store lacks.
-    for (hash, bytes) in [(&image_hash, image), (&thumbnail_hash, thumbnail)] {
-        match storage.exist(hash).await {
-            Ok(true) => {}
-            Ok(false) => {
-                let len = bytes.len() as u64;
-                if let Err(e) = storage.store(hash, bytes).await {
-                    outcome.result = skip(SkipReason::StoreFailed, Some(e.to_string()));
-                    return Ok(outcome);
-                }
-                outcome.stored += len;
-            }
-            Err(e) => {
-                outcome.result = skip(SkipReason::StoreFailed, Some(e.to_string()));
-                return Ok(outcome);
+    // The blobs land in the row's transaction, under the store lock's shared
+    // side, before the row: a row never names a blob the store lacks, and an
+    // unlink batch either ran before the existence check or sees the row.
+    let blobs = [
+        (image_hash.as_str(), image),
+        (thumbnail_hash.as_str(), thumbnail),
+    ];
+    match insert(target, storage, &row, file, blobs).await {
+        Ok(Inserted { fresh, stored }) => {
+            outcome.stored += stored;
+            if !fresh {
+                outcome.result = Imported::AlreadyThere;
             }
         }
-    }
-
-    match insert(target, &row, file, &image_hash, &thumbnail_hash).await {
-        Ok(true) => {}
-        Ok(false) => outcome.result = Imported::AlreadyThere,
-        Err(e) => match refused(&e) {
+        Err(InsertError::Store(e)) => {
+            outcome.result = skip(SkipReason::StoreFailed, Some(e.to_string()));
+        }
+        Err(InsertError::Row(e)) => match refused(&e) {
             Some(constraint) => outcome.result = skip(SkipReason::Refused, Some(constraint)),
             None => return Err(e).context("inserting an imported row"),
         },
@@ -525,16 +519,41 @@ async fn import_one(
     Ok(outcome)
 }
 
-/// The row and its provenance in one transaction; `false` when the id is
-/// already taken (another run inserted it first).
+/// What [`insert`] did: whether the row is this run's, and the bytes it stored.
+struct Inserted {
+    fresh: bool,
+    stored: u64,
+}
+
+enum InsertError {
+    /// The store lock or the store failed: the row is skipped.
+    Store(crate::storage::gc::GcError),
+    Row(anyhow::Error),
+}
+
+/// The blobs (`gc::store_for_row`), the row and its provenance in one
+/// transaction; `fresh` is `false` when the id is already taken (another run
+/// inserted it first).
 async fn insert(
     target: &PgPool,
+    storage: &Storage,
     row: &SourceRow,
     file: &str,
-    image_hash: &str,
-    thumbnail_hash: &str,
-) -> anyhow::Result<bool> {
-    let mut tx = target.begin().await?;
+    blobs: [(&str, Bytes); 2],
+) -> Result<Inserted, InsertError> {
+    let row_failed = |e: sqlx::Error| InsertError::Row(e.into());
+    let mut tx = target.begin().await.map_err(row_failed)?;
+    let mut stored = 0;
+    for (hash, bytes) in blobs.iter().cloned() {
+        let len = bytes.len() as u64;
+        if crate::storage::gc::store_for_row(&mut tx, storage, hash, bytes)
+            .await
+            .map_err(InsertError::Store)?
+        {
+            stored += len;
+        }
+    }
+    let [(image_hash, _), (thumbnail_hash, _)] = &blobs;
     let inserted = sqlx::query(
         "INSERT INTO camera_reel.images \
          (id, user_address, image_hash, thumbnail_hash, is_public, review_status, \
@@ -551,17 +570,22 @@ async fn insert(
     .bind(row.created_at)
     .bind(file)
     .execute(&mut *tx)
-    .await?
+    .await
+    .map_err(row_failed)?
     .rows_affected()
         == 1;
     if inserted {
         sqlx::query("INSERT INTO camera_reel.imported_images (id) VALUES ($1)")
             .bind(row.id)
             .execute(&mut *tx)
-            .await?;
+            .await
+            .map_err(row_failed)?;
     }
-    tx.commit().await?;
-    Ok(inserted)
+    tx.commit().await.map_err(row_failed)?;
+    Ok(Inserted {
+        fresh: inserted,
+        stored,
+    })
 }
 
 /// `GET <bucket_url>/<key>` with the key as one path segment (encoded);
@@ -575,8 +599,8 @@ async fn fetch(http: &Outbound, bucket_url: &url::Url, key: &str) -> Fetched {
         }
         Err(()) => return Fetched::Failed("the bucket URL cannot take a path".into()),
     }
-    let last_failure = std::sync::Mutex::new(String::new());
-    let failed = |why: String| *last_failure.lock().unwrap() = why;
+    let last_failure = parking_lot::Mutex::new(String::new());
+    let failed = |why: String| *last_failure.lock() = why;
     let attempt = || {
         let url = url.clone();
         let failed = &failed;
@@ -636,10 +660,7 @@ async fn fetch(http: &Outbound, bucket_url: &url::Url, key: &str) -> Fetched {
     .await
     {
         Ok(Some(fetched)) => fetched,
-        Ok(None) => Fetched::Failed(format!(
-            "gave up after retries: {}",
-            last_failure.lock().unwrap()
-        )),
+        Ok(None) => Fetched::Failed(format!("gave up after retries: {}", last_failure.lock())),
         Err(e) => Fetched::Failed(e.to_string()),
     }
 }

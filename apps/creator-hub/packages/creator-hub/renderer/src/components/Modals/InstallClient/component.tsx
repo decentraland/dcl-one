@@ -1,7 +1,8 @@
-import { useCallback, useId } from 'react';
+import { useCallback, useEffect, useId } from 'react';
 import { AppleIcon } from '@ui/atoms/BrandIcons';
 import Text from '@ui/atoms/Text';
 import { actions } from '/@/modules/store/editor';
+import { analytics } from '#preload';
 import { useDispatch } from '#store';
 import { t } from '/@/modules/store/translation/utils';
 import { Modal } from '..';
@@ -38,10 +39,20 @@ export function InstallClient({ open, onClose }: Props) {
   const dispatch = useDispatch();
   const titleId = useId();
 
+  useEffect(() => {
+    if (open) void analytics.track('Install Client Prompt', { action: 'shown' });
+  }, [open]);
+
   const handleDownload = useCallback(() => {
+    void analytics.track('Install Client Prompt', { action: 'download' });
     dispatch(actions.openExternalURL('https://decentraland.org/download/'));
     onClose();
   }, [dispatch, onClose]);
+
+  const handleDismiss = useCallback(() => {
+    void analytics.track('Install Client Prompt', { action: 'dismiss' });
+    onClose();
+  }, [onClose]);
   const { icon, text } = isMacOS()
     ? {
         icon: (
@@ -88,7 +99,7 @@ export function InstallClient({ open, onClose }: Props) {
             variant="outline"
             className="hub-button hub-button--secondary hub-button--outlined"
             fullWidth
-            onClick={onClose}
+            onClick={handleDismiss}
           >
             {t('modal.install_client.cancel')}
           </Button>

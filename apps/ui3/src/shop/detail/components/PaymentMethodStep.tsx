@@ -12,9 +12,9 @@
 // option would read as a bug next to the balances shown. Buy stays disabled until the ticks are a rail that settles.
 // Ticking the second row when the two cannot pay together (the Credits cover it alone, so there is no split) moves the
 // pick to that row instead of leaving both ticked over a disabled Buy.
+import { ShopManaMark } from "@dcl/one-ui";
 import { useEffect, useId, useRef, useState, type CSSProperties, type ReactNode } from "react";
 
-import ManaMark from "../../../atoms/ManaMark";
 import { formatCredits, formatCreditsFull } from "@shop/checkout/lib/currency";
 import CategoryFlap from "../../discovery/components/CategoryFlap";
 import Icon from "../../discovery/components/Icon";
@@ -259,13 +259,13 @@ export default function PaymentMethodStep(props: PaymentMethodStepProps) {
           <span className={styles.content}>
             <span className={styles.infoGroup}>
               <span className={styles.logo}>
-                <ManaMark network="polygon" size={35.328} className={styles.manaArt} />
+                <ShopManaMark network="polygon" size={35.328} className={styles.manaArt} />
               </span>
               <span className={styles.text}>
                 <span className={styles.label}>{TEXT.mana}</span>
                 <span className={styles.balance}>
                   {TEXT.manaBalance}
-                  <ManaMark network="polygon" size={13} className={styles.manaMini} />
+                  <ShopManaMark network="polygon" size={13} className={styles.manaMini} />
                   <span className={styles.balanceValue}>{formatMana(props.manaBalanceWei, { group: true, decimals: 2 })}</span>
                 </span>
               </span>
@@ -273,7 +273,7 @@ export default function PaymentMethodStep(props: PaymentMethodStepProps) {
             <span className={styles.priceCol}>
               {manaUsable ? (
                 <span className={styles.price}>
-                  <ManaMark network="polygon" size={24} className={styles.manaPriceIco} />
+                  <ShopManaMark network="polygon" size={24} className={styles.manaPriceIco} />
                   <span data-testid="pay-with-mana-amount">{formatManaPrice(manaLeg)}</span>
                 </span>
               ) : (

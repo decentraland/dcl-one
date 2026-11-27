@@ -203,6 +203,9 @@ pub(super) fn refusal(err: AuthError) -> ChainRefusal {
             }
             ChainRefusal::Unavailable
         }
+        // The node-wide budget of the client source (`eip1654_budget`), below
+        // this route's own: refused before the RPC, the same 429.
+        AuthError::Eip1654RateLimited => ChainRefusal::Throttled(Spent::Network),
         e => ChainRefusal::Invalid(e.to_string()),
     }
 }
@@ -266,7 +269,11 @@ fn derive_final_authority(chain: &AuthChain) -> Result<String, String> {
         .last()
         .ok_or_else(|| "Auth chain is required".to_string())?;
     match last.link_type {
-        AuthLinkType::SIGNER => Err("Could not get final authority from auth chain".to_string()),
+        AuthLinkType::SIGNER
+        | AuthLinkType::EcdsaScopedEphemeral
+        | AuthLinkType::EcdsaEip1654ScopedEphemeral => {
+            Err("Could not get final authority from auth chain".to_string())
+        }
         AuthLinkType::EcdsaEphemeral | AuthLinkType::EcdsaEip1654Ephemeral => {
             let (_, ephemeral, _) = parse_ephemeral_payload(&last.payload)
                 .map_err(|e| format!("Could not get final authority from auth chain: {}", e))?;
@@ -833,6 +840,16 @@ mod tests {
         }
     }
 
+    /// The node's budget of contract-wallet checks refusing below this
+    /// route's own is the same 429, never an invalid chain.
+    #[test]
+    fn a_rate_limited_contract_check_is_throttled() {
+        assert_eq!(
+            refusal(AuthError::Eip1654RateLimited),
+            ChainRefusal::Throttled(Spent::Network)
+        );
+    }
+
     #[tokio::test]
     async fn eoa_chains_need_no_validator() {
         let chain = delegated_chain(SIGNER_KEY, EPHEMERAL_KEY, "2100-01-01T00:00:00.000Z");
@@ -886,6 +903,44 @@ mod tests {
             invalid(validate_identity_chain(&stub_auth_chain(), None).await),
             "Could not get final authority from auth chain"
         );
+    }
+
+    #[tokio::test]
+    async fn a_scoped_login_is_refused() {
+        let (root, ephemeral) = (
+            crate::auth::Wallet::random().unwrap(),
+            crate::auth::Wallet::random().unwrap(),
+        );
+        let grants = [crate::auth::scoped_login::ScopedLoginGrant {
+            service: "explore".into(),
+            operation: "*".into(),
+            resource: None,
+        }];
+        let chain: AuthChain = serde_json::from_value(
+            crate::auth::create_scoped_auth_chain(
+                &root,
+                &ephemeral,
+                4_000_000_000_000,
+                &grants,
+                "payload",
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        invalid(validate_auth_chain(&chain, None).await);
+
+        for link_type in [
+            AuthLinkType::EcdsaScopedEphemeral,
+            AuthLinkType::EcdsaEip1654ScopedEphemeral,
+        ] {
+            let mut identity = chain[..2].to_vec();
+            identity[1].link_type = link_type;
+            assert_eq!(
+                invalid(validate_auth_chain(&identity, None).await),
+                "Could not get final authority from auth chain"
+            );
+            invalid(validate_identity_chain(&identity, None).await);
+        }
     }
 
     #[tokio::test]

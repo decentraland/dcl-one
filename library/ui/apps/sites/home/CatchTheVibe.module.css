@@ -119,20 +119,11 @@
   gap: var(--dcl-space-8);
 }
 
-.controls .playChip {
-  flex: 1;
-  justify-content: center;
+/* The play mark and the clip length; a phone shows the mark alone, in the middle of the clip. */
+.playLabel {
+  display: flex;
   align-items: center;
-  gap: 0;
-  width: 100%;
-  min-width: 0;
-  height: auto;
-  margin: 0;
-  padding: 0;
-  border: 0;
-  border-radius: 0;
-  background-color: rgba(0, 0, 0, 0.3);
-  box-shadow: none;
+  gap: var(--dcl-space-4);
 }
 
 .playIcon {
@@ -146,22 +137,26 @@
 
 .duration {
   display: none;
-  color: var(--dcl-neutrals-snow);
-  font-size: var(--dcl-font-size-body-sm);
-  font-weight: 600;
-  line-height: normal;
-  letter-spacing: 0.00938em;
-  white-space: nowrap;
-  text-transform: none;
 }
 
-.controls .muteChip {
+.muteChip {
   align-self: flex-end;
-  height: 26px;
   margin: 0 13px 13px 0;
-  padding: 5.5px 6px;
-  border-radius: var(--dcl-radius-sm);
-  background-color: var(--dcl-neutrals-shadow);
+}
+
+/* The pause and sound marks are a chip's only content: as blocks they sit in its middle. */
+.chipIcon {
+  display: block;
+}
+
+/* Below source's desktop width the play control covers the clip. Its fill stays at rest in every state:
+   the dark Button's black hover would hide the clip while a touch screen keeps the tapped control hovered. */
+@media (max-width: 990.98px) {
+  .playChip {
+    flex: 1;
+    min-width: 0;
+    background-color: var(--dcl-transparencies-black-40);
+  }
 }
 
 .footer {
@@ -216,6 +211,32 @@ a.creator:focus-visible {
   margin-right: -4px;
 }
 
+/* The reference's hover: the fill stays and a white ring grows out of the button (MUI's 200 ms
+   easeInOut). */
+.hangOut:hover:not([data-disabled], [data-loading]) {
+  background-color: var(--dcl-primary-primary);
+}
+
+.hangOut::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border: 4px solid var(--dcl-neutrals-white);
+  border-radius: var(--dcl-radius-xl);
+  opacity: 0;
+  pointer-events: none;
+  transition:
+    inset 200ms cubic-bezier(0.4, 0, 0.2, 1),
+    opacity 200ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .hangOut:hover:not([data-disabled], [data-loading])::before {
+    inset: -7.5px;
+    opacity: 1;
+  }
+}
+
 /* Source's useDesktopMediaQuery. */
 @media (min-width: 991px) {
   .root {
@@ -244,15 +265,7 @@ a.creator:focus-visible {
     inset: auto auto 13px 13px;
   }
 
-  .controls .playChip {
-    width: auto;
-    height: 26px;
-    padding: 5.5px 6px;
-    border-radius: var(--dcl-radius-sm);
-    background-color: var(--dcl-neutrals-shadow);
-  }
-
-  .controls .muteChip {
+  .muteChip {
     margin: 0;
   }
 
@@ -285,7 +298,8 @@ a.creator:focus-visible {
 
 @media (prefers-reduced-motion: reduce) {
   .image,
-  .video {
+  .video,
+  .hangOut::before {
     transition: none;
   }
 }

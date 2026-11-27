@@ -6,10 +6,12 @@ use common::{
     structs::{PortableExperiencesToggle, SpawnPoint},
     util::{dcl_assert, RingBuffer},
 };
-use dcl_component::{DclReader, DclWriter, SceneComponentId, SceneEntityId, ToDclWriter};
+use dcl_component::{
+    DclReader, DclWriter, SceneComponentId, SceneCrdtTimestamp, SceneEntityId, ToDclWriter,
+};
 use dcl_types::{
     interface::{CrdtStore, CrdtType},
-    RendererResponse, SceneId, SceneLogMessage, SceneResourceCounters,
+    RendererResponse, SceneId, SceneLogMessage, SceneResourceCounters, SceneWake,
 };
 use scene_material::{BoundRegion, SceneBounds};
 
@@ -175,23 +177,38 @@ pub const SUPER_USER_SCENE_NOT_RESPONDING_TIMEOUT: std::time::Duration =
 pub const SCENE_NOT_RESPONDING_DISPLAY_AFTER: std::time::Duration =
     std::time::Duration::from_secs(2);
 
+/// The ticks a scene runs before it counts as started ([`RendererSceneContext::started`]): its
+/// content is shown, and the teleport releases the player onto it, once it has run past this many.
+pub(crate) const STARTUP_TICKS: u32 = 5;
+
 impl RendererSceneContext {
     pub fn broken(&self) -> bool {
         matches!(self.state, SceneState::Broken)
     }
 
-    /// The scene's content is on screen: it has run past its first ticks with nothing blocking
-    /// it (its glTFs loaded), or it is broken or frozen and never will. Its stand-ins (an
-    /// imposter tile, a near LOD) go when this holds.
+    /// The scene has run past its [`STARTUP_TICKS`] with nothing blocking it (its glTFs loaded).
+    pub(crate) fn started(&self) -> bool {
+        self.tick_number > STARTUP_TICKS && self.blocked.is_empty()
+    }
+
+    /// The scene's content is on screen: it has [`started`](Self::started), or it is broken or
+    /// frozen and never will. Its stand-ins (an imposter tile, a near LOD) go when this holds.
     pub fn content_shown(&self) -> bool {
-        self.broken()
-            || self.blocked.contains(FROZEN_BLOCK)
-            || (self.tick_number > 5 && self.blocked.is_empty())
+        self.broken() || self.blocked.contains(FROZEN_BLOCK) || self.started()
     }
 
     pub fn sender(&self) -> Option<&tokio::sync::mpsc::UnboundedSender<RendererResponse>> {
         match &self.state {
             SceneState::Live { handle, .. } => Some(&handle.sender),
+            _ => None,
+        }
+    }
+
+    /// Whether the engine wakes the scene's runtime when it sends it something, while the scene
+    /// runs.
+    pub(crate) fn wake(&self) -> Option<&SceneWake> {
+        match &self.state {
+            SceneState::Live { handle, .. } => Some(&handle.wake),
             _ => None,
         }
     }
@@ -403,11 +420,11 @@ impl RendererSceneContext {
         crdt_type: CrdtType,
         id: SceneEntityId,
         data: &impl ToDclWriter,
-    ) {
+    ) -> SceneCrdtTimestamp {
         let mut buf = Vec::new();
         DclWriter::new(&mut buf).write(data);
         self.crdt_store
-            .force_update(component_id, crdt_type, id, Some(&mut DclReader::new(&buf)));
+            .force_update(component_id, crdt_type, id, Some(&mut DclReader::new(&buf)))
     }
 
     pub fn update_crdt_if_different(

@@ -88,17 +88,20 @@ impl Refused {
             }
         }
     }
-}
 
-impl IntoResponse for Refused {
-    fn into_response(self) -> Response {
+    pub(crate) fn respond(&self, body: Value) -> Response {
         let status = self.status();
-        let body = self.body();
         if status == StatusCode::SERVICE_UNAVAILABLE {
             (status, [(header::RETRY_AFTER, "60")], Json(body)).into_response()
         } else {
             (status, Json(body)).into_response()
         }
+    }
+}
+
+impl IntoResponse for Refused {
+    fn into_response(self) -> Response {
+        self.respond(self.body())
     }
 }
 
@@ -176,6 +179,12 @@ pub(crate) fn base_refusal_json(refusal: &Refusal) -> Value {
         Refusal::NegativeDebit { debit } => json!({ "code": "negativeDebit", "debit": debit }),
         Refusal::CreditValueTooLarge { value, cap } => {
             json!({ "code": "creditValueTooLarge", "value": value, "cap": cap })
+        }
+        Refusal::PartialCreditOutOfRange { asset, leg, quoted } => {
+            json!({ "code": "partialCreditOutOfRange", "asset": asset, "leg": leg, "quoted": quoted })
+        }
+        Refusal::PartialCreditUnavailable { asset, detail } => {
+            json!({ "code": "partialCreditUnavailable", "asset": asset, "detail": detail })
         }
         Refusal::SettlementNeedAboveReference { need, reference } => {
             json!({ "code": "settlementNeedAboveReference", "need": need, "reference": reference })
@@ -1169,6 +1178,21 @@ mod tests {
                     cap: wei,
                 },
                 "creditValueTooLarge",
+            ),
+            (
+                Refusal::PartialCreditOutOfRange {
+                    asset,
+                    leg: UsdCents::new(200),
+                    quoted: UsdCents::new(200),
+                },
+                "partialCreditOutOfRange",
+            ),
+            (
+                Refusal::PartialCreditUnavailable {
+                    asset,
+                    detail: "example",
+                },
+                "partialCreditUnavailable",
             ),
             (
                 Refusal::SettlementNeedAboveReference {

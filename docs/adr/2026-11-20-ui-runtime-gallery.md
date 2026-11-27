@@ -1,6 +1,6 @@
 # ADR: Runtime component gallery in `library/ui/gallery`
 
-- Status: Accepted
+- Status: Accepted; superseded in part by [2026-11-20](2026-11-20-ui-gallery-hud-showcase.md)
 - Date: 2026-11-20
 
 ## Context

@@ -33,7 +33,7 @@ interface Entry {
   profile: Profile | undefined
   /** `profile` is the engine's copy (a `userProfile` reply): complete, and versioned. */
   full: boolean
-  /** The passport's extras (badges, equipped items) were fetched, so a re-read keeps them. */
+  /** The passport's extras (badges, equipped items, the official mark) were fetched, so a re-read keeps them. */
   extras: boolean
   /** When the engine last answered that it holds nothing for this address. */
   missingAt: number | undefined
@@ -66,7 +66,7 @@ const IDLE_TTL = 120_000
 const MISSING_TTL = 60_000
 const SWEEP_EVERY = 30_000
 
-const EXTRAS = ['badges', 'equippedWearables', 'equippedEmotes'] as const
+const EXTRAS = ['badges', 'equippedWearables', 'equippedEmotes', 'official'] as const
 
 const entries = new Map<string, Entry>()
 const listeners = new Map<string, Set<() => void>>()
@@ -74,6 +74,8 @@ let request: (address: string, extras: boolean, requestId: number) => void = () 
 let lastSweep = 0
 /** The local player's address, the one profile the engine can put back to an earlier version. */
 let own: string | undefined
+/** The local Passport edit shown until its engine reply arrives. */
+let editing: string | undefined
 
 /** Only wallet addresses are worth asking the engine about — not the mock's 'You', nor a system line's ''. */
 const isAddress = (key: string): boolean => key.startsWith('0x')
@@ -125,7 +127,7 @@ function readProfile(key: string, e: Entry, extras: boolean): void {
  *  One request per address however many subscribers arrive while it's in flight. */
 function ensureFetched(key: string, now: number): void {
   const e = entries.get(key)
-  if (e == null || e.full || e.pending || !isAddress(key)) return
+  if (key === editing || e == null || e.full || e.pending || !isAddress(key)) return
   if (e.missingAt != null && now - e.missingAt < MISSING_TTL) return
   readProfile(key, e, false)
 }
@@ -180,7 +182,7 @@ export function seedProfiles(seeds: readonly ProfileSeed[]): void {
     const key = profileKey(seed.address)
     const e = entry(key)
     if (e.subscribers === 0) e.idleSince = now
-    if (e.full) continue
+    if (e.full || key === editing) continue
     const prev = e.profile
     const picture = seed.picture ?? prev?.picture
     const claimed = seed.claimed ?? looksClaimed(seed.name)
@@ -202,7 +204,7 @@ function isStaleVersion(e: Entry, profile: Profile | null): boolean {
 export function receiveProfile(address: string, profile: Profile | null, requestId?: number): void {
   const key = profileKey(address)
   const e = requestId == null ? entry(key) : entries.get(key)
-  if (e == null || (requestId != null && e.requestId !== requestId)) return
+  if (key === editing || e == null || (requestId != null && e.requestId !== requestId)) return
   e.pending = false
   if (requestId == null && isStaleVersion(e, profile)) return
   if (profile == null) {
@@ -221,10 +223,12 @@ export function profileReadFailed(address: string, requestId: number): void {
 }
 
 /** An own-profile message also updates the passport while its separate read is in flight. */
-export function receiveOwnProfile(profile: Profile): void {
+export function receiveOwnProfile(profile: Profile): boolean {
   const key = profileKey(profile.address)
   const e = entry(key)
-  if (!isStaleVersion(e, profile)) applyProfile(key, e, profile)
+  if (key === editing || isStaleVersion(e, profile)) return false
+  applyProfile(key, e, profile)
+  return true
 }
 
 function applyProfile(key: string, e: Entry, profile: Profile): void {
@@ -237,7 +241,7 @@ function applyProfile(key: string, e: Entry, profile: Profile): void {
     // that service stops sending faces — either way the row keeps the one it has.
     if (next.name === '' || next.name.toLowerCase() === key) next.name = prev.name
     if (next.picture == null) next.picture = prev.picture
-    // A plain identity reply carries no badges/equipped items; a passport's extras survive
+    // A plain identity reply carries no badges, equipped items or official mark; a passport's extras survive
     // the re-reads that follow. Everything else is the engine's word, including a cleared field.
     for (const k of EXTRAS) if (next[k] === undefined && prev[k] !== undefined) Object.assign(next, { [k]: prev[k] })
   }
@@ -247,12 +251,36 @@ function applyProfile(key: string, e: Entry, profile: Profile): void {
   sweep(Date.now())
 }
 
-/** Change what's held for an address without a round trip — the optimistic own-profile edit. */
-export function updateProfile(address: string, fn: (prev: Profile | undefined) => Profile | undefined): void {
+/** Hold the form's optimistic profile over unsolicited updates and reads started before Submit. */
+export function beginProfileSave(address: string, edit: (profile: Profile) => Profile): void {
   const key = profileKey(address)
   const e = entry(key)
-  e.profile = fn(e.profile)
-  notify(key)
+  editing = key
+  e.requestId = undefined
+  e.pending = false
+  if (e.profile) {
+    e.profile = edit(e.profile)
+    notify(key)
+  }
+}
+
+export function finishProfileSave(address: string, profile: Profile | null): void {
+  const key = profileKey(address)
+  if (key !== editing) return
+  editing = undefined
+  const e = entry(key)
+  if (profile) {
+    if (profile.version != null && (e.announced == null || profile.version >= e.announced)) {
+      e.announced = profile.version
+      e.revertedTo = undefined
+    }
+    applyProfile(key, e, profile)
+  } else {
+    e.profile = undefined
+    e.full = false
+    notify(key)
+  }
+  if (e.subscribers > 0 || e.extras) readProfile(key, e, e.extras)
 }
 
 /** The passport wants the whole thing: badges, equipped items. Always re-read on open, as
@@ -262,7 +290,7 @@ export function requestPassport(address: string): void {
   if (!isAddress(key)) return
   const e = entry(key)
   e.extras = true
-  readProfile(key, e, true)
+  if (key !== editing) readProfile(key, e, true)
 }
 
 /** The engine's copy of a profile changed: a new version, server-filled fields (the snapshots) at
@@ -278,6 +306,7 @@ export function profileChanged(address: string, version: number): void {
   e.revertedTo = last != null && version < last ? version : undefined
   if (key === own) e.peak = Math.max(last ?? version, version)
   e.announced = version
+  if (key === editing) return
   if (e.subscribers === 0) {
     entries.set(key, { ...blank(), announced: e.announced, revertedTo: e.revertedTo, peak: e.peak })
     listeners.delete(key)
@@ -294,6 +323,11 @@ export function setOwnProfile(address: string | null): void {
   if (own != null && own !== next) {
     const e = entries.get(own)
     if (e != null) {
+      if (editing === own) {
+        e.profile = undefined
+        e.full = false
+        notify(own)
+      }
       e.announced = undefined
       e.revertedTo = undefined
       e.peak = undefined
@@ -301,6 +335,7 @@ export function setOwnProfile(address: string | null): void {
       e.pending = false
     }
   }
+  if (editing !== next) editing = undefined
   own = next
 }
 
@@ -311,6 +346,7 @@ export function resetProfileStore(): void {
   request = () => {}
   lastSweep = 0
   own = undefined
+  editing = undefined
 }
 
 /** A person's name colour from what the store knows of them (chosen colour, claimed name). */

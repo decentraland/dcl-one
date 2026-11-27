@@ -1,20 +1,35 @@
-import { useState } from 'react'
+import { useContext, useRef, useState } from 'react'
 import {
   Button,
   ConnectionStatus,
+  CountBadge,
   ItemLabel,
   Modal,
-  ProgressBar,
+  ModalActions,
+  ModalBackdrop,
+  ModalCard,
+  ModalShell,
+  ModalTitle,
   ProfilePic,
+  ProgressBar,
   Skeleton,
   Spinner,
   Tag,
   Toast,
+  Tooltip,
   type ModalProps,
   type ProfilePicSize,
   type TagVariant,
-  type ToastVariant
+  type ToastVariant,
+  EmptyState,
+  Panel,
+  SwapLabel,
+  VoiceBars,
+  DclLogo,
+  MaskIcon,
+  ScrollThumb
 } from '@dcl/one-ui'
+import { EmbeddedCanvas } from '../embedded'
 import type { GalleryEntry } from '../registry'
 import { covers, people } from './data'
 import layout from './layout.module.css'
@@ -42,9 +57,11 @@ type ModalDemoProps = Omit<ModalProps, 'onClose' | 'actions'> & {
   actions?: readonly string[]
 }
 
-// A dialog is rendered only while it is open; the trigger opens it again after it closes.
+// A dialog is rendered only while it is open; the trigger opens it again after it closes. Inside the Showcase it
+// starts closed: opening on load would take the reviewer's focus partway down the page.
 function ModalDemo({ open: initiallyOpen = false, trigger, actions, ...props }: ModalDemoProps) {
-  const [open, setOpen] = useState(initiallyOpen)
+  const embedded = useContext(EmbeddedCanvas)
+  const [open, setOpen] = useState(initiallyOpen && !embedded)
   const close = () => setOpen(false)
   return (
     <>
@@ -68,6 +85,34 @@ function ModalDemo({ open: initiallyOpen = false, trigger, actions, ...props }: 
         />
       ) : null}
     </>
+  )
+}
+
+// The backdrop is fixed over its host's screen: here a box stands in for the screen (it contains fixed content), so
+// the example is drawn in place. The HUD's popup layer owns the focus, Escape and what a press on the scrim does.
+function ModalBackdropDemo({ tone }: { tone?: 'dim' | 'deep' }) {
+  return (
+    <div className={layout.screen}>
+      <ModalBackdrop tone={tone}>
+        <div className={layout.hudHost}>
+          <ModalShell
+            title="Report submitted"
+            ariaLabel="Report submitted"
+            modal={false}
+            width={320}
+            onClose={() => {}}
+            actionsAlign="end"
+            actions={
+              <Button appearance="hud" size="sm">
+                OK
+              </Button>
+            }
+          >
+            Thanks for helping keep Decentraland safe.
+          </ModalShell>
+        </div>
+      </ModalBackdrop>
+    </div>
   )
 }
 
@@ -98,6 +143,97 @@ function ToastDemo({ variant }: { variant: ToastVariant }) {
 }
 
 export const feedbackEntries: GalleryEntry[] = [
+  {
+    name: 'ModalCard',
+    group: 'Feedback',
+    summary:
+      "The Explorer HUD's dialog card and its parts: a title, a body and a row of actions, and the backdrop a host opens it on. Its host owns the focus and Escape.",
+    components: ['ModalCard', 'ModalTitle', 'ModalActions', 'ModalShell', 'ModalBackdrop'],
+    examples: [
+      {
+        id: 'shell',
+        title: 'ModalShell: a title with a close button, a body and two equal actions',
+        render: () => (
+          <div className={layout.hudHost}>
+            <ModalShell
+              title="Leave this community?"
+              subtitle="You can join again at any time."
+              ariaLabel="Leave this community?"
+              modal={false}
+              onClose={() => {}}
+              actionsEqual
+              actions={
+                <>
+                  <Button appearance="hud" variant="secondary" size="bare" radius="md">
+                    CANCEL
+                  </Button>
+                  <Button appearance="hud" size="bare" radius="md">
+                    LEAVE
+                  </Button>
+                </>
+              }
+            >
+              Your posts stay in the community.
+            </ModalShell>
+          </div>
+        )
+      },
+      {
+        id: 'centered',
+        title: 'A centered title with a back button, and a lead note beside the action',
+        render: () => (
+          <div className={layout.hudHost}>
+            <ModalShell
+              title="Report submitted"
+              ariaLabel="Report submitted"
+              modal={false}
+              centeredTitle
+              onBack={() => {}}
+              onClose={() => {}}
+              actionsLead="Our moderators will review it."
+              actions={
+                <Button appearance="hud" size="sm">
+                  OK
+                </Button>
+              }
+            >
+              Thanks for helping keep Decentraland safe.
+            </ModalShell>
+          </div>
+        )
+      },
+      {
+        id: 'card',
+        title: 'ModalCard with its own layout: a title and a column of actions',
+        render: () => (
+          <div className={layout.hudHost}>
+            <ModalCard ariaLabel="Unsaved changes" modal={false} width={360}>
+              <ModalTitle title="Unsaved changes" subtitle="Your avatar has changes." />
+              <ModalActions direction="column">
+                <Button appearance="hud" size="sm">
+                  SAVE
+                </Button>
+                <Button appearance="hud" variant="ghost" size="sm">
+                  DISCARD
+                </Button>
+              </ModalActions>
+            </ModalCard>
+          </div>
+        )
+      },
+      {
+        id: 'backdrop',
+        title:
+          'ModalBackdrop: the blurred scrim over a screen, with the card centred and scaled in',
+        render: () => <ModalBackdropDemo />
+      },
+      {
+        id: 'backdrop-deep',
+        title: 'ModalBackdrop, deep: darker and not blurred',
+        render: () => <ModalBackdropDemo tone="deep" />
+      }
+    ]
+  },
   {
     name: 'Modal',
     group: 'Feedback',
@@ -156,11 +292,133 @@ export const feedbackEntries: GalleryEntry[] = [
     group: 'Feedback',
     summary: 'A status or alert message, shown inline here with no timeout.',
     components: ['Toast'],
-    examples: toastVariants.map((variant) => ({
-      id: variant,
-      title: variant[0]!.toUpperCase() + variant.slice(1),
-      render: () => <ToastDemo variant={variant} />
-    }))
+    examples: [
+      ...toastVariants.map((variant) => ({
+        id: variant,
+        title: variant[0]!.toUpperCase() + variant.slice(1),
+        render: () => <ToastDemo variant={variant} />
+      })),
+      {
+        id: 'hud',
+        title: 'Explorer HUD: a notice, an error and a notice with an action',
+        render: () => (
+          <div className={layout.stack}>
+            <Toast
+              appearance="hud"
+              placement="inline"
+              duration={0}
+              icon={
+                <ProfilePic
+                  appearance="hud"
+                  name={people.ada.name}
+                  src={people.ada.picture}
+                  nameColor={people.ada.color}
+                  size={28}
+                  alt=""
+                />
+              }
+            >
+              <b>{people.ada.name}</b> is online
+            </Toast>
+            <Toast appearance="hud" placement="inline" variant="error" duration={0}>
+              Something went wrong.
+            </Toast>
+            <Toast
+              appearance="hud"
+              placement="inline"
+              duration={0}
+              action={
+                <Button appearance="hud" variant="secondary" size="sm">
+                  Reload
+                </Button>
+              }
+            >
+              Textures optimized
+            </Toast>
+          </div>
+        )
+      }
+    ]
+  },
+  {
+    name: 'Tooltip',
+    group: 'Feedback',
+    summary:
+      'A short label or note beside its anchor, shown on hover and keyboard focus; the HUD tip opens with the pointer alone.',
+    components: ['Tooltip'],
+    examples: [
+      {
+        id: 'sides',
+        title: 'Sides',
+        render: () => (
+          <div className={`${layout.row} ${layout.tooltipHost} ${layout.tooltipRoom}`}>
+            {(['top', 'right', 'bottom', 'left'] as const).map((side) => (
+              <Tooltip key={side} label={`On the ${side}`} side={side} arrow>
+                <Button size="md" variant="secondary">
+                  {side}
+                </Button>
+              </Tooltip>
+            ))}
+          </div>
+        )
+      },
+      {
+        id: 'rich',
+        title: 'Rich content in a portal',
+        render: () => (
+          <div className={`${layout.row} ${layout.tooltipHost} ${layout.tooltipRoom}`}>
+            <Tooltip
+              portal
+              keepInViewport
+              side="top"
+              maxWidth={240}
+              tipClassName={layout.tooltipHost}
+              content={<span>Wraps at 240px and stays inside the window.</span>}
+            >
+              <Button size="md" variant="secondary">
+                Details
+              </Button>
+            </Tooltip>
+          </div>
+        )
+      },
+      {
+        id: 'hud',
+        title:
+          'Explorer HUD: a name with a shortcut, the sidebar rail, a paragraph and an end-aligned tip',
+        render: () => (
+          <div
+            className={`${layout.row} ${layout.tooltipHost} ${layout.tooltipRoom} ${layout.tooltipClip}`}
+          >
+            <Tooltip appearance="hud" label="Friends" shortcut="L" side="top">
+              <Button size="md" variant="secondary">
+                top
+              </Button>
+            </Tooltip>
+            <Tooltip appearance="hud" variant="rail" label="Settings" shortcut="P">
+              <Button size="md" variant="secondary">
+                rail
+              </Button>
+            </Tooltip>
+            <Tooltip
+              appearance="hud"
+              side="bottom"
+              multiline
+              label={'A longer hint that wraps.\n\nParagraph breaks are kept.'}
+            >
+              <Button size="md" variant="secondary">
+                multiline
+              </Button>
+            </Tooltip>
+            <Tooltip appearance="hud" side="bottom" align="end" label="End stream for everyone">
+              <Button size="md" variant="secondary">
+                bottom, end
+              </Button>
+            </Tooltip>
+          </div>
+        )
+      }
+    ]
   },
   {
     name: 'Spinner',
@@ -169,6 +427,21 @@ export const feedbackEntries: GalleryEntry[] = [
     components: ['Spinner'],
     examples: [
       { id: 'light', title: 'Light (dark surface)', render: () => <Spinner variant="light" /> },
+      {
+        id: 'thin',
+        title: 'Thin, sized (Explorer HUD)',
+        render: () => <Spinner variant="thin" size={26} />
+      },
+      {
+        id: 'thick',
+        title: 'Thick, sized (in-world Shop)',
+        render: () => <Spinner variant="thick" size={64} />
+      },
+      {
+        id: 'chase',
+        title: 'Chase, sized (sign-in)',
+        render: () => <Spinner variant="chase" size={40} />
+      },
       {
         id: 'dark',
         title: 'Dark (light surface)',
@@ -185,11 +458,190 @@ export const feedbackEntries: GalleryEntry[] = [
     examples: [
       {
         id: 'tones',
-        title: 'Brand and neutral tones',
+        title: 'Brand, neutral, overlay, sweep and band tones',
         render: () => (
           <div className={layout.stack}>
             <Skeleton style={{ display: 'block', width: 280, height: 160 }} />
             <Skeleton tone="neutral" style={{ display: 'block', width: 200, height: 20 }} />
+            <Skeleton tone="overlay" style={{ display: 'block', width: 256, height: 146 }} />
+            <Skeleton tone="sweep" style={{ width: 126, height: 126 }} />
+            <Skeleton tone="band" style={{ width: 200, height: 22 }} />
+          </div>
+        )
+      }
+    ]
+  },
+  {
+    name: 'CountBadge',
+    group: 'Feedback',
+    summary: 'A small pill with a count, beside a label or inside a tab.',
+    components: ['CountBadge'],
+    examples: [
+      {
+        id: 'sizes',
+        title: 'The three sizes, and a count above its maximum',
+        render: () => (
+          <div className={layout.row}>
+            <CountBadge count={5} />
+            <CountBadge count={5} size="sm" />
+            <CountBadge count={5} size="xs" />
+            <CountBadge count={140} max={99} />
+          </div>
+        )
+      }
+    ]
+  },
+  {
+    name: 'EmptyState',
+    group: 'Feedback',
+    summary:
+      'A centred icon, title and subtitle with optional actions, for an empty or failed surface.',
+    components: ['EmptyState'],
+    examples: [
+      {
+        id: 'variants',
+        title: 'Inline, an error with an action, and a card with two actions',
+        render: () => (
+          <div className={layout.stack}>
+            <EmptyState
+              variant="inline"
+              title="Nothing matched your search"
+              subtitle="Try another name or clear the filters."
+            />
+            <EmptyState
+              variant="inline"
+              tone="error"
+              title="Couldn't load the shop"
+              subtitle="The request timed out."
+              actions={[{ label: 'Retry', onClick: () => {} }]}
+            />
+            <EmptyState
+              variant="card"
+              iconWash
+              icon={<span aria-hidden="true">☺</span>}
+              title="No friends yet"
+              subtitle="Add the people you meet in-world."
+              actions={[
+                { label: 'Find people', onClick: () => {} },
+                { label: 'Later', variant: 'ghost', onClick: () => {} },
+                { label: 'Invite', variant: 'outline', onClick: () => {} }
+              ]}
+            />
+          </div>
+        )
+      }
+    ]
+  },
+  {
+    name: 'Panel',
+    group: 'Feedback',
+    summary: 'The dark surface of a HUD widget or menu.',
+    components: ['Panel'],
+    examples: [
+      {
+        id: 'surfaces',
+        title: 'Solid and frosted',
+        render: () => (
+          <div className={layout.row}>
+            <Panel style={{ padding: 18, width: 220 }}>A surface for widgets and menus.</Panel>
+            <Panel blur style={{ padding: 18, width: 220 }}>
+              A frosted surface over the world.
+            </Panel>
+          </div>
+        )
+      }
+    ]
+  },
+  {
+    name: 'SwapLabel',
+    group: 'Feedback',
+    summary: 'A button label that swaps while its button is hovered or focused.',
+    components: ['SwapLabel'],
+    examples: [
+      {
+        id: 'button',
+        title: 'Hover or focus the button',
+        render: () => (
+          <Button appearance="hud" variant="secondary" aria-label="Cancel request">
+            <SwapLabel idle="Request Sent" hover="Cancel Request" />
+          </Button>
+        )
+      }
+    ]
+  },
+  {
+    name: 'VoiceBars',
+    group: 'Feedback',
+    summary: 'The speaking badge of a nametag.',
+    components: ['VoiceBars'],
+    examples: [
+      {
+        id: 'badge',
+        title: 'Speaking',
+        render: () => (
+          <div className={layout.row}>
+            <VoiceBars />
+          </div>
+        )
+      }
+    ]
+  },
+  {
+    name: 'DclLogo',
+    group: 'Feedback',
+    summary: 'The Decentraland logo mark.',
+    components: ['DclLogo'],
+    examples: [
+      {
+        id: 'sizes',
+        title: '24, 32 and 48 pixels',
+        render: () => (
+          <div className={layout.row}>
+            <DclLogo />
+            <DclLogo size={32} />
+            <DclLogo size={48} />
+          </div>
+        )
+      }
+    ]
+  },
+  {
+    name: 'MaskIcon',
+    group: 'Feedback',
+    summary: 'An image drawn in the text colour.',
+    components: ['MaskIcon'],
+    examples: [
+      {
+        id: 'colours',
+        title: 'One image in three text colours and two sizes',
+        render: () => (
+          <div className={layout.row}>
+            <MaskIcon src={MASK_EXAMPLE} />
+            <span style={{ color: 'var(--dcl-brand-ruby)', display: 'inline-flex' }}>
+              <MaskIcon src={MASK_EXAMPLE} />
+            </span>
+            <span style={{ color: 'var(--dcl-brand-orange)', display: 'inline-flex' }}>
+              <MaskIcon src={MASK_EXAMPLE} size={40} />
+            </span>
+          </div>
+        )
+      }
+    ]
+  },
+  {
+    name: 'ScrollThumb',
+    group: 'Feedback',
+    summary: 'A pill that follows a scroller whose own scrollbar is hidden.',
+    components: ['ScrollThumb'],
+    examples: [
+      {
+        id: 'tones',
+        title: 'Outline, dark and solid, beside a list that scrolls',
+        render: () => (
+          <div className={layout.row}>
+            <ScrollThumbExample tone="outline" />
+            <ScrollThumbExample tone="dark" />
+            <ScrollThumbExample tone="solid" />
           </div>
         )
       }
@@ -324,6 +776,47 @@ export const feedbackEntries: GalleryEntry[] = [
         )
       },
       {
+        id: 'hud',
+        title:
+          'Explorer HUD: any diameter, a status dot at either corner, a framed picture and the initial',
+        render: () => (
+          <div className={layout.row}>
+            <ProfilePic
+              appearance="hud"
+              name={people.ada.name}
+              src={people.ada.picture}
+              nameColor={people.ada.color}
+              size={53}
+              status="online"
+            />
+            <ProfilePic
+              appearance="hud"
+              name={people.ada.name}
+              src={people.ada.picture}
+              nameColor={people.ada.color}
+              size={40}
+              status="offline"
+              dotPosition="top"
+            />
+            <ProfilePic
+              appearance="hud"
+              name={people.ada.name}
+              src={people.ada.picture}
+              nameColor={people.ada.color}
+              size={42}
+              framed
+            />
+            <ProfilePic
+              appearance="hud"
+              name="@mojito"
+              nameColor={people.ada.color}
+              size={36}
+              status="away"
+            />
+          </div>
+        )
+      },
+      {
         id: 'fallback',
         title: 'Initial fallback, compact on mobile and connection status',
         render: () => (
@@ -338,3 +831,29 @@ export const feedbackEntries: GalleryEntry[] = [
     ]
   }
 ]
+
+/** A white-on-transparent star, as a data URI: the gallery has no image asset of its own to mask. */
+const MASK_EXAMPLE =
+  "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill='%23fff' d='M12 2l3 7 7 .6-5.3 4.6 1.6 7L12 17.5 5.7 21.2l1.6-7L2 9.6l7-.6z'/%3E%3C/svg%3E"
+
+function ScrollThumbExample({ tone }: { tone: 'outline' | 'dark' | 'solid' }) {
+  const scroller = useRef<HTMLDivElement>(null)
+  return (
+    <div style={{ position: 'relative', width: 140, height: 120 }}>
+      <div
+        ref={scroller}
+        tabIndex={0}
+        role="group"
+        aria-label={`A list that scrolls, ${tone} handle`}
+        style={{ height: '100%', overflowY: 'auto', scrollbarWidth: 'none', paddingRight: 24 }}
+      >
+        {Array.from({ length: 12 }, (_, index) => (
+          <p key={index} style={{ margin: 0, lineHeight: '28px' }}>
+            Row {index + 1}
+          </p>
+        ))}
+      </div>
+      <ScrollThumb target={scroller} tone={tone} length={40} className={layout.thumbRight} />
+    </div>
+  )
+}

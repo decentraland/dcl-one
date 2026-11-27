@@ -1,45 +1,12 @@
-import { Component, useEffect, type ErrorInfo, type ReactNode } from 'react'
+import { useEffect } from 'react'
+import { COMPONENT_OVERVIEW } from '../componentPages'
+import { EmbeddedCanvas } from '../embedded'
 import { entries } from '../examples'
 import { foundationPages } from '../foundations/FoundationPages'
-import type { Example } from '../registry'
 import { HEIGHT_MESSAGE } from '../messages'
 import styles from './Canvas.module.css'
-
-class ExampleBoundary extends Component<{ children: ReactNode }, { error: Error | null }> {
-  state = { error: null as Error | null }
-  static getDerivedStateFromError(error: Error) {
-    return { error }
-  }
-  componentDidCatch(error: Error, info: ErrorInfo) {
-    // Keep the failure visible in the console as well, where the build check reads it.
-    console.error(error, info.componentStack)
-  }
-  render() {
-    return this.state.error ? (
-      <p role="alert" data-example-error className={styles.error}>
-        {this.state.error.message}
-      </p>
-    ) : (
-      this.props.children
-    )
-  }
-}
-
-function ExampleView({ example }: { example: Example }) {
-  return (
-    <section
-      className={styles.example}
-      data-example={example.id}
-      data-surface={example.surface ?? 'dark'}
-    >
-      <h2 className={styles.title}>{example.title}</h2>
-      {example.note ? <p className={styles.note}>{example.note}</p> : null}
-      <div className={styles.stage} data-stage>
-        <ExampleBoundary>{example.render()}</ExampleBoundary>
-      </div>
-    </section>
-  )
-}
+import { ComponentShowcase } from './ComponentShowcase'
+import { ExampleView } from './ExampleView'
 
 // The canvas runs inside the gallery's iframe; the iframe's width is the viewport media queries read.
 function useReportHeight() {
@@ -50,10 +17,17 @@ function useReportHeight() {
         { type: HEIGHT_MESSAGE, height: document.documentElement.scrollHeight },
         window.location.origin
       )
+    // The gallery sizes the frame to this document, so the canvas never scrolls itself. A scrollbar of its own would
+    // narrow the viewport the examples are drawn in, and then keep itself on a page whose pictures grow with the
+    // width: the frame takes the narrower page's height, which the full width no longer fits.
+    document.documentElement.style.overflowY = 'hidden'
     const observer = new ResizeObserver(report)
     observer.observe(document.body)
     report()
-    return () => observer.disconnect()
+    return () => {
+      observer.disconnect()
+      document.documentElement.style.overflowY = ''
+    }
   }, [])
 }
 
@@ -68,6 +42,8 @@ export function Canvas({ search }: { search: string }) {
   useEffect(() => {
     document.body.style.minHeight = page && 'minHeight' in page ? `${page.minHeight}px` : ''
   }, [page])
+  if (foundation === null && params.get('component') === COMPONENT_OVERVIEW)
+    return <ComponentShowcase />
   if (!page)
     return (
       <p role="alert" className={styles.error}>
@@ -81,10 +57,12 @@ export function Canvas({ search }: { search: string }) {
       </main>
     )
   return (
-    <main className={styles.canvas} data-component={page.name}>
-      {page.examples.map((example) => (
-        <ExampleView key={example.id} example={example} />
-      ))}
-    </main>
+    <EmbeddedCanvas value={params.get('embedded') === '1'}>
+      <main className={styles.canvas} data-component={page.name}>
+        {page.examples.map((example) => (
+          <ExampleView key={example.id} example={example} />
+        ))}
+      </main>
+    </EmbeddedCanvas>
   )
 }

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Install the pinned Linux WASM binding generator and optimizer."""
+"""Install the pinned Linux WASM binding generator, its test runner and the optimizer."""
 import argparse
 import hashlib
 import importlib.util
@@ -22,6 +22,13 @@ TOOLS = {
         'https://github.com/wasm-bindgen/wasm-bindgen/releases/download/0.2.114/wasm-bindgen-0.2.114-x86_64-unknown-linux-musl.tar.gz',
         'ce21be002bdbc22ede2a5cf250cb801d2106956fc3c529c75d9452729db3490c',
         'wasm-bindgen-0.2.114-x86_64-unknown-linux-musl/wasm-bindgen',
+    ),
+    # from the same release archive: runs wasm-bindgen-test tests in a headless browser
+    'wasm-bindgen-test-runner': (
+        '0.2.114',
+        'https://github.com/wasm-bindgen/wasm-bindgen/releases/download/0.2.114/wasm-bindgen-0.2.114-x86_64-unknown-linux-musl.tar.gz',
+        'ce21be002bdbc22ede2a5cf250cb801d2106956fc3c529c75d9452729db3490c',
+        'wasm-bindgen-0.2.114-x86_64-unknown-linux-musl/wasm-bindgen-test-runner',
     ),
     'wasm-opt': (
         '129',
@@ -46,8 +53,8 @@ def install(name, destination):
     binary.chmod(0o755)
     actual = subprocess.check_output([str(binary), '--version'], text=True).strip()
     expected = (
-        f'wasm-bindgen {version}'
-        if name == 'wasm-bindgen'
+        f'{name} {version}'
+        if name.startswith('wasm-bindgen')
         # binaryen prints its release tag after the number: `wasm-opt version 129 (version_129)`.
         else f'wasm-opt version {version} (version_{version})'
     )
@@ -59,13 +66,16 @@ def install(name, destination):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--no-opt', action='store_true')
+    parser.add_argument('--test-runner', action='store_true', help='also install wasm-bindgen-test-runner')
     args = parser.parse_args()
     lock = tomllib.loads((ROOT / 'rendering/bevy-explorer/source/Cargo.lock').read_text())
     versions = {p['version'] for p in lock['package'] if p['name'] == 'wasm-bindgen'}
-    if versions != {TOOLS['wasm-bindgen'][0]}:
+    if versions != {TOOLS['wasm-bindgen'][0]} or TOOLS['wasm-bindgen-test-runner'][0] != TOOLS['wasm-bindgen'][0]:
         raise ValueError('Update the wasm-bindgen tool pin to match Cargo.lock')
     destination = Path(tempfile.mkdtemp(prefix='bevy-web-tools-', dir=os.environ['RUNNER_TEMP']))
     install('wasm-bindgen', destination)
+    if args.test_runner:
+        install('wasm-bindgen-test-runner', destination)
     if not args.no_opt:
         install('wasm-opt', destination)
     with open(os.environ['GITHUB_PATH'], 'a', encoding='utf-8') as path:

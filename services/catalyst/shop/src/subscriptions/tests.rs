@@ -5,6 +5,14 @@
 //! and a recording mailer), plus the crash and idempotency cases the local
 //! outbox adds.
 
+#![allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    clippy::cast_possible_wrap,
+    clippy::cast_precision_loss,
+    reason = "test fixtures use small literal values"
+)]
+
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -803,4 +811,43 @@ async fn the_watcher_baselines_first_and_notifies_the_next_on_sale_transition() 
         .execute(&r.pool)
         .await
         .unwrap();
+}
+
+#[tokio::test]
+async fn watcher_reaches_item_501_after_unknown_prefix_and_resumes_its_sweep() {
+    let Some(db) = crate::test_db::OwnDatabase::create("watcher_sweep").await else {
+        return;
+    };
+    let c = "0x0000000000000000000000000000000000000001";
+    sqlx::query("INSERT INTO shop.item_notify_requests (address, email, contract_address, item_id, chain_id) SELECT $1, 'test@example.com', $1, lpad(n::text, 4, '0'), 137 FROM generate_series(1, 501) n")
+        .bind(c).execute(&db.pool).await.unwrap();
+    seed_item(&db.pool, c, "0501", 0, true).await;
+    let first = watch_pass(&db.pool).await.unwrap();
+    assert_eq!((first.items, first.observed), (500, 0));
+    // Each invocation reloads its durable cursor; a new process has no
+    // in-memory traversal state to restore. Unknown items stay pending.
+    // A new lexical key inside the current range is outside its identity
+    // cohort, so it cannot consume the final item's observation slot.
+    sqlx::query("INSERT INTO shop.item_notify_requests (address, email, contract_address, item_id, chain_id) VALUES ($1, 'test@example.com', $1, '0500a', 137)")
+        .bind(c).execute(&db.pool).await.unwrap();
+    let tail = watch_pass(&db.pool).await.unwrap();
+    assert_eq!((tail.items, tail.observed, tail.enqueued), (1, 1, 0));
+    seed_item(&db.pool, c, "0501", 2, true).await;
+    assert_eq!(watch_pass(&db.pool).await.unwrap().observed, 0);
+    let changed = watch_pass(&db.pool).await.unwrap();
+    assert_eq!((changed.transitions, changed.enqueued), (1, 1));
+    assert_eq!(
+        outbox_rows(&db.pool, c).await,
+        vec![("pending".to_string(), 0)]
+    );
+    watch_pass(&db.pool).await.unwrap();
+    assert_eq!(watch_pass(&db.pool).await.unwrap().enqueued, 0);
+    let pending: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM shop.item_notify_requests WHERE status = 'pending'",
+    )
+    .fetch_one(&db.pool)
+    .await
+    .unwrap();
+    assert_eq!(pending, 502);
+    db.drop().await;
 }
