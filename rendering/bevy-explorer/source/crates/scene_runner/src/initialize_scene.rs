@@ -1944,19 +1944,21 @@ pub fn process_scene_lifecycle(
     keep_scene_ids.retain(allowed);
     // rewritten only when it differs, and without marking `LiveScenes` changed: its change
     // stays tied to scenes spawned and despawned, which the scene layout readers filter on
-    let required_hashes: HashSet<&String> =
-        required_scene_ids.keys().map(|(hash, _)| hash).collect();
-    let required = &live_scenes.required;
-    if required.around != Some(player_parcel)
-        || required.hashes.len() != required_hashes.len()
-        || !required_hashes
-            .iter()
-            .all(|hash| required.hashes.contains(*hash))
     {
-        let required = &mut live_scenes.bypass_change_detection().required;
-        required.around = Some(player_parcel);
-        required.hashes.clear();
-        required.hashes.extend(required_hashes.into_iter().cloned());
+        let required_hashes: HashSet<&String> =
+            required_scene_ids.keys().map(|(hash, _)| hash).collect();
+        let required = &live_scenes.required;
+        if required.around != Some(player_parcel)
+            || required.hashes.len() != required_hashes.len()
+            || !required_hashes
+                .iter()
+                .all(|hash| required.hashes.contains(*hash))
+        {
+            let required = &mut live_scenes.bypass_change_detection().required;
+            required.around = Some(player_parcel);
+            required.hashes.clear();
+            required.hashes.extend(required_hashes.into_iter().cloned());
+        }
     }
 
     // record which scene entities we should keep
