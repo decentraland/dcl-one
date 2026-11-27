@@ -64,6 +64,10 @@ pub const FAMILIES: &[Descriptor] = &[CURSOR_LAG.descriptor];
 
 /// Records `producer`'s [`CURSOR_LAG`]: its cursor at `cursor_block`, its
 /// pages bounded by `published` (equal when a page read everything).
+#[allow(
+    clippy::cast_precision_loss,
+    reason = "a lag in blocks, far below 2^53"
+)]
 pub(super) fn report_lag(producer: &'static str, published: i64, cursor_block: i64) {
     CURSOR_LAG
         .handle([producer])
@@ -773,6 +777,14 @@ pub fn token_log_key(a: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    #![allow(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        clippy::cast_possible_wrap,
+        clippy::cast_precision_loss,
+        reason = "test fixtures use small literal values"
+    )]
+
     use super::*;
     use crate::market::chain_walk::INDEXER_MANA;
 

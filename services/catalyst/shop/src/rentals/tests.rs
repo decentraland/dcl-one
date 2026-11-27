@@ -4,6 +4,14 @@
 //! the end (the asset row cascades to the rental, the listing and the
 //! periods). Asset lookup tests seed an isolated land-authz index.
 
+#![allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    clippy::cast_possible_wrap,
+    clippy::cast_precision_loss,
+    reason = "test fixtures use small literal values"
+)]
+
 use std::sync::Arc;
 
 use alloy::primitives::B256;

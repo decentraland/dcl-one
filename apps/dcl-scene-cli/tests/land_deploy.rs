@@ -1,3 +1,5 @@
+#![allow(clippy::unwrap_used, reason = "test support")]
+
 use axum::Router;
 use axum::body::{Body, to_bytes};
 use axum::extract::State;

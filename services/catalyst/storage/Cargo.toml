@@ -32,3 +32,6 @@ test-support = []
 catalyst-shared = { path = "../shared", features = ["test-support"] }
 catalyst-db = { path = "../db", features = ["test-support"] }
 tokio = { workspace = true, features = ["test-util"] }
+
+[lints]
+workspace = true

@@ -1061,7 +1061,9 @@ pub(crate) fn paired_managers(chain_id: ChainId, venue: Address) -> Vec<String> 
     let venue = format!("{venue:#x}");
     crate::market::shop::coupon_pairings()
         .into_iter()
-        .filter(|(chain, marketplace, _)| *chain == chain_id.0 as i64 && *marketplace == venue)
+        .filter(|(chain, marketplace, _)| {
+            u64::try_from(*chain) == Ok(chain_id.0) && *marketplace == venue
+        })
         .map(|(_, _, manager)| manager)
         .collect()
 }
@@ -1166,7 +1168,10 @@ async fn live_coupon(
          LIMIT 1",
     )
     .bind(signer)
-    .bind(chain_id.0 as i32)
+    .bind(
+        crate::types::chain_id_column::<i32>(chain_id.0)
+            .map_err(|_| ResolveError::UnknownChain(chain_id))?,
+    )
     .bind(&managers)
     .bind(format!("{collection:#x}"))
     .fetch_optional(pool)
@@ -1255,7 +1260,11 @@ pub(crate) async fn resolve_trade(
     }
     let hashed_signature = hashed(&trade.signature);
     let (verdict, index_ready) = match chain.net {
-        Some(net) => trade_verdict(pool, net, chain.chain_id.0 as i64, &trade.id).await?,
+        Some(net) => {
+            let chain_id = crate::types::chain_id_column(chain.chain_id.0)
+                .map_err(|_| ResolveError::UnknownChain(chain.chain_id))?;
+            trade_verdict(pool, net, chain_id, &trade.id).await?
+        }
         None => (None, false),
     };
     let (role, item, token, available) = match asset.token {
@@ -1347,7 +1356,7 @@ async fn resolve_rental(
         .contract_address
         .eq_ignore_ascii_case(&asset.contract.to_string())
         && listing.token_id == token_id.to_string()
-        && listing.chain_id == chain.chain_id.0 as i64;
+        && u64::try_from(listing.chain_id) == Ok(chain.chain_id.0);
     if !same_asset {
         return Err(ResolveError::RentalAsset(rental_id.to_string()));
     }

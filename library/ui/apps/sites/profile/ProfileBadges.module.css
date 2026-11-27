@@ -1,4 +1,4 @@
-/* The badges row and its tooltip. The design system has no Badge or Tooltip yet, so they are drawn
+/* The badges row and the look of its shared Tooltip. The design system has no Badge yet, so it is drawn
  * here. The source's 30px gap has no spacing token; the nearest one (32px) is used. */
 .root {
   width: 100%;
@@ -22,10 +22,6 @@
   margin: 0;
   padding: 0;
   list-style: none;
-}
-
-.badge {
-  position: relative;
 }
 
 .slot {
@@ -56,28 +52,24 @@
   font-weight: 600;
 }
 
+/* The shared Tooltip's surface, set through its --tooltip-* properties; the tip is drawn in a portal on <body>. */
 .tip {
-  position: absolute;
-  z-index: 2;
-  bottom: calc(100% + var(--dcl-space-8));
-  left: 50%;
-  display: none;
-  flex-direction: column;
-  gap: var(--dcl-space-4);
-  box-sizing: border-box;
-  width: max-content;
-  max-width: 240px;
-  padding: var(--dcl-space-8);
-  border-radius: var(--dcl-radius-sm);
-  background: var(--dcl-bg-surface-raised);
-  color: var(--dcl-text-primary);
-  font-size: var(--dcl-font-size-body-sm);
-  transform: translateX(-50%);
+  --tooltip-pad: var(--dcl-space-8);
+  --tooltip-radius: var(--dcl-radius-sm);
+  --tooltip-bg: var(--dcl-bg-surface-raised);
+  --tooltip-text: var(--dcl-text-primary);
+  --tooltip-size: var(--dcl-font-size-body-sm);
+  --tooltip-weight: 400;
+  --tooltip-shadow: none;
+  --font-family: 'Inter', sans-serif;
+  --z-overlay: 2;
 }
 
-.badge:hover .tip,
-.slot:focus-visible + .tip {
+.tipContent {
   display: flex;
+  flex-direction: column;
+  gap: var(--dcl-space-4);
+  line-height: 1.5;
 }
 
 .tipName {

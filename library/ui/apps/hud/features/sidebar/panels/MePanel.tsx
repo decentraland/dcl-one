@@ -4,7 +4,7 @@
 
 import { useEffect, useRef, useState } from 'react'
 import { Avatar, showConfirm, showToast } from '../../../design'
-import { isAddress, splitName, userColor } from '@explorer-core/lib/identity'
+import { isAddress, shortWallet, splitName, userColor } from '@explorer-core/lib/identity'
 import type { Profile } from '@explorer-core/engine/protocol'
 import backpackIcon from '../../../assets/sidebar-rail/me-backpack.svg?no-inline'
 import profileIcon from '../../../assets/sidebar-rail/me-profile.svg?no-inline'
@@ -39,9 +39,6 @@ const COPIED_MS = 1200
 
 // The art keeps its own colours (the red Exit), so it is drawn as a picture at its own size.
 const art = (src: string): React.JSX.Element => <img src={src} alt="" draggable={false} />
-
-/** "0x10e...a7a92": the first five and the last five characters. */
-const shortWallet = (address: string): string => `${address.slice(0, 5)}...${address.slice(-5)}`
 
 export function MePanel({ profile, backpackKey, inviteLink, onBackpack, onProfile, onBadges, onSignOut, onExit, onClose }: MePanelProps): React.JSX.Element {
   const [copied, setCopied] = useState(false)

@@ -1,7 +1,7 @@
 import { useLocation, useNavigate, useNavigation } from "react-router";
 import { useEffect, useState } from "react";
 
-import { PlaceDetail } from "@dcl/one-ui";
+import { Button, PlaceDetail } from "@dcl/one-ui";
 import { isPlaceholderThumbnail, type PlaceViewer } from "@web-core/place-view";
 import SitesLayout from "@/features/components/chrome/SitesLayout";
 
@@ -156,7 +156,7 @@ export default function PlaceDetailRoute({ loaderData }: Route.ComponentProps) {
             onTravel(place.id, jumpHref, launchError);
             if (!jumpHref) retryTravel();
           }}
-          detailSlot={launchError ? <div role="alert"><p>{launchError}</p><button type="button" disabled={navigation.state !== "idle"} onClick={() => { retryTravel(); }}>Retry travel</button></div> : undefined}
+          detailSlot={launchError ? <div role="alert"><p>{launchError}</p><Button variant="secondary" size="md" disabled={navigation.state !== "idle"} onClick={() => { retryTravel(); }}>Retry travel</Button></div> : undefined}
           scenePicker={{
             options: scenes.map((s) => ({ value: s.entityId, label: `${s.title} (${s.base})` })),
             value: sceneId ?? scenes[0]?.entityId ?? "",

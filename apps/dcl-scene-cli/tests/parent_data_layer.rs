@@ -1,6 +1,7 @@
 //! A parent process and the editor data layer of `start --data-layer --json`:
 //! the parent reads the `ready` line from stdout, opens `dataLayerUrl` with
 //! `token`, makes one call and stops the child. Every request is on loopback.
+#![allow(clippy::unwrap_used, reason = "test support")]
 #![cfg(unix)]
 
 mod common {

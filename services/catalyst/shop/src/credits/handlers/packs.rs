@@ -66,14 +66,23 @@ pub struct UnityCreditPack {
     pub order: i32,
 }
 
+#[allow(
+    clippy::cast_possible_truncation,
+    reason = "float-to-int `as` saturates; pack credits are operator-set"
+)]
 fn unity_pack(p: &PackRow) -> Option<UnityCreditPack> {
     if !p.currency.eq_ignore_ascii_case("usd") {
         return None;
     }
     let credits = p.credits.parse::<f64>().ok()?.round() as i64;
+    #[allow(
+        clippy::cast_precision_loss,
+        reason = "the Unity wire carries USD as a number; operator-set prices are far below 2^53 cents"
+    )]
+    let usd = p.price_cents as f64 / 100.0;
     Some(UnityCreditPack {
         id: p.sku.clone(),
-        usd: p.price_cents as f64 / 100.0,
+        usd,
         credits,
         recommended: false,
         order: p.sort_order,

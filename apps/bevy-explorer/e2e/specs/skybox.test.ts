@@ -3,6 +3,7 @@
 // | Unity test                 | Here                                                              | Class   |
 // | TestSkyboxWidgetPresence   | the Skybox panel shows its title, switch, slider and an HH:mm time | Partial |
 // | TestModifySkyboxTime       | the engine's /time sets 18:00 and the panel shows it               | Partial |
+// | (none)                     | Escape closes the panel while its Auto switch holds the focus      | New     |
 //
 // Partial:
 // - TestSkyboxWidgetPresence expects the title "Night/day"; the panel's title is "NIGHT/DAY" (the
@@ -19,8 +20,13 @@
 //   reads about 18 and is enabled. Unity restores the switch only; here the clock is put back as
 //   found too.
 //   Where the scene sets the time of day the switch and the slider are disabled and `/time` does
-//   not move the sky, so both scenarios first check that the place they run in does not hold it
-//   (`sceneLocked` in `/sky_state`) and fail with that reason otherwise.
+//   not move the sky, so every scenario first checks that the place it runs in does not hold it
+//   (`sceneLocked` in `/sky_state`) and fails with that reason otherwise.
+//
+// New:
+// - A click leaves the focus on the Auto switch, a native checkbox. The Escape after it must still
+//   reach the engine, whose Cancel closes the panel: on the web the engine page forwards keys from a
+//   focused control that takes no text, and the HUD declares no text focus for it.
 import assert from 'node:assert/strict'
 import { spec, until, type Explorer, type Selector } from '../driver/index.ts'
 
@@ -134,6 +140,23 @@ scenario('with the day cycle off, the Skybox panel shows the time the clock was 
       await waitAuto(explorer, true)
       await waitClock(explorer, true)
     }
+    await closeSkybox(explorer)
+  } finally {
+    await explorer.time(original.hours, original.speed)
+  }
+})
+
+scenario('Escape closes the Skybox panel while its Auto switch holds the focus', async ({ explorer }) => {
+  await requirePlayersSky(explorer)
+  const original = await readClock(explorer)
+  const autoWasOn = original.speed !== 0
+  try {
+    await openSkybox(explorer)
+    // the engine's first report sets the switch: wait for it before the press, as above
+    await readClock(explorer)
+    await waitAuto(explorer, autoWasOn)
+    await press(explorer, AUTO)
+    await waitAuto(explorer, !autoWasOn)
     await closeSkybox(explorer)
   } finally {
     await explorer.time(original.hours, original.speed)

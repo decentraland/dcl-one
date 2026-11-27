@@ -80,7 +80,7 @@ fn address(label: &str, raw: &str) -> Result<Address, CallError> {
 }
 
 fn secs(ms: i64) -> U256 {
-    U256::from((ms / 1000).max(0) as u64)
+    U256::from(u64::try_from(ms / 1000).unwrap_or(0))
 }
 
 fn asset(
@@ -100,7 +100,7 @@ fn asset(
     }
     .ok_or_else(|| CallError::Trade(format!("{label}: missing its value")))?;
     Ok(offchain::Asset {
-        assetType: U256::from(a.asset_type.max(0) as u64),
+        assetType: U256::from(u64::try_from(a.asset_type).unwrap_or(0)),
         contractAddress: address(label, &a.contract_address)?,
         value: decimal(label, value)?,
         beneficiary,

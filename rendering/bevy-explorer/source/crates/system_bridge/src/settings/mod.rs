@@ -25,10 +25,12 @@ use bevy::{
 };
 #[cfg(not(target_arch = "wasm32"))]
 use cache_size::CacheSizeSetting;
+use chat_reactions::ChatReactionsSetting;
 use common::structs::DmPrivacy;
 #[cfg(not(target_arch = "wasm32"))]
 use common::structs::SsaoSetting;
 use common::{
+    rpc::RpcStreamSender,
     sets::SceneSets,
     structs::{
         AaSetting, AppConfig, BloomSetting, CameraSmoothing, ChatBubbleVisibility, DofSetting,
@@ -40,6 +42,7 @@ use common::{
 use constrain_ui::ConstrainUiSetting;
 use frame_rate::FpsTargetSetting;
 use language_setting::LanguageSetting;
+use left_drag_camera::LeftDragCameraSetting;
 use load_distance::{LoadDistanceSetting, UnloadDistanceSetting};
 use max_avatars::MaxAvatarsSetting;
 use max_avatars_unlimited::UnlimitedAvatarsSetting;
@@ -66,6 +69,7 @@ pub mod bloom_settings;
 pub mod cache_size;
 pub mod camera_smoothing;
 pub mod chat_bubble_visibility;
+pub mod chat_reactions;
 pub mod constrain_ui;
 mod debug_quality;
 pub mod dm_privacy;
@@ -74,12 +78,16 @@ pub mod fog_settings;
 pub mod frame_rate;
 pub mod imposter_settings;
 pub mod language_setting;
+mod left_drag_camera;
 pub mod lens_flare_setting;
 pub mod load_distance;
 pub mod max_avatars;
 pub mod max_avatars_unlimited;
 pub mod max_downloads;
 pub mod max_lods;
+// only the web host reports microphones
+#[cfg(any(target_arch = "wasm32", test))]
+mod microphone_setting;
 pub mod mute_mic_in_background_setting;
 pub mod oob_setting;
 pub mod parcel_grass_settings;
@@ -177,7 +185,7 @@ impl Plugin for SettingBridgePlugin {
             settings: Vec::default(),
         };
         app.add_event::<NewCameraEvent>();
-        app.add_systems(Update, handle_settings);
+        add_settings_streams(app);
 
         let mut schedule = Schedule::new(ApplyAppSettingsLabel);
         let config = app.world().resource::<AppConfig>().clone();
@@ -251,6 +259,8 @@ impl Plugin for SettingBridgePlugin {
         add_int_setting::<VoiceChatVolumeSetting>(app, &mut settings, &mut schedule, &config);
         add_int_setting::<SystemVolumeSetting>(app, &mut settings, &mut schedule, &config);
         add_int_setting::<AvatarVolumeSetting>(app, &mut settings, &mut schedule, &config);
+        #[cfg(target_arch = "wasm32")]
+        microphone_setting::add(app, &mut settings, &config);
         add_enum_setting::<MuteMicInBackgroundSetting>(app, &mut settings, &mut schedule, &config);
 
         add_enum_setting::<DmPrivacy>(app, &mut settings, &mut schedule, &config);
@@ -258,6 +268,7 @@ impl Plugin for SettingBridgePlugin {
         add_enum_setting::<LanguageSetting>(app, &mut settings, &mut schedule, &config);
 
         add_enum_setting::<ConstrainUiSetting>(app, &mut settings, &mut schedule, &config);
+        add_enum_setting::<LeftDragCameraSetting>(app, &mut settings, &mut schedule, &config);
         add_enum_setting::<scene_control_override::SceneControlOverrideSetting>(
             app,
             &mut settings,
@@ -284,6 +295,7 @@ impl Plugin for SettingBridgePlugin {
         add_enum_setting::<CacheSizeSetting>(app, &mut settings, &mut schedule, &config);
         add_enum_setting::<PointAtMarkerVisibility>(app, &mut settings, &mut schedule, &config);
         add_enum_setting::<ChatBubbleVisibility>(app, &mut settings, &mut schedule, &config);
+        add_enum_setting::<ChatReactionsSetting>(app, &mut settings, &mut schedule, &config);
 
         app.insert_resource(settings);
         app.add_plugins(debug_quality::DebugQualityPlugin);
@@ -386,6 +398,8 @@ pub struct Setting {
     >,
     /// The displayed value for the current config, for settings changed outside `set_value`.
     load: Box<dyn Fn(&AppConfig) -> f32 + Send + Sync + 'static>,
+    /// The named choices change at runtime, so a list taken once goes stale.
+    runtime_choices: bool,
     is_disabled: fn(&AppConfig) -> bool,
 }
 
@@ -420,6 +434,7 @@ impl Settings {
             .find(|s| s.info.name == name)
             .unwrap();
 
+        // restored before a failure returns, so the next change can still apply
         setting.apply = Some(apply);
         applied?;
         // a value can change any setting's `disabled` flag: re-read them all now
@@ -458,6 +473,7 @@ impl Settings {
             )),
             load: Box::new(|config: &AppConfig| S::load(config).value() as f32 * S::scale()),
             is_disabled: S::is_disabled,
+            runtime_choices: false,
         });
     }
 
@@ -504,8 +520,45 @@ impl Settings {
             )),
             load: Box::new(|config: &AppConfig| displayed::<S>(config)),
             is_disabled: S::is_disabled,
+            runtime_choices: false,
         });
     }
+}
+
+fn add_settings_streams(app: &mut App) {
+    app.init_resource::<SettingsStreams>().add_systems(
+        Update,
+        (
+            handle_settings,
+            publish_settings.run_if(resource_changed::<Settings>),
+        )
+            .chain(),
+    );
+}
+
+/// The open settings streams and the list they last got.
+#[derive(Resource, Default)]
+struct SettingsStreams {
+    open: Vec<RpcStreamSender<Vec<SettingInfo>>>,
+    sent: Option<Vec<SettingInfo>>,
+}
+
+impl SettingsStreams {
+    /// Sends `list` to the open streams unless it is the list they last got.
+    fn publish(&mut self, list: Vec<SettingInfo>) {
+        self.open.retain(|stream| !stream.is_closed());
+        if self.sent.as_ref() == Some(&list) {
+            return;
+        }
+        for stream in &self.open {
+            let _ = stream.send(list.clone());
+        }
+        self.sent = Some(list);
+    }
+}
+
+fn publish_settings(settings: Res<Settings>, mut streams: ResMut<SettingsStreams>) {
+    streams.publish(settings.get());
 }
 
 // Gets and sets must be handled in arrival order: the scene->engine channel is FIFO, so a
@@ -515,11 +568,18 @@ fn handle_settings(
     mut ev: EventReader<SystemApi>,
     mut config: ResMut<AppConfig>,
     mut settings: ResMut<Settings>,
+    mut streams: ResMut<SettingsStreams>,
 ) {
     for ev in ev.read() {
         match ev {
             SystemApi::GetSettings(sender) => {
                 sender.send(settings.settings.iter().map(|s| s.info.clone()).collect());
+            }
+            SystemApi::GetSettingsStream(sender) => {
+                // the open streams take a pending change first, so the new one starts level
+                streams.publish(settings.get());
+                let _ = sender.send(settings.get());
+                streams.open.push(sender.clone());
             }
             SystemApi::SetSetting(name, val) => {
                 if let Err(e) = settings.set_value(&mut config, name, *val) {
@@ -673,6 +733,41 @@ mod tests {
         assert!(!info.disabled);
         assert_eq!(info.value, high);
         assert_eq!(config.graphics.dof, DofSetting::High);
+    }
+
+    #[test]
+    fn chat_reactions_start_off_and_follow_the_setting() {
+        let mut config = AppConfig::default();
+        let mut settings = Settings {
+            settings: Vec::default(),
+        };
+        settings.add_enum_setting::<ChatReactionsSetting>(&config);
+        let title = ChatReactionsSetting::title();
+        let value = |settings: &Settings| {
+            settings
+                .get()
+                .into_iter()
+                .find(|s| s.name == title)
+                .unwrap()
+                .value
+        };
+        assert_eq!(value(&settings), 0.0);
+        assert!(!config.chat_reactions);
+
+        settings.set_value(&mut config, &title, 1.0).unwrap();
+        assert_eq!(value(&settings), 1.0);
+        assert!(config.chat_reactions);
+    }
+
+    #[test]
+    fn chat_bubbles_are_listed_with_the_chat_settings() {
+        let config = AppConfig::default();
+        let mut settings = Settings {
+            settings: Vec::default(),
+        };
+        settings.add_enum_setting::<ChatBubbleVisibility>(&config);
+        let categories: Vec<_> = settings.get().into_iter().map(|s| s.category).collect();
+        assert_eq!(categories, ["Chat"]);
     }
 
     #[test]

@@ -1,7 +1,7 @@
 // from: credits-server@d9c6a261fb7acf3beb926e10f03d1aed33e9771b:src/controllers/handlers/studio-operators.ts, src/controllers/routes.ts (the operator routes and studioGrantRateLimit)
 //! What a studio's operators use: the studios their wallet acts for, each
 //! one's budget and grants, and granting to players out of that budget
-//! (`studio_grants.rs`). The Shop's studio page calls these.
+//! (`studio_grants.rs`), at credits-server's paths for its clients.
 //!
 //! Signed fetch only, with no admin gate: who may act is the studio's own
 //! operator list (`credits.studio_operators`), checked on every request. A
@@ -15,8 +15,9 @@
 //! contract wallet's signature on it is checked with the uncached EIP-1654
 //! validator (a revoked delegation stops at once, not after the cache's TTL),
 //! and a grant whose signed metadata commits to a `bodySha256` must match
-//! the exact bytes sent. One that signs no hash is accepted, as credits-server
-//! accepted it.
+//! the exact bytes sent. One that signs no hash is refused while
+//! `CREDITS_ADMIN_WRITES_REQUIRE_BOUND_BODY` is on, as an admin write is, and
+//! accepted with a warning while it is off, as credits-server accepted it.
 
 use std::sync::LazyLock;
 use std::time::Duration;
@@ -32,6 +33,7 @@ use serde_json::{Value as JsonValue, json};
 use super::studios::{PageQuery, json_object};
 use crate::credits::SharedState;
 use crate::credits::admin::{exact_original_path, signed_body_matches};
+use crate::credits::errors::ApiError;
 use crate::credits::studio_grants::{
     OperatorStudio, StudioGrantRequest, parse_annotation, parse_grant_credits, parse_reason,
 };
@@ -43,9 +45,10 @@ use crate::shared::routing::{get, post};
 use crate::shared::signed_fetch::{PayloadPolicy, SignedPath, require_signer_at};
 
 /// Grants one operator wallet may ask for in a window (credits-server's
-/// `STUDIO_GRANT_RATE_LIMIT` and `STUDIO_GRANT_RATE_WINDOW_SECONDS` defaults).
-/// Each grant notifies its player, so this paces a flood of small grants; the
-/// budget is what bounds the money.
+/// `STUDIO_GRANT_RATE_LIMIT` and `STUDIO_GRANT_RATE_WINDOW_SECONDS` defaults),
+/// per process. Each grant notifies its player, so this paces a flood of
+/// small grants; the budget is what bounds the money. Only a wallet that acts
+/// for the studio is counted, so other wallets cannot fill the limiter.
 pub const GRANTS_PER_WINDOW: u32 = 60;
 pub const GRANT_WINDOW: Duration = Duration::from_secs(60);
 
@@ -83,7 +86,10 @@ async fn operator_of(
 
 /// The signing wallet, lowercase, of a grant to `route` carrying `body`: the
 /// uncached validator answers a contract wallet (one with no uncached path
-/// is refused), and a signed `bodySha256` must be `body`'s.
+/// is refused), and a signed `bodySha256` must be `body`'s. A grant that
+/// signs no hash follows `CREDITS_ADMIN_WRITES_REQUIRE_BOUND_BODY`, as an
+/// admin write does: refused while it is on, accepted with a warning while
+/// it is off.
 async fn granter_of(
     state: &SharedState,
     headers: &HeaderMap,
@@ -94,7 +100,14 @@ async fn granter_of(
     let headers = exact_original_path(headers, route);
     let fresh = state.eip1654.as_deref().and_then(|v| v.fresh_validator());
     let granter = signer_at(&headers, "post", route, original, fresh).await?;
-    signed_body_matches(&headers, body).map_err(StudioError::Refused)?;
+    if !signed_body_matches(&headers, body).map_err(StudioError::Refused)? {
+        if state.settings.admin_writes_require_bound_body {
+            return Err(StudioError::Refused(ApiError::unauthorized(
+                "Unauthorized: a wallet-signed write must sign its body (bodySha256 in the signed metadata)",
+            )));
+        }
+        tracing::warn!(%granter, route, "a studio grant signed no bodySha256; accepted while CREDITS_ADMIN_WRITES_REQUIRE_BOUND_BODY is off");
+    }
     Ok(granter)
 }
 
@@ -198,9 +211,6 @@ async fn grant_studio_credits(
 ) -> Result<Response, StudioError> {
     let route = format!("/operator/studios/{studio_id}/grants");
     let operator = granter_of(&state, &headers, &route, &original, &body).await?;
-    if GRANTS.check(&operator) == RateLimitDecision::Deny {
-        return Ok(too_many_grants());
-    }
     let studio_id = parse_studio_id(&studio_id)?;
     let body = json_object(&body)?;
     let recipient = body
@@ -222,27 +232,23 @@ async fn grant_studio_credits(
         reason: &reason,
         annotation: annotation.as_deref(),
         idempotency_key: &idempotency_key,
+        max_cents: state.settings.studio_grant_max_cents,
     };
 
     // Who may act comes first: nothing about a studio, not even a past grant,
-    // is told to a wallet that does not act for it. A grant already made is
-    // answered next, from the same snapshot: nothing below can undo it.
-    let grant = match state.credits.studio_grant_replay(req).await? {
-        Some(replayed) => replayed,
-        None => {
-            let max_cents = state
-                .settings
-                .studio_grant_max_cents
-                .ok_or(StudioError::GrantsNotConfigured)?;
-            if usd_cents > max_cents {
-                return Err(StudioError::GrantLimitExceeded {
-                    max_cents,
-                    requested_cents: usd_cents,
-                });
-            }
-            state.credits.grant_from_studio(req).await?
-        }
-    };
+    // is told to a wallet that does not act for it. The write checks it again
+    // under the studio's lock before it answers the key.
+    if !state
+        .credits
+        .is_studio_operator(&studio_id, &operator)
+        .await?
+    {
+        return Err(StudioError::NotFound);
+    }
+    if GRANTS.check(&operator) == RateLimitDecision::Deny {
+        return Ok(too_many_grants());
+    }
+    let grant = state.credits.grant_from_studio(req).await?;
     tracing::info!(
         studio_id = %studio_id,
         studio_name = %grant.studio_name,

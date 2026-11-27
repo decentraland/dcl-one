@@ -30,7 +30,7 @@ type ImageMetadata = {
 }
 
 /** Lowercased; empty on an engine without the read. */
-async function officialWallets(): Promise<Set<string>> {
+export async function officialWallets(): Promise<Set<string>> {
   const list = await BevyApi.getOfficialWallets?.().catch(() => undefined)
   return new Set((list ?? []).map((a) => a.toLowerCase()))
 }

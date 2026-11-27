@@ -235,7 +235,12 @@ impl Market for LocalMarket {
         }
         let filters = crate::market::items::ItemFilters {
             ids: ids.clone(),
-            first: Some((ids.len() * 2).clamp(1, 100) as i64),
+            first: Some(
+                i64::try_from(ids.len())
+                    .unwrap_or(i64::MAX)
+                    .saturating_mul(2)
+                    .clamp(1, 100),
+            ),
             ..Default::default()
         };
         let (items, _) = crate::market::items::list_items(market, &mut read, &filters)
@@ -284,10 +289,13 @@ impl Market for LocalMarket {
                 "the order book is not configured on this node (collections subgraphs)",
             ));
         };
-        let orders =
-            crate::market::orders::open_orders_by_items(market, pairs, per_contract.max(1) as i64)
-                .await
-                .map_err(|r| ApiError::service_unavailable(envelope_message(r)))?;
+        let orders = crate::market::orders::open_orders_by_items(
+            market,
+            pairs,
+            i64::try_from(per_contract.max(1)).unwrap_or(i64::MAX),
+        )
+        .await
+        .map_err(|r| ApiError::service_unavailable(envelope_message(r)))?;
         Ok(orders
             .into_iter()
             .map(|o| ListingRow {
@@ -926,11 +934,20 @@ fn token_matches_item(token_id: &str, item_id: &str) -> bool {
     (tok >> ISSUED_ID_BITS) == item
 }
 
+#[allow(
+    clippy::cast_possible_truncation,
+    reason = "float-to-int `as` drops the fraction and saturates, keeping timestamp order"
+)]
 fn json_as_i64(v: &serde_json::Value) -> Option<i64> {
     v.as_i64().or_else(|| v.as_f64().map(|f| f as i64))
 }
 
 #[cfg(all(test, feature = "ts"))]
+#[allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_precision_loss,
+    reason = "test support"
+)]
 mod ts_peg_export {
     use super::CREDIT_USD;
 
@@ -973,8 +990,7 @@ mod tests {
                 crate::market::Source::CollectionsIndex,
                 "the collections index on matic has no published fold".into(),
             )),
-            by_index: true,
-            owned: vec![crate::market::graph::Network::Matic],
+            may_fall_back_to_graph: false,
         };
         let response = catalogue_refused(refusal).into_response();
         assert_eq!(
