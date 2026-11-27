@@ -771,6 +771,66 @@ async fn a_published_or_deployed_collection_is_never_deleted() {
     assert_eq!(left, 3);
 }
 
+/// A delete asks the chain about the collection's address before its
+/// transaction; when an address change commits meanwhile, the delete
+/// can't tell whether the new address is deployed and deletes nothing.
+#[tokio::test]
+async fn a_delete_whose_collection_moved_to_a_deployed_address_meanwhile_deletes_nothing() {
+    let oracle = FakeOracle::default();
+    let Some(node) = node(Options {
+        rpc: Some(oracle.url().await),
+        ..Options::default()
+    })
+    .await
+    else {
+        return;
+    };
+    let (id, _, _) = draft(&node, 1).await;
+    let (other, _, _) = draft(&node, 1).await;
+    let deployed = contract_of(&node.pool, other).await;
+    oracle.deploy(&deployed, 1);
+    oracle.hold_code();
+    let delete = tokio::spawn({
+        let app = node.app.clone();
+        async move {
+            call(
+                &app,
+                Some(OWNER_KEY),
+                "DELETE",
+                &format!("/v1/collections/{id}"),
+                None,
+            )
+            .await
+        }
+    });
+    for _ in 0..500 {
+        if oracle.code_reads() > 0 {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+    sqlx::query("UPDATE builder.collections SET contract_address = NULL WHERE id = $1")
+        .bind(other)
+        .execute(&node.pool)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE builder.collections SET contract_address = $2 WHERE id = $1")
+        .bind(id)
+        .bind(&deployed)
+        .execute(&node.pool)
+        .await
+        .unwrap();
+    oracle.release_code();
+    let (status, body) = delete.await.unwrap();
+    assert_eq!(status, 503, "{body}");
+    let left: i64 = sqlx::query_scalar("SELECT count(*) FROM builder.collections WHERE id = $1")
+        .bind(id)
+        .fetch_one(&node.pool)
+        .await
+        .unwrap();
+    assert_eq!(left, 1);
+}
+
 #[tokio::test]
 async fn a_submitted_third_party_collection_is_never_deleted() {
     let Some(node) = node(Options::default()).await else {

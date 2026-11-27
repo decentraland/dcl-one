@@ -744,6 +744,7 @@ pub struct FakeOracle {
     asked: Arc<std::sync::Mutex<Vec<String>>>,
     deployed: Arc<std::sync::Mutex<BTreeMap<String, u64>>>,
     code_reads: Arc<std::sync::atomic::AtomicUsize>,
+    code_gate: Arc<std::sync::Mutex<Option<Arc<tokio::sync::Semaphore>>>>,
     down: Arc<std::sync::atomic::AtomicBool>,
     other_chain: Arc<std::sync::atomic::AtomicBool>,
     rarity_calls: Arc<RarityCalls>,
@@ -801,6 +802,18 @@ impl FakeOracle {
             .insert(contract.to_ascii_lowercase(), items);
     }
 
+    /// Holds every `eth_getCode` answer until [`Self::release_code`].
+    pub fn hold_code(&self) {
+        *self.code_gate.lock().unwrap() = Some(Arc::new(tokio::sync::Semaphore::new(0)));
+    }
+
+    /// Lets held and later `eth_getCode` answers through.
+    pub fn release_code(&self) {
+        if let Some(gate) = self.code_gate.lock().unwrap().take() {
+            gate.add_permits(1_000);
+        }
+    }
+
     /// Every request answers HTTP 502 while `down`.
     pub fn set_down(&self, down: bool) {
         self.down.store(down, std::sync::atomic::Ordering::SeqCst);
@@ -853,6 +866,10 @@ impl FakeOracle {
             "eth_getCode" => {
                 fake.code_reads
                     .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                let gate = fake.code_gate.lock().unwrap().clone();
+                if let Some(gate) = gate {
+                    let _ = gate.acquire().await;
+                }
                 let code = match deployed(body["params"][0].as_str().map(str::to_ascii_lowercase)) {
                     Some(_) => "0x6080",
                     None => "0x",

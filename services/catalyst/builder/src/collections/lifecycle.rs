@@ -85,7 +85,9 @@ pub async fn guard_address_change(
 
 /// `DELETE /v1/collections/:id`: a third-party collection stays once
 /// submitted and a standard one once published or deployed (409); either
-/// waits while its lock holds or the node publishes it (423). The items go
+/// waits while its lock holds or the node publishes it (423), and a
+/// standard one whose address changed after the chain was asked about it
+/// answers 503. The items go
 /// with it, their contents and the upload records no other item names, and
 /// the provider's virtual third party once no collection of the provider is
 /// left (builder-server's `delete_virtual_third_party_trigger`).
@@ -97,9 +99,12 @@ pub async fn delete(state: &State, manage: &CollectionManage) -> Result<(), ApiE
     .bind(id)
     .fetch_optional(state.items.pool())
     .await?;
-    let checked = match stored {
-        Some((false, Some(contract))) if deployed(state, &contract).await? => Some(contract),
-        _ => None,
+    let (probed, on_chain) = match stored {
+        Some((false, Some(contract))) => {
+            let on_chain = deployed(state, &contract).await?;
+            (Some(contract), on_chain)
+        }
+        _ => (None, false),
     };
     let mut tx = state.items.pool().begin().await?;
     let view = chain_state::for_decision(&mut tx).await?;
@@ -118,7 +123,13 @@ pub async fn delete(state: &State, manage: &CollectionManage) -> Result<(), ApiE
         )
         .with_data(json!({ "id": id })));
     }
-    if !c.third_party && (c.published || (checked.is_some() && checked == c.contract)) {
+    if !c.third_party && c.contract != probed {
+        return Err(ApiError::service_unavailable(
+            "The collection's address changed while the chain was asked. Try again later.",
+        )
+        .with_data(json!({ "id": id })));
+    }
+    if !c.third_party && (c.published || on_chain) {
         return Err(ApiError::published(
             Subject::Collection,
             &id.to_string(),
