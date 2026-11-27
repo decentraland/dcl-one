@@ -109,6 +109,9 @@ window if a write-producing fold runs every five seconds. The deployed
 rate depends on RPC latency, the pass cadence and which projections the
 fold writes. The per-network publication-check and refusal counters use
 `route="nfts"` for order-dependent NFT pages.
+`catalyst_shop_nft_optional_land_read_failures_total` counts failed optional
+LAND snapshot reads by network. Mixed pages can still return NAMEs and
+collections when these reads fail.
 
 On the same PostgreSQL version, a warm `EXPLAIN (ANALYZE, BUFFERS, TIMING OFF)`
 of the bound page query used 32,000 tokens for one Polygon owner, 4,600

@@ -511,14 +511,12 @@ fn graph_where(f: &NftFilters) -> Value {
     w
 }
 
-fn graph_sort(sort_by: Option<NftSortBy>) -> (&'static str, &'static str) {
+fn graph_sort(sort_by: Option<NftSortBy>) -> Option<(&'static str, &'static str)> {
     match sort_by {
-        Some(NftSortBy::Name) => ("name", "asc"),
-        Some(NftSortBy::RecentlySold) => ("soldAt", "desc"),
-        Some(NftSortBy::CheapestParcel | NftSortBy::RecentlyListed) => {
-            unreachable!("order sorts use the native index")
-        }
-        Some(NftSortBy::Newest) | None => ("createdAt", "desc"),
+        Some(NftSortBy::Name) => Some(("name", "asc")),
+        Some(NftSortBy::RecentlySold) => Some(("soldAt", "desc")),
+        Some(NftSortBy::CheapestParcel | NftSortBy::RecentlyListed) => None,
+        Some(NftSortBy::Newest) | None => Some(("createdAt", "desc")),
     }
 }
 
@@ -774,7 +772,7 @@ pub async fn list_nfts(
         let listings = match snapshot.as_mut() {
             Some((conn, _)) => super::rentals::newest_listings(&mut **conn, chain_id, &statuses)
                 .await
-                .map_err(super::nft_reads::read_error)?,
+                .map_err(super::readers::index_read_error)?,
             None => super::rentals::newest_listings(&state.pool, chain_id, &statuses)
                 .await
                 .unwrap_or_else(|e| {
@@ -902,7 +900,7 @@ pub async fn list_nfts(
                 .await
                 {
                     Ok(listings) => listings,
-                    Err(e) if strict_land => return Err(super::nft_reads::read_error(e)),
+                    Err(e) if strict_land => return Err(super::readers::index_read_error(e)),
                     Err(e) => {
                         tracing::warn!(error = %e, "/v1/nfts: the rentals read failed");
                         Vec::new()
@@ -1024,7 +1022,11 @@ async fn list_page(
     // sorts may still use the configured graph.
     let now_ms = now.timestamp_millis();
     let where_ = graph_where(f);
-    let (order_by, direction) = graph_sort(f.sort_by);
+    let Some((order_by, direction)) = graph_sort(f.sort_by) else {
+        return Err(super::owned_items::not_ready(
+            "the published NFT index serves order sorts",
+        ));
+    };
     let url = readers::require_marketplace(state)?;
     let page = GraphPage {
         entity: "nfts",
@@ -1171,7 +1173,8 @@ mod tests {
         );
         assert!(w.get("searchEmoteOutcomeType").is_some_and(Value::is_null));
         assert_eq!(w["searchEmoteLoop"], true);
-        assert_eq!(graph_sort(Some(NftSortBy::Name)), ("name", "asc"));
+        assert_eq!(graph_sort(Some(NftSortBy::Name)), Some(("name", "asc")));
+        assert_eq!(graph_sort(Some(NftSortBy::CheapestParcel)), None);
         assert!(is_land_routed(
             &parse_filters(&pairs(&[("category", "estate")])).unwrap()
         ));

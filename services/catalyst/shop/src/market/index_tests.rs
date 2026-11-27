@@ -4317,6 +4317,90 @@ async fn the_nft_walk_folds_owners_orders_and_resumes_a_kill_backfills_a_late_co
 }
 
 #[tokio::test]
+async fn the_object_pass_installs_nft_order_proof_for_an_existing_cursor() {
+    let Some(db) = ScratchDb::create().await else {
+        return;
+    };
+    let pool = &db.pool;
+    let net = ChainNet::Matic;
+    let index = NftIndex::new(net);
+    let settings = IndexSettings::default();
+    let owner = chain_walk::test_owner(pool, &index, &settings).await;
+    let block = index.start_block() as i64;
+    sqlx::raw_sql(
+        "DROP TRIGGER nft_order_written_insert ON shop.nft_order;
+         DROP TRIGGER nft_order_written_update ON shop.nft_order;
+         DROP TRIGGER nft_order_written_delete ON shop.nft_order;
+         DROP TRIGGER chain_cursor_nft_order_publication ON shop.chain_cursor;
+         DROP FUNCTION shop.record_nft_order_publication()",
+    )
+    .execute(pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "UPDATE shop.chain_cursor SET last_block=$1, last_block_hash='0x'||repeat('1',64),
+         full_history=true, fold_through=$1, folded_block=$1, folded_at=timezone('UTC',now())
+         WHERE indexer='nft' AND network='matic'",
+    )
+    .bind(block)
+    .execute(pool)
+    .await
+    .unwrap();
+    crate::db::schema_migrate::migrate(pool, crate::db::SCHEMA_SQL, crate::db::MIGRATIONS_SQL)
+        .await
+        .unwrap();
+    let proof = || async {
+        let mut conn = pool.acquire().await.unwrap();
+        chain_walk::rows_published_on(&mut conn, INDEXER_NFT, net, &[], Some("nft_order"))
+            .await
+            .unwrap()
+    };
+    assert!(
+        !proof().await,
+        "the old publication cannot certify order rows"
+    );
+    // An older binary's same-height publication establishes proof for the
+    // empty order projection. No application code writes the proof row.
+    sqlx::query(
+        "UPDATE shop.chain_cursor SET folded_at=folded_at+interval '1 second'
+         WHERE indexer='nft' AND network='matic'",
+    )
+    .execute(pool)
+    .await
+    .unwrap();
+    assert!(proof().await);
+    let market = Deployments::mainnet(net).markets[0].0;
+    let contract = "0x00000000000000000000000000000000000000c1";
+    sqlx::query(
+        "INSERT INTO shop.nft_event (network,block_number,log_index,block_time,kind,
+         emitter,contract_address,token_id,from_address,amount,expires_at,detail)
+         VALUES ('matic',$1,0,1,'order_created',$2,$3,1,$4,50,4102444800000,'upgrade-order')",
+    )
+    .bind(block)
+    .bind(market)
+    .bind(contract)
+    .bind(ALICE)
+    .execute(pool)
+    .await
+    .unwrap();
+    let counts = nft_index::fold(pool, net, Some(block - 1), &owner)
+        .await
+        .unwrap();
+    assert_eq!((counts.nfts, counts.orders), (0, 1));
+    assert!(
+        !proof().await,
+        "a committed order fold needs its publication"
+    );
+    assert!(
+        chain_walk::mark_folded(pool, &index, &owner, block, chrono::Utc::now())
+            .await
+            .unwrap()
+    );
+    assert!(proof().await);
+    db.drop().await;
+}
+
+#[tokio::test]
 async fn order_filtered_collections_refuse_a_committed_unpublished_nft_fold() {
     let Some(db) = ScratchDb::create().await else {
         return;

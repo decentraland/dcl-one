@@ -41,6 +41,7 @@ use super::nfts::{
 };
 use super::orders::Order;
 use super::owned_items::{self, Rule};
+use super::readers::index_read_error;
 use super::wire::{ApiError, Histogram, Network, NftCategory, consolidate, fix_urn};
 use super::{MarketplaceState, Source, unavailable};
 use crate::land_authz::indexer::ReadySnapshot;
@@ -178,7 +179,7 @@ pub(super) async fn names_page_if_admitted(
     let mut conn = match open_read_conn(&state.pool, state.land_network(), f, sources).await {
         Ok(conn) => conn,
         Err(ReadConnError::NftUnavailable(..) | ReadConnError::LandUnavailable) => return Ok(None),
-        Err(ReadConnError::Pool(e)) => return Err(read_error(e)),
+        Err(ReadConnError::Pool(e)) => return Err(index_read_error(e)),
     };
     let admitted = admitted_last_sales(&mut conn, &[ChainNet::Ethereum], now).await?;
     if !admitted.contains(&ChainNet::Ethereum) {
@@ -282,7 +283,7 @@ impl std::ops::DerefMut for ReadConn {
 
 /// How long one statement of a `/v1/nfts`, prices or estate-size read may
 /// run before Postgres cancels it (the pool's own bound is 60 s per
-/// statement), answering [`read_error`]'s 503 past it. Each statement has its
+/// statement), answering [`index_read_error`]'s 503 past it. Each statement has its
 /// own bound. A walking node holds the connection across publication checks,
 /// the owner's count, page, capped total, estate members, rental reads and
 /// order enrichment. Above the slowest
@@ -319,8 +320,6 @@ pub(crate) fn timed_out() -> Response {
         READ_STATEMENT_TIMEOUT.as_secs()
     ))
 }
-
-pub(super) use super::readers::index_read_error as read_error;
 
 /// Whether `owner` holds more than [`LARGE_OWNER_TOKENS`] tokens in the nft
 /// index (counted up to one past the bound).
@@ -400,7 +399,7 @@ async fn read_conn(
         .map_err(|e| match e {
             ReadConnError::LandUnavailable => land_unavailable(),
             ReadConnError::NftUnavailable(source, m) => unavailable(source, &m),
-            ReadConnError::Pool(e) => read_error(e),
+            ReadConnError::Pool(e) => index_read_error(e),
         })
 }
 
@@ -1069,8 +1068,8 @@ fn candidate_legs(
                 .naive_utc(),
         );
         let since_p = b.bind_opt_time(since);
-        // created_at is timestamp(3), so ordering by it preserves the
-        // wire's millisecond ties and can use the existing signer index.
+        // created_at is timestamp(3), so the plain column preserves
+        // the wire's millisecond ties. The measured lookup uses the token index.
         // Not materialized: each leg's listing lookup then reads the
         // trades its owner signed (`idx_trades_signer_created`) instead
         // of scanning every open listing for every candidate row, which on
@@ -1542,7 +1541,7 @@ async fn require_listing_sources(
             Some("nft_order"),
         )
         .await
-        .map_err(read_error)?
+        .map_err(index_read_error)?
         {
             return Err(owned_items::not_ready(&format!(
                 "the {} nft index has not published the listing rows",
@@ -1553,7 +1552,7 @@ async fn require_listing_sources(
     super::trades::ready_checked_for_networks_on(state, conn, &nets, now)
         .await
         .map(|_| ())
-        .map_err(|error| error.into_response(super::readers::index_read_error))
+        .map_err(|error| error.into_response(index_read_error))
 }
 
 pub(super) async fn land_page_snapshot(
@@ -1572,18 +1571,23 @@ pub(super) async fn land_page_snapshot(
     Ok(conn)
 }
 
+const OPTIONAL_LAND_READ_FAILURES: dcl_metrics::CounterFamily<1> = dcl_metrics::CounterFamily::new(
+    "catalyst_shop_nft_optional_land_read_failures_total",
+    "Optional LAND snapshot read failures on mixed NFT pages, by network.",
+    Some(dcl_metrics::Unit::Count),
+    &["network"],
+);
+pub const FAMILIES: &[dcl_metrics::Descriptor] = &[OPTIONAL_LAND_READ_FAILURES.descriptor];
+
 /// A mixed reader keeps its original snapshot when an optional LAND check
 /// fails, including when PostgreSQL has aborted the statement.
 async fn optional_land_on(conn: &mut PgConnection, land: LandNetwork) -> Result<bool, Response> {
     let mut optional = sqlx::Connection::begin(conn)
         .await
-        .map_err(super::readers::index_read_error)?;
+        .map_err(index_read_error)?;
     match crate::land_authz::indexer::cursor_observed(&mut *optional, land.network).await {
         Ok(observation) => {
-            optional
-                .commit()
-                .await
-                .map_err(super::readers::index_read_error)?;
+            optional.commit().await.map_err(index_read_error)?;
             Ok(observation.is_some_and(|publication| {
                 crate::land_authz::indexer::observation_ready(
                     &publication,
@@ -1593,10 +1597,10 @@ async fn optional_land_on(conn: &mut PgConnection, land: LandNetwork) -> Result<
             }))
         }
         Err(error) => {
-            optional
-                .rollback()
-                .await
-                .map_err(super::readers::index_read_error)?;
+            optional.rollback().await.map_err(index_read_error)?;
+            OPTIONAL_LAND_READ_FAILURES
+                .handle([land.network])
+                .increment(1);
             tracing::debug!(%error, "cannot read the optional LAND publication for the NFT page");
             Ok(false)
         }
@@ -1721,7 +1725,7 @@ async fn list_page_at(
     let now_ms = now.timestamp_millis();
     let large_owner = match &f.owner {
         Some(owner) if sorts_on_orders(f) && !on_sale_only(f) => {
-            holds_many(conn, owner).await.map_err(read_error)?
+            holds_many(conn, owner).await.map_err(index_read_error)?
         }
         _ => false,
     };
@@ -1739,17 +1743,19 @@ async fn list_page_at(
     let rows = sqlx::query_with(sqlx::AssertSqlSafe(page_sql), page_args)
         .fetch_all(&mut *conn)
         .await
-        .map_err(read_error)?;
+        .map_err(index_read_error)?;
     let total: i64 = sqlx::query_scalar_with(sqlx::AssertSqlSafe(total_sql), total_args)
         .fetch_one(&mut *conn)
         .await
-        .map_err(read_error)?;
+        .map_err(index_read_error)?;
     let estates: Vec<String> = rows
         .iter()
         .filter(|r| r.get::<String, _>("category") == "estate")
         .map(|r| r.get::<String, _>("token_text"))
         .collect();
-    let parcels = estate_parcels(conn, &estates).await.map_err(read_error)?;
+    let parcels = estate_parcels(conn, &estates)
+        .await
+        .map_err(index_read_error)?;
     Ok((
         rows.iter()
             .map(|r| {
@@ -1907,7 +1913,7 @@ pub async fn estate_sizes(state: &MarketplaceState, f: &NftFilters) -> Result<Hi
     let sizes: Vec<Option<i32>> = sqlx::query_scalar_with(sqlx::AssertSqlSafe(b.sql), b.args)
         .fetch_all(&mut *conn)
         .await
-        .map_err(read_error)?;
+        .map_err(index_read_error)?;
     Ok(consolidate(
         sizes.into_iter().flatten().map(|s| s.to_string()),
     ))
@@ -2084,7 +2090,7 @@ mod tests {
             .await
             .unwrap_err();
         tx.rollback().await.unwrap();
-        let response = read_error(cancelled);
+        let response = index_read_error(cancelled);
         assert_eq!(
             response.status(),
             axum::http::StatusCode::SERVICE_UNAVAILABLE
@@ -2101,7 +2107,7 @@ mod tests {
             .await
             .unwrap_err();
         assert_eq!(
-            read_error(failed).status(),
+            index_read_error(failed).status(),
             axum::http::StatusCode::INTERNAL_SERVER_ERROR
         );
 

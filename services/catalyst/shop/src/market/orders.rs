@@ -275,7 +275,7 @@ pub async fn open_trade_orders(
     let (mut tx, now) = trade_snapshot(state, &ChainNet::ALL).await?;
     open_trade_orders_on(state, &mut *tx, wanted, now.naive_utc())
         .await
-        .map_err(super::nft_reads::read_error)
+        .map_err(super::readers::index_read_error)
 }
 
 /// Newest listing and a stable choice when timestamps tie. The caller
@@ -378,7 +378,7 @@ async fn order_snapshot(
         .map_err(|e| ApiError::from(e).into_response())?;
     super::nft_reads::set_read_timeout(&mut tx)
         .await
-        .map_err(super::nft_reads::read_error)?;
+        .map_err(super::readers::index_read_error)?;
     // set_read_timeout establishes the snapshot before this instant.
     Ok((tx, Utc::now()))
 }
@@ -635,7 +635,7 @@ pub(super) async fn listing_rows_published_on(
 ) -> Result<bool, sqlx::Error> {
     let labels = [net.db_name(), route.label()];
     FOLD_READ_CHECKS.handle(labels).increment(1);
-    let published = super::chain_walk::projection_rows_published_on(
+    let published = super::chain_walk::rows_published_on(
         conn,
         super::chain_walk::INDEXER_NFT,
         net,

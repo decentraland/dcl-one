@@ -1081,19 +1081,10 @@ pub async fn holds_published_fold_on(
 /// projection's own fold marker ([`holds_published_fold`]), as an earlier
 /// binary is during a rollout, and against a write at the published height.
 /// A raw walk advance writes nothing and stays served.
-pub async fn rows_published_on(
-    conn: &mut PgConnection,
-    indexer: &str,
-    net: ChainNet,
-    projections: &[&str],
-) -> Result<bool, sqlx::Error> {
-    projection_rows_published_on(conn, indexer, net, projections, None).await
-}
-
-/// Check for pending writes and, when requested, require an acknowledged
-/// row for a projection introduced after the cursor already existed.
-/// Other projections keep the established no-pending-write rule.
-pub(super) async fn projection_rows_published_on(
+/// When `required_projection` is set, that projection also needs an
+/// acknowledged row. This lets an upgraded reader distinguish missing
+/// proof from an empty projection that a writer has published.
+pub(super) async fn rows_published_on(
     conn: &mut PgConnection,
     indexer: &str,
     net: ChainNet,
