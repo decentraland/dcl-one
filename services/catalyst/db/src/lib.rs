@@ -189,34 +189,41 @@ pub async fn connect_pool(url: &str, settings: &PoolSettings) -> Result<PgPool, 
 
 /// Refuses the TLS settings sqlx would silently weaken, then logs the mode in effect.
 pub fn check_tls(url: &str, opts: &PgConnectOptions) -> Result<(), PoolError> {
-    if let Ok(mode) = std::env::var("PGSSLMODE")
-        && pgsslmode_is_unknown(&mode)
-    {
-        return Err(PoolError::UnknownPgSslMode(mode));
-    }
     let sslmode = opts.get_ssl_mode();
-    match sslmode {
-        // sqlx's verify-ca skips the hostname check and needs a process-wide rustls provider.
-        PgSslMode::VerifyCa => return Err(PoolError::VerifyCaUnsupported),
-        PgSslMode::Prefer | PgSslMode::Require
-            if std::env::var("PGSSLROOTCERT").is_ok() || url_names_root_cert(url) =>
-        {
-            return Err(PoolError::RootCertIgnored);
-        }
-        _ => {}
-    }
+    let root_cert = std::env::var("PGSSLROOTCERT").is_ok_and(|cert| !cert.is_empty())
+        || url_names_root_cert(url);
+    refuse_weakened_tls(
+        sslmode,
+        std::env::var("PGSSLMODE").ok().as_deref(),
+        root_cert,
+    )?;
     tracing::info!(?sslmode, "connecting to PostgreSQL");
     Ok(())
 }
 
-fn pgsslmode_is_unknown(mode: &str) -> bool {
-    !mode.is_empty() && mode.parse::<PgSslMode>().is_err()
+fn refuse_weakened_tls(
+    sslmode: PgSslMode,
+    pgsslmode: Option<&str>,
+    root_cert: bool,
+) -> Result<(), PoolError> {
+    if let Some(env) = pgsslmode.filter(|env| !env.is_empty())
+        && env.parse::<PgSslMode>().is_err()
+    {
+        return Err(PoolError::UnknownPgSslMode(env.to_owned()));
+    }
+    match sslmode {
+        // sqlx's verify-ca skips the hostname check and needs a process-wide rustls provider.
+        PgSslMode::VerifyCa => Err(PoolError::VerifyCaUnsupported),
+        PgSslMode::Prefer | PgSslMode::Require if root_cert => Err(PoolError::RootCertIgnored),
+        _ => Ok(()),
+    }
 }
 
 fn url_names_root_cert(url: &str) -> bool {
     url::Url::parse(url).is_ok_and(|url| {
-        url.query_pairs()
-            .any(|(key, _)| matches!(&*key, "sslrootcert" | "ssl-root-cert" | "ssl-ca"))
+        url.query_pairs().any(|(key, value)| {
+            matches!(&*key, "sslrootcert" | "ssl-root-cert" | "ssl-ca") && !value.is_empty()
+        })
     })
 }
 
@@ -973,30 +980,45 @@ mod tests {
             let url = format!("postgres://u@h/db?sslmode=require&{key}=/ca.pem");
             assert!(url_names_root_cert(&url), "{key}");
         }
+        assert!(!url_names_root_cert(
+            "postgres://u@h/db?sslmode=require&sslrootcert="
+        ));
         assert!(!url_names_root_cert("postgres://u@h/db?sslmode=require"));
         assert!(!url_names_root_cert("postgres://u@h/db"));
     }
 
     #[test]
-    fn check_tls_refuses_a_root_cert_that_tls_would_ignore() {
-        let check = |mode: &str| {
-            let url = format!("postgres://u@h/db?sslmode={mode}&sslrootcert=/ca.pem");
-            check_tls(&url, &url.parse::<PgConnectOptions>().unwrap())
-        };
-        for mode in ["prefer", "require"] {
-            let err = check(mode).unwrap_err();
-            assert!(matches!(err, PoolError::RootCertIgnored), "{mode}: {err}");
-        }
-        for mode in ["verify-full", "disable", "allow"] {
-            check(mode).unwrap();
+    fn weakened_tls_settings_are_refused() {
+        let err = refuse_weakened_tls(PgSslMode::Prefer, Some("required"), false).unwrap_err();
+        assert!(
+            matches!(&err, PoolError::UnknownPgSslMode(env) if env == "required"),
+            "{err}"
+        );
+        let err = refuse_weakened_tls(PgSslMode::VerifyCa, None, false).unwrap_err();
+        assert!(matches!(err, PoolError::VerifyCaUnsupported), "{err}");
+        for mode in [PgSslMode::Prefer, PgSslMode::Require] {
+            let err = refuse_weakened_tls(mode, None, true).unwrap_err();
+            assert!(matches!(err, PoolError::RootCertIgnored), "{mode:?}: {err}");
         }
     }
 
     #[test]
-    fn pgsslmode_is_unknown_only_for_unrecognised_values() {
-        assert!(pgsslmode_is_unknown("required"));
-        assert!(!pgsslmode_is_unknown("require"));
-        assert!(!pgsslmode_is_unknown(""));
+    fn other_tls_settings_pass() {
+        let all = [
+            PgSslMode::Disable,
+            PgSslMode::Allow,
+            PgSslMode::Prefer,
+            PgSslMode::Require,
+            PgSslMode::VerifyFull,
+        ];
+        for mode in all {
+            for env in [None, Some(""), Some("verify-full")] {
+                refuse_weakened_tls(mode, env, false).unwrap();
+            }
+        }
+        for mode in [PgSslMode::Disable, PgSslMode::Allow, PgSslMode::VerifyFull] {
+            refuse_weakened_tls(mode, None, true).unwrap();
+        }
     }
 
     #[tokio::test]

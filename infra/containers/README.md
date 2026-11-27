@@ -13,10 +13,13 @@ are external. Explorer images: pipeline.
 - Probe each API replica at `GET /health` for readiness. HTTP 503 means a required replica check failed. The JSON body also reports shared dependencies for alerting. See [Catalyst API readiness](../../docs/adr/2026-11-24-serve-readiness.md).
 - Run API, indexer, Pulse and migrations from one `apis` digest; domain crates are not separate services.
 - PostgreSQL connections from the `apis` image (the message router included) use TLS whenever the
-  server offers it, without checking its certificate, and fail if that handshake fails.
+  server offers it, without checking its certificate, and fail if that handshake fails. This
+  default (`prefer`) only stops passive eavesdropping: an on-path attacker can refuse TLS.
   `sslmode=require` (or `PGSSLMODE`) refuses plaintext but checks no certificate either; `disable`
   and `allow` turn TLS off. Refused before connecting: `verify-ca`, a root certificate
-  (`sslrootcert` or `PGSSLROOTCERT`) with `prefer` or `require`, and an unrecognised `PGSSLMODE`. `catalyst serve` and `catalyst index` log the mode they connect with.
+  (`sslrootcert`, `ssl-root-cert` or `ssl-ca` in the URL, or `PGSSLROOTCERT`) with `prefer` or
+  `require`, and an unrecognised `PGSSLMODE`. `catalyst serve` and `catalyst index` log the mode
+  they connect with.
 - The APIs image carries the community chat message router at `/bin/catalyst-message-router`
   (`.#message-router`, `infra/packages/message-router.nix`: the catalyst workspace member built
   with `--features livekit`, from the same patched SDK and libwebrtc as `cast-bot`, its notices
