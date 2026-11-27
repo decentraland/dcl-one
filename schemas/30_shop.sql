@@ -683,6 +683,11 @@ CREATE INDEX nft_item_idx ON shop.nft (network, contract_address, item_id) WHERE
 -- held tokens by minted_at DESC, walked per network (an incremental sort
 -- orders the ties by contract and token) instead of sorting every candidate.
 CREATE INDEX nft_mint_order_idx ON shop.nft (network, minted_at DESC) WHERE owner IS NOT NULL;
+-- The recently sold browse of /v1/nfts: each source's first `first + skip`
+-- held tokens by their legacy OrderSuccessful time, newest first, ties by
+-- contract and token, walked per network.
+CREATE INDEX nft_sold_order_idx ON shop.nft (network, sold_at DESC, contract_address, token_id)
+    WHERE sold_at IS NOT NULL AND owner IS NOT NULL;
 -- A DCL NAME's holders by label, compared lowercased (the NAME source's owner
 -- read: worlds' owner and admission, the Admin Toolkit, the lambdas name
 -- owner): WHERE lower(ens_subdomain) = ANY($1).
@@ -17338,7 +17343,7 @@ CREATE TABLE shop.sale_publication (
 -- reader takes it only from a valid publication whose `last_sale_through`
 -- reaches the published block. Workload: one row per sold token, written by
 -- the fold (a window's tokens per pass), read by joining a page's
--- candidates on the primary key.
+-- candidates on the primary key, and newest first by the recently sold sort.
 CREATE TABLE shop.nft_last_sale (
     network text NOT NULL CHECK (network IN ('ethereum', 'matic')),
     contract_address text NOT NULL,
@@ -17349,6 +17354,9 @@ CREATE TABLE shop.nft_last_sale (
 );
 -- The rows a changed history deletes: WHERE network = $1 AND block_number > $2.
 CREATE INDEX nft_last_sale_block ON shop.nft_last_sale (network, block_number);
+-- The recently sold browse of /v1/nfts: a network's sold tokens newest first,
+-- ties by contract and token, each joined to its source until the page fills.
+CREATE INDEX nft_last_sale_recent_idx ON shop.nft_last_sale (network, sold_at DESC, contract_address, token_id);
 
 -- Sparse fee configuration changes. Look up the last event before a
 -- particular execution, including a change earlier in the same block.

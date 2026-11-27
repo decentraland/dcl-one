@@ -126,7 +126,55 @@ The 525,000 resulting rows took 518 MB, with the primary key and the two seconda
 | `category=wearable` | 3.6 to 5.4 s | 4.5 to 7.1 s | 173 to 319 ms |
 | no category (collections, names and LAND) | 4.1 to 4.8 s | 6.0 to 7.0 s | 442 to 604 ms |
 
-Both plans spend most of their time reading every held token: a parallel sequential scan of the 3M Polygon tokens, joined to their items and collections, then a top-N sort. With the latest sales, the Ethereum v1 source probes `nft_last_sale_pkey` once for each of its 200,000 tokens. Measured with `EXPLAIN ANALYZE` on this machine, one wearable page took 6.7 s with legacy orders only and 6.1 s with the latest sales, so the difference stayed within the noise of the shared machine. An index ordering the table by `sold_at` would serve a page only if the recently sold sort first walked the sold tokens. Today's sort does not use one, so the table has none.
+Both plans spend most of their time reading every held token: a parallel sequential scan of the 3M Polygon tokens, joined to their items and collections, then a top-N sort. With the latest sales, the Ethereum v1 source probes `nft_last_sale_pkey` once for each of its 200,000 tokens. Measured with `EXPLAIN ANALYZE` on this machine, one wearable page took 6.7 s with legacy orders only and 6.1 s with the latest sales, so the difference stayed within the noise of the shared machine. The recently sold sort now walks the sold tokens instead, through `nft_last_sale_recent_idx`; see [Recently sold](#recently-sold).
+
+## Recently sold
+
+`/v1/nfts?sortBy=recently_sold` walks each source's sold tokens newest first in two parts, then reads its unsold tokens by contract and token:
+- the latest sales, through `nft_last_sale_recent_idx`;
+- the legacy `OrderSuccessful` times, through `nft_sold_order_idx`, or `nft_event_successful_order` for LAND.
+
+It does so when the page's capped total counts at least 400 candidates per row of the window (`first + skip`), or more than the cap. Otherwise, and for an owner's page, it sorts the candidates whole as before. The fixture is synthetic, measured on a laptop with PostgreSQL 17.6 while other builds and test suites ran, so treat the ranges as an order of magnitude.
+
+The seed is the one in [Latest sale per token](#latest-sale-per-token):
+- 3M Polygon tokens over 100,000 items of 5,000 collections;
+- 200,000 Ethereum v1 tokens, 300,000 names, 90,000 parcels and 2,000 estates;
+- a legacy sold time on 0.2% of the tokens (6,400 held);
+- 50,000 Ethereum `OrderSuccessful` events, 30,000 of them on LAND and estates;
+- latest sales on 20% of Polygon tokens (599,574), and 10% of v1 tokens, 5% of names and 2% of LAND (36,933 on Ethereum);
+- three items marked `unique`, with 90 tokens between them.
+
+Each page is `first=24`, the route's sources, both networks' latest sales admitted unless noted. The page statement was timed in three runs after a warm-up. "Before" is the earlier page: every source whole, its top window by the sort. Both answered the same page in every case. The capped total, which both run, is not in the times; it now runs before the page, on the same snapshot.
+
+| Page | Capped total | Walks | Before | Now |
+| --- | ---: | --- | ---: | ---: |
+| `category=wearable` | 100,001 | yes | 5.2 to 5.8 s | 34 to 44 ms |
+| no category (collections, names, LAND) | 100,001 | yes | 4.9 to 5.4 s | 149 to 151 ms |
+| `category=wearable`, `skip=200` | 100,001 | yes | 3.9 to 4.6 s | 49 to 58 ms |
+| `category=wearable`, `skip=1000` | 100,001 | yes | 4.7 to 7.3 s | 123 to 169 ms |
+| `category=wearable`, `skip=10000` | 100,001 | yes | 4.9 to 5.4 s | 1.1 to 1.2 s |
+| no category, `skip=10000` | 100,001 | yes | 7.7 to 8.1 s | 1.8 to 2.1 s |
+| `category=wearable`, no latest sales admitted | 100,001 | yes | 2.3 to 2.5 s | 20 to 24 ms |
+| no category, no latest sales admitted | 100,001 | yes | 2.8 to 2.9 s | 98 to 103 ms |
+| `category=wearable&isOnSale=false` | 100,001 | yes | 5.6 to 6.7 s | 98 to 149 ms |
+| `category=emote` | 100,001 | yes | 0.86 to 1.3 s | 0.6 to 0.76 s |
+| `category=ens` | 100,001 | yes | 0.31 to 0.59 s | 2 ms |
+| `isLand=true` | 90,000 | yes | 0.47 to 0.51 s | 0.27 to 0.37 s |
+| `itemRarity=unique` | 90 | no | 0.24 to 0.27 s | the same |
+| one creator | 1,600 | no | 0.11 to 0.13 s | the same |
+| one collection | 600 | no | 8 to 9 ms | the same |
+| `search` | 330 | no | 0.8 to 1.2 s | the same |
+| an owner's 16 tokens | 16 | no (owner) | 7 to 8 ms | the same |
+
+Two choices come from earlier runs of this benchmark.
+
+**The latest-sale part looks each sale's token up on its own** (a `LATERAL` lookup by primary key, `OFFSET 0`). Joined on `(network, contract_address, token_id)`, the planner multiplied the three columns' selectivities. It expected 419 Polygon tokens where 179,832 matched the wearable filter. At a window of 1,024 it read the window as most of the matches, so it hash-joined all 3M tokens to the 600,000 sales and sorted them (6.1 s of the part's 6.7 s). At a window of 24 it walked the index. Looked up one sale at a time, the estimate is one token per sale, and the walk holds at any depth. `skip=1000` went from 3.3 to 5.1 s with the join to 123 to 169 ms.
+
+**The walk needs enough candidates.** A walk reads about `window × held / candidates` rows of each part before it fills the window; a whole sort reads each candidate once. Walking the 90 `unique` tokens read every latest sale and every unsold token in key order: 13.6 to 14.8 s, against 0.27 s sorted whole. The two meet near `sqrt(window × held)` candidates. That is about 9,000 for 24 rows on 3.5M held tokens, hence 400 per row of the window. A total past the cap always walks.
+
+The indexes, built `CONCURRENTLY` on this seed:
+- `nft_last_sale_recent_idx` on `(network, sold_at DESC, contract_address, token_id)`: 73 MB over 636,507 rows (the table is 79 MB, its primary key 89 MB), 1.4 s;
+- `nft_sold_order_idx` on `shop.nft (network, sold_at DESC, contract_address, token_id)`, partial on held tokens with a legacy sold time: 768 kB over 6,400 rows, 1.2 s, against a 728 MB table.
 
 ## Credits metrics snapshot
 
