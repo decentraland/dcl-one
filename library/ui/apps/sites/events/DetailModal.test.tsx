@@ -1,6 +1,6 @@
 import '@testing-library/jest-dom/vitest'
 import userEvent from '@testing-library/user-event'
-import { cleanup, render, screen } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { EventDetailModal } from './DetailModal'
 
@@ -98,10 +98,64 @@ describe('when an event does not offer a reminder', () => {
     )
   })
 
-  it('should keep the existing Calendar and Copy controls', () => {
+  it('should draw Calendar and Copy as large secondary-light icon buttons beside Jump In', () => {
     const calendar = screen.getByRole('link', { name: 'Add to calendar' })
     const copy = screen.getByRole('button', { name: 'Copy link' })
-    expect(calendar).not.toHaveAttribute('data-viewport')
-    expect(copy).not.toHaveAttribute('data-viewport')
+    expect(calendar).toHaveAttribute('href', 'https://example.com/calendar')
+    expect(calendar).toHaveAttribute('target', '_blank')
+    expect(calendar).toHaveAttribute('rel', expect.stringContaining('noopener'))
+    for (const control of [calendar, copy]) {
+      expect(control).toHaveAttribute('data-variant', 'secondaryLight')
+      expect(control).toHaveAttribute('data-size', 'lg')
+      expect(control).toHaveAttribute('data-viewport', 'desktop')
+      expect(control).toHaveAttribute('data-icon-only', 'true')
+    }
+  })
+})
+
+describe('when the detail dialog is open', () => {
+  let onClose: ReturnType<typeof vi.fn>
+
+  beforeEach(() => {
+    onClose = vi.fn()
+    render(
+      <EventDetailModal
+        title="Open studio"
+        image={null}
+        live
+        location={{ label: '0,0', world: false }}
+        shareUrl="https://example.com/event"
+        onClose={onClose}
+      />
+    )
+  })
+
+  // user-event installs its own clipboard on every call, so these presses go through fireEvent.
+  const useClipboard = (clipboard: Pick<Clipboard, 'writeText'> | undefined) =>
+    Object.defineProperty(navigator, 'clipboard', { value: clipboard, configurable: true })
+
+  afterEach(() => {
+    Reflect.deleteProperty(navigator, 'clipboard')
+  })
+
+  it('should close from the close button over the cover', async () => {
+    await userEvent.click(screen.getByRole('button', { name: 'Close' }))
+    expect(onClose).toHaveBeenCalledTimes(1)
+  })
+
+  it('should show the link to copy by hand when the browser has no clipboard', () => {
+    useClipboard(undefined)
+    fireEvent.click(screen.getByRole('button', { name: 'Copy link' }))
+    expect(screen.getByRole('status')).toHaveTextContent(
+      'Copy this link: https://example.com/event'
+    )
+  })
+
+  it('should show the link to copy by hand when the clipboard refuses', async () => {
+    const writeText = vi.fn(() => Promise.reject(new Error('denied')))
+    useClipboard({ writeText })
+    fireEvent.click(screen.getByRole('button', { name: 'Copy link' }))
+    expect(writeText).toHaveBeenCalledWith('https://example.com/event')
+    expect(await screen.findByText('Copy this link: https://example.com/event')).toBeTruthy()
   })
 })

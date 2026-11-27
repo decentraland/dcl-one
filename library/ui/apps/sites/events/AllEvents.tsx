@@ -143,15 +143,16 @@ function AllEvents({
           className={styles.panel}
         >
           <nav className={styles.dates} aria-label={text('Event days')}>
-            <button
-              type="button"
-              className={styles.dateArrow}
+            <Button
+              variant="text"
+              size="sm"
+              iconOnly
               aria-label={text('Navigate to previous dates')}
               disabled={!canGoBack}
               onClick={onPrevious}
             >
-              <GeneralLeftArrow size={20} aria-hidden="true" />
-            </button>
+              <GeneralLeftArrow className={styles.dateIcon} size={20} aria-hidden="true" />
+            </Button>
             <ol className={styles.dateLabels}>
               {days.map((day) => (
                 <li
@@ -164,15 +165,16 @@ function AllEvents({
                 </li>
               ))}
             </ol>
-            <button
-              type="button"
-              className={styles.dateArrow}
+            <Button
+              variant="text"
+              size="sm"
+              iconOnly
               aria-label={text('Navigate to next dates')}
               disabled={!canGoForward}
               onClick={onNext}
             >
-              <GeneralRightArrow size={20} aria-hidden="true" />
-            </button>
+              <GeneralRightArrow className={styles.dateIcon} size={20} aria-hidden="true" />
+            </Button>
           </nav>
           {status === 'unavailable' ? (
             <div className={styles.message}>

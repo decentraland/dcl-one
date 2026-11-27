@@ -1,6 +1,5 @@
 .cover { margin: 0; display: flex; flex-direction: column; align-items: flex-start; gap: 8px; }
 .coverImage { object-fit: cover; max-width: 100%; }
-.cover :focus-visible { outline: 2px solid var(--ui-accent); outline-offset: 3px; }
 
 /* Pinned to the viewport while the form scrolls, as the production editor's fixed page background. */
 .authoring[data-editor] {
@@ -133,35 +132,15 @@
   clip-path: inset(50%);
 }
 
+/* Placement only: the wizard's fields share a wrapping row, each as tall as its own content; the library draws each field. */
+.field { flex: 1 1 180px; align-self: flex-start; }
+
 .authoring .fields { gap: var(--dcl-space-16); }
 .authoring .descriptionFields { flex-direction: column; gap: var(--dcl-space-24); }
-.authoring .descriptionFields > * { flex: auto; }
+.authoring .descriptionFields > * { flex: auto; align-self: stretch; }
 
 .authoring .coords { width: 100%; min-width: 0; }
-.authoring .coords > label { flex: 1 1 0; }
-.authoring .coords input { width: 100%; }
-
-.authoring .fieldLabel,
-.authoring .durationField {
-  color: var(--dcl-neutrals-silver);
-  font-size: 12px;
-  font-weight: 500;
-  letter-spacing: 0.15px;
-  text-transform: uppercase;
-}
-
-.authoring .field {
-  box-sizing: border-box;
-  height: 56px;
-  padding: 14px;
-  border-color: var(--dcl-neutrals-silver);
-  border-radius: var(--dcl-radius-xs);
-  background: transparent;
-  color: inherit;
-  font-family: inherit;
-  font-size: 16px;
-  font-weight: 600;
-}
+.authoring .coords > * { flex: 1 1 0; }
 
 .authoring .scheduleFields {
   display: grid;
@@ -169,59 +148,10 @@
   gap: var(--dcl-space-12);
 }
 
-.authoring .durationField {
-  flex-direction: column;
-  align-items: stretch;
-  gap: var(--dcl-space-4);
-}
-
+/* Placement only: the library Switch draws the toggle. */
 .authoring .repeatField {
   grid-column: 1 / -1;
-  flex-direction: row-reverse;
   justify-self: start;
-  gap: var(--dcl-space-12);
-  font-size: 16px;
-  font-weight: 400;
-}
-
-.authoring .repeatField input {
-  appearance: none;
-  position: relative;
-  width: 38px;
-  height: 20px;
-  margin: 0;
-  border-radius: var(--dcl-radius-full);
-  background: var(--dcl-transparencies-white-40);
-  cursor: pointer;
-}
-
-.authoring .repeatField input::before {
-  content: '';
-  position: absolute;
-  top: 2px;
-  left: 2px;
-  width: 16px;
-  height: 16px;
-  border-radius: 50%;
-  background: var(--dcl-neutrals-snow);
-}
-
-.authoring .repeatField input:checked {
-  background: var(--dcl-primary-primary);
-}
-
-.authoring .repeatField input:checked::before {
-  left: 20px;
-}
-
-.authoring textarea.field {
-  height: auto;
-  min-height: 112px;
-}
-
-.authoring .field::placeholder {
-  color: var(--dcl-neutrals-silver);
-  opacity: 1;
 }
 
 /* The featured-asset search reads as one more field of the form, not a boxed group. */
@@ -236,12 +166,6 @@
 }
 .authoring .picker { position: relative; }
 .authoring .associations { gap: var(--dcl-space-24); }
-.authoring .associations .fieldLabel { flex: initial; }
-
-.authoring .field:hover,
-.authoring .field:focus-visible {
-  border-color: var(--dcl-neutrals-white);
-}
 
 .editorActions { gap: var(--dcl-space-12); }
 
