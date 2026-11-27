@@ -161,7 +161,9 @@
     outline: 2px solid currentColor;
     outline-offset: 3px;
   }
-  .root[data-variant='primary']:not([data-icon-only='true']):is(
+  /* A white ring around a black band reads on dark and light surfaces alike. The inverse fill's own text
+     colour is dark, so a currentColor ring would disappear on the dark surfaces it is used on. */
+  .root:is([data-variant='primary'], [data-variant='inverse']):not([data-icon-only='true']):is(
       :focus-visible,
       [data-force-state='focus']
     ) {
