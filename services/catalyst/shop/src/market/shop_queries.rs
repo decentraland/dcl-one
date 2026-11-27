@@ -748,6 +748,35 @@ pub fn build_related_items_sql(
 mod tests {
     use super::*;
 
+    #[test]
+    fn related_limits_trade_proofs_to_the_requested_listing_type() {
+        for (listing_type, predicate) in [
+            (Some(ShopListingType::Primary), "= 'public_item_order'"),
+            (Some(ShopListingType::Secondary), "= 'public_nft_order'"),
+            (None, "IN ('public_item_order', 'public_nft_order')"),
+        ] {
+            let query = build_related_items_sql(
+                "0xabc",
+                "1",
+                "wearable",
+                Some("hat"),
+                Some("rare"),
+                Some(15),
+                &RelatedItemsFilters {
+                    listing_type,
+                    ..Default::default()
+                },
+                ManaUsdRate::parse_usd_per_mana("0.02").unwrap(),
+                FeedClock::unbounded(),
+            );
+            let (_, listing_filter) = query.sql.split_once("WHERE t.type ").unwrap();
+            assert!(
+                listing_filter.starts_with(&format!("{predicate} AND t.expires_at")),
+                "{listing_type:?}: {listing_filter}"
+            );
+        }
+    }
+
     /// The open trades and the coupon window are decided at the clock's
     /// instant, the one parameter `with_trades` binds and answers.
     #[tokio::test]
