@@ -163,9 +163,9 @@ export default function DownloadPage({
             <a className={styles.logo} href="/" aria-label="Decentraland">
               <img src={logo} alt="" width={48} height={48} />
             </a>
-            <button type="button" className={styles.signIn} onClick={auth.onSignIn}>
+            <Button variant="outline" size="md" className={styles.signIn} onClick={auth.onSignIn}>
               Sign In
-            </button>
+            </Button>
           </>
         )}
         <div className={styles.desktop}>

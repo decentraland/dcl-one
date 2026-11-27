@@ -1435,16 +1435,6 @@ pub fn expected_cursors(
     out
 }
 
-/// Whether the walks that follow `net`'s catalogue (nft, sales) take its
-/// collections from the collections index's walked log: where this process
-/// walks them (the index enabled, the network's mainnet chain). Elsewhere
-/// (a testnet, the index off) they take the catalogue's rows and wait for
-/// the collections mirror (`nft_index::catalogue_set_sql`,
-/// `nft_index::catalogue_wait`).
-pub fn walks_follow_the_index(settings: &IndexSettings, net: ChainNet) -> bool {
-    settings.collections_enabled && settings.serves_mainnet(net)
-}
-
 fn visit_projections(
     state: &Arc<MarketplaceState>,
     net: ChainNet,
@@ -1459,7 +1449,6 @@ fn visit_projections(
     };
     let chain_id = settings.chain_id(net);
     let mainnet = settings.serves_mainnet(net);
-    let native = walks_follow_the_index(settings, net);
     if settings.nft_enabled {
         let gate: Gate = {
             let state = state.clone();
@@ -1467,9 +1456,12 @@ fn visit_projections(
                 let state = state.clone();
                 async move {
                     Ok(
-                        super::nft_index::catalogue_wait(&state.pool, net, chain_id, native)
-                            .await
-                            .map(|why| format!("nft {}: {why}", net.db_name())),
+                        (!super::nft_index::mirror_complete(&state.pool, net, chain_id).await).then(|| {
+                            format!(
+                                "nft {}: waiting for the collections mirror's first complete pass",
+                                net.db_name()
+                            )
+                        }),
                     )
                 }
                 .boxed()
@@ -1481,8 +1473,7 @@ fn visit_projections(
             Arc::new(move || {
                 Arc::new(
                     super::nft_index::NftIndex::for_chain(net, chain_id)
-                        .expect("validated NFT index chain")
-                        .following_the_index(native),
+                        .expect("validated NFT index chain"),
                 )
             }),
             Some(gate),
@@ -1502,8 +1493,7 @@ fn visit_projections(
         && (net == ChainNet::Matic || chain_id == ChainNet::Ethereum.testnet_chain_id())
     {
         let index = super::sales_index::SalesIndex::for_chain(chain_id)
-            .expect("validated sales index chain")
-            .following_the_index(native);
+            .expect("validated sales index chain");
         let url = state.catalogue_rpc_url(net);
         let gate: Gate = {
             let (state, url) = (state.clone(), url.clone().unwrap_or_default());
@@ -1517,11 +1507,9 @@ fn visit_projections(
                         super::sales_index::check_venues(&rpc, &state.pool, index).await?;
                         venues_checked.store(true, Ordering::SeqCst);
                     }
-                    Ok(
-                        super::nft_index::catalogue_wait(&state.pool, net, chain_id, native)
-                            .await
-                            .map(|why| format!("sales matic: {why}")),
-                    )
+                    Ok((!super::nft_index::mirror_complete(&state.pool, net, chain_id).await).then(|| {
+                        "sales matic: waiting for the collections mirror's first complete pass".to_string()
+                    }))
                 }
                 .boxed()
             })

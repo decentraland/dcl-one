@@ -30,7 +30,8 @@ SPEC.loader.exec_module(dev)
 
 class DevTest(unittest.TestCase):
     def setUp(self):
-        self.temporary = tempfile.TemporaryDirectory(prefix='foundation-dev-test-')
+        # Under /tmp so the stack's own temporary folder stays inside it (see supervisor_temporary).
+        self.temporary = tempfile.TemporaryDirectory(prefix='foundation-dev-test-', dir='/tmp')
         self.addCleanup(self.temporary.cleanup)
         self.state = Path(self.temporary.name)
         self.patches = [patch.object(dev, 'STATE', self.state),
@@ -49,6 +50,32 @@ class DevTest(unittest.TestCase):
         self.assertEqual(len(queries), 1)
         self.assertIn("('dapps', 'dapps-shop-marketplace-features', true)", queries[0])
         self.assertIn('ON CONFLICT (app, name) DO NOTHING', queries[0])
+
+    def test_the_stack_keeps_its_temporary_folder_in_a_short_checkout(self):
+        temporary = dev.supervisor_temporary()
+        self.assertEqual(temporary, self.state / 'tmp')
+        self.assertEqual(temporary.stat().st_mode & 0o777, 0o700)
+
+    def deep_state(self):
+        deep = self.state / ('d' * 80)
+        deep.mkdir()
+        return patch.object(dev, 'STATE', deep)
+
+    def test_a_deep_checkout_gets_a_temporary_folder_the_ingress_socket_fits_in(self):
+        with self.deep_state():
+            temporary = dev.supervisor_temporary()
+        self.addCleanup(temporary.rmdir)
+        self.assertTrue(str(temporary).startswith('/tmp/foundation-dev-'))
+        self.assertLessEqual(len(f'{temporary}/RT_tbf92YMdmLWi/service_ipc.sock'), dev.SOCKET_PATH_MAX)
+        self.assertEqual(temporary.stat().st_mode & 0o777, 0o700)
+
+    def test_a_short_temporary_folder_others_can_use_is_refused(self):
+        with self.deep_state():
+            temporary = dev.supervisor_temporary()
+            self.addCleanup(temporary.rmdir)
+            temporary.chmod(0o777)
+            with self.assertRaisesRegex(RuntimeError, 'only you can use'):
+                dev.supervisor_temporary()
 
     def test_trades_snapshot_comes_from_a_local_file(self):
         snapshot = self.state / 'trades.sql.gz'

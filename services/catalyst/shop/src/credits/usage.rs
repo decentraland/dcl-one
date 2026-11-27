@@ -44,6 +44,13 @@
 //! `folded_block_time` (the reservation holds until the chain has been read
 //! past the credit's expiry).
 
+// Money and chain values: a silently truncated or sign-flipped cast is a bug.
+#![deny(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    clippy::cast_possible_wrap
+)]
+
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::Duration;
 
@@ -196,6 +203,11 @@ fn hex_u64(s: &str) -> Option<u64> {
     hex_to_i64(s.trim()).and_then(|n| u64::try_from(n).ok())
 }
 
+/// `n` as the `bigint` block column.
+fn block_column(n: u64) -> Result<i64, sqlx::Error> {
+    i64::try_from(n).map_err(|_| sqlx::Error::Encode(format!("block {n} is past i64").into()))
+}
+
 fn is_word(s: &str) -> bool {
     s.len() == 66 && s.starts_with("0x") && s[2..].bytes().all(|b| b.is_ascii_hexdigit())
 }
@@ -208,10 +220,11 @@ pub fn normalize_address(raw: &str) -> Option<String> {
 
 pub fn decode_log(log: &RpcLog) -> Result<Usage, String> {
     let block_number = hex_u64(&log.block_number)
-        .ok_or_else(|| format!("bad blockNumber {}", log.block_number))?
-        as i64;
-    let log_index =
-        hex_u64(&log.log_index).ok_or_else(|| format!("bad logIndex {}", log.log_index))? as i32;
+        .and_then(|n| i64::try_from(n).ok())
+        .ok_or_else(|| format!("bad blockNumber {}", log.block_number))?;
+    let log_index = hex_u64(&log.log_index)
+        .and_then(|n| i32::try_from(n).ok())
+        .ok_or_else(|| format!("bad logIndex {}", log.log_index))?;
     let topics: Vec<String> = log.topics.iter().map(|t| t.to_ascii_lowercase()).collect();
     if topics.len() != 3 || topics[0] != CREDIT_USED_TOPIC {
         return Err(format!("not a CreditUsed log ({} topics)", topics.len()));
@@ -248,7 +261,7 @@ pub fn decode_log(log: &RpcLog) -> Result<Usage, String> {
         .block_timestamp
         .as_deref()
         .and_then(hex_u64)
-        .and_then(|t| DateTime::from_timestamp(t as i64, 0))
+        .and_then(|t| DateTime::from_timestamp(i64::try_from(t).ok()?, 0))
         .map(|t| t.naive_utc());
     Ok(Usage {
         block_number,
@@ -362,7 +375,7 @@ pub async fn ensure_cursor(
     )
     .bind(settings.chain_id)
     .bind(contract)
-    .bind(settings.start_block as i64 - 1)
+    .bind(block_column(settings.start_block)? - 1)
     .execute(pool)
     .await?;
     let row = cursor(pool, settings.chain_id)
@@ -434,7 +447,7 @@ pub async fn begin_replay(
     )
     .bind(settings.chain_id)
     .bind(contract)
-    .bind(from as i64 - 1)
+    .bind(block_column(from)? - 1)
     .bind(full)
     .execute(pool)
     .await?;
@@ -455,7 +468,7 @@ pub async fn mark_folded(
          WHERE chain_id = $1 AND last_block = $2 AND full_replay_started AND contract = $5",
     )
     .bind(chain_id)
-    .bind(through.number as i64)
+    .bind(block_column(through.number)?)
     .bind(through.time)
     .bind(now.naive_utc())
     .bind(contract)
@@ -511,7 +524,8 @@ pub async fn insert_usages(
         .bind(col(|u| u.value_wei.clone()))
         .execute(&mut *conn)
         .await?;
-        written += result.rows_affected() as usize;
+        written =
+            written.saturating_add(usize::try_from(result.rows_affected()).unwrap_or(usize::MAX));
     }
     Ok(written)
 }
@@ -667,18 +681,23 @@ impl UsageIndex {
             let mut usages = Vec::with_capacity(logs.len());
             for log in &logs {
                 let usage = decode_log(log).map_err(|detail| IndexError::Decode {
-                    block: hex_u64(&log.block_number).unwrap_or(0) as i64,
-                    index: hex_u64(&log.log_index).unwrap_or(0) as i32,
+                    block: hex_u64(&log.block_number)
+                        .and_then(|n| i64::try_from(n).ok())
+                        .unwrap_or(0),
+                    index: hex_u64(&log.log_index)
+                        .and_then(|n| i32::try_from(n).ok())
+                        .unwrap_or(0),
                     detail,
                 })?;
                 usages.push(usage);
             }
+            let upper_col = block_column(upper)?;
             let mut tx = self.pool.begin().await?;
             let written = insert_usages(&mut tx, chain_id, &usages).await?;
-            set_cursor(&mut tx, chain_id, contract, upper as i64).await?;
+            set_cursor(&mut tx, chain_id, contract, upper_col).await?;
             tx.commit().await?;
             outcome.usages_written += written;
-            outcome.indexed_to = upper as i64;
+            outcome.indexed_to = upper_col;
             if !usages.is_empty() {
                 tracing::info!(
                     chain_id,
@@ -801,7 +820,8 @@ impl UsageIndex {
             indexed_to: row.last_block,
             ..Default::default()
         };
-        let from = (row.last_block + 1) as u64;
+        let from = u64::try_from(row.last_block.saturating_add(1))
+            .with_context(|| format!("usage cursor at negative block {}", row.last_block))?;
         if from <= target {
             self.sync_range(
                 &rpc,
@@ -826,13 +846,14 @@ impl UsageIndex {
             }
             return Ok(outcome);
         }
-        let since = row.folded_block.unwrap_or(-1).min(target as i64);
+        let target_col = block_column(target)?;
+        let since = row.folded_block.unwrap_or(-1).min(target_col);
         let diffs = fold(
             &self.credits,
             settings.chain_id,
             contract,
             since,
-            target as i64,
+            target_col,
         )
         .await
         .map_err(|e| anyhow::anyhow!("folding the usages: {e}"))?;
@@ -953,6 +974,13 @@ mod unit_tests {
             "a partial use of a 30 MANA credit"
         );
         assert_eq!(u.block_time.unwrap().and_utc().timestamp(), 0x6ab58d9a);
+    }
+
+    #[test]
+    fn a_log_index_past_i32_is_refused() {
+        let mut log: RpcLog = serde_json::from_str(CAPTURED_LOG).unwrap();
+        log.log_index = "0x80000000".into();
+        assert!(decode_log(&log).unwrap_err().contains("bad logIndex"));
     }
 
     #[test]

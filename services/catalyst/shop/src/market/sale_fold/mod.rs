@@ -193,20 +193,11 @@ async fn inputs(
         backfill_pending = super::nft_index::BACKFILL_PENDING_SQL,
     )))
         .bind(net.db_name()).fetch_one(&mut *c).await?;
-    // A collection of the catalogue's rows, or of the collections index's
-    // published log where it walks the network (the set a native nft walk
-    // takes, `nft_index::catalogue_set_sql`), that the nft walk has not
-    // recorded though it was created before the walk's cursor.
-    let undiscovered: bool = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
-        "SELECT EXISTS(SELECT FROM (SELECT contract_address, created_at FROM shop.collections WHERE network = $1
-             UNION {native}) c JOIN shop.chain_cursor n ON n.network = $1 AND n.indexer = 'nft'
-         WHERE c.created_at <= n.last_block_time AND NOT EXISTS
-           (SELECT FROM shop.nft_contract k WHERE k.network = $1 AND k.contract_address = c.contract_address))",
-        native = nft_index::catalogue_set_sql(net, net.chain_id(), true)
-    )))
-    .bind(net.db_name())
-    .fetch_one(&mut *c)
-    .await?;
+    let undiscovered:bool=sqlx::query_scalar(
+        "SELECT EXISTS(SELECT FROM shop.collections c JOIN shop.chain_cursor n ON n.network=c.network AND n.indexer='nft'
+         WHERE c.network=$1 AND c.created_at<=n.last_block_time AND NOT EXISTS
+           (SELECT FROM shop.nft_contract k WHERE k.network=c.network AND k.contract_address=c.contract_address))")
+        .bind(net.db_name()).fetch_one(&mut *c).await?;
     // A Bought line outside the current catalogue may name a late genuine
     // collection. Only a complete factory walk through that purchase can
     // distinguish it from an unrelated address.

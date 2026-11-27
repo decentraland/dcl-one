@@ -1,3 +1,6 @@
+// Decodes untrusted input: malformed bytes must not panic.
+#![deny(clippy::indexing_slicing, clippy::expect_used)]
+
 use super::{RemoteError, RpcMessageHeader, RpcMessageTypes, fill_remote_error};
 use prost::Message;
 

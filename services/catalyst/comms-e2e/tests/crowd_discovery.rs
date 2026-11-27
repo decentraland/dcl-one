@@ -2,6 +2,7 @@
 //! archipelago bot against a connector played by this test (what it records of an island
 //! assignment, and the island roster it keeps), and the verdicts the scenario gives on what the
 //! clients saw.
+#![allow(clippy::unwrap_used, reason = "test support")]
 
 use std::sync::Arc;
 use std::time::Duration;

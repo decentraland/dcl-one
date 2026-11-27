@@ -1,6 +1,7 @@
 //! Settings shared by the HTTP server and the indexing worker.
 use crate::{config::Config, jobs, land_authz, shop};
 use anyhow::Context;
+use shop::types::{ChainId, EvmAddress};
 use std::time::Duration;
 
 /// The job runner `serve` and `index` both build: leased in
@@ -77,6 +78,22 @@ pub(crate) fn market_settings(
                 config.marketplace.wert_api_url.as_deref(),
                 config.marketplace.wert_api_key.as_deref(),
                 self_hosts,
+                || {
+                    let credits_manager = Config::non_empty(&config.shop.credits_manager_contract)
+                        .map(|address| {
+                            EvmAddress::parse(&address).context("CREDITS_MANAGER_CONTRACT")
+                        })
+                        .transpose()?
+                        .map(|address| (ChainId(config.economy.collections_chain_id), address));
+                    let publication_manager =
+                        EvmAddress::parse(catalyst_builder::publication::COLLECTION_MANAGER)
+                            .context("Builder's Polygon CollectionManager")?;
+                    shop::market::wert::WertPolicy::new(
+                        credits_manager,
+                        publication_manager,
+                        config.marketplace.wert_extra_contracts.as_deref(),
+                    )
+                },
             )
             .context("WERT_* configuration")?,
         )

@@ -132,6 +132,12 @@ pub struct MarketplaceConfig {
     #[arg(long, env = "WERT_API_KEY", hide_env_values = true)]
     pub wert_api_key: Option<String>,
 
+    /// Extra Wert contract tuples as comma-separated `network:address:target`
+    /// entries. Networks are ethereum, polygon, amoy and sepolia. Targets
+    /// are default and publicationFees.
+    #[arg(long, env = "WERT_EXTRA_CONTRACTS")]
+    pub wert_extra_contracts: Option<String>,
+
     // The Transak card on-ramp (`/v1/transak/*`): all six, or none (the routes
     // then answer 503 naming them).
     /// Transak's partner API (`/v2/refresh-token`, `/v2/order/{id}`).
@@ -520,10 +526,11 @@ pub struct ShopConfig {
     #[arg(long, env = "CREDITS_WRITE_ADMIN_ADDRESSES", default_value = "")]
     pub credits_write_admin_addresses: String,
 
-    /// Refuse a write admin's wallet-signed change that does not sign its
-    /// body's SHA-256 (`bodySha256` in the signed metadata). Off, such a change
-    /// is accepted with a warning, as the old server accepted it; a signed hash
-    /// that does not match the body is refused either way.
+    /// Refuse a write admin's wallet-signed change, and a studio operator's
+    /// grant, that does not sign its body's SHA-256 (`bodySha256` in the
+    /// signed metadata). Off, such a change is accepted with a warning, as the
+    /// old server accepted it; a signed hash that does not match the body is
+    /// refused either way.
     #[arg(long, env = "CREDITS_ADMIN_WRITES_REQUIRE_BOUND_BODY", default_value_t = false, action = clap::ArgAction::Set)]
     pub credits_admin_writes_require_bound_body: bool,
 

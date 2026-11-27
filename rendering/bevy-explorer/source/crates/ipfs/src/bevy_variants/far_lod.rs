@@ -45,6 +45,8 @@ pub(crate) struct FarLodHealth {
     failures: u32,
     /// while tripped: when the next request, the probe, may go out
     paused_until: Option<Instant>,
+    /// times the breaker recovered this session
+    recoveries: u32,
 }
 
 /// The breaker's state, for `/scene_lod_state`.
@@ -56,6 +58,9 @@ pub struct FarLodStatus {
     pub failures: u32,
     /// while far LODs are paused: how long until the next probe
     pub paused_for: Option<Duration>,
+    /// times far LODs resumed after a pause this session: a change means the far LODs whose
+    /// download failed meanwhile may be asked for again
+    pub recoveries: u32,
 }
 
 impl FarLodHealth {
@@ -113,7 +118,11 @@ impl FarLodHealth {
             self.missing.insert(scene.to_owned());
         }
         self.failures = 0;
-        self.paused_until.take().map(|_| BreakerChange::Recovered)
+        let change = self.paused_until.take().map(|_| BreakerChange::Recovered);
+        if change.is_some() {
+            self.recoveries = self.recoveries.wrapping_add(1);
+        }
+        change
     }
 
     /// `scene`'s request failed with an error, a timeout or a status that may change.
@@ -134,6 +143,7 @@ impl FarLodHealth {
             paused_for: self
                 .paused_until
                 .map(|until| until.checked_duration_since(now).unwrap_or_default()),
+            recoveries: self.recoveries,
         }
     }
 }
@@ -247,7 +257,8 @@ mod tests {
             FarLodStatus {
                 missing: 0,
                 failures: 0,
-                paused_for: None
+                paused_for: None,
+                recoveries: 1,
             }
         );
     }

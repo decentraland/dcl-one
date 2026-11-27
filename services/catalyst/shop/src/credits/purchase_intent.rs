@@ -1,3 +1,9 @@
+// Money and chain values: a silently truncated or sign-flipped cast is a bug.
+#![deny(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    clippy::cast_possible_wrap
+)]
 use crate::evm::eip712::{hash_dynamic, struct_hash, typed_data_digest, word_address, word_u64};
 use alloy_primitives::Address;
 use serde::{Deserialize, Serialize};
@@ -164,7 +170,7 @@ fn parse_decimal(s: &str) -> Option<(u128, u32)> {
     for b in int_part.bytes().chain(frac_part.bytes()) {
         mantissa = mantissa.checked_mul(10)?.checked_add((b - b'0') as u128)?;
     }
-    Some((mantissa, frac_part.len() as u32))
+    Some((mantissa, u32::try_from(frac_part.len()).ok()?))
 }
 
 fn rescale(mantissa: u128, from: u32, to: u32) -> Option<u128> {
@@ -196,7 +202,7 @@ fn lines_total(lines: &[RepricedLine]) -> Option<String> {
             return None;
         }
         let (m, s) = parse_decimal(&l.unit_price_credits)?;
-        let line = m.checked_mul(l.qty as u128)?;
+        let line = m.checked_mul(u128::try_from(l.qty).ok()?)?;
         if s > scale {
             acc = rescale(acc, scale, s)?;
             scale = s;

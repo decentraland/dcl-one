@@ -345,16 +345,9 @@ async fn repair_window(
             }
         }
         let candidates: BTreeSet<_> = by_block.values().flatten().cloned().collect();
-        // The catalogue the walk follows (`nft_index::catalogue_set_sql`).
-        let listed: BTreeMap<String, i64> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
-            "SELECT contract_address, created_at FROM ({}) AS c WHERE contract_address = ANY($1)",
-            nft_index::catalogue_set_sql(ChainNet::Matic, 137, ix.catalogue_native())
-        )))
-        .bind(candidates.into_iter().collect::<Vec<_>>())
-        .fetch_all(pool)
-        .await?
-        .into_iter()
-        .collect();
+        let listed: BTreeMap<String,i64> = sqlx::query_as(
+            "SELECT contract_address,created_at FROM shop.collections WHERE network='matic' AND chain_id=137 AND contract_address=ANY($1)")
+            .bind(candidates.into_iter().collect::<Vec<_>>()).fetch_all(pool).await?.into_iter().collect();
         let mut block_times = std::collections::HashMap::new();
         if !listed.is_empty() {
             if !trim_for_times(&mut window, from, budget.saturating_sub(used.charge + 2)) {
@@ -453,8 +446,8 @@ async fn repair_window(
     let mut tx = pool.begin().await?;
     // Book repair and folding share the cursor-first order. Trade-events
     // recovery locks its event rows before the cursor.
-    let book = matches!(owner.indexer, INDEXER_NFT | INDEXER_SALES);
-    if book {
+    let cursor_first = chain_walk::locks_cursor_before_projection_write(owner.indexer);
+    if cursor_first {
         owner.check(&mut tx).await?;
     }
     if owner.indexer == INDEXER_NFT {
@@ -511,7 +504,7 @@ async fn repair_window(
         .bind(owner.indexer).bind(owner.net.db_name()).bind(VERSION).bind(window.reached as i64)
         .bind(anchor as i64).bind(hash).bind(next).execute(&mut *tx).await?.rows_affected();
     ensure!(count == 1, "sales repair coverage changed");
-    if !book {
+    if !cursor_first {
         owner.check(&mut tx).await?;
     }
     tx.commit().await?;

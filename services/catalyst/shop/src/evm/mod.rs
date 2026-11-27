@@ -46,6 +46,13 @@
 //! (`crate::shared::writes::DataWrites`, the social switch's twin): off, every
 //! non-GET route but `/v1/payments/verify` answers the 503 envelope.
 
+// Money and chain values: a silently truncated or sign-flipped cast is a bug.
+#![deny(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    clippy::cast_possible_wrap
+)]
+
 pub mod abi;
 pub mod admin;
 pub mod chain;
@@ -63,6 +70,12 @@ pub mod transaction;
 pub mod transfer_shortfall;
 pub mod upstream;
 
+#[allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    clippy::cast_possible_wrap,
+    reason = "test support"
+)]
 #[cfg(test)]
 mod tests;
 
