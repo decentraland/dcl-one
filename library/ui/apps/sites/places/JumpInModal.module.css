@@ -10,32 +10,12 @@
   box-shadow: 0 4px 25px color-mix(in srgb, var(--dcl-neutrals-white) 25%, transparent);
 }
 
+/* The shared CloseButton, placed over the cover. */
 .close {
   position: absolute;
   top: var(--dcl-space-16);
   right: var(--dcl-space-16);
   z-index: 2;
-  display: grid;
-  place-items: center;
-  width: 40px;
-  height: 40px;
-  padding: 0;
-  border: 0;
-  border-radius: 10px;
-  background: var(--dcl-transparencies-black-40);
-  color: var(--dcl-neutrals-snow);
-  cursor: pointer;
-}
-
-.close:hover {
-  background: var(--dcl-transparencies-black-60);
-}
-
-.close:focus-visible,
-.copy:focus-visible,
-.jumpIn:focus-visible {
-  outline: 2px solid var(--dcl-neutrals-snow);
-  outline-offset: 2px;
 }
 
 .heroWrap {
@@ -140,23 +120,9 @@
   padding-top: 20px;
 }
 
+/* The shared JumpInCTA's width: the row's free space on a phone, the reference's 249px from 768px. */
 .jumpIn {
-  composes: text627574746f6e2f786c from '../../../foundations/typography/text-styles.module.css';
-  display: inline-flex;
   flex: 1 1 auto;
-  align-items: center;
-  justify-content: center;
-  gap: var(--dcl-space-8);
-  height: 46px;
-  padding: 0 20px;
-  border-radius: var(--dcl-radius-md);
-  background: var(--dcl-action-primary);
-  color: var(--dcl-text-on-action);
-  text-decoration: none;
-}
-
-.jumpIn:hover {
-  background: var(--dcl-primary-primary-dark-1);
 }
 
 @media (min-width: 768px) {
@@ -169,23 +135,6 @@
 .copyWrap {
   position: relative;
   display: inline-flex;
-}
-
-.copy {
-  display: grid;
-  place-items: center;
-  width: 46px;
-  height: 46px;
-  padding: 0;
-  border: 1px solid var(--dcl-neutrals-snow);
-  border-radius: var(--dcl-radius-md);
-  background: transparent;
-  color: var(--dcl-neutrals-snow);
-  cursor: pointer;
-}
-
-.copy:hover {
-  background: var(--dcl-transparencies-white-10);
 }
 
 .copied {
