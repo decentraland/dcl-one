@@ -299,6 +299,39 @@ existing indexes and add no storage or write work.
 These measurements cover SQL on the local fixture. End-to-end latency
 after deployment has yet to be measured.
 
+## Polygon catalogue resale ranking (2026-11-27)
+
+A synthetic PostgreSQL 17.6 fixture held about 12,000 Polygon items,
+5.28M Polygon NFTs, and 1.02M Polygon legacy orders. About 69,700 orders
+were live and 138,400 were expired with a stored open status. Live orders
+covered about 2,100 items, with about 1,050 orders at the 99th percentile
+of items with a live order. The database used 128 MiB shared buffers and
+4 MiB work memory.
+
+The prior Polygon first page hit the 10-second statement timeout. An
+execution with a 30-second bound took 10.57 s. It made about 69,700
+NFT primary-key lookups and 55,800 individual checks for transfers above
+the published fold. PostgreSQL attributed 9.64 s of shared read time to
+those lookups. The expiry index filtered the expired orders before the
+ownership probes.
+
+The catalogue sorts live book rows by contract and token before making
+the NFT lookups. It reads at most 1,025 events above the published NFT
+fold in one range scan and checks the transfer keys from that read. If a
+1,025th event exists, the query uses its per-token check. The empty-tail
+plan used one event range scan and zero per-token event scans.
+
+| Prepared Polygon page | Plan | p95 before / after |
+| --- | --- | ---: |
+| Default, first 24 | Custom | 2.66 s / 1.94 s |
+| Default, first 24 | Generic | 3.50 s / 1.74 s |
+| On-sale wearables, first 24 | Custom | 3.49 s / 1.84 s |
+| On-sale wearables, first 24 | Generic | 3.81 s / 1.91 s |
+
+Each p95 uses 20 warmed, alternating prepared SQL executions per variant
+with one client. The paired result rows and totals matched. These are
+local SQL timings. Production latency depends on its cache and storage.
+
 ## Latest sale per token
 
 The fixtures below are synthetic, measured on a laptop with PostgreSQL 17.6 while other builds were running. Treat the ranges as an order of magnitude.
