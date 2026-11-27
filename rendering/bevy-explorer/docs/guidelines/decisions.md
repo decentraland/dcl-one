@@ -763,6 +763,52 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   own Lock/Unlock cursor actions. Here right-click toggles the lock as everywhere else, left-drag
   looks while the cursor is free (Unity's drag), and Escape closes photo mode. The gallery key (G,
   Unity's K) closes photo mode and opens the gallery, where Unity's K only closes it.
+- **Left-drag camera: reticle at the centre, no per-frame cursor warp.** unity-explorer's
+  left-button drag hides the cursor, shows its crosshair at the press point and warps the OS
+  cursor back to the press point every frame. Here the drag holds the engine's `"camera"` cursor
+  lock, as the right button does: the reticle is at the screen centre (both HUDs draw it there
+  while locked), and the cursor is not moved each frame. A page cannot move the cursor, and
+  Pointer Lock gives the same end state on web: the browser restores the pointer where the lock
+  began. Natively, where the window confines the cursor instead of locking it, the cursor
+  reappears where it drifted during the drag, not where the press was.
+- **Left-drag camera: a drag that starts on a HUD panel or scene UI never turns the camera.**
+  Whether a press may turn the camera is decided once, at the press: a press over UI or within
+  10 px of a window edge stays an ordinary press for its whole hold, even if the drag then
+  leaves the UI. unity-explorer checks every frame. UI refuses because scene UI content scrolls
+  by dragging without reserving the pointer, so a drag on it must stay the scene's.
+- **Left-drag camera: the release after a drag reaches no entity.** While the drag turns the
+  camera nothing is hovered, scene UI included, up to and including the release, so `PetUp`
+  after a drag goes to no entity. The cursor is still locked at the screen centre on that frame,
+  and an entity under the reticle did not get the press. Natively the hidden cursor is only
+  confined and keeps moving, so a scene UI button it ends over did not get the press either.
+- **Left-drag camera follows the pointer binding, gamepad included.** The pan starts from the
+  `IaPointer` action, not the left mouse button itself, so with the setting on, holding the
+  pad's pointer button (LT) and moving the right stick turns the camera instead of moving the
+  virtual cursor. unity-explorer's drag is fixed to the left mouse button. Following the action
+  keeps the pan on whatever the player binds to the pointer, as every other pointer action is.
+  On web a pad press gives the page no user activation, so the browser refuses the pointer
+  lock; a pan pressed on the pad then turns the camera without it, and only a lock that was
+  granted and then dropped ends it. A pan pressed with a mouse button or key still ends when
+  the browser refuses the lock, as when Escape released it less than a second before.
+- **Left-drag camera: no pan under any scene camera.** While a scene's camera is active the
+  left drag never turns the camera, even when the scene allows manual rotation
+  (`allow_manual_rotation`) and the right button still turns it there. The scene owns the view
+  there, so the left button stays the scene's press.
+- **Left-drag camera: a scene's drag capture wins.** When the press is captured by an entity that
+  listens for `PetDrag` or `PetDragLocked`, the press never turns the camera: the scene asked
+  for the drag. unity-explorer has no such capture. Drags that do not use `PetDrag` are taken
+  over once the motion passes the start threshold, with the setting on: `PetDown` followed by
+  reading `PrimaryPointerInfo` until `PetUp`, a global `isPressed` read with the pointer info,
+  and drawing or box-select on empty ground. From then on `screen_coordinates` is the screen
+  centre, `isPointerLocked` reads true, nothing is hovered and `PetUp` reaches no entity. As in
+  unity-explorer. A scene opts out with a `PetDrag` or `PetDragLocked` listener on the collider
+  that wins the press, including a large invisible collider for drags on empty ground.
+- **Left-drag camera starts on motion since the press.** unity-explorer starts the pan when one
+  frame's mouse motion exceeds 1 px, motion from before the press included. Here the pointer
+  motion counts from the frame after the press and accumulates while the button is held, and
+  the pan starts once the total exceeds 1. That motion is the pointer analog input, so it is
+  scaled by the pointer sensitivity setting rather than measured in pixels. A still click stays
+  a click, and a slow drag still starts at a high frame rate, where one frame's motion is tiny.
 - **Photo mode has no gamepad toggle, and its pan is on the D-pad.** unity-explorer opens the
   in-world camera with the pad's East button and pans with the bumpers (and `dpad/y`). Here East
   is the scenes' secondary action and nothing is reserved outside photo mode, so a pad binding
@@ -1064,11 +1110,25 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   show seams between the slices, so here they are radii, borders and gradients with the sprites'
   colours. The canvas scales by the smaller of width and height, as every menu page does, where
   unity-explorer's scales by width.
-- **Jump to Location closes the passport.** unity-explorer's passport does not close itself
-  when its Jump to Location runs; here the passport closes once the friend's parcel or World is
-  known, as it already does for a photo's teleport. A friend found nowhere leaves it open, and
+- **Jump to Location closes the passport once it has somewhere to go.** unity-explorer's passport
+  closes when its header button is clicked, whatever the jump finds, and stays open after the same
+  entry of its options menu; here both close it once the friend's parcel or World is
+  known, as a photo's teleport does. A friend found nowhere leaves it open, and
   nothing is shown, as there. The profile card offers the jump after View Profile, since its rows
   already follow a different order from unity-explorer's user menu.
+- **The passport offers no Call to a blocked user.** unity-explorer's passport shows Call
+  whatever the block state; here Call follows Chat, hidden for a user you blocked and for one who
+  blocked you.
+- **ACCEPT FRIEND on the passport shows its result.** As in unity-explorer, the click accepts;
+  here "Accepting Friend Request" and then the result show over the passport.
+- **The passport menu's profile entry is a row with no copy buttons.** unity-explorer's entry
+  centres a large picture over the name and the wallet, each with a copy button; here it is the
+  shared menu header, the picture beside the name and wallet, and the passport header copies both.
+- **The passport's header tips open below their buttons.** unity-explorer's open above, over the
+  panel's top edge; here the panel clips at that edge, so the tips open below.
+- **A guest's Call from the passport is refused by a notice.** unity-explorer asks a guest to
+  upgrade the account for Call and for a new direct message; here Call says voice chat is not
+  available to guests, and Chat opens the conversation.
 - **INVITE FRIENDS is for a signed-in player only.** unity-explorer's copy runs for any
   identity it holds. Here neither kind of guest gets the button: not the throwaway guest, and not a
   guest account. As there, it copies the deployment site's `/invite/<address>`

@@ -17,22 +17,6 @@ const ProfileLambdaSchema = z.object({
 });
 type ProfileLambda = z.infer<typeof ProfileLambdaSchema>;
 
-const ReferralTierSchema = z.object({
-  tier: z.number(),
-  invitesAccepted: z.number(),
-  rarity: z.string(),
-  description: z.string(),
-});
-
-export const ReferralStateSchema = z.object({
-  invitedUsers: z.number(),
-  invitedUsersAccepted: z.number(),
-  currentTier: z.number(),
-  nextTier: z.number(),
-  tiers: z.array(ReferralTierSchema),
-});
-export type ReferralState = z.infer<typeof ReferralStateSchema>;
-
 export type ReferrerVM = {
   /** The inviter's display name, as decentraland.org shows it: the profile's first avatar name, trimmed. */
   name: string | null;

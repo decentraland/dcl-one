@@ -130,7 +130,7 @@ export function WebItemPreview({
       unavailable={show3d && failed}
       view={ownControls && !isEmote ? { current: view, select: setView } : undefined}
       emote={ownControls && isEmote ? { replay, play: () => setReplay((n) => n + 1) } : undefined}
-      show={!show3d && canPreview ? onShow : undefined}
+      show={!show3d && canPreview && fullDevice !== null ? onShow : undefined}
       shapeNote={mismatch && !itemAlone ? body : undefined}
       renderer={drawnBy}
     >

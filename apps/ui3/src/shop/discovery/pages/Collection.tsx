@@ -7,8 +7,7 @@
 import { useMemo, useState } from "react";
 import { Link, useParams } from "react-router";
 
-import { Button } from "@dcl/one-ui";
-import EmptyState from "../../../components/EmptyState";
+import { Button, EmptyState, ShopSkeletonCards } from "@dcl/one-ui";
 import { shortAddress } from "@shop/model/address";
 import { SHOP_BASE } from "../../routes";
 import { fetchCatalogItems, fetchCollection } from "@shop/discovery/api";
@@ -19,7 +18,6 @@ import Filters, { STATUSES, type FilterStatus } from "../components/Filters";
 import { CollectionHero } from "../components/Hero";
 import IndexNotice from "../components/IndexNotice";
 import LoadMore from "../components/LoadMore";
-import SkeletonCards from "../components/SkeletonCards";
 import { indexUnavailable, type IndexFreshness } from "@shop/discovery/freshness";
 import { useProfile, useScrollTopOnChange, useSeo, useUrlFilters } from "../hooks";
 import { t } from "@shop/discovery/intl";
@@ -143,18 +141,18 @@ export default function Collection() {
           </div>
         ) : null}
         {!grid.isLoading && !grid.error && grid.items.length === 0 ? (
-          <EmptyState data-testid="collection-empty" title={t("assets.empty.title")} subtitle={t("collection.empty")} actions={[{ label: t("filterBar.clearAll"), onClick: clearFilters }]} />
+          <EmptyState appearance="shop" titleAs="h2" data-testid="collection-empty" title={t("assets.empty.title")} subtitle={t("collection.empty")} actions={<Button size="md" onClick={clearFilters}>{t("filterBar.clearAll")}</Button>} />
         ) : unavailable ? null : (
           <>
             <div className="shop-grid" data-testid="grid">
               {grid.isLoading || grid.isPlaceholder ? (
-                <SkeletonCards count={15} />
+                <ShopSkeletonCards count={15} />
               ) : (
                 <>
                   {grid.items.map((item, i) => (
                     <AssetCard key={item.id} item={item} source="collection" position={i} creatorName={creatorName || null} />
                   ))}
-                  {grid.isFetchingNextPage ? <SkeletonCards count={6} /> : null}
+                  {grid.isFetchingNextPage ? <ShopSkeletonCards count={6} /> : null}
                 </>
               )}
             </div>

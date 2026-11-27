@@ -10,7 +10,7 @@ workspace = true
 
 [features]
 default = []
-inspect = ["fastwebsockets", "hyper", "uuid"]
+inspect = ["fastwebsockets", "hyper"]
 
 [dependencies]
 common = { workspace = true }
@@ -38,6 +38,8 @@ rusqlite = { workspace = true }
 deno_core = { workspace = true }
 deno_error = { workspace = true }
 deno_web = { workspace = true }
+uuid = { workspace = true }
+async-trait = { workspace = true }
 deno_webidl = { workspace = true }
 
 bytes = "1.11.1"
@@ -49,7 +51,6 @@ hyper = { version = "0.14.26", features = [
   "http1",
   "server",
 ], optional = true }
-uuid = { workspace = true, optional = true }
 
 [target.'cfg(unix)'.dependencies]
 libc = { workspace = true }

@@ -12,6 +12,7 @@ import type { CatalogItem } from "@shop/discovery/lib/catalogItem";
 import { useShopWallet } from "../../wallet/context";
 import { avatarShape as profileShape, BASE_MALE, itemShapes, type BodyShapeUrn } from "@shop/detail/lib/bodyShape";
 import { pickRenderer } from "../lib/pickRenderer";
+import { decidePreviewDevice } from "../lib/previewDevice";
 import { itemUrn } from "@shop/detail/lib/urn";
 import { fetchWearableRules, keepEquipped, sharedEntityBase } from "../lib/wearable-rules";
 import { fetchEmoteClipUrl } from "../lib/emoteBase64";
@@ -125,18 +126,19 @@ function ExplorerItemPreview({ item, avatarShape = null, renderer }: ItemPreview
 }
 
 function WebPreviewHost({ item, avatarShape = null, renderer }: ItemPreviewProps) {
-  const [show3d, setShow3d] = useState(renderer === "full");
-  // Read on the client only: the device decides between Unity and Babylon, and whether to mount at all without WebGL.
-  const [fullDevice, setFullDevice] = useState<boolean | null>(renderer ? renderer === "full" : null);
-  useEffect(() => {
-    const decision = pickRenderer();
-    if (!renderer) {
-      setFullDevice(decision.renderer === "full");
-      if (decision.reason !== "no-webgl") setShow3d(true);
-    }
-  }, [renderer]);
   const urn = item.urn ?? itemUrn(item);
   const canPreview = !!urn && item.category !== "ens";
+  const [show3d, setShow3d] = useState(renderer === "full");
+  // Read on the client only: the device decides between Unity and Babylon, and whether to mount at all without WebGL.
+  // An item with no preview (a NAME) never asks, so it never pays for the link probe.
+  const [fullDevice, setFullDevice] = useState<boolean | null>(renderer ? renderer === "full" : null);
+  useEffect(() => {
+    if (renderer || !canPreview) return;
+    return decidePreviewDevice((decision) => {
+      setFullDevice(decision.renderer === "full");
+      if (decision.reason !== "no-webgl") setShow3d(true);
+    });
+  }, [renderer, canPreview]);
   const { account } = useShopWallet();
   const wanted = canPreview && show3d;
   const profile = useShopQuery(wanted && account ? ["wearer-profile", account] : null, (signal) => fetchProfile(account!, { signal }), { staleMs: 5 * 60_000 });

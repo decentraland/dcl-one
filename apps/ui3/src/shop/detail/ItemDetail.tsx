@@ -8,8 +8,7 @@
 import { Suspense, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { Link, useLocation, useNavigate, useParams } from "react-router";
 
-import { Button, Tooltip } from "@dcl/one-ui";
-import EmptyState from "../../components/EmptyState";
+import { Button, EmptyState, ShopBadgeSkeleton, Tooltip } from "@dcl/one-ui";
 import { useCart } from "../cart/store";
 import { itemAsset, tokenAsset, type AssetId } from "@shop/model/asset";
 import { parseEvmAddress, shortAddress, sameAddress } from "@shop/model/address";
@@ -25,7 +24,7 @@ import { fetchCatalogItems, fetchCollection, fetchCollectionItems, fetchRelatedI
 import { cardEligibility } from "@shop/discovery/cardPrice";
 import { cartInputFor } from "../discovery/components/AssetCard";
 import { useMarketplace } from "../market/access";
-import { BadgeSkeleton, DetailCollection, DetailCreator } from "./components/DetailBadges";
+import { DetailCollection, DetailCreator } from "./components/DetailBadges";
 import Icon from "../discovery/components/Icon";
 import IndexNotice from "../discovery/components/IndexNotice";
 import Rail from "../discovery/components/Rail";
@@ -541,10 +540,12 @@ export default function ItemDetail() {
     return (
       <div className="shop-page" data-testid="item-not-found">
         <EmptyState
+          appearance="shop"
+          titleAs="h2"
           icon={<Icon name="cart" size={44} />}
           title={t("itemDetail.notAvailableTitle")}
           subtitle={t("itemDetail.notAvailableBody")}
-          actions={[{ label: t("notFound.cta"), onClick: () => navigate(`${SHOP_BASE}/items`) }]}
+          actions={<Button size="md" onClick={() => navigate(`${SHOP_BASE}/items`)}>{t("notFound.cta")}</Button>}
         />
       </div>
     );
@@ -781,7 +782,7 @@ export default function ItemDetail() {
                   {collectionQ.data?.name ? (
                     <DetailCollection contractAddress={contractAddress} name={collectionQ.data.name} thumbnails={collectionThumbs} label={(name) => <>{t("itemDetail.collection")} {name}</>} />
                   ) : collectionPending ? (
-                    <BadgeSkeleton testId="collection-loading" />
+                    <ShopBadgeSkeleton testId="collection-loading" />
                   ) : null}
                   {showOwner ? (
                     <div className="shop-pdp__col">

@@ -1,6 +1,4 @@
 import {
-  useEffect,
-  useRef,
   useState,
   type ComponentType,
   type AnchorHTMLAttributes,
@@ -39,6 +37,8 @@ export type LivePromoProps = {
     AnchorHTMLAttributes<HTMLAnchorElement> & { to: string; ref?: Ref<HTMLAnchorElement> }
   >
   backdrop: ReactNode
+  linkRef: Ref<HTMLAnchorElement>
+  onScreen: boolean
   allowed: boolean
   bevyFlag: boolean | null
   to: string
@@ -54,6 +54,8 @@ export type LivePromoProps = {
 export function LivePromo({
   Link,
   backdrop,
+  linkRef,
+  onScreen,
   allowed,
   bevyFlag,
   to,
@@ -65,34 +67,11 @@ export function LivePromo({
   fallbackAlt,
   testId
 }: LivePromoProps) {
-  const ref = useRef<HTMLAnchorElement>(null)
-  const [onScreen, setOnScreen] = useState(false)
   const [ready, setReady] = useState(false)
   const [failed, setFailed] = useState(false)
   // Bevy failing gives way to Babylon for the rest of the tile's life.
   const [bevyFailed, setBevyFailed] = useState(false)
   const bevy = bevyFlag === true && !bevyFailed
-
-  useEffect(() => {
-    const el = ref.current
-    if (!el) return
-    // Nothing to tell whether the tile is on screen with: it mounts, rather than keep the picture for good.
-    if (typeof IntersectionObserver === 'undefined') {
-      setOnScreen(true)
-      return
-    }
-    // A little before it scrolls into view, so the scene is ready when it lands. The tile is the one element observed, so
-    // the last entry of a batch is where it is now.
-    const io = new IntersectionObserver(
-      (entries) => {
-        const last = entries[entries.length - 1]
-        if (last) setOnScreen(last.isIntersecting)
-      },
-      { rootMargin: '200px' }
-    )
-    io.observe(el)
-    return () => io.disconnect()
-  }, [])
 
   const live = allowed && !failed
   // The iframe lives only while the tile is on screen: off screen its render loop runs at full speed for nobody. A hidden
@@ -105,7 +84,7 @@ export function LivePromo({
 
   return (
     <Link
-      ref={ref}
+      ref={linkRef}
       className={styles.root}
       to={to}
       aria-label={ariaLabel}

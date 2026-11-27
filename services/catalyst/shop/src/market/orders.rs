@@ -116,10 +116,12 @@ pub struct Keyed {
 }
 
 pub fn from_seconds_to_milliseconds(time: f64) -> i64 {
-    if time < super::nft_index::LEGACY_EXPIRY_UNIT_THRESHOLD as f64 {
-        (time * 1000.0).round() as i64
+    #[allow(clippy::cast_precision_loss, reason = "10^11 is exact in f64")]
+    let threshold = super::nft_index::LEGACY_EXPIRY_UNIT_THRESHOLD as f64;
+    if time < threshold {
+        super::casts::saturating_i64((time * 1000.0).round())
     } else {
-        time.round() as i64
+        super::casts::saturating_i64(time.round())
     }
 }
 
@@ -156,8 +158,8 @@ pub fn parse_filters(pairs: &[(String, String)]) -> Result<OrderFilters, Invalid
             }
         });
     Ok(OrderFilters {
-        first: p.get_number("first", None).map(|v| v as i64),
-        skip: p.get_number("skip", None).map(|v| v as i64),
+        first: p.get_integer("first"),
+        skip: p.get_integer("skip"),
         sort_by,
         marketplace_address: p.get_string("marketplaceAddress", None),
         owner: p.get_string("owner", None),
@@ -197,8 +199,7 @@ pub(crate) fn parse_open_by_items(
         items.push(item);
     }
     let per_contract = p
-        .get_number("perContract", None)
-        .map(|v| v as i64)
+        .get_integer("perContract")
         .unwrap_or(OPEN_BY_ITEMS_DEFAULT_PER_CONTRACT)
         .clamp(1, OPEN_BY_ITEMS_MAX_PER_CONTRACT);
     Ok((items, per_contract))
@@ -225,11 +226,30 @@ fn stamp_owner_check(mut response: Response) -> Response {
 
 /// `$1` is now, `$2` the trades floor; `extra` binds from `$3`.
 fn trades_leg_sql(extra: &str) -> String {
-    format!(
-        "WITH {} SELECT {} {TRADE_ORDER_FROM} {extra} ORDER BY u.created_at DESC, u.id::text ASC LIMIT {TRADE_ORDER_CAP}",
-        unified_trades_cte("$1", "$2"),
-        TRADE_ORDER_COLUMNS.replace("SHIFT", ITEM_ID_SHIFT),
-    )
+    let trades = unified_trades_cte("$1", "$2");
+    let columns = TRADE_ORDER_COLUMNS.replace("SHIFT", ITEM_ID_SHIFT);
+    if extra.is_empty() {
+        // Process candidates in creation order and verify each before
+        // the limit so a newer unbacked trade cannot displace an older
+        // eligible one.
+        format!(
+            "WITH {trades}
+             SELECT verified.* FROM (
+                 SELECT id, created_at FROM shop.trades
+                 WHERE type = 'public_nft_order' AND expires_at > $1 AND effective_since <= $1
+                 ORDER BY created_at DESC, id::text ASC OFFSET 0
+             ) candidate
+             CROSS JOIN LATERAL (
+                 SELECT {columns} {TRADE_ORDER_FROM} AND u.id = candidate.id OFFSET 0
+             ) verified
+             ORDER BY candidate.created_at DESC, candidate.id::text ASC LIMIT {TRADE_ORDER_CAP}"
+        )
+    } else {
+        format!(
+            "WITH {trades} SELECT {columns} {TRADE_ORDER_FROM} {extra}
+             ORDER BY u.created_at DESC, u.id::text ASC LIMIT {TRADE_ORDER_CAP}"
+        )
+    }
 }
 
 /// An open v3 listing ([`TRADE_ORDER_COLUMNS`]' row) as an order: its id is the
@@ -1074,13 +1094,33 @@ async fn book_total(
     let Some((from, binds)) = book_from(&served(state), f, now_ms, land) else {
         return Ok(0);
     };
+    let unfiltered = f.status.is_none()
+        && f.marketplace_address.is_none()
+        && f.owner.is_none()
+        && f.buyer.is_none()
+        && f.contract_address.is_none()
+        && f.token_id.is_none()
+        && f.item_id.is_none();
+    let cap = cap.max(0);
     let mut total = 0;
     for net in nets_of(f.network) {
-        let sql = format!(
-            "SELECT count(*) FROM (SELECT 1 {from} AND o.network = '{}' LIMIT {}) x",
-            net.db_name(),
-            cap.max(0)
-        );
+        let from = format!("{from} AND o.network = '{}'", net.db_name());
+        let sql = if unfiltered {
+            // The open-expiry index can fill a shallow count on its own.
+            // Count unexpired terminal orders only for the remaining cap.
+            format!(
+                "WITH live AS (
+                     SELECT count(*) AS found FROM (
+                         SELECT 1 {from} AND o.status = 'open' LIMIT {cap}
+                     ) open_orders
+                 )
+                 SELECT live.found + (SELECT count(*) FROM (
+                     SELECT 1 {from} AND o.status <> 'open' LIMIT ({cap} - live.found)
+                 ) terminal_orders) FROM live"
+            )
+        } else {
+            format!("SELECT count(*) FROM (SELECT 1 {from} LIMIT {cap}) x")
+        };
         let mut q = sqlx::query_scalar(sqlx::AssertSqlSafe(sql));
         for b in &binds {
             q = q.bind(b);
@@ -1307,13 +1347,13 @@ pub(super) async fn list_orders_for(
         let (rows, total) = legacy_leg(state, f, window, now.timestamp_millis()).await?;
         (rows, total, trades)
     };
-    let total = legacy_total + trades.len() as i64;
+    let total = legacy_total + crate::market::casts::len_i64(trades.len());
     merged.extend(trades);
     sort_merged(&mut merged, f.sort_by);
     let page = merged
         .into_iter()
-        .skip(offset as usize)
-        .take(limit as usize)
+        .skip(crate::market::casts::page(offset))
+        .take(crate::market::casts::page(limit))
         .map(|k| k.order)
         .collect();
     Ok((page, total))
@@ -1499,7 +1539,7 @@ pub async fn open_orders_by_items(
     let mut all: Vec<Keyed> = Vec::new();
     for (contract, mut rows) in per {
         sort_merged(&mut rows, Some(OrderSortBy::Cheapest));
-        rows.truncate(per_contract as usize);
+        rows.truncate(crate::market::casts::page(per_contract));
         all.extend(rows.into_iter().filter(|k| {
             k.order
                 .token_id

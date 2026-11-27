@@ -869,7 +869,10 @@ fn not_modified_since(entities: &[Value], threshold: i64) -> bool {
     entities.iter().all(|entity| {
         entity
             .get("timestamp")
-            .and_then(|t| t.as_i64().or_else(|| t.as_f64().map(|f| f as i64)))
+            .and_then(|t| {
+                t.as_i64()
+                    .or_else(|| t.as_f64().map(super::casts::saturating_i64))
+            })
             .is_some_and(|ts| ts.div_euclid(1000) * 1000 <= threshold)
     })
 }

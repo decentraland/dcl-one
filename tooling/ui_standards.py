@@ -560,7 +560,7 @@ PRIMITIVES_CSS = ROOT / 'apps' / 'ui3' / 'src' / 'atoms' / 'primitives.css'
 FLOOR_PATHS = ('apps/sites/src/features', 'apps/sites/src/pages', 'apps/ui3/src/web', 'apps/ui3/src/explorer/pages',
                'apps/ui3/src/landings', 'library/ui/components', 'library/ui/apps/sites/profile',
                'library/ui/apps/sites/CopyAddress.module.css', 'library/ui/apps/sites/cast',
-               'library/ui/apps/sites/social')
+               'library/ui/apps/sites/social', 'library/ui/apps/sites/invite')
 PROPERTY_DEFINITION = re.compile(r'(?<![\w-])(--[\w-]+)\s*:')
 VAR_USE = re.compile(r'var\(\s*(--[\w-]+)')
 

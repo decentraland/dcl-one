@@ -419,7 +419,7 @@ async fn measure(
     // The projection, the dataset, the database's cursor and the RPC must
     // name one chain before any window is read; the dataset is known
     // before any read.
-    let projection = req.net.chain_id() as u64;
+    let projection = req.net.chain_id_u64();
     if req.reader.chain() != projection {
         out.refused = Some(format!(
             "the dataset {} serves chain {}, the {} {} projection reads chain {projection}",
@@ -452,7 +452,7 @@ async fn measure(
         Ok(row) => out.database_chain = row.flatten(),
     }
     if let Some(c) = out.database_chain
-        && c as u64 != projection
+        && u64::try_from(c).ok() != Some(projection)
     {
         out.refused = Some(format!(
             "the database's {} {} cursor is bound to chain {c}, the projection reads chain {projection}",

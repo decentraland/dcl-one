@@ -1,3 +1,4 @@
+use super::casts::{self, RowCount};
 use super::{
     SharedState,
     chain_walk::{self, ChainIndex, ChainNet, INDEXER_MANA, LogGroup},
@@ -143,7 +144,7 @@ impl ChainIndex for ManaTransfersIndex {
                 .bind(chunk.iter().map(|r| r.recipient.as_str()).collect::<Vec<_>>())
                 .bind(chunk.iter().map(|r| r.amount.as_str()).collect::<Vec<_>>())
                 .bind(chunk.iter().map(|r| r.timestamp).collect::<Vec<_>>())
-                .execute(&mut *conn).await?.rows_affected() as usize;
+                .execute(&mut *conn).await?.rows_usize();
         }
         Ok(written)
     }
@@ -240,8 +241,8 @@ pub async fn history(State(state): State<SharedState>, Query(q): Query<HistoryQu
         .bind(limit + 1).bind(cursor).fetch_all(&mut *tx).await;
     match rows {
         Ok(rows) => {
-            let more = rows.len() > limit as usize;
-            let data: Vec<Value> = rows.iter().take(limit as usize).map(|r| json!({
+            let more = rows.len() > casts::page(limit);
+            let data: Vec<Value> = rows.iter().take(casts::page(limit)).map(|r| json!({
                 "blockNumber":r.get::<i64,_>("block_number"), "logIndex":r.get::<i32,_>("log_index"),
                 "transactionHash":r.get::<String,_>("transaction_hash"), "from":r.get::<String,_>("sender"),
                 "to":r.get::<String,_>("recipient"), "amount":r.get::<String,_>("amount"), "timestamp":r.get::<i64,_>("timestamp")

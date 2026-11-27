@@ -13,7 +13,11 @@ function probeBody(): Uint8Array<ArrayBuffer> {
   return probe;
 }
 
-/** The fixed download the creators item editor times to choose its preview renderer. */
+/**
+ * The fixed download timed to choose a 3D preview renderer, by the creators item editor and by the Shop's previews (item
+ * detail, fitting room, outfits, the home promo). Both read it through `PROBE_URL` in library/web-core/connection-speed.ts:
+ * renaming this route means changing that constant with it.
+ */
 export function loader() {
   return new Response(probeBody(), {
     headers: {

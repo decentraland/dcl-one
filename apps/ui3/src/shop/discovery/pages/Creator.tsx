@@ -5,8 +5,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router";
 
-import { Button } from "@dcl/one-ui";
-import EmptyState from "../../../components/EmptyState";
+import { Button, EmptyState, ShopSkeletonCards } from "@dcl/one-ui";
 import { shortAddress } from "@shop/model/address";
 import { SHOP_BASE } from "../../routes";
 import { fetchCatalogItems, fetchCreatorCollections, type CollectionSummary } from "@shop/discovery/api";
@@ -17,7 +16,6 @@ import FilterBar, { RARITIES, SORTS, type FilterChip } from "../components/Filte
 import Filters, { STATUSES, type FilterStatus } from "../components/Filters";
 import IndexNotice from "../components/IndexNotice";
 import LoadMore from "../components/LoadMore";
-import SkeletonCards from "../components/SkeletonCards";
 import { indexUnavailable, type IndexFreshness } from "@shop/discovery/freshness";
 import { useProfile, useScrollTopOnChange, useSeo, useUrlFilters } from "../hooks";
 import { t } from "@shop/discovery/intl";
@@ -118,7 +116,7 @@ export default function Creator() {
   });
   const unavailable = indexUnavailable(grid.error) ?? indexUnavailable(collections.error);
   const illustration = (src: string) => <img className="shop-creator__empty-illus" src={src} alt="" />;
-  const exploreCta = { label: t("assets.empty.cta"), onClick: () => navigate(`${SHOP_BASE}/items`) };
+  const exploreCta = <Button size="md" onClick={() => navigate(`${SHOP_BASE}/items`)}>{t("assets.empty.cta")}</Button>;
 
   if (!address) return null;
 
@@ -175,22 +173,24 @@ export default function Creator() {
               </div>
             ) : !collections.isLoading && collections.items.length === 0 && !unavailable ? (
               <EmptyState
+                appearance="shop"
+                titleAs="h2"
                 data-testid="creator-collections-empty"
                 icon={illustration(collectionsEmptyIllustration)}
                 title={t("creator.collectionsEmptyTitle")}
                 subtitle={t("creator.collectionsEmpty")}
-                actions={[exploreCta]}
+                actions={exploreCta}
               />
             ) : (
               <div className="shop-grid" data-variant="collections">
                 {collections.isLoading ? (
-                  <SkeletonCards count={9} />
+                  <ShopSkeletonCards count={9} />
                 ) : (
                   <>
                     {collections.items.map((c) => (
                       <CollectionCard key={c.contractAddress} collection={c} itemCount={c.itemCount} />
                     ))}
-                    {collections.isFetchingNextPage ? <SkeletonCards count={6} /> : null}
+                    {collections.isFetchingNextPage ? <ShopSkeletonCards count={6} /> : null}
                   </>
                 )}
               </div>
@@ -209,26 +209,28 @@ export default function Creator() {
                 </Button>
               </div>
             ) : view === "no-creations" ? (
-              <EmptyState data-testid="creator-empty" icon={illustration(itemsEmptyIllustration)} title={t("creator.emptyNoCreationsTitle")} subtitle={t("creator.emptyNoCreations")} actions={[exploreCta]} />
+              <EmptyState appearance="shop" titleAs="h2" data-testid="creator-empty" icon={illustration(itemsEmptyIllustration)} title={t("creator.emptyNoCreationsTitle")} subtitle={t("creator.emptyNoCreations")} actions={exploreCta} />
             ) : view === "filters" ? (
               <EmptyState
+                appearance="shop"
+                titleAs="h2"
                 data-testid="creator-empty-filters"
                 icon={illustration(searchEmptyIllustration)}
                 title={t("creator.emptyFiltersTitle")}
                 subtitle={t("creator.emptyFilters", { count: baseline.data ?? 0 })}
-                actions={[{ label: t("filterBar.clearAll"), onClick: clearFilters }]}
+                actions={<Button size="md" onClick={clearFilters}>{t("filterBar.clearAll")}</Button>}
               />
             ) : unavailable ? null : (
               <>
                 <div className="shop-grid" data-testid="grid">
                   {view === "skeletons" ? (
-                    <SkeletonCards count={15} />
+                    <ShopSkeletonCards count={15} />
                   ) : (
                     <>
                       {grid.items.map((item, i) => (
                         <AssetCard key={item.id} item={item} mode={isForSale(item) ? "shop" : "view"} source="creator" position={i} creatorName={profile?.name || null} />
                       ))}
-                      {grid.isFetchingNextPage ? <SkeletonCards count={6} /> : null}
+                      {grid.isFetchingNextPage ? <ShopSkeletonCards count={6} /> : null}
                     </>
                   )}
                 </div>
