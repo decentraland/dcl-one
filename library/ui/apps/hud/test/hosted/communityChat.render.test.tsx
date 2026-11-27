@@ -184,6 +184,15 @@ describe('community chat panel', () => {
     await userEvent.unhover(options)
     expect(screen.getByRole('menu')).toBeInTheDocument()
     expect(vi.mocked(chat.setActive)).toHaveBeenLastCalledWith(true)
+    // a gamepad's Cancel closes it with no DOM event at all
+    act(() => {
+      dispatchCancelLayer()
+    })
+    expect(screen.queryByRole('menu')).toBeNull()
+    expect(vi.mocked(chat.setActive)).toHaveBeenLastCalledWith(false)
+    await userEvent.click(options)
+    await userEvent.unhover(options)
+    expect(vi.mocked(chat.setActive)).toHaveBeenLastCalledWith(true)
     await userEvent.click(document.body)
     expect(screen.queryByRole('menu')).toBeNull()
     await waitFor(() => expect(vi.mocked(chat.setActive)).toHaveBeenLastCalledWith(false))

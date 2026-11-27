@@ -285,6 +285,29 @@ describe('Submenu', () => {
     expect(off).toHaveBeenCalledTimes(1)
   })
 
+  it("closes from the host's closer without taking the focus when the pointer opened it", () => {
+    let closer: (() => void) | undefined
+    render(
+      <Submenu
+        label="Invite"
+        whileOpen={(close) => {
+          closer = close
+          return () => {}
+        }}
+      >
+        {list}
+      </Submenu>
+    )
+    const row = screen.getByRole('menuitem', { name: 'Invite' })
+    fireEvent.mouseEnter(row.parentElement as HTMLElement)
+    act(() => closer?.())
+    expect(row).toHaveAttribute('aria-expanded', 'false')
+    expect(row).not.toHaveFocus()
+    fireEvent.click(row, { detail: 1 })
+    act(() => closer?.())
+    expect(row).not.toHaveFocus()
+  })
+
   it('opens and closes without a host closer', () => {
     render(<Submenu label="Invite" icon={<i data-testid="icon" />} className="mine">{list}</Submenu>)
     const row = screen.getByRole('menuitem', { name: 'Invite' })

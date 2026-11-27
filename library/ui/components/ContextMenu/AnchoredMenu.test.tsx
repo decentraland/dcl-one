@@ -25,44 +25,26 @@ describe('anchoredMenuPosition', () => {
 
 describe('AnchoredMenu', () => {
   const items = [{ label: 'Share' }, { kind: 'separator' as const }, { label: 'Delete', danger: true }]
-  // jsdom tracks no input modality: this sets whether an element shows the keyboard's focus (`:focus-visible`)
-  const showsFocusRing = (element: Element, shows: boolean) => {
-    const matches = element.matches.bind(element)
-    return vi
-      .spyOn(element, 'matches')
-      .mockImplementation((selector) => (selector === ':focus-visible' ? shows : matches(selector)))
-  }
 
-  it('is portaled to the body and named', () => {
+  it('is portaled to the body, named, and focuses its first row', () => {
     const view = render(<AnchoredMenu anchor={{ x: 10, y: 40 }} items={items} onClose={() => {}} aria-label="Photo options" />)
     const menu = screen.getByRole('menu', { name: 'Photo options' })
     expect(view.container).not.toContainElement(menu)
-  })
-
-  it('focuses its first row from an opener that shows the keyboard focus, as after Enter', () => {
-    render(<button type="button">opener</button>)
-    const opener = screen.getByRole('button', { name: 'opener' })
-    const ring = showsFocusRing(opener, true)
-    opener.focus()
-    render(<AnchoredMenu anchor={{ x: 0, y: 0 }} items={items} onClose={() => {}} ignore={opener} />)
     expect(screen.getByRole('menuitem', { name: 'Share' })).toHaveFocus()
-    ring.mockRestore()
   })
 
-  it('takes no focus from an opener the pointer pressed, nor without one, so a later key press rings no row', () => {
+  it('opened with the pointer, takes no focus and gives none back as it closes, for a later key press to ring', () => {
     render(<button type="button">opener</button>)
     const opener = screen.getByRole('button', { name: 'opener' })
-    const ring = showsFocusRing(opener, false)
-    opener.focus()
-    const first = render(<AnchoredMenu anchor={{ x: 0, y: 0 }} items={items} onClose={() => {}} ignore={opener} />)
-    expect(opener).toHaveFocus()
-    first.unmount()
-    opener.blur()
-    const bodyRing = showsFocusRing(document.body, false)
-    render(<AnchoredMenu anchor={{ x: 0, y: 0 }} items={items} onClose={() => {}} />)
+    const view = render(
+      <AnchoredMenu anchor={{ x: 0, y: 0 }} items={items} onClose={() => {}} ignore={opener} openedWith="pointer" />
+    )
     expect(document.body).toHaveFocus()
-    bodyRing.mockRestore()
-    ring.mockRestore()
+    // A browser focuses an entry the pointer presses; the menu closing under it leaves the focus nowhere.
+    screen.getByRole('menuitem', { name: 'Share' }).focus()
+    view.unmount()
+    expect(opener).not.toHaveFocus()
+    expect(document.body).toHaveFocus()
   })
 
   it('draws nothing, takes no focus and hears no press while closed', () => {
@@ -127,7 +109,6 @@ describe('AnchoredMenu', () => {
     render(<AnchoredMenu anchor={{ x: 0, y: 0 }} onClose={() => {}} items={items} />)
     const share = screen.getByRole('menuitem', { name: 'Share' })
     const remove = screen.getByRole('menuitem', { name: 'Delete' })
-    share.focus()
     fireEvent.keyDown(share, { key: 'ArrowDown' })
     expect(remove).toHaveFocus()
     fireEvent.keyDown(remove, { key: 'ArrowDown' })

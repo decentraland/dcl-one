@@ -1,26 +1,45 @@
-// The share menu of a place or an event: post on X, or copy its link.
+// The share menu of a place or an event: post on X, or copy its link. Opened from the keyboard its first item
+// takes the focus; opened with the pointer, none. While open it is a cancel layer, so the engine's Cancel closes it
+// wherever the focus is.
 
-import { useEffect, useRef } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import type { ShareLinks } from '@explorer-core/features/map/shareLinks'
+import { registerCancelLayer } from '@explorer-core/lib/cancelLayers'
 import { ContextMenu, showToast } from '../../../design'
 import { PANEL_ART } from '../mapArt'
 import styles from './MapPanel.module.css'
 import { MaskIcon } from '@dcl/one-ui'
+import { pressedWith, releasePointerFocus, type PressedWith } from '../../../lib/pressedWith'
 
-export function ShareMenu({ links, onClose }: { links: ShareLinks; onClose: () => void }): React.JSX.Element {
+/** A Share button's menu: how the button opened it, or null while it is closed. A pointer press leaves the button
+ *  unfocused, as it leaves the menu. */
+export function useShareMenu(): { openedWith: PressedWith | null; press: (event: React.MouseEvent<HTMLElement>) => void; close: () => void } {
+  const [openedWith, setOpenedWith] = useState<PressedWith | null>(null)
+  const press = useCallback((event: React.MouseEvent<HTMLElement>): void => {
+    releasePointerFocus(event)
+    setOpenedWith(pressedWith(event))
+  }, [])
+  const close = useCallback((): void => setOpenedWith(null), [])
+  return { openedWith, press, close }
+}
+
+export function ShareMenu({ links, openedWith, onClose }: { links: ShareLinks; openedWith: PressedWith; onClose: () => void }): React.JSX.Element {
   const ref = useRef<HTMLDivElement>(null)
   // the latest `onClose`, so a parent drawing again does not take the focus back to the first item
   const close = useRef(onClose)
   close.current = onClose
+  const fromKeyboard = useRef(openedWith === 'keyboard')
   useEffect(() => {
-    // the first item takes the focus only from a Share button the keyboard pressed (it shows the
-    // keyboard's focus): opened with the pointer, the menu takes none for a later key press to ring
-    if (document.activeElement?.matches(':focus-visible')) ref.current?.querySelector('button')?.focus()
+    if (fromKeyboard.current) ref.current?.querySelector('button')?.focus()
     const onDown = (e: PointerEvent): void => {
       if (ref.current != null && !ref.current.contains(e.target as Node)) close.current()
     }
     document.addEventListener('pointerdown', onDown, true)
-    return () => document.removeEventListener('pointerdown', onDown, true)
+    const off = registerCancelLayer(() => close.current())
+    return () => {
+      document.removeEventListener('pointerdown', onDown, true)
+      off()
+    }
   }, [])
   return (
     <div

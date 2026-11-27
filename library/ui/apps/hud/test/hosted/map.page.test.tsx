@@ -9,6 +9,7 @@ import type { EventData } from '@explorer-core/engine/protocol'
 import { mapLayers } from '@explorer-core/features/map/mapLayersStore'
 import { mapPins } from '@explorer-core/features/map/mapPins'
 import { navigation } from '@explorer-core/features/map/navigation'
+import { dispatchCancelLayer } from '@explorer-core/lib/cancelLayers'
 import { eventOf, placeOf } from '@explorer-core/test/mapFixtures'
 import { MapPage } from '../../features/map/MapPage'
 import { MARKER_ART } from '../../features/map/mapArt'
@@ -541,25 +542,26 @@ describe('map place panel', () => {
     vi.unstubAllGlobals()
   })
 
-  it('the share menu takes the focus only from a Share button the keyboard pressed', async () => {
+  it('the share menu takes the focus only from the keyboard, and Cancel closes it however it opened', async () => {
     serve({ search: [CLUB] })
     renderMap()
     await search('club')
     await userEvent.click(await within(panel()).findByRole('button', { name: /Sugar Club/ }))
     const share = await within(panel()).findByRole('button', { name: 'Share' })
-    // jsdom tracks no input modality: this sets whether the button shows the keyboard's focus (`:focus-visible`)
-    const matches = share.matches.bind(share)
-    let ring = false
-    vi.spyOn(share, 'matches').mockImplementation((selector) => (selector === ':focus-visible' ? ring : matches(selector)))
     await userEvent.click(share)
-    const menu = within(panel()).getByRole('menu')
-    expect(menu).not.toContainElement(document.activeElement as HTMLElement)
-    await userEvent.click(document.body)
+    expect(within(panel()).getByRole('menu')).toBeInTheDocument()
+    expect(document.body).toHaveFocus()
+    act(() => {
+      dispatchCancelLayer()
+    })
     expect(within(panel()).queryByRole('menu')).not.toBeInTheDocument()
-    ring = true
     share.focus()
     await userEvent.keyboard('{Enter}')
     expect(within(within(panel()).getByRole('menu')).getByRole('menuitem', { name: 'Share on X' })).toHaveFocus()
+    act(() => {
+      dispatchCancelLayer()
+    })
+    expect(within(panel()).queryByRole('menu')).not.toBeInTheDocument()
   })
 
   it("lists the place's photos with their count, and says so when there are none", async () => {

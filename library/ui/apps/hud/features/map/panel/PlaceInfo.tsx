@@ -24,7 +24,7 @@ import { eventSchedule, eventShareLinks, placeShareLinks } from '@explorer-core/
 import tipIcon from '../../../assets/donate/tip.png'
 import { useDonate } from '../../donate/useDonate'
 import { CAT_ICONS, PANEL_ART } from '../mapArt'
-import { ShareMenu } from './ShareMenu'
+import { ShareMenu, useShareMenu } from './ShareMenu'
 import { TextWithLinks } from './TextWithLinks'
 import styles from './MapPanel.module.css'
 import { MaskIcon } from '@dcl/one-ui'
@@ -54,7 +54,7 @@ function ActionButton({ label, on, icon, iconOn, disabled, size, flipped, onClic
 
 function EventRow({ event, placeUsers, referrer, onOpen }: { event: EventData; placeUsers: number; referrer: string | undefined; onOpen: () => void }): React.JSX.Element {
   const [attending, setAttending] = useState(event.attending === true)
-  const [sharing, setSharing] = useState(false)
+  const share = useShareMenu()
   const reminds = useRef(0)
   const remind = (): void => {
     const run = ++reminds.current
@@ -91,10 +91,10 @@ function EventRow({ event, placeUsers, referrer, onOpen }: { event: EventData; p
             remind me
           </button>
           <span className={styles.shareAnchor}>
-            <button type="button" className={styles.eventShare} aria-label="Share" aria-haspopup="menu" aria-expanded={sharing} onClick={() => setSharing(true)}>
+            <button type="button" className={styles.eventShare} aria-label="Share" aria-haspopup="menu" aria-expanded={share.openedWith != null} onClick={share.press}>
               <MaskIcon src={PANEL_ART.share} size={22} />
             </button>
-            {sharing && <ShareMenu links={eventShareLinks(event, referrer)} onClose={() => setSharing(false)} />}
+            {share.openedWith != null && <ShareMenu links={eventShareLinks(event, referrer)} openedWith={share.openedWith} onClose={share.close} />}
           </span>
         </span>
       </span>
@@ -217,7 +217,7 @@ export function PlaceInfo({ view, referrer, isHome, navigating, onPlaceChange, o
   const { place, origin, liveEvent } = view
   const [tab, setTab] = useState<Tab>('overview')
   const [photoCount, setPhotoCount] = useState<number | null>(null)
-  const [sharing, setSharing] = useState(false)
+  const share = useShareMenu()
   const [imageFailed, setImageFailed] = useState(false)
   // the latest place, for a write that lands after another has changed it
   const current = useRef(place)
@@ -342,10 +342,10 @@ export function PlaceInfo({ view, referrer, isHome, navigating, onPlaceChange, o
             </button>
           )}
           <span className={styles.shareAnchor}>
-            <button type="button" className={styles.action} aria-label="Share" aria-haspopup="menu" aria-expanded={sharing} onClick={() => setSharing(true)}>
+            <button type="button" className={styles.action} aria-label="Share" aria-haspopup="menu" aria-expanded={share.openedWith != null} onClick={share.press}>
               <MaskIcon src={PANEL_ART.share} size={24} />
             </button>
-            {sharing && <ShareMenu links={placeShareLinks(place, referrer)} onClose={() => setSharing(false)} />}
+            {share.openedWith != null && <ShareMenu links={placeShareLinks(place, referrer)} openedWith={share.openedWith} onClose={share.close} />}
           </span>
         </div>
         <div className={styles.tabs} role="tablist">

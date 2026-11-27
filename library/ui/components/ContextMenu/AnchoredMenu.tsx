@@ -44,6 +44,12 @@ export interface AnchoredMenuProps {
   /** The scale the opener is drawn at. The stylesheet reads the same number from `--ui-scale`. */
   scale?: number
   whileOpen?: MenuWhileOpen
+  /**
+   * How the menu was opened. From the keyboard (the default), its first entry takes the focus, which returns to the
+   * opener as the menu closes. From the pointer, it takes and gives back none: the Explorer HUD passes it, where a
+   * later key press is the game's and Chrome would ring the focused entry.
+   */
+  openedWith?: 'keyboard' | 'pointer'
   'aria-label'?: string
 }
 
@@ -59,9 +65,12 @@ function OpenAnchoredMenu({
   ignore,
   scale: given,
   whileOpen,
+  openedWith = 'keyboard',
   'aria-label': ariaLabel
 }: Omit<AnchoredMenuProps, 'open'>) {
   const root = useRef<HTMLDivElement>(null)
+  // How it opened does not change while it is open.
+  const fromKeyboard = useRef(openedWith === 'keyboard')
   const closed = useRef(onClose)
   const ignored = useRef(ignore)
   const opened = useRef(whileOpen)
@@ -94,13 +103,13 @@ function OpenAnchoredMenu({
     }
   }, [])
 
-  // The first entry takes the focus only from an opener that shows the keyboard's (`:focus-visible`), as Submenu
-  // focuses its list only on a keyboard click: opened with the pointer, the menu takes none for a later key press to
-  // ring. The focus returns to the opener only if the press that closed the menu did not put it somewhere else.
+  // Opened from the keyboard, the focus returns to the opener only if the press that closed the menu did not put it
+  // somewhere else.
   useEffect(() => {
+    if (!fromKeyboard.current) return
     const node = root.current
     const opener = ignored.current ?? document.activeElement
-    if (opener instanceof HTMLElement && opener.matches(':focus-visible')) focusables(node)[0]?.focus()
+    focusables(node)[0]?.focus()
     return () => {
       const active = document.activeElement
       const lost = active == null || active === document.body || node?.contains(active) === true

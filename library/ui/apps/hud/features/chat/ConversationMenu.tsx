@@ -4,12 +4,13 @@
 // the caller's entries under a rule. The menu opens over the title bar, from the kebab's left,
 // in a layer of its own: the chat panel clips what it paints.
 
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { registerCancelLayer } from '@explorer-core/lib/cancelLayers'
 import { autoTranslates, setAutoTranslate } from '@explorer-core/features/chat/translation'
 import { GeneralLeftArrow, MenusDelete, MenusNotifications, MenusTranslate } from '@dcl/one-ui'
 import { ContextMenu, type ContextMenuItem } from '../../design'
+import { pressedWith, releasePointerFocus } from '../../lib/pressedWith'
 import { KebabDots } from './ChatIcons'
 import { PING_MODES, clearPingMode, setPingMode, usePingPrefs } from './ping'
 import { useTranslationPrefs } from './useTranslation'
@@ -33,6 +34,10 @@ export const CHAT_MENU_WIDTH = 260
 /** Marks the menu's layer, so the chat knows that focus moving into it has not left the chat. */
 export const MENU_LAYER = 'data-chat-menu'
 
+/** Told whether one of the chat's menus is open: an open menu keeps the chat active, though one the
+ *  pointer opened holds no focus. */
+export const ChatMenuOpen = createContext<(open: boolean) => void>(() => {})
+
 /** A menu anchored to the button that opens it, painted in its own layer (the chat panel clips
  *  what it paints). `anchor` places the menu from the button's rectangle and the HUD's scale; the
  *  open menu follows the button when the window or the HUD's scale changes. A press outside or
@@ -55,6 +60,7 @@ export function useAnchoredMenu(anchor: (button: DOMRect, scale: number) => { le
   const button = useRef<HTMLButtonElement>(null)
   const menu = useRef<HTMLDivElement>(null)
   const byKeyboard = useRef(false)
+  const reportOpen = useContext(ChatMenuOpen)
   const anchorRef = useRef(anchor)
   anchorRef.current = anchor
   const dismissRef = useRef(onDismiss)
@@ -72,9 +78,9 @@ export function useAnchoredMenu(anchor: (button: DOMRect, scale: number) => { le
     setAt(r != null ? anchorRef.current(r, getHudScale()) : { left: 0, top: 0 })
   }, [])
   const toggle = (event: React.MouseEvent<HTMLElement>): void => {
-    if (event.detail > 0) event.currentTarget.blur()
+    releasePointerFocus(event)
     if (open) return close()
-    byKeyboard.current = event.detail === 0
+    byKeyboard.current = pressedWith(event) === 'keyboard'
     place()
     setOpen(true)
   }
@@ -87,6 +93,11 @@ export function useAnchoredMenu(anchor: (button: DOMRect, scale: number) => { le
       off()
     }
   }, [open, place])
+  useEffect(() => {
+    if (!open) return
+    reportOpen(true)
+    return () => reportOpen(false)
+  }, [open, reportOpen])
   // keyboard focus moves into the menu when it opens
   useEffect(() => {
     if (!open || !byKeyboard.current) return

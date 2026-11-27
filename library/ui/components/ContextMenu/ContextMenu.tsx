@@ -249,6 +249,8 @@ export function Submenu({ label, icon, children, className, whileOpen }: Submenu
   const [focusFirst, setFocusFirst] = useState(false)
   const flyout = useRef<HTMLDivElement>(null)
   const row = useRef<HTMLButtonElement>(null)
+  // Whether the keyboard opened the list: only then does closing it return the focus to the row.
+  const fromKeyboard = useRef(false)
   const listId = useId()
   const opened = useRef(whileOpen)
   useEffect(() => {
@@ -271,18 +273,21 @@ export function Submenu({ label, icon, children, className, whileOpen }: Submenu
       setFocusFirst(false)
     }
   }, [open, focusFirst])
-  // The host's close (Cancel) shuts the list first and returns the focus to the row.
+  // The host's close (Cancel) shuts the list first, and returns the focus to the row if the keyboard opened it.
   useEffect(() => {
     if (!open) return
     return opened.current?.(() => {
       setOpen(false)
-      row.current?.focus()
+      if (fromKeyboard.current) row.current?.focus()
     })
   }, [open])
   return (
     <div
       className={styles.subWrap}
-      onMouseEnter={() => setOpen(true)}
+      onMouseEnter={() => {
+        if (!open) fromKeyboard.current = false
+        setOpen(true)
+      }}
       onMouseLeave={() => setOpen(false)}
       onBlur={(event) => {
         if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setOpen(false)
@@ -298,7 +303,8 @@ export function Submenu({ label, icon, children, className, whileOpen }: Submenu
         aria-controls={open ? listId : undefined}
         // A click from the keyboard (detail 0) also focuses the list; a pointer click drops the row's focus.
         onClick={(event) => {
-          if (event.detail === 0) setFocusFirst(true)
+          fromKeyboard.current = event.detail === 0
+          if (fromKeyboard.current) setFocusFirst(true)
           else event.currentTarget.blur()
           setOpen(true)
         }}

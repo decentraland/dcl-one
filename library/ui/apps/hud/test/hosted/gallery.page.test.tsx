@@ -351,9 +351,6 @@ describe('GalleryPage', () => {
       renderPage(gallery(photos))
       await loadThumbnails()
       const trigger = screen.getAllByRole('button', { name: 'Photo options' })[0]
-      // jsdom tracks no input modality: after Enter the ⋮ shows the keyboard's focus (`:focus-visible`)
-      const matches = trigger.matches.bind(trigger)
-      const ring = vi.spyOn(trigger, 'matches').mockImplementation((selector) => selector === ':focus-visible' || matches(selector))
       trigger.focus()
       await userEvent.keyboard('{Enter}')
       expect(screen.getByRole('menu', { name: 'Photo options' })).toContainElement(document.activeElement as HTMLElement)
@@ -361,7 +358,6 @@ describe('GalleryPage', () => {
         dispatchCancelLayer()
       })
       expect(trigger).toHaveFocus()
-      ring.mockRestore()
     })
 
     it('Cancel closes the menu', async () => {

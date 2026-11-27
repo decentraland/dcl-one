@@ -4,6 +4,7 @@
 // strip is keyboard-operable (the panels it heads are not `tabpanel`s; the strip only owns selection).
 
 import { CountBadge, Tabs as SharedTab, TabsBar } from '@dcl/one-ui'
+import { releasePointerFocus } from '../lib/pressedWith'
 
 export interface TabItem<T extends string = string> {
   id: T
@@ -50,9 +51,8 @@ export function Tabs<T extends string>({
           selected={it.id === value}
           disabled={it.disabled}
           onClick={(event) => {
-            // A pointer click (`detail` 1 or more) leaves no focus on the tab: the next key press is the game's, and
-            // Chrome would ring the tab on it. Enter, Space and the arrows (`detail` 0) keep the keyboard's focus.
-            if (event.detail > 0) event.currentTarget.blur()
+            // Enter, Space and the arrows keep the keyboard's focus on the tab; a pointer click keeps none.
+            releasePointerFocus(event)
             onChange(it.id)
           }}
           label={

@@ -81,11 +81,6 @@ describe('ReelGrid virtualization', () => {
 
 describe('the photo menu', () => {
   afterEach(() => vi.restoreAllMocks())
-  // jsdom tracks no input modality: this sets whether the ⋮ shows the keyboard's focus (`:focus-visible`), as after Enter
-  const showsFocusRing = (element: Element, shows: boolean): void => {
-    const matches = element.matches.bind(element)
-    vi.spyOn(element, 'matches').mockImplementation((selector) => (selector === ':focus-visible' ? shows : matches(selector)))
-  }
 
   it('opened from the keyboard, the photo menu focuses the Set as Public switch, and the arrows leave it and come back', async () => {
     vi.spyOn(HTMLElement.prototype, 'clientHeight', 'get').mockReturnValue(800)
@@ -93,7 +88,6 @@ describe('the photo menu', () => {
     render(<ReelGrid photos={reel(3)} layout={LAYOUT} menu={{ showDelete: true, onSetPublic: vi.fn(async () => true) }} onOpen={vi.fn()} onVisibleIndex={vi.fn()} />)
     for (const b of screen.getAllByRole('button', { name: 'Open photo' })) fireEvent.load(b.querySelector('img') as HTMLImageElement)
     const trigger = screen.getAllByRole('button', { name: 'Photo options' })[0]
-    showsFocusRing(trigger, true)
     trigger.focus()
     await userEvent.keyboard('{Enter}')
     const control = screen.getByRole('menuitemcheckbox', { name: 'Set as Public' }).querySelector('input[role="switch"]') as HTMLInputElement
@@ -104,16 +98,15 @@ describe('the photo menu', () => {
     expect(control).toHaveFocus()
   })
 
-  it('opened with the pointer, the photo menu takes no focus for a later key press to ring', async () => {
+  it('opened with the pointer, the photo menu and its ⋮ keep no focus for a later key press to ring', async () => {
     vi.spyOn(HTMLElement.prototype, 'clientHeight', 'get').mockReturnValue(800)
     vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(1900)
     render(<ReelGrid photos={reel(3)} layout={LAYOUT} menu={{ showDelete: true, onSetPublic: vi.fn(async () => true) }} onOpen={vi.fn()} onVisibleIndex={vi.fn()} />)
     for (const b of screen.getAllByRole('button', { name: 'Open photo' })) fireEvent.load(b.querySelector('img') as HTMLImageElement)
     const trigger = screen.getAllByRole('button', { name: 'Photo options' })[0]
-    showsFocusRing(trigger, false)
     await userEvent.click(trigger)
-    const menu = screen.getByRole('menu', { name: 'Photo options' })
-    expect(menu).not.toContainElement(document.activeElement as HTMLElement)
+    expect(screen.getByRole('menu', { name: 'Photo options' })).toBeInTheDocument()
+    expect(document.body).toHaveFocus()
   })
 
   it("shows the photo's value again after the writes it asked for are refused", async () => {
