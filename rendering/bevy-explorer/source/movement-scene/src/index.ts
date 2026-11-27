@@ -341,6 +341,8 @@ var glideTick = 0;
 // Set when a glide ends by touching down, so its landing plays the glide landing (GLIDE_LANDING).
 // Consumed in stateAnimation.
 var landingFromGlide = false;
+// Set with landingFromGlide when the touchdown comes while the glider's Start plays.
+var landingFromGlideStart = false;
 // Glide pose clip published last frame (forward/idle), to detect a swap mid-glide.
 var prevGlideSrc: string | undefined = undefined;
 
@@ -355,6 +357,19 @@ function clipFinished(src: string): boolean {
 function clipReached(src: string, fraction: number): boolean {
   const s = activeAnimationState;
   return s !== undefined && s.src === src && (s.loopCount >= 1 || s.playbackTime >= fraction * s.duration);
+}
+
+// True on the tick the state's clip, started `from` (a fraction of its `length`) into it, crosses `exit` (or exit + k: the
+// position recurs each cycle) once the state's blend in is over. No exit is taken while a blend runs, nor on the tick it
+// ends, so an exit reached inside the blend waits for the clip's next cycle (the jump's Start, entered at 0.33 of its
+// length, reaches its exit inside its own blend and passes to Up a cycle later).
+function exitReached(from: number, length: number, exit: number): boolean {
+  const t = time - animFrom + 1e-6;
+  const before = t - tickTime;
+  if (animTick === tick || before < (animBlend ?? 0)) return false;
+  const a = from + before / length - exit;
+  const b = from + t / length - exit;
+  return b >= 0 && Math.floor(b) > Math.floor(a);
 }
 
 // The jump-chain clip tier nearest the movement blend: the sets sit at blends 1 (idle), 2 (jog) and 3 (run), the fall
@@ -397,13 +412,13 @@ function enterState(state: AnimState, blend?: number, offset?: number) {
   if (state !== 'HardLanding') hardLanding = 'none';
 }
 
-// Touchdown from an airborne state: a stunning landing from the long fall plays the hard landing, any other the tier's
-// End.
-function land(blend: number, offset = 0) {
+// Touchdown from an airborne state: a stunning landing plays the hard landing, blending in over `hardBlend`, from the
+// states that have one (the long fall, the glider's Start); any other landing plays the tier's End.
+function land(blend: number, offset = 0, hardBlend?: number) {
   // the model may count the touchdown a frame after this one: landingStuns() tells it before
   const stun = stunned() || landingStuns();
-  if (stun && animState === 'LongFall') {
-    enterState('HardLanding', HARD_LANDING_ENTER_BLEND);
+  if (stun && hardBlend !== undefined) {
+    enterState('HardLanding', hardBlend);
     hardLanding = 'enter';
     prevHardLanding = 'none';
   } else {
@@ -486,10 +501,12 @@ function stateAnimation(
     // from the long fall), a glide (not a stow) on the glide landing, which closes the glider
     if (airborne) enterState('Down', GLIDE_FALL_BLEND, 0);
     else {
-      land(LAND_FROM_AIR_JUMP_BLEND);
-      glideLanding = landingFromGlide;
+      // a stunning touchdown while the glider still opens (Start) is a hard landing
+      land(LAND_FROM_AIR_JUMP_BLEND, 0, landingFromGlideStart ? LAND_FROM_AIR_JUMP_BLEND : undefined);
+      glideLanding = landingFromGlide && hardLanding === 'none';
     }
     landingFromGlide = false;
+    landingFromGlideStart = false;
   } else if (jumpTrigger && jumps > 1) {
     enterState('DoubleJump', DOUBLE_JUMP_BLEND, 0);
     const clips = DOUBLE_JUMP[animTier];
@@ -507,7 +524,7 @@ function stateAnimation(
         }
         break;
       case 'Jump':
-        if (JUMP_START_FROM + t / CLIP_LENGTH[set.start] >= JUMP_START_EXIT) enterState('Up', animBlend);
+        if (exitReached(JUMP_START_FROM, CLIP_LENGTH[set.start], JUMP_START_EXIT)) enterState('Up', animBlend);
         else if (!airborne) land(LAND_FROM_JUMP_BLEND_OF * CLIP_LENGTH[set.start], LAND_FROM_JUMP_FROM);
         break;
       case 'Up':
@@ -515,7 +532,7 @@ function stateAnimation(
         break;
       case 'UpToDown':
         if (!airborne) land(LAND_FROM_JUMP_BLEND_OF * CLIP_LENGTH[set.mid], LAND_FROM_JUMP_FROM);
-        else if (t / CLIP_LENGTH[set.mid] >= JUMP_MID_EXIT) {
+        else if (exitReached(0, CLIP_LENGTH[set.mid], JUMP_MID_EXIT)) {
           enterState('Down', JUMP_FALL_BLEND_OF * CLIP_LENGTH[set.mid], 0);
         }
         break;
@@ -526,7 +543,11 @@ function stateAnimation(
         }
         break;
       case 'LongFall':
-        if (!airborne) land(LAND_FROM_FALL_BLEND_OF * CLIP_LENGTH[CLIP_LONG_FALL]);
+        // a touchdown while the long fall still blends in lands as from Down, the state it blends from
+        if (!airborne) {
+          if (t - tickTime < (animBlend ?? 0)) enterState('Grounded', LAND_FROM_FALL_BLEND_OF * CLIP_LENGTH[set.fall], 0);
+          else land(LAND_FROM_FALL_BLEND_OF * CLIP_LENGTH[CLIP_LONG_FALL], 0, HARD_LANDING_ENTER_BLEND);
+        }
         else if (velocity.y >= LONG_FALLING_SPEED) enterState('Down', LONG_FALL_END_BLEND, 0);
         break;
       case 'DoubleJump':
@@ -534,11 +555,11 @@ function stateAnimation(
         else if (clipReached(doubleJumpClip, DOUBLE_JUMP_EXIT)) enterState('Down', settings.transAir, 0);
         break;
       case 'Grounded': {
-        // locomotion once the entry blend is over and the avatar moves, or from LAND_EXIT of End
+        // locomotion on the tick after the entry blend is over if the avatar moves, or from LAND_EXIT of End
         const end = CLIP_LENGTH[set.end];
-        if (t >= (animBlend ?? 0) && moveBlend > LAND_MOVE_BLEND) {
+        if (t - tickTime >= (animBlend ?? 0) && moveBlend > LAND_MOVE_BLEND) {
           enterState('Movement', LAND_MOVE_BLEND_OF * end, LAND_MOVE_FROM);
-        } else if ((animOffset ?? 0) + t / end >= LAND_EXIT) enterState('Movement', LAND_EXIT_BLEND_OF * end);
+        } else if (exitReached(animOffset ?? 0, end, LAND_EXIT)) enterState('Movement', LAND_EXIT_BLEND_OF * end);
         break;
       }
     }
@@ -586,7 +607,7 @@ function hardLandingAnimation(): MovementAnimation | null {
     speed: exit ? HARD_LANDING_EXIT_SPEED : 1,
     loop: hardLanding === 'loop',
     idle: true,
-    transitionSeconds: hardLanding === 'enter' ? HARD_LANDING_ENTER_BLEND : exit ? HARD_LANDING_EXIT_BLEND : HARD_LANDING_LOOP_BLEND,
+    transitionSeconds: hardLanding === 'enter' ? animBlend ?? HARD_LANDING_ENTER_BLEND : exit ? HARD_LANDING_EXIT_BLEND : HARD_LANDING_LOOP_BLEND,
     playbackTime: changed ? 0 : undefined,
     sounds: [],
   };
@@ -622,8 +643,9 @@ function selectAnimation(): MovementAnimation {
     if (glidePhase === 'deploy' || glidePhase === 'glide') {
       if (grounded) {
         // Landed while gliding: the glide landing closes the glider (close embedded).
-        glidePhase = 'none';
         landingFromGlide = wasJumpingOrFalling;
+        landingFromGlideStart = landingFromGlide && glidePhase === 'deploy';
+        glidePhase = 'none';
       } else {
         glidePhase = 'stow';
         glideFrom = time;
