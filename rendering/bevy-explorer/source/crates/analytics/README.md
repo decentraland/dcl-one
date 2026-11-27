@@ -76,17 +76,20 @@ web crash report carries `feature_flags`, `feature_flags_override` and `settings
 The engine sends `Settings Snapshot` (`settings_snapshot.rs`) at startup (`reason: startup`) and
 again 5 s after the settings stop changing, when they differ from the last one sent
 (`reason: changed`). Adoption counts use the one `startup` event per session; the latest event is
-the session's state. `changed` holds the settings whose value differs from their default, keyed by the
-setting's name, and `changed_count` the number of entries in it (0 and an empty `changed` when
-nothing differs, so adoption has a denominator). Every registered setting is reported except the
-ones in `EXCLUDED` in that file: DM privacy (the server's value, unknown until after sign-in), disk
-cache size, scene threads, max videos, max downloads and window mode. A setting whose choices are
-filled in at runtime (the microphone, whose choices are the device's own labels) is left out too.
-Any other new setting is reported without a change there. A setting with named variants reports the variant's name, any other the
-number; a setting still unset (negative) is left out. It reads the player's saved settings, not
-the host page's session overrides. The startup event is queued before sign-in, so it carries no
-wallet; analysis joins on `session_id`. `/settings_snapshot` and the debug panel's "Settings
-snapshot" section show the same result live.
+the session's state, except that a change made within 5 s of quitting is not sent. `changed` holds
+the settings whose value differs from their default, keyed by the setting's name, and
+`changed_count` the number of entries in it (0 and an empty `changed` when nothing differs, so
+adoption has a denominator). The key is the title the Settings menu shows, so rewording a title
+renames the key. Every registered setting is reported, a new one included, except the ones
+`EXCLUDED` in that file names (the server's DM privacy, machine tuning and the window mode) and any
+whose choices are filled in at runtime (the microphone, whose choices are the device's own
+labels). The default is this build's: a setting whose default changes needs a migration in
+`AppConfig::reset_outdated_settings`, or every saved config still on the old default is reported
+as changed. A setting with named variants reports the variant's name, any other the number; a
+setting still unset (negative) is left out. It reads the player's saved settings, not the host
+page's session overrides. The startup event is queued before sign-in, so it carries no wallet;
+analysis joins on `session_id`. `/settings_snapshot` and the debug panel's "Settings snapshot"
+section show the same result live.
 
 The loading screen is reported as mobile's funnel names it (`loading.rs`): `Screen Viewed`
 LOADING_START {position, realm, when: on_explorer_ready | on_changerealm | on_moveto} when it

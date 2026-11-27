@@ -1,8 +1,8 @@
 //! The `Settings Snapshot` event: the settings whose value differs from their default. It is
-//! queued at startup (`reason: startup`) and again once a change has settled (`reason: changed`),
-//! so the latest event is the session's state. Every registered setting is reported except the
-//! ones in [`EXCLUDED`] and the ones whose choices are filled in at runtime. It reads the saved settings, not the host page's session overrides.
-//! `/settings_snapshot` and its debug panel section show the same result live.
+//! queued at startup (`reason: startup`) and again once a change has settled (`reason: changed`).
+//! Every registered setting is reported except the ones in [`EXCLUDED`] and the ones whose
+//! choices are filled in at runtime. It reads the saved settings, not the host page's session
+//! overrides. `/settings_snapshot` and its debug panel section show the same result live.
 
 use std::time::Duration;
 
@@ -30,6 +30,10 @@ const SETTLE: Duration = Duration::from_secs(5);
 /// registered setting is reported, a new one included. DM privacy is the server's value, unset
 /// until social reads it after sign-in. Cache size, the thread counts and max downloads tune the
 /// machine, not the player's preferences. The window mode is window state.
+///
+/// "Differs from its default" is read against the default of this build. A setting whose default
+/// changes needs a migration in `AppConfig::reset_outdated_settings`, or every saved config still
+/// on the old default is reported as changed.
 const EXCLUDED: &[fn() -> String] = &[
     <DmPrivacy as AppSetting>::title,
     <CacheSizeSetting as AppSetting>::title,
@@ -63,7 +67,7 @@ pub(crate) fn snapshot(settings: &Settings) -> Changed {
         settings
             .settings
             .iter()
-            .filter(|setting| !setting.runtime_choices)
+            .filter(|setting| !setting.runtime_choices())
             .map(|setting| &setting.info),
     )
 }
@@ -72,10 +76,9 @@ pub(crate) fn snapshot(settings: &Settings) -> Changed {
 /// the variant's name when the setting has named variants, else the number. Unset (negative)
 /// values are skipped.
 fn changed_settings<'a>(settings: impl IntoIterator<Item = &'a SettingInfo>) -> Changed {
-    let excluded: Vec<String> = EXCLUDED.iter().map(|title| title()).collect();
     let mut changed = std::collections::BTreeMap::new();
     for setting in settings {
-        if excluded.contains(&setting.name)
+        if EXCLUDED.iter().any(|title| title() == setting.name)
             || setting.value < 0.0
             || setting.value == setting.default
         {

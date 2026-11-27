@@ -396,8 +396,15 @@ pub struct Setting {
     /// The displayed value for the current config, for settings changed outside `set_value`.
     load: Box<dyn Fn(&AppConfig) -> f32 + Send + Sync + 'static>,
     /// The named choices change at runtime, so a list taken once goes stale.
-    pub runtime_choices: bool,
+    runtime_choices: bool,
     is_disabled: fn(&AppConfig) -> bool,
+}
+
+impl Setting {
+    /// True when the named choices change at runtime: they are the device's, not the engine's.
+    pub fn runtime_choices(&self) -> bool {
+        self.runtime_choices
+    }
 }
 
 #[derive(Resource)]
@@ -662,12 +669,8 @@ pub fn record_cameras(
 
 /// A setting's value as an f64, from its whole step count. Settings use whole steps (including
 /// tens, tenths and twentieths), so this converts the step count to a JSON or HTML number without
-/// widening a binary f32 approximation of e.g. 0.05 or 1/10. A zero or non-finite step returns the
-/// value as it is.
+/// widening a binary f32 approximation of e.g. 0.05 or 1/10.
 pub fn step_number(value: f32, step: f32) -> f64 {
-    if step <= 0.0 || !step.is_finite() {
-        return f64::from(value);
-    }
     let steps = f64::from((value / step).round());
     if step >= 1.0 {
         steps * f64::from(step)
@@ -893,8 +896,6 @@ mod tests {
         assert_eq!(step_number(info.min_value, info.step_size), 0.1);
         assert_eq!(step_number(1.9, 0.05), 1.9);
         assert_eq!(step_number(0.05, 0.05), 0.05);
-        // a zero step has no step count: the value is kept
-        assert_eq!(step_number(0.5, 0.0), 0.5);
     }
 
     #[test]
