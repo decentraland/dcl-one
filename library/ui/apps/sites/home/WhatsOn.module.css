@@ -103,7 +103,9 @@
 }
 
 .live,
-.users {
+.users,
+.attendees,
+.elapsed {
   display: flex;
   align-items: center;
   height: 26px;
@@ -140,14 +142,17 @@
   }
 }
 
-.users {
-  gap: 6px;
+.users,
+.attendees,
+.elapsed {
   background-color: var(--dcl-neutrals-shadow);
 }
 
-.people {
-  display: flex;
-  align-items: center;
+.users {
+  gap: 6px;
+}
+
+.attendees {
   gap: var(--dcl-space-4);
 }
 

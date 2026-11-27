@@ -138,10 +138,7 @@ async function loadHomeLiveNow(opts: GetOptions): Promise<HomeLiveData> {
   await withDeadline(
     async (signal) => {
       const bounded = { ...opts, signal };
-      const { events, scenes } = await readLiveNow(bounded, {
-        world: false,
-        with_connected_users: true,
-      });
+      const { events, scenes } = await readLiveNow(bounded, { world: false });
       signal.throwIfAborted();
       const built = buildHomeLiveCards(events ?? [], scenes ?? []);
       read.cards = built;
@@ -154,7 +151,7 @@ async function loadHomeLiveNow(opts: GetOptions): Promise<HomeLiveData> {
       read.cards = cards;
       const people = cards.flatMap((card) => [
         ...(card.creatorAddress ? [card.creatorAddress] : []),
-        ...(card.connectedAddresses ?? []),
+        ...(card.attendeeAddresses ?? []),
       ]);
       const profiles =
         (await loadProfiles([...people, ...VIBE_ADDRESSES], bounded).catch(

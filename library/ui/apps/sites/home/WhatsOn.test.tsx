@@ -34,7 +34,7 @@ describe('WhatsOn', () => {
   })
 })
 
-describe('when the live event has a start and connected players', () => {
+describe('when the live event has a start and public attendees', () => {
   it('should expose the start, the real profile picture and the copy-link action', () => {
     const html = renderToStaticMarkup(
       <WhatsOn
@@ -49,7 +49,7 @@ describe('when the live event has a start and connected players', () => {
             usersLabel: '1 online',
             share: true,
             started: { dateTime: '2026-11-27T10:00:00.000Z', minutes: 5 },
-            people: [{ name: 'Ada', avatarUrl: '/profile-images/entities/face.png' }]
+            attendees: [{ id: 'ada', name: 'Ada', avatarUrl: '/profile-images/entities/face.png' }]
           }
         ]}
         labels={{
@@ -58,7 +58,8 @@ describe('when the live event has a start and connected players', () => {
           jumpIn: 'Jump In',
           activity: {
             started: (minutes) => `Started ${minutes} min ago`,
-            copyLink: 'Copy event link',
+            attendees: 'Event attendees',
+            copyLink: (title) => `Copy event link: ${title}`,
             copied: 'Copied',
             copyFailed: 'Could not copy'
           }
@@ -75,6 +76,6 @@ describe('when the live event has a start and connected players', () => {
 
     expect(html).toContain('dateTime="2026-11-27T10:00:00.000Z">Started 5 min ago')
     expect(html).toContain('src="/profile-images/entities/face.png"')
-    expect(html).toContain('aria-label="Copy event link"')
+    expect(html).toContain('aria-label="Copy event link: Party"')
   })
 })

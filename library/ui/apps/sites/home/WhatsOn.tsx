@@ -3,7 +3,7 @@ import { JumpInCTA } from '../../../components/JumpInCTA/JumpInCTA'
 import { Button } from '../../../components/Button/Button'
 import { CopyFeedback } from '../../../components/CopyFeedback/CopyFeedback'
 import { ProfilePic } from '../../../components/ProfilePic/ProfilePic'
-import { GeneralCopy } from '../../../foundations/icons'
+import { MenusShare } from '../../../foundations/icons'
 import { Carousel, type CarouselLabels } from '../shared/Carousel'
 import { cssUrl } from '../shared/cssUrl'
 import dclLogo from '../assets/dcl-logo.svg'
@@ -21,7 +21,7 @@ type WhatsOnCardData = {
   /** The in-world position the hover call jumps to. */
   jumpHref?: string
   started?: { dateTime: string; minutes: number }
-  people?: readonly { name: string; avatarUrl: string }[]
+  attendees?: readonly { id: string; name: string; avatarUrl: string }[]
   share?: boolean
   /** `foundation` shows the Decentraland logo as the avatar, as source does for Genesis Plaza;
       `color` is the disc behind the face, source's hash of the display name. */
@@ -43,7 +43,8 @@ type WhatsOnProps = {
     jumpIn: string
     activity?: {
       started: (minutes: number) => string
-      copyLink: string
+      attendees: string
+      copyLink: (title: string) => string
       copied: string
       copyFailed: string
     }
@@ -139,23 +140,22 @@ function Card({
               <Icon className={styles.usersIcon} d={PERSON} name="PermIdentityRounded" />
               <span aria-hidden="true">{card.users}</span>
               <span className={styles.visuallyHidden}>{card.usersLabel}</span>
-              {card.people?.length ? (
-                <span className={styles.people} aria-hidden="true">
-                  {card.people.map((person, index) => (
-                    <ProfilePic
-                      key={index}
-                      name={person.name}
-                      src={person.avatarUrl}
-                      alt=""
-                      size={20}
-                    />
-                  ))}
-                </span>
-              ) : null}
+            </span>
+          ) : null}
+          {card.attendees?.length && activity ? (
+            <span className={styles.attendees} role="group" aria-label={activity.attendees}>
+              {card.attendees.map((attendee) => (
+                <ProfilePic
+                  key={attendee.id}
+                  name={attendee.name}
+                  src={attendee.avatarUrl}
+                  size={20}
+                />
+              ))}
             </span>
           ) : null}
           {card.started && activity ? (
-            <time className={styles.users} dateTime={card.started.dateTime}>
+            <time className={styles.elapsed} dateTime={card.started.dateTime}>
               {activity.started(card.started.minutes)}
             </time>
           ) : null}
@@ -209,10 +209,10 @@ function Card({
                       variant="quaternary"
                       iconOnly
                       size="md"
-                      aria-label={activity.copyLink}
+                      aria-label={activity.copyLink(card.title)}
                       onClick={copy}
                     >
-                      <GeneralCopy size={24} aria-hidden="true" />
+                      <MenusShare size={24} aria-hidden="true" />
                     </Button>
                   )}
                 </CopyFeedback>

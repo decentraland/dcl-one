@@ -16,7 +16,7 @@ describe("when building a Home live event card", () => {
       image: "",
       coordinates: "1,2",
       startedAt: "2026-11-27T10:00:00.000Z",
-      connectedAddresses: [address],
+      attendeeAddresses: [address],
       isGenesisPlaza: false,
       place: false,
     };
@@ -30,10 +30,10 @@ describe("when building a Home live event card", () => {
     };
   });
 
-  it("should floor elapsed minutes and use the available player face", () => {
+  it("should floor elapsed minutes and use the available RSVP face", () => {
     expect(whatsOnCards([card], profiles, now)[0]).toMatchObject({
       started: { dateTime: "2026-11-27T10:00:00.000Z", minutes: 5 },
-      people: [{ name: "Ada", avatarUrl: "/profile-images/entities/ada/face.png" }],
+      attendees: [{ id: address, name: "Ada", avatarUrl: "/profile-images/entities/ada/face.png" }],
       share: true,
     });
   });
@@ -48,13 +48,13 @@ describe("when building a Home live event card", () => {
     });
   });
 
-  describe("and the connected address has no profile", () => {
+  describe("and the attendee has no profile", () => {
     beforeEach(() => {
       profiles = {};
     });
 
     it("should omit unavailable faces", () => {
-      expect(whatsOnCards([card], profiles, now)[0]?.people).toEqual([]);
+      expect(whatsOnCards([card], profiles, now)[0]?.attendees).toEqual([]);
     });
   });
 });

@@ -38,11 +38,12 @@ export function whatsOnCards(
             minutes: Math.floor((now - startedAt) / 60_000),
           }
         : undefined;
-    const people = card.connectedAddresses?.flatMap((address) => {
+    const attendees = card.attendeeAddresses?.flatMap((address) => {
       const person = profiles[address];
       return person?.face
         ? [
             {
+              id: address,
               name: getDisplayName(person.name, person.hasClaimedName, address),
               avatarUrl: person.face,
             },
@@ -60,7 +61,7 @@ export function whatsOnCards(
       usersLabel: `${card.users} online`,
       jumpHref: `/play/?position=${encodeURIComponent(card.coordinates)}`,
       started,
-      people,
+      attendees,
       share: !card.place,
       creator: name
         ? {

@@ -16378,11 +16378,11 @@
     },
     {
       "path": "library/ui/apps/sites/home/WhatsOn.module.css",
-      "sha256": "aa5647421c93f7916f023177cd76c8cc3618cdd50672e49657c49e8aaa8ec6f4"
+      "sha256": "d8f5a1aec4ef043989950568ebb3a2c7f479a4dfc3e044efa21d8177ba9ad86e"
     },
     {
       "path": "library/ui/apps/sites/home/WhatsOn.tsx",
-      "sha256": "42551b3195a37a40751570662e997b31131c867963e7d9a583bb7acdeeda1b61"
+      "sha256": "104fc6b797bd6986a8417780cb04ac07f5c6ea4f908b923df732db3245c02119"
     },
     {
       "path": "library/ui/apps/sites/index.ts",

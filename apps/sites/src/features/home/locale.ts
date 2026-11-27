@@ -24,6 +24,8 @@ const en = {
     by: "by",
     jumpIn: "Jump in",
     started: "Started {elapsed}",
+    startedNow: "Just started",
+    attendees: "Event attendees",
     copyLink: "Copy event link",
     copied: "Copied",
     copyFailed: "Could not copy the event link",
@@ -74,6 +76,8 @@ export const homeCopy = {
       by: "por",
       jumpIn: "Entrar",
       started: "Empezó {elapsed}",
+      startedNow: "Acaba de empezar",
+      attendees: "Asistentes al evento",
       copyLink: "Copiar enlace del evento",
       copied: "Copiado",
       copyFailed: "No se pudo copiar el enlace",
@@ -119,6 +123,8 @@ export const homeCopy = {
       by: "par",
       jumpIn: "Rejoindre",
       started: "A commencé {elapsed}",
+      startedNow: "Vient de commencer",
+      attendees: "Participants à l’événement",
       copyLink: "Copier le lien de l’événement",
       copied: "Copié",
       copyFailed: "Impossible de copier le lien",
@@ -164,6 +170,8 @@ export const homeCopy = {
       by: "作者",
       jumpIn: "进入",
       started: "{elapsed}开始",
+      startedNow: "刚刚开始",
+      attendees: "活动参与者",
       copyLink: "复制活动链接",
       copied: "已复制",
       copyFailed: "无法复制链接",
@@ -209,6 +217,8 @@ export const homeCopy = {
       by: "제작자",
       jumpIn: "입장",
       started: "{elapsed} 시작",
+      startedNow: "방금 시작",
+      attendees: "이벤트 참가자",
       copyLink: "이벤트 링크 복사",
       copied: "복사됨",
       copyFailed: "링크를 복사할 수 없습니다",
@@ -254,6 +264,8 @@ export const homeCopy = {
       by: "作成者",
       jumpIn: "参加する",
       started: "{elapsed}に開始",
+      startedNow: "開始したばかり",
+      attendees: "イベント参加者",
       copyLink: "イベントのリンクをコピー",
       copied: "コピーしました",
       copyFailed: "リンクをコピーできませんでした",
@@ -278,13 +290,20 @@ export const homeCopy = {
   },
 } satisfies Record<SitesLocale, HomeCopy>;
 
-
 export function homeLiveActivity(locale: SitesLocale) {
-  const { started, copyLink, copied, copyFailed } = homeCopy[locale].whatsOn;
-  const relative = new Intl.RelativeTimeFormat(locale, { style: "short", numeric: "auto" });
+  const { started, startedNow, attendees, copyLink, copied, copyFailed } = homeCopy[locale].whatsOn;
+  const relative = new Intl.RelativeTimeFormat(locale, { style: "short" });
   return {
-    started: (minutes: number) => started.replace("{elapsed}", relative.format(-minutes, "minute")),
-    copyLink,
+    started: (minutes: number) => {
+      if (minutes === 0) return startedNow;
+      let elapsed: string;
+      if (minutes >= 1_440) elapsed = relative.format(-Math.floor(minutes / 1_440), "day");
+      else if (minutes >= 60) elapsed = relative.format(-Math.floor(minutes / 60), "hour");
+      else elapsed = relative.format(-minutes, "minute");
+      return started.replace("{elapsed}", elapsed);
+    },
+    attendees,
+    copyLink: (title: string) => `${copyLink}: ${title}`,
     copied,
     copyFailed,
   };

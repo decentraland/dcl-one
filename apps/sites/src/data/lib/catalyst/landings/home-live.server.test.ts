@@ -63,7 +63,7 @@ describe("Home Live Now read", () => {
 });
 
 describe("when Home reads a live event in a busy scene", () => {
-  const participant = "0xABCDEF1234567890123456789012345678901234";
+  const attendee = "0xABCDEF1234567890123456789012345678901234";
   const occurrence = "2026-11-27T10:00:00.000Z";
   let fetchImpl: ReturnType<typeof vi.fn<typeof fetch>>;
   let result: Awaited<ReturnType<typeof loadHomeLive>>;
@@ -79,7 +79,8 @@ describe("when Home reads a live event in a busy scene", () => {
           y: 2,
           start_at: "2026-11-20T10:00:00.000Z",
           next_start_at: occurrence,
-          connected_addresses: [participant, participant.toLowerCase(), "invalid-address"],
+          latest_attendees: [attendee, attendee.toLowerCase(), "invalid-address"],
+          connected_addresses: ["0x9999999999999999999999999999999999999999"],
         }] });
       }
       if (path.pathname.endsWith("/hot-scenes")) {
@@ -96,22 +97,27 @@ describe("when Home reads a live event in a busy scene", () => {
     result = await loadHomeLive({ base: "https://node.example", fetchImpl });
   });
 
-  it("should request live connected addresses in the event list", () => {
-    expect(fetchImpl.mock.calls[0]?.[0]).toEqual(expect.stringContaining("with_connected_users=true"));
+  it("should use the public event list without requesting live player identities", () => {
+    const eventRequest = fetchImpl.mock.calls.find(([url]) =>
+      new URL(String(url)).pathname.endsWith("/v1/events"),
+    );
+    expect(eventRequest?.[0]).toEqual(expect.stringContaining("list=live"));
+    expect(eventRequest?.[0]).not.toEqual(expect.stringContaining("with_connected_users"));
   });
 
-  it("should use the active occurrence and deduplicate connected addresses", () => {
+  it("should use the active occurrence and deduplicate public RSVP addresses", () => {
     expect(result.cards[0]).toMatchObject({
       id: "live",
       startedAt: occurrence,
-      connectedAddresses: [participant.toLowerCase()],
+      attendeeAddresses: [attendee.toLowerCase()],
     });
   });
 
-  it("should batch the participant's profile with the other Home profiles", () => {
+  it("should batch the public attendee's profile with the other Home profiles", () => {
     const profileRequest = fetchImpl.mock.calls.find(([url]) =>
       String(url).endsWith("/lambdas/profiles"),
     );
-    expect(profileRequest?.[1]?.body).toEqual(expect.stringContaining(participant.toLowerCase()));
+    expect(profileRequest?.[1]?.body).toEqual(expect.stringContaining(attendee.toLowerCase()));
+    expect(profileRequest?.[1]?.body).not.toEqual(expect.stringContaining("0x9999999999999999999999999999999999999999"));
   });
 });
