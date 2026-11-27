@@ -557,7 +557,7 @@ async fn check_inner(
         return Err(bad("the listing sends no asset"));
     };
     let item_id = (first.asset_type == TradeAssetType::CollectionItem).then_some(first.value);
-    // An unsupported chain is the caller's error, refused before any read.
+    // An unsupported chain is the caller's error, refused before the catalogue read.
     let Some(trade) = proposed_trade(chain_id, signer, sent) else {
         return Err(bad(format!(
             "no off-chain marketplace is deployed on chain {}",

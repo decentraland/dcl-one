@@ -532,24 +532,27 @@ fn capitalize(s: &str) -> String {
     }
 }
 
-fn parcels_of(v: Option<&Value>) -> Vec<EstateParcel> {
-    v.and_then(Value::as_array)
-        .map(|a| {
-            a.iter()
-                // A parcel outside the `integer` range is not a parcel.
-                .filter_map(|p| {
-                    let (x, y) = (readers::int_of(p, "x"), readers::int_of(p, "y"));
-                    match (i32::try_from(x), i32::try_from(y)) {
-                        (Ok(x), Ok(y)) => Some(EstateParcel { x, y }),
-                        _ => {
-                            tracing::warn!(x, y, "/v1/nfts: dropped an out-of-range estate parcel");
-                            None
-                        }
-                    }
-                })
-                .collect()
+fn parcels_of(v: Option<&Value>, contract: &str, token_id: &str) -> Vec<EstateParcel> {
+    let all = v.and_then(Value::as_array).map_or(&[][..], Vec::as_slice);
+    // A parcel outside the `integer` range is not a parcel.
+    let parcels: Vec<EstateParcel> = all
+        .iter()
+        .filter_map(|p| {
+            let x = i32::try_from(readers::int_of(p, "x")).ok()?;
+            let y = i32::try_from(readers::int_of(p, "y")).ok()?;
+            Some(EstateParcel { x, y })
         })
-        .unwrap_or_default()
+        .collect();
+    let dropped = all.len() - parcels.len();
+    if dropped > 0 {
+        tracing::warn!(
+            contract,
+            token_id,
+            dropped,
+            "/v1/nfts: dropped out-of-range estate parcels"
+        );
+    }
+    parcels
 }
 
 /// A subgraph nft row as the wire result, with its live legacy order.
@@ -617,7 +620,7 @@ pub fn nft_from_graph(n: &Value, network: Network, now_ms: i64) -> NftResult {
                     .unwrap_or(0),
                 description: readers::at(n, "estate/data/description")
                     .and_then(|v| v.as_str().map(str::to_string)),
-                parcels: parcels_of(readers::at(n, "estate/parcels")),
+                parcels: parcels_of(readers::at(n, "estate/parcels"), &contract, &token_id),
             },
         },
         _ => NftData::Emote {
