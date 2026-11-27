@@ -8,6 +8,8 @@ import FeaturedAssetPicker from "./FeaturedAssetPicker";
 vi.hoisted(() => { Object.assign(window, { __vite_plugin_react_preamble_installed__: true, $RefreshSig$: () => (type: unknown) => type }); });
 vi.mock("@/data/lib/catalyst/landings/hangout-options", () => ({ searchFeaturedAssets: vi.fn() }));
 
+// The form passes variant="tertiary"; Button draws it with its outline look and reports data-variant="outline".
+
 describe("when searching featured assets", () => {
   let user: ReturnType<typeof userEvent.setup>;
   let view: ReturnType<typeof render>;

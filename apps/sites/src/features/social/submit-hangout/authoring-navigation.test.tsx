@@ -9,6 +9,8 @@ import SubmitHangout from "./SubmitHangout";
 
 vi.hoisted(() => { Object.assign(window, { __vite_plugin_react_preamble_installed__: true }); });
 
+// The form passes variant="tertiary"; Button draws it with its outline look and reports data-variant="outline".
+
 describe("when signed in to the hangout wizard", () => {
   let router: ReturnType<typeof createMemoryRouter>;
   let track: ReturnType<typeof vi.fn<TrackFn>>;

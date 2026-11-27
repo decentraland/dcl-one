@@ -12,6 +12,8 @@ vi.hoisted(() => {
   Object.assign(window, { __vite_plugin_react_preamble_installed__: true });
 });
 
+// The form passes variant="tertiary"; Button draws it with its outline look and reports data-variant="outline".
+
 describe("when a signed-in creator opens the single-page Events editor", () => {
   let user: ReturnType<typeof userEvent.setup>;
   let submit: ReturnType<typeof vi.fn<SubmitFn>>;
