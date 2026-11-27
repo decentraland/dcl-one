@@ -225,8 +225,10 @@ def added_lines(diff):
 
 
 def git(*args):
+    # Decode as UTF-8, not the locale encoding (cp1252 on Windows): Git writes paths as UTF-8. surrogateescape keeps
+    # the bytes of a path or source file that is not valid UTF-8, so the path still opens and the file is still checked.
     return subprocess.run(['git', '-c', 'core.quotePath=false', *args], cwd=ROOT, check=True,
-                          capture_output=True, text=True).stdout
+                          capture_output=True, encoding='utf-8', errors='surrogateescape').stdout
 
 
 def names(command, *args):
