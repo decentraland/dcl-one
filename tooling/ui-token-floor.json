@@ -605,7 +605,7 @@
   },
   "library/ui/apps/sites/social/SocialHub.module.css": {
     "primitives": 0,
-    "tokens": 80
+    "tokens": 73
   },
   "library/ui/components/AppChrome/ChromeBody.module.css": {
     "primitives": 0,

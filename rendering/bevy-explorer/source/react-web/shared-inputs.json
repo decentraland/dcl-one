@@ -16422,7 +16422,7 @@
     },
     {
       "path": "library/ui/apps/sites/index.ts",
-      "sha256": "4d2a28a688e8a79b1b8c8746038714ac6aeadfe53e57ee3ea1f5dd93a9bb5755"
+      "sha256": "bfe29285cddf797d8910bad8e7d94f513256124624ed884b99777d2ae0913e9a"
     },
     {
       "path": "library/ui/apps/sites/jump/JumpCard.module.css",
@@ -16738,7 +16738,7 @@
     },
     {
       "path": "library/ui/apps/sites/social/CommunityChannels.tsx",
-      "sha256": "ffd19781f4d58461bdf97b6e19ba588fedaf5468a53aa86ac9b7a2d3e8879c93"
+      "sha256": "d47b005b245b0441efc8f9071ecce516d8f4395dedbef3e4c3f1ce9ff4e42c89"
     },
     {
       "path": "library/ui/apps/sites/social/CommunityCreate.module.css",
@@ -16782,15 +16782,15 @@
     },
     {
       "path": "library/ui/apps/sites/social/SocialHub.module.css",
-      "sha256": "b4604c306b7d38e594997afeb3c94d71fc7117c0ff7a6b6ecbcb660af46f2167"
+      "sha256": "5a695c91dffb66364ed52ed313c8d55c0edb513e4d29b05609a93b10b5fa48d9"
     },
     {
       "path": "library/ui/apps/sites/social/SocialHub.tsx",
-      "sha256": "fad803edba49b1e2650ec180f54e0837a54985d4c5e1a6c81e38ef7c25bf0724"
+      "sha256": "d55b13adae9c370dd932cb2126a06c86df369fb8f348e9d7ea4a22b5768efd8e"
     },
     {
       "path": "library/ui/apps/sites/social/hub-format.ts",
-      "sha256": "0e2f47ba2a61792fe5638534fd03178619b5edbbe6e2637c0392cfac477f2912"
+      "sha256": "3e125dd08b76d0bd4d55d40e07160a5fc600b2ce9f7bde95138c2e759c3e9b8e"
     },
     {
       "path": "library/ui/apps/sites/social/ldcreatecommunityview.css",
