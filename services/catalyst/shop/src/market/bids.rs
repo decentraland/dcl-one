@@ -1283,14 +1283,14 @@ pub async fn list_bids(
         let (rows, total) = legacy_leg(state, f, window, now.timestamp_millis()).await?;
         (rows, total, trades)
     };
-    let total = legacy_total + trades.len() as i64;
+    let total = legacy_total + crate::market::casts::len_i64(trades.len());
     merged.extend(trades);
     sort_bids(&mut merged, f.sort_by);
     Ok((
         merged
             .into_iter()
-            .skip(f.offset as usize)
-            .take(limit as usize)
+            .skip(crate::market::casts::page(f.offset))
+            .take(crate::market::casts::page(limit))
             .collect(),
         total,
     ))
