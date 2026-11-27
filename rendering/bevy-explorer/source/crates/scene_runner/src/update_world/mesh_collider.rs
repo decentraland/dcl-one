@@ -774,30 +774,6 @@ impl SceneColliderData {
         })
     }
 
-    /// How far along the ray from `origin` the collider `id` is first hit, within `distance`.
-    /// `None` when the ray misses it or starts inside it, as [`Self::cast_ray_nearest`] with
-    /// `skip_inside` treats a collider the ray starts in.
-    pub(crate) fn ray_entry_distance(
-        &self,
-        id: &ColliderId,
-        origin: Vec3,
-        direction: Vec3,
-        distance: f32,
-    ) -> Option<f32> {
-        let collider = self.get_collider(id)?;
-        let ray = Ray {
-            origin: origin.as_dvec3().into(),
-            dir: direction.as_dvec3().into(),
-        };
-        let shape = collider.shape();
-        if shape.contains_point(collider.position(), &ray.origin) {
-            return None;
-        }
-        shape
-            .cast_ray(collider.position(), &ray, distance as f64, true)
-            .map(|toi| toi as f32)
-    }
-
     /// The height of the feet at `origin` above the first collider that a ball of the avatar's
     /// radius touches as it drops, and that collider. The contact can be too steep to stand on.
     pub fn get_ground(&mut self, origin: Vec3) -> Option<(f32, ColliderId)> {
@@ -1804,13 +1780,6 @@ fn update_scene_collider_data(
 #[derive(Component)]
 pub struct HasCollider<T: ColliderType>(pub ColliderId, PhantomData<fn() -> T>);
 
-impl<T: ColliderType> HasCollider<T> {
-    #[cfg(test)]
-    pub(crate) fn new(id: ColliderId) -> Self {
-        Self(id, PhantomData)
-    }
-}
-
 // collider state component
 #[derive(Component)]
 pub struct HasTrigger(pub ColliderId);
@@ -2264,6 +2233,8 @@ mod ownership_tests;
 mod reveal_tests;
 #[cfg(test)]
 mod scene_cut_tests;
+#[cfg(test)]
+mod trigger_area_tests;
 
 #[cfg(test)]
 mod tests {
