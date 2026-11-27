@@ -139,7 +139,6 @@ function richProfile(address: string, name: string, isGuest: boolean): Profile {
       { title: 'Twitter', url: 'https://twitter.com' },
       { title: 'Discord', url: 'https://discord.com' }
     ],
-    mutuals: 30,
     badges: mockBadges(),
     equippedWearables: equippedNow(),
     equippedEmotes: mockEquippedEmotes().filter((e) => e.slot != null),

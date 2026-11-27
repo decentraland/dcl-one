@@ -7,6 +7,7 @@ import { Avatar, ModalShell, TextArea, openPopup } from '../../design'
 import { splitName, userColor } from '@explorer-core/lib/identity'
 import { useSession } from '../session/SessionContext'
 import { knownUserColor } from '../session/profileStore'
+import { MutualFriends } from './MutualFriends'
 import { onFriendEvent } from '@explorer-core/features/friends/friendEvents'
 import styles from './FriendRequestPopup.module.css'
 
@@ -32,15 +33,7 @@ function Mutuals({ address }: { address: string }): React.JSX.Element | null {
   const list = friends.mutuals[address.toLowerCase()]
   const load = friends.loadMutuals
   useEffect(() => load(address), [address, load])
-  if (!list || list.length === 0) return null
-  return (
-    <div className={styles.mutuals}>
-      {list.slice(0, 3).map((m) => (
-        <Avatar key={m.address} src={m.picture} name={m.name} color={knownUserColor(m.address, m.name)} size={24} className={styles.mutualFace} />
-      ))}
-      <span>{list.length} Mutual</span>
-    </div>
-  )
+  return <MutualFriends list={list} className={styles.mutuals} />
 }
 
 function Who({ user }: { user: RequestUser }): React.JSX.Element {

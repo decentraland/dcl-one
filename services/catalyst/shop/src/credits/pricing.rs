@@ -993,8 +993,7 @@ mod tests {
                 crate::market::Source::CollectionsIndex,
                 "the collections index on matic has no published fold".into(),
             )),
-            by_index: true,
-            owned: vec![crate::market::graph::Network::Matic],
+            may_fall_back_to_graph: false,
         };
         let response = catalogue_refused(refusal).into_response();
         assert_eq!(
