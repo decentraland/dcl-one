@@ -5788,6 +5788,18 @@
           "kind": "regular"
         },
         {
+          "name": "ShopLoading.module.css",
+          "kind": "regular"
+        },
+        {
+          "name": "ShopLoading.test.tsx",
+          "kind": "regular"
+        },
+        {
+          "name": "ShopLoading.tsx",
+          "kind": "regular"
+        },
+        {
           "name": "ShopManaMark.test.tsx",
           "kind": "regular"
         },
@@ -15196,6 +15208,14 @@
       "sha256": "e57083e759c3f00ca541d96f97d526efa9bc2d0094ff036606e60b9c1bd86280"
     },
     {
+      "path": "library/ui/apps/shop/ShopLoading.module.css",
+      "sha256": "a8db2080d9bf3fbe2894966317e69416a0c42d32507f1eb02282d2b197d34a54"
+    },
+    {
+      "path": "library/ui/apps/shop/ShopLoading.tsx",
+      "sha256": "c9f3145a933dc86ff3abeb9eabf03ab8d580e0a1d227e049ee406d350fe6b0ad"
+    },
+    {
       "path": "library/ui/apps/shop/ShopManaMark.tsx",
       "sha256": "9d46b40cdfe49cce98f4cbcff7f6b0e84a64525e8d067d3df442a697fbf5f275"
     },
@@ -15213,7 +15233,7 @@
     },
     {
       "path": "library/ui/apps/shop/index.ts",
-      "sha256": "756cbde699b4739a7de553febfc44860b3f86e31661dfcc6f3978a43c3352f2a"
+      "sha256": "17aa5bec086a3ca347f5c886d38a6e48a2a87fc39aafa635c078a20ca6a62fe2"
     },
     {
       "path": "library/ui/apps/sites/CopyAddress.module.css",
@@ -17389,11 +17409,11 @@
     },
     {
       "path": "library/ui/components/ShopCard/ShopCard.module.css",
-      "sha256": "1d0cbf97e7a456ce315987a7ae7660b31a54ad29292ca40491829775f2c6f7c2"
+      "sha256": "62d122a653ba0fa8586cb8d4ca4547a0e6f2f99585301ea71fe172b12c2a476f"
     },
     {
       "path": "library/ui/components/ShopCard/ShopCard.tsx",
-      "sha256": "7d6b906f6019452cd90186461d96ce2acb1078b6237fa26ce758d17b166df303"
+      "sha256": "512e99ed67d829fa45c0e33dbfdd0c9a0242a77857ec21867b03f78328c7f3ce"
     },
     {
       "path": "library/ui/components/Skeleton/Skeleton.module.css",
@@ -52782,6 +52802,51 @@
       "kind": "test:runtime"
     },
     {
+      "from": "library/ui/apps/shop/ShopLoading.tsx",
+      "to": "library/ui/apps/shop/ShopLoading.module.css",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/shop/ShopLoading.tsx",
+      "to": "library/ui/apps/shop/ShopLoading.module.css",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/shop/ShopLoading.tsx",
+      "to": "library/ui/apps/shop/ShopLoading.module.css",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/shop/ShopLoading.tsx",
+      "to": "library/ui/components/ShopCard/ShopCard.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/shop/ShopLoading.tsx",
+      "to": "library/ui/components/ShopCard/ShopCard.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/shop/ShopLoading.tsx",
+      "to": "library/ui/components/ShopCard/ShopCard.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/shop/ShopLoading.tsx",
+      "to": "library/ui/components/Skeleton/Skeleton.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/shop/ShopLoading.tsx",
+      "to": "library/ui/components/Skeleton/Skeleton.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/shop/ShopLoading.tsx",
+      "to": "library/ui/components/Skeleton/Skeleton.tsx",
+      "kind": "test:runtime"
+    },
+    {
       "from": "library/ui/apps/shop/ShopManaMark.tsx",
       "to": "library/ui/foundations/icons/general.tsx",
       "kind": "native:runtime"
@@ -52899,6 +52964,21 @@
     {
       "from": "library/ui/apps/shop/index.ts",
       "to": "library/ui/apps/shop/ShopHeldCredits.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/shop/index.ts",
+      "to": "library/ui/apps/shop/ShopLoading.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/shop/index.ts",
+      "to": "library/ui/apps/shop/ShopLoading.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/shop/index.ts",
+      "to": "library/ui/apps/shop/ShopLoading.tsx",
       "kind": "test:runtime"
     },
     {
@@ -70649,6 +70729,11 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/ui/apps/shop/ShopHeldCredits.tsx",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/ui/apps/shop/ShopLoading.tsx",
       "kind": "type"
     },
     {
