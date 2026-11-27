@@ -2711,13 +2711,14 @@ The recently sold sort reads the capped total first, on the same snapshot. With 
 - its tokens with a legacy order, walked newest first through `nft_sold_order_idx`. For LAND, the registries' `OrderSuccessful` events in `nft_event_successful_order` are aggregated per token and sorted, so that part's cost follows LAND's order history rather than the window;
 - its tokens with neither, by contract and token.
 
-A part stops after `first + skip` rows under the filters. A token's `sold_at` is the later of its two times, so the page's window lies within the first two parts' rows (a token in both is kept once) followed by the third's.
+A part stops after `first + skip` rows under the filters. A token's `sold_at` is the later of its two times, so the page's window lies within the first two parts' rows (a token in both is kept once) followed by the third's. Ties are broken by contract, token and then network: the same contract address and token ID can be held on both networks.
 
-The walk has a budget: half the capped total, in index rows of each sold part of a collection or NAME source. A first statement reads the time of each network's budget-th newest row in both indexes (`sold_floors`), and the page bounds each part by that time, a constant the planner can estimate. A network with fewer rows than the budget gets no bound. When a bounded part finds fewer than `first + skip` rows above its bound, the page returns no row and is read again, sorted whole. A filter that keeps many tokens but few sold ones, such as a large, rarely sold collection, so reads at most that budget instead of walking every sale of the network. With fewer candidates, the page reads and sorts them whole from the filters' own indexes, which costs less than walking for matches.
+The walk has a budget: half the capped total, in index rows of each sold part of a collection or NAME source. Each such part reads that many rows of its index on its network, newest first, under a `LIMIT` before any filter, so it never inspects a row past them, however many rows share a sale time. When a part finds fewer than `first + skip` rows among them and its index holds a row past the budget, the page returns no row and is read again, sorted whole. The one-row probe past the budget runs only for a part that fell short. A filter that keeps many tokens but few sold ones, such as a large, rarely sold collection, so reads at most that budget instead of walking every sale of the network. With fewer candidates, the page reads and sorts them whole from the filters' own indexes, which costs less than walking for matches.
 
 The tests:
 - `the_recently_sold_lane_pages_like_the_whole_set` compares the walk with the whole sort over every source, every admission and windows that cross into the unsold tokens. Under small budgets it checks that a walked page is either the whole sort's or empty.
-- `the_walk_reads_a_bounded_prefix` covers the budget's routing.
+- `the_walk_reads_a_bounded_prefix` covers the budget's routing. It includes a sale time shared by more tokens than the budget, where the filter's tokens lie past the budget: the walk misses, the page is sorted whole, and the plan shows at most the budget plus one row read from each index.
+- `a_token_on_both_networks_pages_by_network` pages a token held on both networks, sold at the same time and unsold, one row at a time, through the walk and the whole sort.
 
 See the [synthetic fixture measurements](METRICS.md#recently-sold).
 

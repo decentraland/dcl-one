@@ -555,102 +555,37 @@ fn last_sale_join(on: bool, network: &str, contract: &str, token: &str) -> Strin
     }
 }
 
-/// The oldest time a sold part reads on each network: `None` reads them all.
+/// How many index rows each sold part of a walk reads on each network of a
+/// collection or NAME source, newest first ([`walked_page`]). The default
+/// has no limit: each part reads its network's rows until it fills its
+/// window.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-struct Floor {
-    ethereum: Option<i64>,
-    matic: Option<i64>,
-}
+pub struct SoldBudget(Option<i64>);
 
-impl Floor {
-    fn on(self, network: &str) -> Option<i64> {
-        if network == ChainNet::Matic.db_name() {
-            self.matic
-        } else {
-            self.ethereum
-        }
+impl SoldBudget {
+    /// A budget of `rows` index rows per part and network (one at least).
+    fn rows(rows: i64) -> Self {
+        Self(Some(rows.max(1)))
     }
 }
 
-/// The floors of a walk's two sold parts ([`sold_floors`]). The default
-/// has none: each part reads its network's rows until it fills its window.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct SoldFloors {
-    sale: Floor,
-    legacy: Floor,
-}
-
-/// The time of the `budget`-th newest row of each index a walk's sold parts
-/// read: `nft_last_sale_recent_idx` where the latest sales are admitted,
-/// `nft_sold_order_idx`, on the networks of the collection and NAME
-/// sources. A network with fewer rows has no floor: its walk reads them all
-/// and so stays within the budget. Read before the page, so that the page
-/// bounds each part by a constant the planner can estimate.
-async fn sold_floors(
-    conn: &mut PgConnection,
-    f: &NftFilters,
-    sources: Sources,
-    last_sale: LastSale,
-    budget: i64,
-) -> Result<SoldFloors, sqlx::Error> {
-    let mut nets = if sources.collections {
-        collection_networks(f)
+/// The index rows a sold part reads, newest first, as `s`, with its
+/// `columns`: `nft_last_sale_recent_idx` for the latest sales,
+/// `nft_sold_order_idx` for the legacy orders. Ties follow the index, by
+/// contract and token.
+fn newest_sold(sale: bool, network: &str, columns: &str) -> String {
+    let (table, held) = if sale {
+        ("shop.nft_last_sale", "")
     } else {
-        Vec::new()
-    };
-    if sources.names && !nets.contains(&ChainNet::Ethereum) {
-        nets.push(ChainNet::Ethereum);
-    }
-    let offset = budget.max(1) - 1;
-    let floor = |table: &str, held: &str, net: ChainNet| {
-        format!(
-            "(SELECT s.sold_at FROM {table} s WHERE s.network = '{}'{held} \
-              ORDER BY s.sold_at DESC, s.contract_address, s.token_id OFFSET {offset} LIMIT 1)",
-            net.db_name()
+        (
+            "shop.nft",
+            " AND s.sold_at IS NOT NULL AND s.owner IS NOT NULL",
         )
     };
-    let reads: Vec<(bool, ChainNet, String)> = nets
-        .iter()
-        .flat_map(|&net| {
-            let sale = last_sale
-                .on(net)
-                .then(|| (true, net, floor("shop.nft_last_sale", "", net)));
-            let legacy = (
-                false,
-                net,
-                floor(
-                    "shop.nft",
-                    " AND s.sold_at IS NOT NULL AND s.owner IS NOT NULL",
-                    net,
-                ),
-            );
-            sale.into_iter().chain(std::iter::once(legacy))
-        })
-        .collect();
-    let mut floors = SoldFloors::default();
-    if reads.is_empty() {
-        return Ok(floors);
-    }
-    let columns: Vec<&str> = reads.iter().map(|read| read.2.as_str()).collect();
-    let row = sqlx::query(sqlx::AssertSqlSafe(format!(
-        "SELECT {}",
-        columns.join(", ")
-    )))
-    .fetch_one(conn)
-    .await?;
-    for (i, (sale, net, _)) in reads.iter().enumerate() {
-        let time: Option<i64> = row.try_get(i)?;
-        let floor = if *sale {
-            &mut floors.sale
-        } else {
-            &mut floors.legacy
-        };
-        match net {
-            ChainNet::Ethereum => floor.ethereum = time,
-            ChainNet::Matic => floor.matic = time,
-        }
-    }
-    Ok(floors)
+    format!(
+        "SELECT {columns} FROM {table} s WHERE s.network = '{network}'{held} \
+         ORDER BY s.sold_at DESC, s.contract_address, s.token_id"
+    )
 }
 
 /// The rows of a source that one part of the recently sold lane reads
@@ -664,12 +599,12 @@ enum SoldPart {
     /// Every row of the source; `sold_key` is NULL.
     Whole,
     /// The rows with a latest sale (`shop.nft_last_sale`), keyed by its time.
-    /// Read only where the latest sales are admitted. Only the rows from the
-    /// floor's time on, on a network where it has one ([`SoldFloors`]).
-    Sale(Floor),
+    /// Read only where the latest sales are admitted. Only those among the
+    /// budget's newest index rows, where it has one ([`SoldBudget`]).
+    Sale(SoldBudget),
     /// The rows with a legacy `OrderSuccessful`, keyed by its time; only
-    /// those from the floor's time on.
-    Legacy(Floor),
+    /// those among the budget's newest index rows.
+    Legacy(SoldBudget),
     /// The rows with neither, whose `sold_at` is NULL. The sort puts them
     /// last, by contract and token.
     Unsold,
@@ -685,51 +620,65 @@ impl SoldPart {
     /// `sold_key`, and the condition the part adds to its WHERE. `on` says
     /// whether the source joins the latest sales as `ls` ([`last_sale_join`]).
     /// The `Sale` part reads `ls` first and joins it to its token, so that
-    /// `nft_last_sale_recent_idx` gives its rows newest first.
-    fn nft(self, on: bool, network: &str) -> (&'static str, &'static str, String) {
-        let bound = |time: &str| {
-            self.floor(network)
-                .map(|floor| format!(" AND {time} >= {floor}"))
-                .unwrap_or_default()
+    /// `nft_last_sale_recent_idx` gives its rows newest first. A part with a
+    /// budget reads that many index rows before any filter: rows past them
+    /// are never inspected, however many share a time.
+    fn nft(self, on: bool, network: &str) -> (String, &'static str, String) {
+        let read = |table: &str, sale: bool| match self.budget() {
+            Some(rows) => format!("({} LIMIT {rows})", newest_sold(sale, network, "s.*")),
+            None => table.to_string(),
         };
         match self {
-            Self::Whole => ("shop.nft n", "NULL::bigint", String::new()),
+            Self::Whole => ("shop.nft n".to_string(), "NULL::bigint", String::new()),
             // Each sale looks its token up on its own (`OFFSET 0` keeps the
             // lookup per row): the planner then counts one token per sale.
             // Joined on the key's three columns it multiplies their
             // selectivities, expects a few hundred tokens where there are a
             // network's sales, and past a shallow window sorts every sale.
             Self::Sale(_) => (
-                "shop.nft_last_sale ls CROSS JOIN LATERAL (SELECT * FROM shop.nft t WHERE t.network = ls.network \
-                 AND t.contract_address = ls.contract_address AND t.token_id = ls.token_id OFFSET 0) n",
+                format!(
+                    "{} ls CROSS JOIN LATERAL (SELECT * FROM shop.nft t WHERE t.network = ls.network \
+                     AND t.contract_address = ls.contract_address AND t.token_id = ls.token_id OFFSET 0) n",
+                    read("shop.nft_last_sale", true)
+                ),
                 "ls.sold_at",
-                format!(" AND ls.network = '{network}'{}", bound("ls.sold_at")),
+                format!(" AND ls.network = '{network}'"),
             ),
             Self::Legacy(_) => (
-                "shop.nft n",
+                format!("{} n", read("shop.nft", false)),
                 "n.sold_at",
-                format!(" AND n.sold_at IS NOT NULL{}", bound("n.sold_at")),
+                " AND n.sold_at IS NOT NULL".to_string(),
             ),
             Self::Unsold if on => (
-                "shop.nft n",
+                "shop.nft n".to_string(),
                 "NULL::bigint",
                 " AND n.sold_at IS NULL AND ls.network IS NULL".to_string(),
             ),
             Self::Unsold => (
-                "shop.nft n",
+                "shop.nft n".to_string(),
                 "NULL::bigint",
                 " AND n.sold_at IS NULL".to_string(),
             ),
         }
     }
 
-    /// The oldest time the part reads on `network`, when it has a floor
-    /// there.
-    fn floor(self, network: &str) -> Option<i64> {
+    /// The part's budget of index rows, when it has one.
+    fn budget(self) -> Option<i64> {
         match self {
-            Self::Sale(floor) | Self::Legacy(floor) => floor.on(network),
+            Self::Sale(budget) | Self::Legacy(budget) => budget.0,
             Self::Whole | Self::Unsold => None,
         }
+    }
+
+    /// For a part with a budget on `network`: a query that finds a row past
+    /// the budget. With none, the part read every row of its index.
+    fn past_budget(self, network: &str) -> Option<String> {
+        let rows = self.budget()?;
+        let sale = matches!(self, Self::Sale(_));
+        Some(format!(
+            "{} OFFSET {rows} LIMIT 1",
+            newest_sold(sale, network, "1")
+        ))
     }
 
     /// A source's key columns: the `Sale` part reads them from the sale, so
@@ -1164,8 +1113,10 @@ fn push_filters(b: &mut Builder, f: &NftFilters, wheres: &mut Vec<String>) {
 fn sort_sql(sort: Option<NftSortBy>) -> &'static str {
     match sort {
         Some(NftSortBy::Name) => "ORDER BY c.name ASC NULLS LAST, c.contract_address, c.token_id",
+        // The network last: a contract address and token id can be held
+        // on both networks, with the same sale time or none.
         Some(NftSortBy::RecentlySold) => {
-            "ORDER BY c.sold_at DESC NULLS LAST, c.contract_address, c.token_id"
+            "ORDER BY c.sold_at DESC NULLS LAST, c.contract_address, c.token_id, c.network"
         }
         Some(NftSortBy::CheapestParcel) => {
             "ORDER BY c.order_price ASC NULLS LAST, c.contract_address, c.token_id"
@@ -1527,10 +1478,10 @@ pub fn build_nfts_query(
 /// sorted by price or listing time is read in two parts too. `last_sale`
 /// names the networks whose latest sales the page's `sold_at` takes. With
 /// `walk`, the recently sold sort walks its sources ([`walks_sold`]),
-/// each sold part of a collection or NAME source from its floor on
-/// ([`sold_floors`]). A part that did not fill its window above its floor
-/// empties the page; any row the page does return is the whole sort's
-/// ([`walked_page`]).
+/// each sold part of a collection or NAME source within its budget of
+/// index rows ([`SoldBudget`]). A part that did not fill its window within
+/// a budget its index exceeds empties the page; any row the page does
+/// return is the whole sort's ([`walked_page`]).
 #[allow(
     clippy::too_many_arguments,
     reason = "build_nfts_query's inputs, the owner's size, the latest sales and the routing"
@@ -1545,7 +1496,7 @@ pub fn build_nfts_page(
     since: Option<chrono::NaiveDateTime>,
     large_owner: bool,
     last_sale: LastSale,
-    walk: Option<SoldFloors>,
+    walk: Option<SoldBudget>,
 ) -> (String, sqlx::postgres::PgArguments) {
     let mut b = Builder::new();
     let orders = needs_orders(f);
@@ -1568,7 +1519,7 @@ pub fn build_nfts_page(
     } else {
         let from = Candidates::ListedWhenFiltered;
         let part = match walk {
-            Some(floors) if lane => SoldPart::Sale(floors.sale),
+            Some(budget) if lane => SoldPart::Sale(budget),
             _ => whole,
         };
         candidate_legs(
@@ -1596,11 +1547,8 @@ pub fn build_nfts_page(
             );
             (legs, walked)
         };
-        let floors = walk.unwrap_or_default();
-        (
-            part(SoldPart::Legacy(floors.legacy)),
-            part(SoldPart::Unsold).0,
-        )
+        let budget = walk.unwrap_or_default();
+        (part(SoldPart::Legacy(budget)), part(SoldPart::Unsold).0)
     } else {
         ((Vec::new(), Vec::new()), Vec::new())
     };
@@ -1633,8 +1581,8 @@ pub fn build_nfts_page(
         ""
     });
     let unlisted_where = where_of("c.order_price IS NULL");
-    // The walk's sold tops, each a CTE, and whether each part read from a
-    // floor filled its window above it.
+    // The walk's sold tops, each a CTE, and whether each part read within
+    // a budget filled its window or read every row of its index.
     let mut sold_ctes = String::new();
     let mut complete = Vec::new();
     let tops: Vec<String> = if lane {
@@ -1642,18 +1590,20 @@ pub fn build_nfts_page(
         // each read newest first by its own time: the first `first +
         // skip` rows of each hold those of the source by `sold_at`, and
         // a row read twice is kept once. The unsold rows follow every
-        // sold one, by contract and token. A part read from a floor holds
-        // its first rows when it found `first + skip` of them above it.
-        let floors = walk.unwrap_or_default();
+        // sold one, by contract and token. A part read within a budget
+        // holds its first rows when it found `first + skip` of them there,
+        // or when its index holds no row past the budget. That index is
+        // read only when the part fell short.
+        let budget = walk.unwrap_or_default();
         let parts = legs
             .iter()
             .zip(&walked)
-            .map(|leg| (leg, SoldPart::Sale(floors.sale)))
+            .map(|leg| (leg, SoldPart::Sale(budget)))
             .chain(
                 legacy
                     .iter()
                     .zip(&legacy_walked)
-                    .map(|leg| (leg, SoldPart::Legacy(floors.legacy))),
+                    .map(|leg| (leg, SoldPart::Legacy(budget))),
             );
         let mut sold = Vec::new();
         for (k, ((leg, net), part)) in parts.enumerate() {
@@ -1662,8 +1612,10 @@ pub fn build_nfts_page(
                  ORDER BY c.sold_key DESC, c.contract_address, c.token_id LIMIT {window}), "
             ));
             sold.push(format!("SELECT * FROM sold_{k}"));
-            if net.and_then(|net| part.floor(net.db_name())).is_some() {
-                complete.push(format!("(SELECT count(*) FROM sold_{k}) >= {window}"));
+            if let Some(past) = net.and_then(|net| part.past_budget(net.db_name())) {
+                complete.push(format!(
+                    "((SELECT count(*) FROM sold_{k}) >= {window} OR NOT EXISTS ({past}))"
+                ));
             }
         }
         (!sold.is_empty())
@@ -1747,7 +1699,7 @@ pub fn build_nfts_total(
 /// The recently sold page of `total` candidates (capped) read by walking
 /// its sources, when [`walks_sold`] and [`enough_to_walk`] allow it and the
 /// walk fills its window within a budget of half of `total` index rows per
-/// sold part ([`sold_floors`], [`build_nfts_page`]). `None` when the page
+/// sold part ([`SoldBudget`], [`build_nfts_page`]). `None` when the page
 /// must be sorted whole: a filter that keeps many tokens but few sold ones
 /// (a large, rarely sold collection, the emotes deep in the list) then
 /// reads at most that budget before it sorts, instead of walking every sale
@@ -1771,7 +1723,6 @@ async fn walked_page(
     if !walks_sold(f) || !enough_to_walk(total, first + skip) {
         return Ok(None);
     }
-    let floors = sold_floors(conn, f, sources, last_sale, total / 2).await?;
     let (sql, args) = build_nfts_page(
         f,
         sources,
@@ -1782,7 +1733,7 @@ async fn walked_page(
         since,
         false,
         last_sale,
-        Some(floors),
+        Some(SoldBudget::rows(total / 2)),
     );
     let rows = sqlx::query_with(sqlx::AssertSqlSafe(sql), args)
         .fetch_all(conn)
@@ -3362,8 +3313,12 @@ mod tests {
             "too few candidates: sorted whole even where the walk would fill"
         );
         assert!(
-            !walks(&rare_only, 1200).await,
-            "a budget of exactly the network's 600 rows still bounds the walk"
+            walks(&rare_only, 1200).await,
+            "a budget of exactly the network's 600 rows reads them all"
+        );
+        assert!(
+            !walks(&rare_only, 1198).await,
+            "one row short of them bounds the walk"
         );
         assert!(
             !walks(&[("contractAddress", rare), ("owner", a)], 500).await,
@@ -3400,6 +3355,193 @@ mod tests {
             walks(&rare_only, 500).await,
             "both parts fill the window early"
         );
+        // A tie as large as the budget: 600 tokens of one collection sold
+        // at the same second, newest, then two of another at that second,
+        // past them in the index. The budget's rows hold none of the
+        // second collection's: the walk misses without reading the rest of
+        // the tie, and the page is sorted whole.
+        let tied = "0x00000000000000000000000000000000000000e1";
+        let after = "0x00000000000000000000000000000000000000e2";
+        sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
+            "INSERT INTO shop.collections (network, contract_address, chain_id, name, creator, owner, urn, is_completed, is_approved, is_editable, created_at, updated_at, reviewed_at, mirrored_at) \
+             SELECT 'matic', x.c, 137, 'Probe ' || x.c, '{a}', '{a}', 'urn:decentraland:matic:collections-v2:' || x.c, true, true, false, 1, 1, 1, now() \
+             FROM (VALUES ('{tied}'), ('{after}')) x(c); \
+             INSERT INTO shop.items (network, contract_address, item_id, chain_id, item_type, urn, creator, rarity, total_supply, max_supply, available, price, image, name, category, body_shapes, search_is_collection_approved, created_at, updated_at, reviewed_at, mirrored_at) \
+             SELECT 'matic', x.c, 0, 137, 'wearable_v2', 'urn:decentraland:matic:collections-v2:' || x.c || ':0', '{a}', 'rare', 1, 999, 1, 5, 'i', 'Item', 'hat', ARRAY['BaseMale'], true, 1, 1, 1, now() \
+             FROM (VALUES ('{tied}'), ('{after}')) x(c); \
+             INSERT INTO shop.nft (network, contract_address, token_id, owner, item_id, issued_id, minted_block, minted_at, transferred_block, transferred_log, transferred_at, sold_at) \
+             SELECT 'matic', x.c, g, '{a}', 0, g, g, 100 + g, g, 0, 100 + g, 9500 \
+             FROM (VALUES ('{tied}', 600), ('{after}', 2)) x(c, n), generate_series(1, x.n) g; \
+             INSERT INTO shop.nft_last_sale (network, contract_address, token_id, sold_at, block_number) \
+             SELECT 'matic', x.c, g, 9500, 1 FROM (VALUES ('{tied}', 600), ('{after}', 2)) x(c, n), generate_series(1, x.n) g;"
+        )))
+        .execute(&pool)
+        .await
+        .unwrap();
+        let after_only = [("contractAddress", after)];
+        assert!(
+            !walks(&after_only, 500).await,
+            "the budget's 250 rows are all of the tie's first collection"
+        );
+        assert!(
+            walks(&after_only, 1300).await,
+            "a budget past the tie reaches the second collection"
+        );
+        let mut q = after_only.to_vec();
+        q.push(("sortBy", "recently_sold"));
+        let f = parse_filters(&pairs(&q)).unwrap();
+        let s = sources_for(&f);
+        let (sql, args) = build_nfts_page(&f, s, None, 2, 0, now, None, false, all, None);
+        let whole: Vec<(String, String, Option<i64>)> =
+            sqlx::query_with(sqlx::AssertSqlSafe(sql), args)
+                .fetch_all(&pool)
+                .await
+                .unwrap()
+                .iter()
+                .map(|r| {
+                    (
+                        r.get("contract_address"),
+                        r.get("token_text"),
+                        r.get("sold_at"),
+                    )
+                })
+                .collect();
+        let sold = |token: &str| (after.to_string(), token.to_string(), Some(9500));
+        assert_eq!(whole, vec![sold("1"), sold("2")], "the whole sort's page");
+        // The index rows the missed walk inspects, read from its plan with
+        // the indexes preferred: the budget's, and one past it to learn
+        // that the index holds more.
+        let budget = 250;
+        let (sql, args) = build_nfts_page(
+            &f,
+            s,
+            None,
+            1,
+            0,
+            now,
+            None,
+            false,
+            all,
+            Some(SoldBudget::rows(budget)),
+        );
+        let mut tx = pool.begin().await.unwrap();
+        sqlx::raw_sql("SET LOCAL enable_seqscan = off; SET LOCAL enable_bitmapscan = off")
+            .execute(&mut *tx)
+            .await
+            .unwrap();
+        let plan: serde_json::Value = sqlx::query_scalar_with(
+            sqlx::AssertSqlSafe(format!("EXPLAIN (ANALYZE, FORMAT JSON) {sql}")),
+            args,
+        )
+        .fetch_one(&mut *tx)
+        .await
+        .unwrap();
+        tx.rollback().await.unwrap();
+        fn inspected(node: &serde_json::Value, out: &mut Vec<(String, f64)>) {
+            let index = node["Index Name"].as_str().unwrap_or_default();
+            if index == "nft_last_sale_recent_idx" || index == "nft_sold_order_idx" {
+                let rows = node["Actual Rows"].as_f64().unwrap_or_default()
+                    * node["Actual Loops"].as_f64().unwrap_or_default();
+                out.push((index.to_string(), rows));
+            }
+            for child in node["Plans"].as_array().into_iter().flatten() {
+                inspected(child, out);
+            }
+        }
+        let mut reads = Vec::new();
+        inspected(&plan[0]["Plan"], &mut reads);
+        assert!(
+            reads.iter().any(|r| r.1 > 0.0),
+            "the walk reads its index: {reads:?}"
+        );
+        assert!(
+            reads.iter().all(|r| r.1 <= (budget + 1) as f64),
+            "at most the budget and one row past it: {reads:?}"
+        );
+        drop(conn);
+        own.drop().await;
+    }
+
+    /// A contract address and token id held on both networks, sold at the
+    /// same second or never: the recently sold sort orders the pair by
+    /// network, so a page boundary between them falls in the same place in
+    /// the walk and the whole sort.
+    #[tokio::test]
+    async fn a_token_on_both_networks_pages_by_network() {
+        let Some(own) = crate::market::tests::support::OwnDb::create("nftbothnets").await else {
+            return;
+        };
+        let pool = own.pool.clone();
+        let now = 1_700_000_000_000;
+        crate::market::trade_events::tests::publish_cursors_at(
+            &pool,
+            chrono::DateTime::from_timestamp_millis(now).map(|t| t.naive_utc()),
+        )
+        .await;
+        let c = "0x00000000000000000000000000000000000000c7";
+        let a = "0x00000000000000000000000000000000000000aa";
+        sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
+            "INSERT INTO shop.collections (network, contract_address, chain_id, name, creator, owner, urn, is_completed, is_approved, is_editable, created_at, updated_at, reviewed_at, mirrored_at) \
+             VALUES ('matic', '{c}', 137, 'Twin', '{a}', '{a}', 'urn:decentraland:matic:collections-v2:{c}', true, true, false, 1, 1, 1, now()), \
+                    ('ethereum', '{c}', 1, 'Twin', '{a}', '{a}', 'urn:decentraland:ethereum:collections-v1:twin', true, true, false, 1, 1, 1, now()); \
+             INSERT INTO shop.items (network, contract_address, item_id, chain_id, item_type, urn, creator, rarity, total_supply, max_supply, available, price, image, name, category, body_shapes, search_is_collection_approved, created_at, updated_at, reviewed_at, mirrored_at) \
+             VALUES ('matic', '{c}', 0, 137, 'wearable_v2', 'urn:decentraland:matic:collections-v2:{c}:0', '{a}', 'rare', 1, 99, 1, 5, 'i', 'Hat', 'hat', ARRAY['BaseMale'], true, 1, 1, 1, now()), \
+                    ('ethereum', '{c}', 0, 1, 'wearable_v1', 'urn:decentraland:ethereum:collections-v1:twin:w0', '{a}', 'rare', 1, 99, 0, 0, 'i', 'Hat', 'hat', ARRAY['BaseMale'], true, 1, 1, 1, now()); \
+             INSERT INTO shop.nft (network, contract_address, token_id, owner, item_id, issued_id, minted_block, minted_at, transferred_block, transferred_log, transferred_at, sold_at) \
+             SELECT 'matic', '{c}', g, '{a}', 0, g, g, 100 + g, g, 0, 100 + g, CASE WHEN g <= 2 THEN 700 END FROM generate_series(1, 4) g; \
+             INSERT INTO shop.nft (network, contract_address, token_id, owner, wearable_id, issued_id, minted_block, minted_at, transferred_block, transferred_log, transferred_at, sold_at) \
+             SELECT 'ethereum', '{c}', g, '{a}', 'w0', g, g, 100 + g, g, 0, 100 + g, CASE WHEN g <= 2 THEN 700 END FROM generate_series(1, 4) g; \
+             INSERT INTO shop.nft_last_sale (network, contract_address, token_id, sold_at, block_number) \
+             SELECT x.n, '{c}', 1, 700, 1 FROM (VALUES ('matic'), ('ethereum')) x(n);"
+        )))
+        .execute(&pool)
+        .await
+        .unwrap();
+        let f = parse_filters(&pairs(&[("sortBy", "recently_sold")])).unwrap();
+        let s = sources_for(&f);
+        let all = LastSale {
+            ethereum: true,
+            matic: true,
+        };
+        let page = |skip: i64, walk: Option<SoldBudget>| {
+            let pool = pool.clone();
+            let f = f.clone();
+            async move {
+                let (sql, args) =
+                    build_nfts_page(&f, s, None, 1, skip, now, None, false, all, walk);
+                sqlx::query_with(sqlx::AssertSqlSafe(sql), args)
+                    .fetch_all(&pool)
+                    .await
+                    .unwrap()
+                    .iter()
+                    .map(|r| {
+                        (
+                            r.get::<String, _>("token_text"),
+                            r.get::<Option<i64>, _>("sold_at"),
+                            r.get::<String, _>("network"),
+                        )
+                    })
+                    .collect::<Vec<_>>()
+            }
+        };
+        let row = |token: &str, sold: Option<i64>, net: &str| {
+            vec![(token.to_string(), sold, net.to_string())]
+        };
+        let want = [
+            row("1", Some(700), "ethereum"),
+            row("1", Some(700), "matic"),
+            row("2", Some(700), "ethereum"),
+            row("2", Some(700), "matic"),
+            row("3", None, "ethereum"),
+            row("3", None, "matic"),
+        ];
+        for (skip, want) in want.iter().enumerate() {
+            let skip = skip as i64;
+            for walk in [None, Some(SoldBudget::default()), Some(SoldBudget::rows(8))] {
+                assert_eq!(&page(skip, walk).await, want, "skip={skip} walk={walk:?}");
+            }
+        }
+        own.drop().await;
     }
 
     /// `sold_at` takes a token's latest sale from `shop.nft_last_sale` on
@@ -3584,13 +3726,15 @@ mod tests {
         .await
         .unwrap();
         let land = Some(LAND_MAINNET);
-        let rows = |rows: &[sqlx::postgres::PgRow]| -> Vec<(String, String, Option<i64>)> {
+        type Identity = (String, String, Option<i64>, String);
+        let rows = |rows: &[sqlx::postgres::PgRow]| -> Vec<Identity> {
             rows.iter()
                 .map(|r| {
                     (
                         r.get("contract_address"),
                         r.get("token_text"),
                         r.get("sold_at"),
+                        r.get("network"),
                     )
                 })
                 .collect()
@@ -3649,7 +3793,7 @@ mod tests {
                 ] {
                     // Routed to the walk with no limit to its budget: the lane
                     // reads the page wherever it may.
-                    let unbounded = Some(SoldFloors::default());
+                    let unbounded = Some(SoldBudget::default());
                     let (page, args) = build_nfts_page(
                         &f, s, land, first, skip, now, None, false, last_sale, unbounded,
                     );
@@ -3691,7 +3835,7 @@ mod tests {
                         format!("WHERE {}", wheres.join(" AND "))
                     };
                     bld.push(&format!(
-                        "WITH {prefix}listed AS ({}) SELECT c.contract_address, c.token_id::text AS token_text, c.sold_at \
+                        "WITH {prefix}listed AS ({}) SELECT c.contract_address, c.token_id::text AS token_text, c.sold_at, c.network \
                          FROM listed c {where_sql} {} LIMIT {lim} OFFSET {off}",
                         legs.join(" UNION ALL "),
                         sort_sql(f.sort_by)
@@ -3710,10 +3854,6 @@ mod tests {
                         // A small budget: a page the walk returns is the
                         // whole sort's.
                         for budget in [3, 12, 40] {
-                            let mut conn = pool.acquire().await.unwrap();
-                            let floors = sold_floors(&mut conn, &f, s, last_sale, budget)
-                                .await
-                                .unwrap();
                             let (page, args) = build_nfts_page(
                                 &f,
                                 s,
@@ -3724,7 +3864,7 @@ mod tests {
                                 None,
                                 false,
                                 last_sale,
-                                Some(floors),
+                                Some(SoldBudget::rows(budget)),
                             );
                             let bounded = sqlx::query_with(sqlx::AssertSqlSafe(page), args)
                                 .fetch_all(&pool)
@@ -3773,7 +3913,7 @@ mod tests {
             None,
             false,
             all,
-            Some(SoldFloors::default()),
+            Some(SoldBudget::default()),
         );
         let got = rows(
             &sqlx::query_with(sqlx::AssertSqlSafe(page), args)
