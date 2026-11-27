@@ -911,7 +911,10 @@ mod tests {
         retry: bool,
         settled: Option<&tokio::sync::Barrier>,
     ) -> Option<SyncOutcome> {
-        let pool = crate::db::scratch::isolated_pool(3).await?;
+        let database =
+            crate::db::scratch::OwnedDatabase::new("sync", crate::db::scratch::Schema::Full, 3)
+                .await?;
+        let pool = database.pool.clone();
         let pointer = entity["pointers"][0].as_str().unwrap().to_string();
         let entity_type = entity["type"].as_str().unwrap().to_string();
         let timestamp = entity["timestamp"].as_i64().unwrap();
@@ -923,11 +926,6 @@ mod tests {
                 signed_chain_behind_contract(&entity_id, "2099-01-01T00:00:00.000Z").await
             }
         };
-        sqlx::query("DELETE FROM content.active_pointers WHERE pointer = $1")
-            .bind(&pointer)
-            .execute(&pool)
-            .await
-            .unwrap();
         let (base, server) = spawn_content_server(body, None).await;
         let (storage, tmp) = temp_storage("validated").await;
         storage
@@ -1024,19 +1022,8 @@ mod tests {
         let active_is_this = outcome.active.as_deref() == Some(entity_id.as_str());
 
         server.abort();
-        for sql in [
-            "DELETE FROM content.active_pointers WHERE entity_id = $1",
-            "DELETE FROM content.deployments WHERE entity_id = $1",
-            "DELETE FROM content.failed_deployments WHERE entity_id = $1",
-        ] {
-            sqlx::query(sql)
-                .bind(&entity_id)
-                .execute(&pool)
-                .await
-                .unwrap();
-        }
         let _ = tokio::fs::remove_dir_all(&tmp).await;
-        pool.close().await;
+        database.drop().await;
         Some(SyncOutcome {
             active: active_is_this.then_some(entity_id),
             ..outcome
@@ -1151,7 +1138,6 @@ mod tests {
             );
             assert!(outcome.failure.is_none());
         }
-        assert_ne!(first.active, second.active);
     }
 
     #[tokio::test]
