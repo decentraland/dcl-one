@@ -195,22 +195,27 @@ bound counts and what a request past it gets.
   files, each byte and file an upload source sends costs its day the price
   the table names. A spent day answers 429 with `Retry-After`.
 - **File uploads.** A file upload takes a place among the node's file
-  places, of which a wallet and an upload source hold a share; with none
-  free it answers 429 with `Retry-After` at once. A body that hasn't arrived
-  within its deadline answers 408 ("The upload timed out") and frees the
-  place.
+  places, of which a wallet and an upload source hold a share. A body that
+  hasn't arrived within its deadline, or sends no byte for the idle window,
+  answers 408 ("The upload timed out") and frees the place. While every
+  place is held, a newcomer gets a place only as described for video
+  uploads below; otherwise it answers 429 with `Retry-After` at once.
 - **Video uploads.** A video upload takes a place among the node's video
   places, of which a wallet and an upload source hold a share. The time it
   holds the place, whether bytes arrive or not and however it ends, spends
-  the wallet's and the source's day of upload time. While every place is
-  held, a newcomer takes the place of the upload whose wallet or source
-  spent the longest on finished uploads today, if longer than the
-  newcomer's; that upload ends with 408 ("The upload gave its place to
+  the wallet's and the source's day of upload time. An upload is behind
+  while it has received less, since it took its place, than the pace its
+  route's largest body needs to arrive by the deadline. While every place
+  is held and an upload is behind, a newcomer reads its body on an extra
+  place, one for each upload behind; once its first bytes arrive, the
+  slowest upload behind ends with 408 ("The upload gave its place to
   another while the node was busy") and `Retry-After`, and its spooled
-  bytes are removed. An upload whose wallet and source finished none today
-  keeps its place until it ends. Otherwise the newcomer gets 429 with
-  `Retry-After`. `BUILDER_VIDEO_UPLOADS_MAX` sets the
-  node's places; startup refuses a value outside the table's range.
+  bytes are removed. When none is behind any more and no place came free,
+  the newcomer ends with 429 and `Retry-After` instead, and a newcomer that
+  sends nothing ends at the idle window having cut nobody. With no upload
+  behind, the newcomer gets 429 with `Retry-After` at once.
+  `BUILDER_VIDEO_UPLOADS_MAX` sets the node's places; startup refuses a
+  value outside the table's range.
 - **Drafts.** A wallet's drafts are the items it holds that no publication
   names (a standard item until its collection is published, a third-party
   item until it has an item curation), the collections it holds
@@ -263,7 +268,7 @@ step, or a bound of the review, validator or outside-service areas).
 | `Retry-After` of a refused place | 30 seconds | `items::places::RETRY_AFTER_SECS` |
 | Bytes of a video | 250,000,000 bytes | `items::video::DEFAULT_MAX_BYTES` |
 | Time for a video's body to arrive | 20 minutes | `items::video::DEFAULT_DEADLINE` |
-| Idle window: time without a byte before a video upload ends | 30 seconds | `items::video::DEFAULT_IDLE_TIMEOUT` |
+| Idle window: time without a byte before a file or video upload ends | 30 seconds | `items::places::IDLE_TIMEOUT` |
 | Video uploads at once on the node, `BUILDER_VIDEO_UPLOADS_MAX` unset | 32 | `items::video::MAX_UPLOADS` |
 | The most `BUILDER_VIDEO_UPLOADS_MAX` sets, from 1 | 256 | `MAX_VIDEO_UPLOADS_SETTING` |
 | Video uploads at once of a wallet | 1 | `items::video::MAX_UPLOADS_PER_SIGNER` |
