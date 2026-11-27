@@ -367,10 +367,15 @@ fn references_no_file(gltf: &Gltf) -> bool {
     })
 }
 
-/// True when each uri is absent (the data is in the file) or a `data:` uri.
+/// True when each uri is absent (the data is in the file) or a data uri the glTF loader decodes
+/// itself: `data:<mime>,<data>`. A `data:` uri without a comma is resolved as a file.
 fn uris_in_file<'a>(uris: impl IntoIterator<Item = Option<&'a str>>) -> bool {
-    uris.into_iter()
-        .all(|uri| uri.is_none_or(|uri| uri.starts_with("data:")))
+    uris.into_iter().all(|uri| {
+        uri.is_none_or(|uri| {
+            uri.strip_prefix("data:")
+                .is_some_and(|rest| rest.contains(','))
+        })
+    })
 }
 
 /// The bounds the materials of a root's glTF containers clip to, on a root with no
@@ -514,7 +519,7 @@ fn update_gltf(
             Entity,
             &SceneEntity,
             &GltfHandle,
-            &GltfDefinition,
+            Ref<GltfDefinition>,
             Option<&GltfPart>,
         ),
         (With<GltfDefinition>, Without<GltfLoaded>),
@@ -660,6 +665,10 @@ fn update_gltf(
     }
 
     for (ent, scene_ent, h_gltf, def, part) in unprocessed_gltfs.iter() {
+        // a changed definition has its new model queued above; this handle is the old one
+        if def.is_changed() {
+            continue;
+        }
         match ipfas.load_state(h_gltf.0.id()) {
             bevy::asset::LoadState::Loaded => (),
             bevy::asset::LoadState::Failed(e) => {

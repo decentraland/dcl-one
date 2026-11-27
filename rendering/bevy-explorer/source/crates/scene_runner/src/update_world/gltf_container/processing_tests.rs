@@ -709,6 +709,8 @@ fn a_file_with_its_data_inside_references_no_file() {
     assert!(uris_in_file([]));
     assert!(!uris_in_file([None, Some("textures/wood.png")]));
     assert!(!uris_in_file([Some("model.bin")]));
+    // without a comma the loader resolves it as a file
+    assert!(!uris_in_file([Some("data:tex.png")]));
 }
 
 #[test]
@@ -789,10 +791,15 @@ fn without_a_salt_a_scene_takes_only_its_own_cached_mesh() {
         .entity_mut(a)
         .take::<RendererSceneContext>()
         .expect("a context");
-    spawn_triangle(&mut app, a, "a_later");
+    let a_later = spawn_triangle(&mut app, a, "a_later");
     app.world_mut().entity_mut(a).insert(context);
     app.update();
-    assert_ne!(drawn_mesh(&mut app, "a_later"), b_mesh);
+    let lookup = app.world().get::<SceneResourceLookup>(a).unwrap();
+    assert!(lookup
+        .mesh_ids_by_hash
+        .values()
+        .any(|id| *id == a_later.id()));
+    assert_eq!(drawn_mesh(&mut app, "a_later"), a_later.id());
 }
 
 const URL: &str = "https://content.example/contents/bafkreimodel";
