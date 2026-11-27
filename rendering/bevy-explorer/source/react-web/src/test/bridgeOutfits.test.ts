@@ -814,6 +814,18 @@ describe('the bridge outfits domain', () => {
       expect(toldBeforePicture.at(-1)).toEqual({ kind: 'outfitBusy', slot: 0, action: 'equip', busy: false })
     })
 
+    describe('and the look changes while the picture is taken', () => {
+      it('should not keep the picture', async () => {
+        const { request } = await bridge()
+        captureAvatarThumbnail.mockImplementationOnce(async () => {
+          if (look != null) look = { ...look, hair: { r: 1, g: 0, b: 0 } }
+          return PICTURE
+        })
+        await request({ kind: 'equipOutfit', slot: 0 })
+        expect(pictureWrites).toEqual([])
+      })
+    })
+
     describe('and the slot holds no outfit', () => {
       it('should end the busy state it started', async () => {
         const { request, sent } = await bridge()
@@ -922,6 +934,71 @@ describe('the bridge outfits domain', () => {
         answer({ metadata: stored })
         await preview
         expect(look?.wearables).toEqual(['urn:mine'])
+      })
+    })
+
+    describe('and the look is reverted after a failed deploy', () => {
+      it('should not put the reverted look back when restored', async () => {
+        const { request } = await bridge()
+        await request({ kind: 'previewOutfit', slot: 0 })
+        await request({ kind: 'revertAvatar' })
+        editLook.mockClear()
+        await request({ kind: 'restoreOutfitPreview' })
+        expect(editLook).not.toHaveBeenCalled()
+      })
+    })
+
+    describe('and the look is reverted while its outfit is still being read', () => {
+      it('should put nothing on the look', async () => {
+        const { request } = await bridge()
+        let answer: (value: unknown) => void = () => {}
+        getJson.mockReturnValueOnce(new Promise((resolve) => (answer = resolve)))
+        const preview = request({ kind: 'previewOutfit', slot: 0 })
+        await request({ kind: 'revertAvatar' })
+        answer({ metadata: stored })
+        await preview
+        expect(look?.wearables).toEqual(['urn:mine'])
+      })
+    })
+
+    describe('and the preview is restored while the avatar loads it, to a look with the same wearables', () => {
+      beforeEach(() => {
+        look = { ...before, wearables: ['urn:old'], hair: { r: 1, g: 0, b: 0 }, emotes: ['urn:wave'] } as unknown as AvatarLook
+      })
+
+      it('should not picture the outfit', async () => {
+        const { request } = await bridge()
+        lookShown.mockImplementationOnce(async () => {
+          await request({ kind: 'restoreOutfitPreview' })
+        })
+        await request({ kind: 'previewOutfit', slot: 0 })
+        expect([captureAvatarThumbnail.mock.calls.length, pictureWrites]).toEqual([0, []])
+      })
+    })
+
+    describe('and the look changes while the picture is taken', () => {
+      it('should not keep the picture', async () => {
+        const { request } = await bridge()
+        captureAvatarThumbnail.mockImplementationOnce(async () => {
+          if (look != null) look = { ...look, hair: { r: 1, g: 0, b: 0 } }
+          return PICTURE
+        })
+        await request({ kind: 'previewOutfit', slot: 0 })
+        expect(pictureWrites).toEqual([])
+      })
+    })
+
+    describe('and the outfit was stored with a colour that is not opaque', () => {
+      beforeEach(() => {
+        const hair = { color: { r: 0.5, g: 0.5, b: 0.5, a: 0.5 } }
+        stored = { outfits: [{ slot: 0, outfit: { ...outfit(['urn:old']), hair } }], namesForExtraSlots: [] }
+        getJson.mockResolvedValue({ metadata: stored })
+      })
+
+      it('should picture the outfit', async () => {
+        const { request } = await bridge()
+        await request({ kind: 'previewOutfit', slot: 0 })
+        expect(pictureWrites).toEqual([['outfit-thumb:0xa:0', PICTURE]])
       })
     })
 

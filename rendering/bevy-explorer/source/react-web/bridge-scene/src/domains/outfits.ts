@@ -12,7 +12,8 @@
 //   pictures → localStorage, per account and slot: a cache, never deployed, a missing one taken once
 //              the outfit is on the avatar
 //   preview → the Backpack's look, as an equip, until restoreOutfitPreview puts back the look from
-//             before the first preview (the page: leaving Saved Outfits, closing the Backpack)
+//             before the first preview (the page: leaving Saved Outfits, closing the Backpack);
+//             revertAvatar (the page, Revert) forgets that look with the draft it drops
 //   equip → the Backpack's look (body shape + colors + wearables; ./avatarDraft deploys it on close);
 //           it keeps a previewed look
 import { getPlayer } from '@dcl/sdk/players'
@@ -181,7 +182,7 @@ function sameOutfit(a: Outfit, b: Outfit): boolean {
 }
 
 // Capture the Backpack's CURRENT look into a deployable Outfit (colors default to grey if absent).
-function currentOutfit(look: AvatarLook): Outfit {
+function currentOutfit(look: OutfitLook): Outfit {
   return {
     bodyShape: look.bodyShape,
     eyes: { color: opaque(look.eyes ?? GREY) },
@@ -199,10 +200,11 @@ let beforePreview: OutfitLook | null = null
 // Counts previews and restores: a preview still reading its outfit when a later one, or the restore,
 // arrives puts nothing on.
 let previews = 0
-identity.onChange(() => {
+function forgetPreview(): void {
   beforePreview = null
   previews++
-})
+}
+identity.onChange(forgetPreview)
 
 export function registerOutfits(ctx: Ctx): void {
   // Pictures of the account the outfits belong to, even if the player changed meanwhile.
@@ -310,6 +312,12 @@ export function registerOutfits(ctx: Ctx): void {
   // Put a saved outfit's body shape, colors and wearables on the Backpack's look (keeps emotes).
   const wear = async (slot: number, action: 'preview' | 'equip', current: () => boolean): Promise<void> => {
     const me = getPlayer()
+    // Not the stored outfit: a stored colour's alpha never reaches the look.
+    let put: Outfit | null = null
+    const shows = (): boolean => {
+      const look = currentLook()
+      return put != null && look != null && current() && sameOutfit(currentOutfit(look), put)
+    }
     // Busy until the Backpack's avatar has loaded the look; the missing picture below is taken after.
     const worn = await busy(slot, action, async (): Promise<Outfit | null> => {
       if (me == null) return null
@@ -319,14 +327,16 @@ export function registerOutfits(ctx: Ctx): void {
       })
       const found = metadata?.outfits.find((o) => o.slot === slot)?.outfit
       if (found == null || !current()) return null
-      editLook({
+      const change: OutfitLook = {
         bodyShape: found.bodyShape,
         eyes: rgb(found.eyes.color),
         hair: rgb(found.hair.color),
         skin: rgb(found.skin.color),
         wearables: found.wearables,
         forceRender: found.forceRender
-      })
+      }
+      editLook(change)
+      put = currentOutfit(change)
       // Re-emit the equipped set resolved from the outfit's wearables (by urn, independent of the
       // loaded catalog page). Otherwise off-page outfit items never reach the HUD's category slots
       // and the next single-item equip drops them.
@@ -338,10 +348,10 @@ export function registerOutfits(ctx: Ctx): void {
     })
     if (me == null || worn == null) return
     if (thumbnailOf(me.userId, slot) == null) {
-      // Changed since: the preview no longer shows this outfit.
-      if (JSON.stringify(currentLook()?.wearables) !== JSON.stringify(worn.wearables)) return
+      // Changed since, or while the picture was taken: the avatar may not show this outfit.
+      if (!shows()) return
       const thumbnail = await captureAvatarThumbnail()
-      if (thumbnail == null) return
+      if (thumbnail == null || !shows()) return
       await serially(async () => {
         // A save or delete may have changed the slot meanwhile.
         const now = await loadMetadata(me.userId, me.isGuest).catch(() => null)
@@ -368,6 +378,9 @@ export function registerOutfits(ctx: Ctx): void {
     beforePreview = null
     await wear(msg.slot, 'equip', () => true)
   })
+
+  // The draft is dropped (./avatarDraft): a restore would put it back for the next close to deploy.
+  ctx.on('revertAvatar', forgetPreview)
 
   // The look is put back before anything is awaited: the commitAvatar that follows a closing
   // Backpack's restore deploys it.
