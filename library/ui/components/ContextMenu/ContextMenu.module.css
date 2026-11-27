@@ -1,16 +1,31 @@
-/* Not from Figma's menu-item and menu-header (Menus): the Explorer HUD's context menu, with the row that opens a
-   list beside it, the menu a kebab button opens and the one opened from a point. These rules sit outside the
-   cascade layer: its rows are native buttons, which a host's own reset would otherwise restyle. The 14px corners,
-   the shadow, the 4 %, 8 %, 45 % and 70 % whites, the danger reds and the sheet's greys have no token. */
+/* Figma's bold/menu surface and its bold/menu-item rows (Menu page), as the Explorer HUD draws them: the context
+   menu, the row that opens a list beside it, the menu a kebab button opens and the one opened from a point. These
+   rules sit outside the cascade layer: its rows are native buttons, which a host's own reset would otherwise restyle.
+   No token holds the 2px border, the 36px row, the overlay shadow (Figma elevation/overlay), the pressed row's 5 %
+   white (Figma bg/pressed: --dcl-bg-pressed still holds an older 20 %) or the header's 45 % white. */
 .ctx {
-  min-width: 220px;
-  max-width: 280px;
-  padding: 6px;
-  background: var(--dcl-neutrals-shadow);
-  border: 1px solid var(--dcl-transparencies-white-10);
-  border-radius: 14px; /* = HUD --r-card */
-  box-shadow: 0 30px 80px rgba(0, 0, 0, 0.5); /* = HUD --shadow-modal */
-  color: var(--dcl-neutrals-snow);
+  /* How far a row's edge sits from the surface's outer edge: a list opened beside a row lines up with it. */
+  --menu-edge: calc(var(--dcl-space-8) + 2px);
+  /* The switch row's small switch (Figma switch, sm): 28 × 18, white 10 % off and the primary action on. */
+  --toggle-w: 28px;
+  --toggle-h: 18px;
+  --toggle-pad: 2px;
+  --toggle-off: var(--dcl-transparencies-white-10);
+  --toggle-on: var(--dcl-action-primary);
+  --toggle-knob: var(--dcl-neutrals-snow);
+  --toggle-knob-shadow: none;
+  box-sizing: border-box;
+  /* As wide as its rows, whatever room it is placed in (a kebab's menu hangs from a button), up to the maximum. */
+  width: var(--menu-width, max-content);
+  min-width: var(--menu-width, 180px);
+  max-width: var(--menu-width, 280px);
+  padding: var(--dcl-space-8);
+  background: var(--dcl-bg-page);
+  border: 2px solid var(--dcl-border-subtle);
+  border-radius: var(--dcl-radius-md);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5);
+  color: var(--dcl-text-primary);
+  font-family: 'Inter Variable', 'Inter', system-ui, -apple-system, sans-serif; /* = HUD --font-family */
 }
 
 /* A long list scrolls past this height. */
@@ -22,8 +37,8 @@
 .header {
   display: flex;
   align-items: center;
-  gap: 11px;
-  padding: 10px 10px 12px;
+  gap: var(--dcl-space-12);
+  padding: 10px var(--dcl-space-12) var(--dcl-space-12);
 }
 .hinfo {
   min-width: 0;
@@ -31,7 +46,7 @@
 .hname {
   font-size: 15px;
   font-weight: 800;
-  color: var(--dcl-neutrals-snow);
+  color: var(--dcl-text-primary);
 }
 .htag {
   color: rgba(255, 255, 255, 0.45); /* = HUD --ink-45 */
@@ -46,136 +61,101 @@
   white-space: nowrap;
   text-overflow: ellipsis;
   color: var(--dcl-transparencies-white-60);
-  font-size: 12px;
+  font-size: var(--dcl-font-size-body-xs);
 }
 
+/* Figma's section-title row: label/xs-caps in the secondary text colour. */
 .title {
-  padding: 9px 10px 8px;
-  font-size: 14px;
-  font-weight: 800;
-  color: var(--dcl-neutrals-snow);
+  display: flex;
+  align-items: center;
+  min-height: 36px;
+  padding: 0 var(--dcl-space-12);
+  color: var(--dcl-text-secondary);
+  font-size: var(--dcl-font-size-label-xs-caps);
+  font-weight: 600;
+  line-height: 1.25;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
 }
 
 .caption {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 9px 10px 8px;
+  gap: var(--dcl-space-8);
+  min-height: 36px;
+  padding: 0 var(--dcl-space-12);
 }
 .captionLabel {
   min-width: 0;
-  color: rgba(255, 255, 255, 0.7); /* = HUD --ink-7 */
-  font-size: 13px;
+  color: var(--dcl-text-secondary);
+  font-size: var(--dcl-font-size-body-xs);
   font-weight: 600;
 }
 
+/* Figma's divider row: a 1px rule across the rows, in a 10px band. */
 .sep {
   height: 1px;
-  margin: 4px 6px;
-  background: rgba(255, 255, 255, 0.04); /* = HUD --fill-1 */
+  margin: var(--dcl-space-4) 0 5px;
+  background: var(--dcl-border-subtle);
 }
 
+/* Figma's option row: a 20px icon, the label (body/sm-strong) and what trails it, 36px high. A label too long for
+   one line wraps and the row grows: names people choose (a community's) are never cut. */
 .item {
+  box-sizing: border-box;
   width: 100%;
+  min-height: 36px;
   display: flex;
   align-items: center;
-  gap: 11px;
+  gap: var(--dcl-space-8);
+  padding: var(--dcl-space-4) var(--dcl-space-12);
   text-align: left;
   background: none;
   border: none;
+  border-radius: var(--dcl-radius-sm);
   cursor: pointer;
-  color: var(--dcl-neutrals-snow);
+  color: var(--dcl-text-primary);
   font-family: inherit;
-  font-size: 13px;
+  font-size: var(--dcl-font-size-body-sm-strong);
   font-weight: 600;
-  padding: 9px 10px;
-  border-radius: 9px;
-  transition:
-    background 0.1s ease,
-    color 0.1s ease;
+  line-height: 1.5;
+  transition: background 0.1s ease;
 }
 .item:hover {
-  background: rgba(255, 255, 255, 0.08); /* = HUD --fill-3 */
+  background: var(--dcl-bg-hover);
 }
-.itemDanger {
-  color: #ff5470;
-}
-.itemDanger:hover {
-  background: rgba(255, 36, 36, 0.14);
-  color: #ff6b84;
+.item:active {
+  background: rgba(255, 255, 255, 0.05);
 }
 .icon {
-  flex: 0 0 auto;
-  width: 18px;
-  text-align: center;
-  opacity: 0.85;
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  color: var(--dcl-icon-default);
 }
 .label {
   flex: 1;
   min-width: 0;
+  overflow-wrap: anywhere;
 }
 .chev {
-  flex: 0 0 auto;
-  color: rgba(255, 255, 255, 0.45); /* = HUD --ink-45 */
-  font-size: 16px;
-}
-.check {
-  flex: 0 0 auto;
-  width: 14px;
-  text-align: right;
-  color: var(--dcl-brand-ruby);
-  font-size: 12px;
-}
-.check svg {
   flex: none;
-  vertical-align: -0.125em;
-}
-
-/* sheet: a flat menu over the chat. 41px rows, 20px icons, a rule from edge to edge of the rows,
-   and a 40x24 switch that is grey while off. */
-.sheet {
-  width: 258px;
-  max-width: none;
-  box-sizing: border-box;
-  padding: 6px 9px 7px;
-  border: none;
-  background: #1e1e1e; /* = HUD --menu-sheet */
-  box-shadow: none;
-  --toggle-w: 40px;
-  --toggle-h: 24px;
-  --toggle-pad: 2px;
-  --toggle-off: #454545; /* = HUD --switch-off-menu */
-}
-.sheet .item {
-  gap: 10px;
-  height: 41px;
-  padding: 0 12px 0 10px;
-  font-family: 'Inter Variable', 'Inter', system-ui, -apple-system, sans-serif; /* = HUD --font-family */
-  font-size: 14px;
-  font-weight: 700;
-}
-.sheet .icon {
   display: flex;
-  justify-content: center;
-  width: 20px;
-  opacity: 1;
+  color: var(--dcl-text-secondary);
 }
-.sheet .sep {
-  margin: 6px 0;
-  background: var(--dcl-transparencies-white-20);
+/* Figma's destructive tone: the label in the system red, the icon in the primary action's. */
+.itemDanger {
+  color: var(--dcl-feedback-error);
 }
-/* the switch ends 12px from the sheet's edge */
-.sheet .itemToggle {
-  padding-right: 3px;
-}
-.sheet .chev {
-  font-weight: 400;
-}
-.sheet .itemDanger {
-  color: var(--dcl-brand-ruby);
+.itemDanger .icon {
+  color: var(--dcl-action-primary);
 }
 
-/* A row that opens a list beside it. The row takes the host menu's row class too. */
+/* A row that opens a list beside it. The row takes the host menu's row class too: in a ContextMenu its icon and
+   chevron take the menu's look (above), and elsewhere they keep the look of the host row's. */
 .subWrap {
   position: relative;
 }
@@ -183,40 +163,37 @@
   display: flex;
   align-items: center;
   width: 100%;
+  text-align: left;
 }
 .subIcon {
   display: inline-flex;
   flex: none;
 }
-.subLabel {
-  flex: 1;
-  min-width: 0;
-  text-align: left;
-}
 .subChev {
-  flex: 0 0 auto;
+  flex: none;
   color: rgba(255, 255, 255, 0.45); /* = HUD --ink-45 */
   font-size: 1.05rem; /* = HUD --fs-lg */
 }
-/* Beside the row, its top level with the row's. */
+/* Beside the row, a 4px gap from the surface it opens from, its first row level with the row. */
 .flyout {
+  --menu-width: initial;
   position: absolute;
-  top: 0;
-  left: 100%;
-  padding-left: 4px;
+  top: calc(-1 * var(--menu-edge, 0px));
+  left: calc(100% + var(--menu-edge, 0px));
+  padding-left: var(--dcl-space-4);
   z-index: 10000; /* = HUD --z-popup */
 }
 /* No room on the right: the list opens on the row's left. */
 .flyoutLeft {
   left: auto;
-  right: 100%;
+  right: calc(100% + var(--menu-edge, 0px));
   padding-left: 0;
-  padding-right: 4px;
+  padding-right: var(--dcl-space-4);
 }
-/* No room below: the list's bottom lines up with the row's. */
+/* No room below: the list's last row lines up with the row. */
 .flyoutUp {
   top: auto;
-  bottom: 0;
+  bottom: calc(-1 * var(--menu-edge, 0px));
 }
 
 /* The menu a kebab button opens: below it, right-aligned. */
@@ -227,7 +204,7 @@
   position: absolute;
   top: 100%;
   right: 0;
-  margin-top: 4px;
+  margin-top: var(--dcl-space-4);
   z-index: 1;
 }
 
