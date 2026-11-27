@@ -196,9 +196,11 @@ most `SCENE_GLOBAL_UPDATE_CAPACITY` of them between its ticks, so a capped scene
 `GLOBAL_UPDATE_BACKLOG_DUE` (a quarter of the capacity) delivered since its last dispatch
 (`GlobalCrdtState::sent` against the count it recorded then) is due whatever its band. A scene
 subscribes to global updates when it spawns, not when it starts loading, so the native
-forwarder's swap forwards no backlog to the other scenes of its context. Its inbound message queues (string and binary buses,
+forwarder's swap forwards no backlog to the other scenes of its context; the context sends its
+last time of day and camera FOV again at that subscription, so the new scene starts with both. Its inbound message queues (string and binary buses,
 topic inbox) are bounded too, so a capped scene with `SCENE_MESSAGE_BACKLOG_DUE` peer messages
-handed to them since its last dispatch (`SceneMessageTraffic::delivered_to`) is due as well.
+handed to them since its last dispatch (`SceneMessagesDelivered`, on the scene root) is due as
+well.
 The behind cap applies from 16 m on, since nearer the
 player can back into a scene's colliders and hears its audio, and only while the camera is near
 level (`behind_cap_applies`), because the behind test ignores pitch. A

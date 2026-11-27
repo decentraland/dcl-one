@@ -34,7 +34,7 @@ use common::{
 };
 use comms::{
     global_crdt::{CrdtContexts, GlobalCrdtState},
-    scene_messages::SceneMessageTraffic,
+    scene_messages::SceneMessagesDelivered,
     SceneRoomConnection, SetCurrentScene,
 };
 use dcl_component::{
@@ -616,6 +616,7 @@ fn update_scene_priority(
             Option<&Partition>,
             &mut RendererSceneContext,
             Option<&SuperUserScene>,
+            Option<&SceneMessagesDelivered>,
         ),
         Without<SceneLoading>,
     >,
@@ -623,7 +624,6 @@ fn update_scene_priority(
     rendering_camera: Query<(&GlobalTransform, &PrimaryCamera, Has<PhotoMode>), With<Camera>>,
     crdt_context_ids: Res<CrdtContexts>,
     crdt_contexts: Query<&GlobalCrdtState>,
-    scene_messages: Res<SceneMessageTraffic>,
     imposter_scene: Res<CurrentImposterScene>,
     mut updates: ResMut<SceneUpdates>,
     time: Res<Time>,
@@ -649,7 +649,7 @@ fn update_scene_priority(
         Some((PointerResult::Exists { hash, .. }, _)) => Some(hash.as_str()),
         _ => None,
     };
-    for (ent, maybe_partition, mut context, maybe_super) in scenes.iter_mut() {
+    for (ent, maybe_partition, mut context, maybe_super, _) in scenes.iter_mut() {
         // before this frame's dispatch
         if let Some(wake) = context.wake() {
             wake.set(wake_scenes.contains(&ent));
@@ -698,7 +698,7 @@ fn update_scene_priority(
     // sort eligible scenes
     updates.scene_queue = scenes
         .iter_mut()
-        .filter(|(ent, _, context, maybe_super)| {
+        .filter(|(ent, _, context, maybe_super, _)| {
             missing_in_flight.remove(ent);
             let allow = !context.in_flight() && context.schedulable(maybe_super.is_some());
             if context.in_flight() {
@@ -718,7 +718,7 @@ fn update_scene_priority(
             }
             allow
         })
-        .filter_map(|(ent, maybe_partition, mut context, _)| {
+        .filter_map(|(ent, maybe_partition, mut context, _, delivered)| {
             let partition = maybe_partition.map_or(PartitionData::NEAREST, |p| p.0);
             let active = active_scenes.contains(&ent);
             context.priority = if active { 0.0 } else { partition.sqr_distance };
@@ -738,8 +738,8 @@ fn update_scene_priority(
                     let unread_updates =
                         global_updates_sent(&crdt_context_ids, &crdt_contexts, &context)
                             .saturating_sub(context.global_updates_read);
-                    let unread_messages = scene_messages
-                        .delivered_to(&context.hash)
+                    let unread_messages = delivered
+                        .map_or(0, |delivered| delivered.0)
                         .saturating_sub(context.scene_messages_read);
                     if unread_updates < GLOBAL_UPDATE_BACKLOG_DUE
                         && unread_messages < SCENE_MESSAGE_BACKLOG_DUE
@@ -1293,7 +1293,6 @@ mod player_scenes_tests {
             contexts.0.insert(String::new(), shared);
             world.insert_resource(contexts);
         }
-        world.init_resource::<SceneMessageTraffic>();
         world.init_resource::<Time>();
         world.init_resource::<CurrentImposterScene>();
     }
@@ -1595,19 +1594,9 @@ mod player_scenes_tests {
             GlobalTransform::default(),
         ));
         scene_loop_resources(&mut world);
-        let hash = world
-            .get::<RendererSceneContext>(east)
-            .unwrap()
-            .hash
-            .to_string();
-        let mut traffic = world.resource_mut::<SceneMessageTraffic>();
-        for _ in 0..SCENE_MESSAGE_BACKLOG_DUE - 1 {
-            traffic.record_delivered(&hash);
-        }
-        // another scene's messages fill other queues
-        for _ in 0..SCENE_MESSAGE_BACKLOG_DUE {
-            traffic.record_delivered("another scene");
-        }
+        world
+            .entity_mut(east)
+            .insert(SceneMessagesDelivered(SCENE_MESSAGE_BACKLOG_DUE - 1));
         world
             .resource_mut::<Time>()
             .advance_by(Duration::from_secs_f32(0.1));
@@ -1615,13 +1604,11 @@ mod player_scenes_tests {
         world.run_system_once(update_scene_priority).unwrap();
         assert!(!queued(&world).contains(&east));
 
-        world
-            .resource_mut::<SceneMessageTraffic>()
-            .record_delivered(&hash);
+        world.get_mut::<SceneMessagesDelivered>(east).unwrap().0 += 1;
         world.run_system_once(update_scene_priority).unwrap();
         assert!(queued(&world).contains(&east));
         // its dispatch reads the backlog, so the next frame holds it again
-        let delivered = world.resource::<SceneMessageTraffic>().delivered_to(&hash);
+        let delivered = world.get::<SceneMessagesDelivered>(east).unwrap().0;
         let now = world.resource::<Time>().elapsed_secs_f64();
         let mut context = world.get_mut::<RendererSceneContext>(east).unwrap();
         assert!(record_dispatch(&mut context, now, 0, delivered));
@@ -1983,6 +1970,7 @@ fn send_scene_updates(
         &GlobalTransform,
         Has<SuperUserScene>,
         Option<&mut scene_traffic::SceneTraffic>,
+        Option<&SceneMessagesDelivered>,
     )>,
     mut updates: ResMut<SceneUpdates>,
     time: Res<Time>,
@@ -2000,12 +1988,11 @@ fn send_scene_updates(
     scene_realms: Res<comms::global_crdt::SceneRealms>,
     screen_areas: ScreenAreas,
     preview_mode: Res<PreviewMode>,
-    (mut buf, mut realm_info_cache, crdt_context_ids, crdt_contexts, scene_messages): (
+    (mut buf, mut realm_info_cache, crdt_context_ids, crdt_contexts): (
         Local<Vec<u8>>,
         Local<RealmInfoCache>,
         Res<CrdtContexts>,
         Query<&GlobalCrdtState>,
-        Res<SceneMessageTraffic>,
     ),
 ) {
     let updates = &mut *updates;
@@ -2078,7 +2065,8 @@ fn send_scene_updates(
 
     updates.scene_queue.pop_front();
 
-    let (_, mut context, scene_transform, is_super, traffic) = scenes.get_mut(ent).unwrap();
+    let (_, mut context, scene_transform, is_super, traffic, delivered) =
+        scenes.get_mut(ent).unwrap();
 
     // only live scenes are queued, so this only fails if the scene broke this frame
     let Some(sender) = context.sender().cloned() else {
@@ -2260,7 +2248,7 @@ fn send_scene_updates(
         context.state = SceneState::Broken;
     } else {
         let sent = global_updates_sent(&crdt_context_ids, &crdt_contexts, &context);
-        let delivered = scene_messages.delivered_to(&context.hash);
+        let delivered = delivered.map_or(0, |delivered| delivered.0);
         if record_dispatch(&mut context, now, sent, delivered) {
             updates.released_by_backlog += 1;
         }

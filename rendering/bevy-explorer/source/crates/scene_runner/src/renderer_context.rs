@@ -78,7 +78,7 @@ pub struct RendererSceneContext {
     pub(crate) due_on_backlog: bool,
     /// `GlobalCrdtState::sent` of the scene's crdt context at its last dispatch.
     pub(crate) global_updates_read: u64,
-    /// `SceneMessageTraffic::delivered_to` the scene at its last dispatch.
+    /// The scene's `SceneMessagesDelivered` at its last dispatch.
     pub(crate) scene_messages_read: u64,
     /// This scene's `featureToggles.portableExperiences`, applied to portables while the
     /// player stands in it.

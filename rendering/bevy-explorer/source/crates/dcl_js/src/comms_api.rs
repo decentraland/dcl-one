@@ -6,8 +6,9 @@ use dcl_component::proto_components::kernel::apis::VideoTracksActiveStreamsRespo
 use serde::Serialize;
 
 use crate::State;
+use dcl_types::TOPIC_INBOX_CAPACITY;
 use dcl_types::{CommsMessageType, RpcCalls, SceneResourceCounters};
-pub use dcl_types::{MAX_TOPIC_BYTES, MAX_TOPIC_MESSAGE_BYTES};
+pub use dcl_types::{MAX_QUEUED_TOPIC_BYTES, MAX_TOPIC_BYTES, MAX_TOPIC_MESSAGE_BYTES};
 
 pub async fn op_get_active_video_streams(
     state: Rc<RefCell<impl State>>,
@@ -32,12 +33,6 @@ pub const TOPIC_RATE_WINDOW: Duration = Duration::from_millis(1000);
 pub const TOPIC_QUEUE_CAPACITY: usize = 1024;
 /// Topics a scene may subscribe to at once.
 pub const MAX_SUBSCRIBED_TOPICS: usize = 256;
-/// Sender and data bytes queued across all of a scene's topics; past it new messages are dropped.
-pub const MAX_QUEUED_TOPIC_BYTES: usize = 8 * 1024 * 1024;
-/// Holds what peers send between two drains. The scene thread waits on the renderer between
-/// ticks, so a peer can fill it; sized so a full inbox of maximum-size messages holds no more than
-/// [`MAX_QUEUED_TOPIC_BYTES`], the most the queues it drains into accept.
-const TOPIC_INBOX_CAPACITY: usize = MAX_QUEUED_TOPIC_BYTES / MAX_TOPIC_MESSAGE_BYTES;
 const TOPIC_LENGTH_PREFIX_BYTES: usize = 2;
 /// Expired rate windows are pruned once this many are held, then at twice what is left.
 const RATE_WINDOW_PRUNE_MIN: usize = 64;

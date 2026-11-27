@@ -27,6 +27,7 @@ use common::{
 };
 use comms::{
     global_crdt::{CrdtContexts, GlobalCrdtState},
+    scene_messages::SceneMessagesDelivered,
     SceneBanGate,
 };
 use dcl_component::{
@@ -612,6 +613,7 @@ pub(crate) fn load_scene_javascript(
             }),
             Visibility::default(),
             renderer_context,
+            SceneMessagesDelivered::default(),
             ComponentTracker::default(),
             DeletedSceneEntities::default(),
             SceneEntity {
@@ -750,7 +752,7 @@ pub(crate) fn initialize_scene(
     editor_mode: Res<EditorMode>,
     portable_scenes: Res<PortableScenes>,
     mobile_ui: Res<MobileUiEmulation>,
-    crdt_contexts: Query<&GlobalCrdtState>,
+    mut crdt_contexts: Query<&mut GlobalCrdtState>,
 ) {
     for (root, mut state, initial_data, mut context, super_user) in loading_scenes.iter_mut() {
         if !matches!(state.as_mut(), SceneLoading::Javascript { .. })
@@ -792,12 +794,13 @@ pub(crate) fn initialize_scene(
             _ => panic!("bad state"),
         };
 
-        // subscribed at spawn, the receiver holds only updates sent from here on
-        let Ok(global_scene) = crdt_contexts.get(crdt_context) else {
+        // subscribed at spawn, the receiver holds the current time of day and camera fov, then
+        // only the updates sent from here on
+        let Ok(mut global_scene) = crdt_contexts.get_mut(crdt_context) else {
             fail("the scene's crdt context is gone");
             continue;
         };
-        let (global_state, global_updates) = global_scene.subscribe(scene_origin);
+        let (global_state, global_updates) = global_scene.subscribe_with_time_and_fov(scene_origin);
         refresh_global_state(&mut context.crdt_store, &global_entities, global_state);
 
         let crdt_component_interfaces = CrdtComponentInterfaces(HashMap::from_iter(
@@ -2005,7 +2008,9 @@ pub fn process_scene_lifecycle(
 
         // a failed load is terminal: the entity is kept (so the scene isn't respawned while
         // in range) but it will never get further, so it must not defer other scenes. a
-        // frozen scene never advances its tick, so it's as loaded as it's going to get
+        // frozen scene never advances its tick, so it's as loaded as it's going to get; without
+        // the exemption a scene frozen before `SCENE_LOADED_TICK` defers other scenes (and
+        // imposters) forever
         let failed = matches!(maybe_loading, Some(SceneLoading::Failed));
         let still_loading = !failed
             && maybe_ctx.is_none_or(|ctx| {

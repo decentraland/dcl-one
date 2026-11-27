@@ -192,7 +192,7 @@ impl Plugin for SceneDebugPanelPlugin {
                     ("Behind-camera cap", "behindCap"),
                     ("Scene-frames skipped by the cap", "skipped"),
                     (
-                        "Ticks sent before their band allowed, on unread global updates",
+                        "Ticks sent before their band allowed, on unread global updates or peer messages",
                         "released",
                     ),
                 ],

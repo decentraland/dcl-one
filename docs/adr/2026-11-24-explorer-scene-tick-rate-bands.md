@@ -48,18 +48,22 @@ and main-thread time each frame there is spare time, whether or not the player c
 - **A scene subscribes to global updates at spawn.** Its initial store is seeded with the
   global state when it starts loading, and its receiver is taken when it spawns, after its
   script has downloaded, with the store brought to the global state of that moment: the players
-  who left meanwhile removed, newer components taken (`refresh_global_state`). The native
+  who left meanwhile removed, newer components taken (`refresh_global_state`). The time of day
+  and the camera FOV travel only as updates, not in the global state, so the context keeps the
+  last of each and sends them again at the subscription
+  (`GlobalCrdtState::subscribe_with_time_and_fov`): the new scene starts with both, and the
+  scenes already live receive the same values again. The native
   forwarder, which swaps one receiver per context and forwards what the new one holds to every
   scene of the context, then has only the updates sent between the subscription and its swap to
   forward again, which the scenes apply idempotently. Subscribing at load start would hold every
   update sent while the script downloads, up to 1,024, and send them to every live scene a
   second time, past the count above.
 - **Unread peer messages make a scene due too.** A scene's inbound message queues, the string
-  and binary buses (1,024 each) and the topic inbox (645), also drain only at a tick, and drop
-  new messages when full. `SceneMessageTraffic::delivered_to` counts the peer messages handed
-  to a scene's queues, by scene hash; each dispatch records it (`scene_messages_read`), and a
-  capped scene with `SCENE_MESSAGE_BACKLOG_DUE` (160, a quarter of the topic inbox) or more since
-  is due whatever its band. The count is summed over the three queues, so the release comes no
+  and binary buses (1,024 each) and the topic inbox (630, `TOPIC_INBOX_CAPACITY`), also drain
+  only at a tick, and drop new messages when full. `SceneMessagesDelivered`, on the scene root,
+  counts the peer messages handed to the scene's queues; each dispatch records it
+  (`scene_messages_read`), and a capped scene with `SCENE_MESSAGE_BACKLOG_DUE` (157, a quarter of
+  the topic inbox) or more since is due whatever its band. The count is summed over the three queues, so the release comes no
   later than any one queue's quarter.
 - **A rate is a minimum interval.** `update_scene_priority` leaves a capped scene out of the
   frame's queue until `1 / rate` seconds have passed since it was last sent. A scene that is due
@@ -117,10 +121,10 @@ and main-thread time each frame there is spare time, whether or not the player c
 - On the client every scene shares one crdt context, so the global-update release follows the
   island's update rate: at about 500 updates a second every capped scene is due about every
   half second, and the 1/s and 0.5/s caps act as about 2/s where the island is busiest. A scene
-  receiving peer messages is likewise due at least every 160 of them. The panel's `released`
+  receiving peer messages is likewise due at least every 157 of them. The panel's `released`
   next to `skipped` shows how much of the cap a spot keeps.
 - A capped scene loses peer messages only when more than the remaining room in a queue (at
-  least 485 topic messages, or 864 bus messages) arrive between its release and its dispatch.
+  least 473 topic messages, or 867 bus messages) arrive between its release and its dispatch.
 - The photo and cinematic exemptions lift every cap, not just the scenes the camera frames. A
   scene that keeps a cinematic camera or camera-mode area active while the player is inside it
   ticks the whole world at the full rate for that time. Measuring the bands from the rendering

@@ -144,8 +144,8 @@ pub(crate) fn scene_tick_rate(partition: &PartitionData) -> f32 {
 
 /// The age a scene due this frame is ranked by. A scene its band let through ranks by the time
 /// since its interval passed, at least a frame, so holding it back does not rank it as starved; a
-/// scene at the full rate, or released on unread global updates, by the time since it was last
-/// sent.
+/// scene at the full rate, or released on unread global updates or peer messages, by the time
+/// since it was last sent.
 pub(crate) fn queue_age(cap: Option<f32>, released: bool, age: f64, frame: f64) -> f64 {
     match cap {
         Some(rate) if !released => (age - 1.0 / f64::from(rate)).max(frame),
@@ -167,9 +167,9 @@ pub(crate) const GLOBAL_UPDATE_BACKLOG_DUE: u64 =
     common::structs::SCENE_GLOBAL_UPDATE_CAPACITY as u64 / 4;
 
 /// The peer messages handed to a capped scene's inbound queues (string bus, binary bus, topic
-/// inbox) since its last dispatch from which it is due: a quarter of the smallest queue, the
-/// topic inbox (645 messages; each bus holds 1,024).
-pub(crate) const SCENE_MESSAGE_BACKLOG_DUE: u64 = 160;
+/// inbox) since its last dispatch from which it is due: a quarter of the topic inbox, the
+/// smallest of the three.
+pub(crate) const SCENE_MESSAGE_BACKLOG_DUE: u64 = dcl_types::TOPIC_INBOX_CAPACITY as u64 / 4;
 
 /// Where partitions are measured from: distance from the player, facing from the rendering
 /// camera (a `PrimaryCamera` with a `Camera`). Without one, as on the headless server whose

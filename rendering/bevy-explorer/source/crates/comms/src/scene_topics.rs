@@ -10,7 +10,11 @@ use common::{
 use console::{AddDebugSection, DebugSection, DoAddConsoleCommand};
 use dcl_types::{CommsMessageType, MAX_TOPIC_MESSAGE_BYTES};
 
-use crate::{scene_messages::SceneMessageTraffic, scene_rooms::SceneRooms, SceneRoom};
+use crate::{
+    scene_messages::{SceneMessageTraffic, SceneMessagesDelivered},
+    scene_rooms::SceneRooms,
+    SceneRoom,
+};
 
 pub struct SceneTopicsPlugin;
 
@@ -90,7 +94,8 @@ fn subscribe_scene_topics(mut commands: Commands, mut events: EventReader<RpcCal
 
 #[derive(SystemParam)]
 pub struct SceneTopicRouter<'w, 's> {
-    inboxes: Query<'w, 's, &'static SceneTopicInbox>,
+    inboxes: Query<'w, 's, (Entity, &'static SceneTopicInbox)>,
+    delivered: Query<'w, 's, &'static mut SceneMessagesDelivered>,
     traffic: ResMut<'w, SceneMessageTraffic>,
 }
 
@@ -101,21 +106,25 @@ impl SceneTopicRouter<'_, '_> {
     pub fn deliver(&mut self, scene_hash: &str, sender: String, payload: Vec<u8>) {
         self.traffic.received += 1;
         // the type byte, already taken off, counts toward the limit
-        let delivered = payload.len() < MAX_TOPIC_MESSAGE_BYTES
-            && self
-                .inboxes
-                .iter()
-                .find(|inbox| inbox.hash == scene_hash && !inbox.sender.is_closed())
-                .is_some_and(|inbox| inbox.sender.send((sender, payload)).is_ok());
-        if delivered {
-            self.traffic.record_delivered(scene_hash);
-        } else {
-            self.traffic.receive_dropped += 1;
+        let delivered_to = (payload.len() < MAX_TOPIC_MESSAGE_BYTES)
+            .then(|| {
+                self.inboxes
+                    .iter()
+                    .find(|(_, inbox)| inbox.hash == scene_hash && !inbox.sender.is_closed())
+            })
+            .flatten()
+            .filter(|(_, inbox)| inbox.sender.send((sender, payload)).is_ok())
+            .map(|(scene, _)| scene);
+        match delivered_to {
+            Some(scene) => self.record_delivered(scene),
+            None => self.traffic.receive_dropped += 1,
         }
     }
 
-    pub(crate) fn record_delivered(&mut self, scene_hash: &str) {
-        self.traffic.record_delivered(scene_hash);
+    pub(crate) fn record_delivered(&mut self, scene: Entity) {
+        if let Ok(mut delivered) = self.delivered.get_mut(scene) {
+            delivered.0 += 1;
+        }
     }
 
     pub(crate) fn record_banned(&mut self, is_topic: bool) {
