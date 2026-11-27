@@ -108,9 +108,9 @@ const SECTIONS: Record<string, { title: string; match?: RegExp }[]> = {
   ],
   audio: [{ title: 'Volume' }, { title: 'Voice Chat & Streams', match: /microphone|\bmic\b|device|mute|^voice[ _]chat$/i }],
   performance: [
-    { title: 'Avatars', match: /avatars/i },
     { title: 'General' },
-    { title: 'Scene LODs', match: /\blods?\b|\bring\b/i }
+    { title: 'Scene LODs', match: /\blods?\b|\bring\b/i },
+    { title: 'Avatars', match: /avatars/i }
   ],
   controls: [{ title: 'Mouse' }, { title: 'Point At', match: /point|marker/i }]
 }

@@ -205,16 +205,16 @@ describe('settings panel disabled controls', () => {
 describe('performance tab sections', () => {
   beforeEach(() => resetSettingsTab())
 
-  it('groups the rows under Avatars, General and Scene LODs, in that order', async () => {
+  it('groups the rows under General, Scene LODs and Avatars, in that order', async () => {
     const list = ['Max Far LODs', 'Scene Threads', 'Max Avatars'].map((name) => base({ name, category: 'performance' }))
     const settings: SettingsState = { ...fakeSession().settings, open: true, list, set: vi.fn() }
     render(<SettingsPanel lobbyStage={{ preset: 'halloween-2026', set: vi.fn() }} settings={settings} bindings={fakeSession().bindings} profile={fakeProfileState()} onNavigate={vi.fn()} />)
     await userEvent.click(screen.getByRole('tab', { name: 'Performance' }))
     const card = screen.getByRole('group', { name: 'Performance settings' })
-    expect(within(card).getAllByRole('heading', { level: 2 }).map((h) => h.textContent)).toEqual(['Avatars', 'General', 'Scene LODs'])
+    expect(within(card).getAllByRole('heading', { level: 2 }).map((h) => h.textContent)).toEqual(['General', 'Scene LODs', 'Avatars'])
     // each row sits in the section under its heading, and only there
     const section = (title: string): HTMLElement => screen.getByRole('heading', { level: 2, name: title }).closest('section') as HTMLElement
-    for (const [title, name] of [['Avatars', 'Max Avatars'], ['General', 'Scene Threads'], ['Scene LODs', 'Max Far LODs']]) {
+    for (const [title, name] of [['General', 'Scene Threads'], ['Scene LODs', 'Max Far LODs'], ['Avatars', 'Max Avatars']]) {
       expect(within(section(title)).getAllByRole('slider')).toEqual([screen.getByRole('slider', { name })])
     }
   })

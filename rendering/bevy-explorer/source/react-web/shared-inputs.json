@@ -14200,7 +14200,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/settings/SettingsPanel.tsx",
-      "sha256": "d0970c170321b441626ca4a3b50ded5d0af65ad00ac21bfaad6e504686d21cac"
+      "sha256": "9694c7189a22ec62e58e995917e852799dac2d4bd94876d208f7135d1748d49c"
     },
     {
       "path": "library/ui/apps/hud/features/settings/askBeforeLeaving.ts",
@@ -14944,7 +14944,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/hosted/settings.clicks.test.tsx",
-      "sha256": "5d9095ba86d3f6082feced3dc67ec9549f7dabeabf725db52e19ff6ed4a5c2e2"
+      "sha256": "657ff2a9223c7a08293c44c94be6784255b4b9a53e5905b87c11aad4b250e021"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/settings.test.tsx",
