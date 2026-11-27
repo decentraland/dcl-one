@@ -898,23 +898,20 @@ mod tests {
         eip1654: Option<Arc<dyn crate::auth::Eip1654Validator>>,
         settings: crate::validator::Settings,
     ) -> Option<SyncOutcome> {
-        sync_then_retry(entity, chain, eip1654, settings, false).await
+        sync_then_retry(entity, chain, eip1654, settings, false, None).await
     }
 
-    /// [`sync_one`], then with `retry` one retry cycle over the failures, in a database of
-    /// its own: a cycle walks every due record.
+    /// [`sync_one`], then with `retry` one retry cycle over the failures. Each case has its
+    /// own database: pointers can overlap, and a retry cycle walks every due record.
     async fn sync_then_retry(
         entity: serde_json::Value,
         chain: Chain,
         eip1654: Option<Arc<dyn crate::auth::Eip1654Validator>>,
         settings: crate::validator::Settings,
         retry: bool,
+        settled: Option<&tokio::sync::Barrier>,
     ) -> Option<SyncOutcome> {
-        let pool = if retry {
-            crate::db::scratch::isolated_pool(3).await?
-        } else {
-            test_pool(3).await?
-        };
+        let pool = crate::db::scratch::isolated_pool(3).await?;
         let pointer = entity["pointers"][0].as_str().unwrap().to_string();
         let entity_type = entity["type"].as_str().unwrap().to_string();
         let timestamp = entity["timestamp"].as_i64().unwrap();
@@ -993,6 +990,10 @@ mod tests {
         } else {
             None
         };
+
+        if let Some(settled) = settled {
+            settled.wait().await;
+        }
 
         let outcome = SyncOutcome {
             deployed: is_entity_deployed(&pool, &entity_id, 0).await.unwrap(),
@@ -1098,6 +1099,59 @@ mod tests {
         assert!(outcome.deployed);
         assert!(outcome.active.is_some());
         assert!(outcome.failure.is_none());
+    }
+
+    #[tokio::test]
+    async fn concurrent_sync_cases_with_the_same_pointer_keep_their_own_active_entity() {
+        let blocks =
+            crate::validator::fake_chain::serve(|q, _| panic!("unexpected question {q:?}")).await;
+        let entity = || {
+            serde_json::json!({
+                "version": "v3", "type": "outfits",
+                "pointers": [format!("{CONTRACT_SIGNER}:outfits")],
+                "timestamp": 1_700_000_000_000i64, "content": [],
+                "metadata": {"outfits": [], "namesForExtraSlots": [], "tag": unique()}
+            })
+        };
+        let wallet = Arc::new(WalletAtBlock {
+            answers_at_block: true,
+        });
+        // Observe only after both deployments settle: a shared pointer cannot name both entities.
+        let settled = tokio::sync::Barrier::new(2);
+        let (first, second) = tokio::time::timeout(Duration::from_secs(60), async {
+            tokio::join!(
+                sync_then_retry(
+                    entity(),
+                    Chain::BehindContract,
+                    Some(wallet.clone()),
+                    over(&blocks),
+                    false,
+                    Some(&settled),
+                ),
+                sync_then_retry(
+                    entity(),
+                    Chain::BehindContract,
+                    Some(wallet),
+                    over(&blocks),
+                    false,
+                    Some(&settled),
+                ),
+            )
+        })
+        .await
+        .expect("both sync cases returned");
+        let (Some(first), Some(second)) = (first, second) else {
+            return;
+        };
+        for outcome in [&first, &second] {
+            assert!(outcome.deployed);
+            assert!(
+                outcome.active.is_some(),
+                "each case keeps its own active entity"
+            );
+            assert!(outcome.failure.is_none());
+        }
+        assert_ne!(first.active, second.active);
     }
 
     #[tokio::test]
@@ -1242,6 +1296,7 @@ mod tests {
                 Some(Arc::new(PanickingWallet)),
                 over(&blocks),
                 true,
+                None,
             ),
         )
         .await
