@@ -130,6 +130,7 @@ const CLIP_LENGTH: Record<string, number> = {
   [JUMP_SETS.idle.end]: 16 / 60, [JUMP_SETS.jog.end]: 24 / 60, [JUMP_SETS.run.end]: 22 / 60,
   [CLIP_LONG_FALL]: 48 / 60,
   [GLIDE_AVATAR.start]: 68 / 60, [GLIDE_AVATAR.end]: 16 / 60,
+  [HARD_LANDING.enter]: 30 / 60, [HARD_LANDING.exit]: 25 / 60,
 };
 // The locomotion clips at movement blend 0 (idle), 1 (walk), 2 (jog) and 3 (run).
 const MOVE_CLIPS = [CLIP_IDLE, CLIP_WALK, CLIP_JOG, CLIP_RUN];
@@ -315,8 +316,8 @@ var doubleJumpClip = '';
 type HardLandingPhase = 'none' | 'enter' | 'loop' | 'exit';
 var hardLanding: HardLandingPhase = 'none';
 var prevHardLanding: HardLandingPhase = 'none';
-// Scene time Loop started.
-var hardLandingLoopFrom = 0;
+// Scene time Loop or Exit started.
+var hardLandingFrom = 0;
 
 // --- Glide turn rate ---
 // Smoothed avatar turn rate (deg/s), used to pick the left/right glide lean.
@@ -345,13 +346,6 @@ var landingFromGlide = false;
 var landingFromGlideStart = false;
 // Glide pose clip published last frame (forward/idle), to detect a swap mid-glide.
 var prevGlideSrc: string | undefined = undefined;
-
-// True once the engine reports a non-looped clip has played to its end.
-function clipFinished(src: string): boolean {
-  const s = activeAnimationState;
-  return s !== undefined && s.src === src && !s.loop
-    && (s.loopCount >= 1 || s.playbackTime >= s.duration - 1e-3);
-}
 
 // True once the engine reports the clip has played the given fraction of its length.
 function clipReached(src: string, fraction: number): boolean {
@@ -587,15 +581,18 @@ function stateAnimation(
   }
 }
 
-// Hard landing after the touchdown frame: Enter to its end, Loop until the stun is over (and at least its blend-in),
-// Exit to HARD_LANDING_EXIT_END, then null to let what follows blend in over HARD_LANDING_AFTER_BLEND.
+// Hard landing after the touchdown frame, on time: Enter whole (exitReached), Loop until the stun is over (and at least
+// its blend-in), Exit to HARD_LANDING_EXIT_END of its length at HARD_LANDING_EXIT_SPEED, then null to let what follows
+// blend in over HARD_LANDING_AFTER_BLEND.
 function hardLandingAnimation(): MovementAnimation | null {
-  if (hardLanding === 'enter' && clipFinished(HARD_LANDING.enter)) {
+  if (hardLanding === 'enter' && exitReached(0, CLIP_LENGTH[HARD_LANDING.enter], 1)) {
     hardLanding = 'loop';
-    hardLandingLoopFrom = time;
-  } else if (hardLanding === 'loop' && !stunned() && time - hardLandingLoopFrom >= HARD_LANDING_LOOP_BLEND) {
+    hardLandingFrom = time;
+  } else if (hardLanding === 'loop' && !stunned() && time - hardLandingFrom >= HARD_LANDING_LOOP_BLEND) {
     hardLanding = 'exit';
-  } else if (hardLanding === 'exit' && clipReached(HARD_LANDING.exit, HARD_LANDING_EXIT_END)) {
+    hardLandingFrom = time;
+  } else if (hardLanding === 'exit'
+    && time - hardLandingFrom + 1e-6 >= HARD_LANDING_EXIT_END * CLIP_LENGTH[HARD_LANDING.exit] / HARD_LANDING_EXIT_SPEED) {
     enterState('Movement', HARD_LANDING_AFTER_BLEND);
     return null;
   }
