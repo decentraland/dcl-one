@@ -1,7 +1,7 @@
-/* Just the card — the popup layer (PopupHost .dim/.pop) draws the scrim, DPI-scales it (reference
-   canvas) and animates it in. Screen-relative caps use % — percentages resolve against the scaled
-   .pop box, i.e. the visible screen. vw/vh would NOT: viewport units ignore ancestor transforms, so
-   at --ui-scale > 1 they overshoot the real screen. */
+/* Just the card — the popup layer (PopupHost's ModalBackdrop) draws the scrim, DPI-scales it (reference
+   canvas) and animates it in. Screen-relative caps use % — percentages resolve against the scaled box
+   the backdrop centres its content in, i.e. the visible screen. vw/vh would NOT: viewport units ignore
+   ancestor transforms, so at --ui-scale > 1 they overshoot the real screen. */
 .modal {
   position: relative;
   display: flex;
@@ -115,9 +115,6 @@
 .iconBtn:hover {
   background: var(--fill-5);
   transform: scale(1.08);
-}
-.joined {
-  opacity: 0.85;
 }
 /* the header's Join / Request to Join / Leave: an outlined button */
 .headActions > button:not(.iconBtn):not(.kebab) {

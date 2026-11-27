@@ -168,6 +168,45 @@ this engine's design using its requirements and tests.
   files. The tool writes all of them. Push the `rev` to your fork with `publish --remote`, and CI
   publishes it here after the merge: see [the bevy fork](bevy-fork.md#changing-bevy).
 
+## Upgrading the scene runtime
+
+The native scene runtime is upstream deno_core, deno_web and deno_webidl, with our own fetch,
+WebSocket and `localStorage` ops ([ADR](../../../../docs/adr/2026-11-09-native-scene-runtime-on-upstream-deno.md)).
+Bump the three together, in one PR.
+
+1. **Versions.** Pick the newest deno_core, then the deno_web and deno_webidl releases that
+   require exactly that deno_core. Update `[workspace.dependencies]`.
+2. **Lock.** This is the one exception to editing `Cargo.lock` by hand: a deno_core bump moves
+   V8, serde_v8, deno_ops and hundreds of transitive lines. Let Cargo resolve once
+   (`cargo metadata`), then revert every line the bump doesn't explain (the known flips above),
+   and validate with `cargo metadata --locked`. Say in the PR that the lock was resolved and
+   reviewed.
+3. **Vendored scripts.** Follow `update_instructions` in
+   `crates/dcl_deno/src/js/vendor/upstream.lock.json`: copy the deno_web and deno_webidl scripts
+   from the locked releases unchanged, take deno_fetch from the release matching deno_web, and
+   re-apply the listed changes.
+4. **Build and fix.** `cargo check -p dcl_deno --tests --features inspect` and
+   `cargo check -p dcl_deno_ipc` first: `inspect` is a default feature.
+5. **Upstream ops.** `UPSTREAM_OPS` in `crates/dcl_deno/src/js/mod.rs` lists the upstream ops
+   scenes get; every other upstream op is disabled. List the ops the loaded scripts name, from
+   the new deno_core's own scripts (`*.js` at the crate root) and ours:
+   `rg -o -I '\bop_\w+' <deno_core>/*.js crates/dcl_deno/src/js/vendor crates/dcl_deno/src/js/modules crates/dcl_js/src/modules | sort -u`.
+   Add a new upstream op only if a script calls it on a path scenes reach, after reading what
+   it does with its arguments: an op that indexes, unwraps or borrows across scene input stays
+   off the list or gets an override. Remove names that no longer exist.
+6. **The tests that catch an upgrade:**
+   - `upstream_ops_outside_the_list_are_disabled` and `every_op_a_loaded_script_names_is_enabled`:
+     a listed op is gone, or a vendored script, own script or `~system/*` module needs one that
+     is not listed. The second test does not read deno_core's own scripts, so step 5's search is
+     what catches those.
+   - `embedded_upstream_scripts_match_the_locked_crates` and `every_runtime_script_is_compiled_in`:
+     a vendored script is stale or missing.
+   - `runtime_surface_tests.rs`: Intl, console, op results, `performance.now()`, per-scene
+     BroadcastChannel, the fetch contract, `localStorage`.
+   - `websocket_tests.rs`: the scene WebSocket.
+7. **Measure.** Compare scene frame time against main with the [benchmark](benchmark.md) before
+   merging.
+
 ## Review
 
 - First response within one working day. If it hasn't come, ping the reviewer on Slack rather

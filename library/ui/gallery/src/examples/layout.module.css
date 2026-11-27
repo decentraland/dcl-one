@@ -56,6 +56,13 @@
   padding-block: var(--dcl-space-48);
 }
 
+/* Tips kept in the page take room while hidden: this keeps them from widening a narrow page, with room below for a
+   paragraph. */
+.tooltipClip {
+  overflow: hidden;
+  padding-bottom: 120px;
+}
+
 .backdrop {
   position: relative;
   width: 100%;
@@ -117,4 +124,107 @@
     grid-template-columns: 1fr;
     gap: var(--dcl-space-16);
   }
+}
+
+/* A row of examples that scrolls inside the stage instead of wrapping or widening the page. */
+.strip {
+  display: flex;
+  align-items: center;
+  gap: var(--dcl-space-16);
+  padding-block: var(--dcl-space-8);
+  overflow-x: auto;
+}
+
+.strip > * {
+  flex: none;
+}
+
+/* Room below a row of selects for an open list, and the layer the host gives that list. */
+.selectRoom {
+  --z-overlay: 1;
+
+  align-items: flex-start;
+  min-height: 180px;
+}
+
+/* The Explorer HUD's page reset, for a HUD part that leaves its box model to its host. */
+.hudHost,
+.hudHost * {
+  box-sizing: border-box;
+}
+
+.hudHost {
+  max-width: 100%;
+}
+
+/* A column of fields that each take the column's width, with room for a ring drawn 6px outside a field. The
+   column is `minmax(0, 1fr)`, so a field narrower than its input's own width shrinks to the column. */
+.ringRoom {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 24px;
+  box-sizing: border-box;
+  width: 100%;
+  max-width: 360px;
+  padding: 10px;
+}
+
+/* Where a ScrollThumb example puts its track: the right edge of its positioned parent. */
+.thumbRight {
+  right: 0;
+}
+
+/* WearableCard tiles: room under each row for the action a hovered card shows, and around the row for its lift. */
+.tiles {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--dcl-space-64) var(--dcl-space-24);
+  padding: var(--dcl-space-12) var(--dcl-space-16) var(--dcl-space-64);
+}
+
+/* EquippedItemCard grid: 108px columns, with room under the last row for the link a hovered card shows. */
+.itemCards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, 108px);
+  align-items: stretch;
+  gap: 56px var(--dcl-space-12);
+  padding-bottom: 56px;
+}
+
+/* A PagedRail's row: 600px wide, with room at the sides for its arrows. */
+.railRoom {
+  box-sizing: border-box;
+  width: 100%;
+  max-width: 680px;
+  padding: var(--dcl-space-12) 40px;
+}
+
+.railRoom > * {
+  width: 100%;
+}
+
+.railCard {
+  display: grid;
+  width: 194px;
+  height: 120px;
+  place-items: center;
+  border-radius: var(--dcl-radius-md);
+  background: var(--dcl-bg-surface-raised);
+}
+
+/* A stand-in for the screen a ModalBackdrop covers: `contain: layout` makes the box the containing block of the
+   backdrop's fixed position, so it covers the box and not the gallery. The picture gives its blur something to blur. */
+.screen {
+  position: relative;
+  width: 100%;
+  max-width: 640px;
+  height: 360px;
+  overflow: hidden;
+  contain: layout;
+  border-radius: var(--dcl-radius-lg);
+  background: repeating-linear-gradient(
+    45deg,
+    var(--dcl-neutrals-pale-black) 0 24px,
+    var(--dcl-neutrals-shadow) 24px 48px
+  );
 }

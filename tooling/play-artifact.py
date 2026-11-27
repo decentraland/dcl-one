@@ -18,6 +18,12 @@ SOURCE = 'rendering/bevy-explorer/source/'
 # dependencies: Cargo.lock, under SOURCE, names their revisions.
 VENDOR = 'rendering/bevy-explorer/vendor/'
 PROTO = 'library/protocol/proto/'
+# The avatar preview: its own workspace, compiled from the engine's crates (tools/package.py lays
+# it out under content-hashed names). Its modules depend on the engine's inputs and its crate; the
+# page and its packaging change only the assembled artifact. Its build outputs are never inputs.
+PREVIEW = 'rendering/avatar-preview/'
+PREVIEW_PAGE = (PREVIEW + 'web/', PREVIEW + 'tools/')
+PREVIEW_OUTPUTS = (PREVIEW + 'target/', PREVIEW + 'web/pkg/', PREVIEW + 'web/pkg-gl/')
 # What the bridge scene's install takes from outside SOURCE: the hashing library its SDK commands
 # load, and Creator Hub's zip-extract, which its pnpm-workspace.yaml puts in place of extract-zip.
 BRIDGE_INPUTS = ('library/hashing/', 'apps/creator-hub/packages/zip-extract/')
@@ -31,7 +37,7 @@ _SPEC.loader.exec_module(shared_inputs)
 
 
 MANIFEST = 'sites-play.json'
-PARTS = ('engine', 'bridge-scene', 'service_worker.js', 'preview_realm.js')
+PARTS = ('engine', 'bridge-scene', 'service_worker.js', 'preview_realm.js', 'avatar-preview')
 # Source is maintained here. Hash its tracked files directly, alongside the build tools and
 # configuration (the flake lock and package set pin the protoc and wasm-pack the web job
 # builds with); generated outputs and local overrides are excluded.
@@ -48,7 +54,7 @@ BUILD_ENV = ('BEVY_SEGMENT_WRITE_KEY', 'BEVY_ANALYTICS_DEV')
 REQUIRED = ('engine/pkg/webgpu_build_bg.wasm', 'engine/pkg/webgpu_build.js',
             'engine/pkg/manifest.json', 'engine/pkg-scene/dcl_scene_wasm_bg.wasm',
             'engine/headless.html', 'bridge-scene/static/BevyExplorerUI/about',
-            'service_worker.js', 'preview_realm.js')
+            'service_worker.js', 'preview_realm.js', 'avatar-preview/index.html')
 ENGINE_PARTS = {
     'pkg': SOURCE + 'deploy/web/engine/pkg',
     'pkg-scene': SOURCE + 'deploy/web/engine/pkg-scene',
@@ -58,6 +64,11 @@ ENGINE_REQUIRED = ('pkg/webgpu_build_bg.wasm', 'pkg/webgpu_build.js',
                    'pkg/manifest.json', 'pkg-scene/dcl_scene_wasm_bg.wasm',
                    'pkg-scene/dcl_scene_wasm.js')
 ENGINE_MANIFEST = 'engine-cache.json'
+# The compiled preview modules, one per browser backend, as build.sh lays them out.
+PREVIEW_PARTS = {'pkg': PREVIEW + 'web/pkg', 'pkg-gl': PREVIEW + 'web/pkg-gl'}
+PREVIEW_REQUIRED = tuple(f'{part}/{name}' for part in PREVIEW_PARTS for name in (
+    'dcl_avatar_preview_bg.wasm', 'dcl_avatar_preview.js', 'content_cache.js'))
+PREVIEW_MANIFEST = 'preview-cache.json'
 # Written by fetch-play.py beside an imported main build that a non-engine change takes:
 # the producer commit it was validated against and the tree inputs it was validated for.
 PRODUCER_VALIDATION = 'producer-validated.json'
@@ -71,7 +82,7 @@ def read_json(path):
     return json.loads(path.read_text())
 
 
-def input_files(root=ROOT, revision=None, engine_only=False):
+def input_files(root=ROOT, revision=None, engine_only=False, preview=False):
     shared = shared_inputs.input_hashes(root, revision) if not engine_only else {}
     def selected(path):
         # Native npm packaging is not consumed by the web builder or WASM. The tracked bindings are not
@@ -83,6 +94,11 @@ def input_files(root=ROOT, revision=None, engine_only=False):
                 SOURCE + 'deploy/web/package.json', SOURCE + 'deploy/web/package-lock.json')):
             # Web npm metadata still invalidates the assembled artifact, not WASM.
             return False
+        if path.startswith(PREVIEW):
+            # The engine never reads the preview; markdown selects no lane in bevy-ci.py.
+            if (engine_only and not preview) or path.endswith('.md') or path.startswith(PREVIEW_OUTPUTS):
+                return False
+            return not (engine_only and path.startswith(PREVIEW_PAGE))
         return (path.startswith((SOURCE, VENDOR, PROTO, '.cargo/')) or path in shared or path in INPUTS
                 # bevy-ci.py selects the web lane for these paths and drops markdown.
                 or (not engine_only and ((path.startswith(BRIDGE_INPUTS) and not path.endswith('.md'))
@@ -127,6 +143,8 @@ def input_files(root=ROOT, revision=None, engine_only=False):
                        for p in ([root / base] if (root / base).is_file() else (root / base).rglob('*'))
                        if p.is_file()]
             tracked += list(INPUTS) + list(shared)
+            if not engine_only or preview:
+                tracked += [p.relative_to(root).as_posix() for p in (root / PREVIEW).rglob('*') if p.is_file()]
             if not engine_only:
                 tracked += [p.relative_to(root).as_posix() for base in BRIDGE_INPUTS
                             for p in (root / base).rglob('*') if p.is_file()]
@@ -154,6 +172,11 @@ def inputs(root=ROOT, revision=None):
 def engine_inputs(root=ROOT, revision=None):
     # Web runtime assets stay included: Rust embeds gpu_cache.js via wasm_bindgen.
     return digest(json.dumps(input_files(root, revision, engine_only=True), sort_keys=True).encode())
+
+
+def preview_inputs(root=ROOT, revision=None):
+    """The compiled preview modules' key: the engine's inputs and the preview's crate."""
+    return digest(json.dumps(input_files(root, revision, engine_only=True, preview=True), sort_keys=True).encode())
 
 
 def build_env():
@@ -239,6 +262,56 @@ def restore_engine(directory, root=ROOT, allow_unoptimized=True):
     return info
 
 
+def verify_preview_info(info, root=ROOT, allow_unoptimized=True, producer=None, trust_inputs=False):
+    if not isinstance(info, dict) or not (
+            trust_inputs or info.get('inputs') == preview_inputs(root, producer)):
+        raise ValueError('Compiled avatar preview inputs differ; rebuild the preview')
+    if not re.fullmatch(r'(?:[0-9a-f]{40}|local)', str(info.get('revision', ''))):
+        raise ValueError('Missing or invalid compiled avatar preview revision')
+    if info.get('optimized') is not True and not (allow_unoptimized and info.get('optimized') is False):
+        raise ValueError('Production requires the optimized avatar preview')
+    return info
+
+
+def verify_preview(directory, root=ROOT, allow_unoptimized=True):
+    if directory.is_symlink() or (directory / PREVIEW_MANIFEST).is_symlink():
+        raise ValueError('Linked compiled avatar preview cache or manifest')
+    meta = read_json(directory / PREVIEW_MANIFEST)
+    if meta.get('format') != 1:
+        raise ValueError('Unsupported compiled avatar preview cache format')
+    verify_preview_info(meta, root, allow_unoptimized)
+    if meta.get('files') != files(directory, PREVIEW_PARTS, PREVIEW_REQUIRED):
+        raise ValueError('Compiled avatar preview checksum or file inventory mismatch')
+    return {k: meta[k] for k in ('inputs', 'revision', 'optimized')}
+
+
+def pack_preview(directory, root=ROOT, optimized=True, revision='local'):
+    """As pack_engine: one disposable output slot."""
+    directory.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(dir=directory.parent) as temporary:
+        staged = Path(temporary) / 'preview'
+        for part, source in PREVIEW_PARTS.items():
+            shutil.copytree(root / source, staged / part, symlinks=True)
+        meta = {'format': 1, 'inputs': preview_inputs(root), 'revision': revision,
+                'optimized': optimized, 'files': files(staged, PREVIEW_PARTS, PREVIEW_REQUIRED)}
+        (staged / PREVIEW_MANIFEST).write_text(json.dumps(meta, sort_keys=True, indent=2) + '\n')
+        info = verify_preview(staged, root)
+        if directory.exists():
+            shutil.rmtree(directory)
+        staged.rename(directory)
+    return info
+
+
+def restore_preview(directory, root=ROOT, allow_unoptimized=True):
+    info = verify_preview(directory, root, allow_unoptimized)
+    for part, target in PREVIEW_PARTS.items():
+        target = root / target
+        if target.exists():
+            shutil.rmtree(target)
+        shutil.copytree(directory / part, target)
+    return info
+
+
 def verify_build(directory, root=ROOT, allow_unoptimized=True, producer=None, trust_inputs=False):
     """Validate producer bytes independently of the Sites bindings check.
 
@@ -257,13 +330,15 @@ def verify_build(directory, root=ROOT, allow_unoptimized=True, producer=None, tr
             record = {}
         validated = (record.get('tree_inputs') == inputs(root) and record.get('producer') == meta.get('build_revision')
                      and re.fullmatch('[0-9a-f]{40}', str(record.get('producer', ''))) is not None)
-    if meta.get('format') != 3 or not (validated or meta.get('inputs') == inputs(root, producer)):
+    if meta.get('format') != 4 or not (validated or meta.get('inputs') == inputs(root, producer)):
         raise ValueError('Explorer build inputs differ; rebuild Bevy or import a matching CI artifact')
     if meta.get('optimized') is not True and not (allow_unoptimized and meta.get('optimized') is False):
         raise ValueError('Production requires the optimized Explorer build')
     engine = verify_engine_info(meta.get('engine'), root, allow_unoptimized, producer, validated)
-    if engine['optimized'] is not meta['optimized']:
-        raise ValueError('Explorer optimization flag differs from the compiled engine')
+    preview = verify_preview_info(meta.get('preview'), root, allow_unoptimized, producer, validated)
+    # Optimized means every compiled part is: a PR may restore main's engine and compile its preview.
+    if (engine['optimized'] and preview['optimized']) is not meta['optimized']:
+        raise ValueError('Explorer optimization flag differs from the compiled engine and avatar preview')
     if meta.get('files') != files(directory):
         raise ValueError('Explorer artifact checksum or file inventory mismatch')
     return meta
@@ -294,8 +369,9 @@ def pack(directory, root=ROOT, optimized=True):
     if target.exists():
         shutil.rmtree(target)
     shutil.copytree(source, target)
-    meta = {'format': 3, 'inputs': inputs(root), 'optimized': optimized,
+    meta = {'format': 4, 'inputs': inputs(root), 'optimized': optimized,
             'engine': info.get('engine'),
+            'preview': info.get('preview'),
             'build_revision': info['revision'],
             'files': files(directory)}
     (directory / MANIFEST).write_text(json.dumps(meta, sort_keys=True, indent=2) + '\n')
@@ -305,8 +381,8 @@ def pack(directory, root=ROOT, optimized=True):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('command', choices=('pack', 'verify', 'inputs',
-                                           'engine-inputs', 'engine-cache-key', 'verify-engine'))
+    parser.add_argument('command', choices=('pack', 'verify', 'inputs', 'engine-inputs', 'engine-cache-key',
+                                           'verify-engine', 'preview-inputs', 'verify-preview'))
     parser.add_argument('directory', type=Path, nargs='?')
     parser.add_argument('--root', type=Path, default=ROOT)
     parser.add_argument('--unoptimized', action='store_true')
@@ -322,6 +398,10 @@ def main():
         print(engine_inputs(args.root))
     elif args.command == 'engine-cache-key':
         print(engine_cache_key(args.root))
+    elif args.command == 'preview-inputs':
+        print(preview_inputs(args.root))
+    elif args.command == 'verify-preview':
+        print(json.dumps(verify_preview(args.directory, args.root, not args.production)))
     elif args.command == 'verify-engine':
         print(json.dumps(verify_engine(args.directory, args.root, not args.production)))
     elif args.command == 'pack':

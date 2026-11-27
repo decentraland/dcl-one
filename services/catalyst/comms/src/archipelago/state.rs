@@ -147,7 +147,7 @@ impl IpSlots {
     }
 
     /// `Err` when the address already holds its limit; `Ok(None)` when it is not counted.
-    #[allow(clippy::result_unit_err)]
+    #[allow(clippy::result_unit_err, reason = "the only refusal is a full address")]
     pub fn try_acquire(self: &Arc<Self>, client_ip: Option<&str>) -> Result<Option<IpSlot>, ()> {
         let Some(ip) = client_ip.filter(|_| self.max > 0) else {
             return Ok(None);

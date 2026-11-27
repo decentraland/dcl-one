@@ -1,3 +1,9 @@
+// Money and chain values: a silently truncated or sign-flipped cast is a bug.
+#![deny(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    clippy::cast_possible_wrap
+)]
 // from: catalyrst/crates/catalyrst-credits/src/handlers/orders.rs, credits-server src/controllers/handlers/create-checkout-session.ts, credits-server src/logic/checkout-return-url.ts
 //! The explorer's order flow: `POST /credits/checkout` opens a Stripe
 //! Checkout Session for `quantity` (1..=5, default 1) of one pack (the
@@ -39,6 +45,11 @@ pub struct CheckoutRequestBody {
 /// The number of packs. Unlike `source` this moves money (it multiplies the
 /// charge and the grant), so a malformed value is refused, never read as one:
 /// absent or null is 1, anything but a whole number in `1..=max` is a 400.
+#[allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    reason = "the float is checked whole and in 1..=max first"
+)]
 fn parse_pack_quantity(value: Option<&serde_json::Value>, max: u32) -> Result<u32, ApiError> {
     let refuse = || {
         ApiError::bad_request(format!(
@@ -55,10 +66,9 @@ fn parse_pack_quantity(value: Option<&serde_json::Value>, max: u32) -> Result<u3
             _ => return Err(refuse()),
         },
     };
-    if (1..=u64::from(max)).contains(&whole) {
-        Ok(whole as u32)
-    } else {
-        Err(refuse())
+    match u32::try_from(whole) {
+        Ok(n) if (1..=max).contains(&n) => Ok(n),
+        _ => Err(refuse()),
     }
 }
 

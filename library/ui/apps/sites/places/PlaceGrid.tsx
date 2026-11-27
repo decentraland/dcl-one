@@ -1,5 +1,5 @@
 import { useEffect, useRef, useSyncExternalStore } from 'react'
-import { Button } from '../shared/Button/Button'
+import { Button } from '../../../components/Button/Button'
 import { PlaceCardSlot } from './cards/PlaceCardSlot'
 import type { PlaceCardData, PlaceCardHandlers, PlaceCardLabels } from './cards/types'
 import styles from './PlaceGrid.module.css'
@@ -47,7 +47,11 @@ function PlacesMessage({ message, tone = 'info', action }: PlacesMessageProps) {
       <p className={styles.messageText} role={tone === 'alert' ? 'alert' : undefined}>
         {message}
       </p>
-      {action ? <Button onClick={action.onClick}>{action.label}</Button> : null}
+      {action ? (
+        <Button size="lg" onClick={action.onClick}>
+          {action.label}
+        </Button>
+      ) : null}
     </div>
   )
 }
@@ -97,7 +101,7 @@ function LoadMore({ hasMore, loading, onLoadMore, loadingLabel, loadMoreLabel }:
         {loading ? loadingLabel : ''}
       </span>
       {hasMore && !loading && !observable ? (
-        <Button variant="secondary" onClick={onLoadMore}>
+        <Button size="lg" variant="secondary" onClick={onLoadMore}>
           {loadMoreLabel}
         </Button>
       ) : null}

@@ -329,6 +329,49 @@ function showcaseStaysLazy(): Plugin {
   }
 }
 
+/**
+ * Vite emits an asset when it loads the module that imports it, before tree-shaking, and keeps the file after
+ * the module is dropped. The shared entry (@dcl/one-ui) reaches the images and videos of views the HUD never
+ * renders, so this removes the shared library's emitted images, videos and fonts that no chunk, stylesheet or page names. The HUD's
+ * own assets and the in-world Shop's are left alone.
+ */
+export function dropUnusedSharedAssets(): Plugin {
+  const shared = join(sharedSource('@dcl/one-ui'), '..') + sep
+  let root = process.cwd()
+  const kept = [join(shared, 'apps', 'hud') + sep, join(shared, 'apps', 'shop') + sep]
+  return {
+    name: 'hud:drop-unused-shared-assets',
+    apply: 'build',
+    enforce: 'post',
+    configResolved(config) {
+      root = config.root
+    },
+    generateBundle(_, bundle) {
+      const outputs = Object.values(bundle)
+      const text = (output: (typeof outputs)[number]): string =>
+        output.type === 'chunk'
+          ? output.code
+          : typeof output.source === 'string'
+            ? output.source
+            : /\.(?:css|html|js|json|svg|webmanifest)$/.test(output.fileName)
+              ? Buffer.from(output.source).toString()
+              : ''
+      const texts = outputs.map((output) => ({ name: output.fileName, text: text(output) }))
+      for (const output of outputs) {
+        // Stylesheets and scripts are the build's own output, not media a module imported.
+        if (output.type !== 'asset' || /\.(?:css|js|html|json|map)$/.test(output.fileName)) continue
+        const fromShared = output.originalFileNames.some((original) => {
+          const file = isAbsolute(original) ? original : join(root, original)
+          return file.startsWith(shared) && !kept.some((directory) => file.startsWith(directory))
+        })
+        if (!fromShared) continue
+        const base = output.fileName.slice(output.fileName.lastIndexOf('/') + 1)
+        if (!texts.some((other) => other.name !== output.fileName && other.text.includes(base))) delete bundle[output.fileName]
+      }
+    }
+  }
+}
+
 // The short commit this HUD is built from, '' without a git checkout (the sign-in screens' corner).
 function hudBuild(): string {
   const out = spawnSync('git', ['rev-parse', '--short', 'HEAD'], { encoding: 'utf8' })
@@ -359,6 +402,7 @@ export default defineConfig(({ command, mode }) => ({
     ...(HUD_REACT_PROFILING && mode !== 'native' ? [reactProfilingBuild()] : []),
     bridgeScenePreview(),
     showcaseStaysLazy(),
+    dropUnusedSharedAssets(),
     coiHeadersExceptAuth(),
     serveStatic('/engine/', '../deploy/web/engine'),
     // The service worker, at the ROOT so its scope covers the page (like prod): page isolation

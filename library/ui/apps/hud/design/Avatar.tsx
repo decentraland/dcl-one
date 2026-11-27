@@ -1,9 +1,9 @@
-// Avatar — circular profile picture with a colored-initial fallback and optional
-// status dot. Shared across chat bubbles, member rows, friends, and the profile.
+// Avatar — the shared ProfilePic in its HUD look, with the HUD's handling of a picture that is not there yet:
+// the host's picture URL, and a failed picture probed again and brought back everywhere it shows.
 
 import { useSyncExternalStore } from 'react'
 import { nativeProfileImage } from '@hud-host'
-import styles from './Avatar.module.css'
+import { ProfilePic } from '@dcl/one-ui'
 
 /** A failed picture is probed again after each of these: a fresh profile's snapshot URL is published
  *  before the server has rendered it (~10-15 s), and nothing says when it lands. */
@@ -77,11 +77,6 @@ interface AvatarProps {
   className?: string
 }
 
-function initialOf(name: string): string {
-  const m = name.replace(/^[@#]/, '').match(/[a-z0-9]/i)
-  return (m ? m[0] : name[0] || '?').toUpperCase()
-}
-
 export function Avatar({
   src: snapshot,
   name,
@@ -90,28 +85,24 @@ export function Avatar({
   status,
   framed = false,
   dotPosition = 'bottom',
-  className = ''
+  className
 }: AvatarProps): React.JSX.Element {
   const src = nativeProfileImage(snapshot)
   const isFailed = useSyncExternalStore(subscribe, () => src != null && failedAttempts.has(src))
   const showImg = src && !isFailed
-  const dot = Math.max(6, Math.round(size * (dotPosition === 'top' ? 0.15 : 0.18)))
   return (
-    <span
-      className={`${styles.root} ${framed ? styles.framed : ''} ${className}`.trim()}
-      style={{ width: size, height: size, background: color, fontSize: Math.round(size * 0.42) }}
-    >
-      {showImg ? (
-        <img className={styles.img} src={src} alt={name} onLoad={() => loaded(src)} onError={() => failed(src)} />
-      ) : (
-        initialOf(name)
-      )}
-      {status && (
-        <span
-          className={`${styles.dot} ${styles[status]} ${dotPosition === 'top' ? styles.dotTop : ''}`.trim()}
-          style={{ width: dot, height: dot }}
-        />
-      )}
-    </span>
+    <ProfilePic
+      appearance="hud"
+      name={name}
+      src={showImg ? src : undefined}
+      nameColor={color}
+      size={size}
+      status={status}
+      framed={framed}
+      dotPosition={dotPosition}
+      className={className}
+      onPictureLoad={src ? () => loaded(src) : undefined}
+      onPictureError={src ? () => failed(src) : undefined}
+    />
   )
 }

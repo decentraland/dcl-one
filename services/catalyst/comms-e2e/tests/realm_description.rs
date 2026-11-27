@@ -1,5 +1,6 @@
 //! The wait for a stack that is back after a restart: the realm description answers 503 while
 //! parts of the stack are still coming up.
+#![allow(clippy::unwrap_used, reason = "test support")]
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};

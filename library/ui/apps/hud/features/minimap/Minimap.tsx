@@ -13,7 +13,7 @@
 // i.e. on a chunk boundary.
 
 import { memo, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
-import { DclLogo, Kebab, Minus, Plus, showToast } from '../../design'
+import { Kebab, Minus, Plus, showToast } from '../../design'
 import { DEFAULT_REALM } from '@hud-host'
 import { DoubleChevron, PinOutline } from './icons'
 import tipIcon from '../../assets/donate/tip.png'
@@ -21,7 +21,6 @@ import { useDonate } from '../donate/useDonate'
 import { EngineViewport } from '../engine/EngineViewport'
 import { PARCEL_METERS, atlasPx, chunksInRect, isGenesisSatelliteView, parcelTileFor, type Chunk } from '@explorer-core/features/map/atlas'
 import { MARKER_ART, PANEL_ART } from '../map/mapArt'
-import { MaskIcon } from '../../design/MaskIcon'
 import { useMapLayerData } from '../map/useMapLayerData'
 import { mapLayers } from '@explorer-core/features/map/mapLayersStore'
 import { navigation } from '@explorer-core/features/map/navigation'
@@ -53,6 +52,7 @@ import type { EngineViewportRegion, MinimapStyle } from '@explorer-core/engine/p
 import { hudInsetRef } from '../../lib/hudInset'
 import { registerCancelLayer } from '@explorer-core/lib/cancelLayers'
 import styles from './Minimap.module.css'
+import { DclLogo, MaskIcon } from '@dcl/one-ui'
 
 /** Side of the square map, before --ui-scale: the panel's inner width (--minimap-map in the module). */
 const MAP_SIZE = 240
