@@ -9,6 +9,7 @@
 
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 import { isCancelKey, isEditableTarget, isSliderTarget, setBindingsSnapshot } from '@hud/lib/bindingLabels'
+import { SLIDER_KEYS } from '@hud/test/sliderKeys'
 // boot.js reads window.__serviceUrl as it is evaluated: the host defines it there
 import '../lib/baseDomain'
 
@@ -83,8 +84,6 @@ const TEXT_FIELDS = {
   'a textarea': '<textarea></textarea>'
 }
 const MOVEMENT = ['KeyW', 'KeyA', 'KeyS', 'KeyD']
-// The keys a focused slider adjusts itself with.
-const SLIDER_KEYS = ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End', 'PageUp', 'PageDown']
 // The HUD's sliders: the shared Slider (the Volume panel's Master) and the ColorPicker's bars.
 const SLIDERS = {
   'the Volume slider': '<input type="range" min="0" max="100" aria-label="Master">',

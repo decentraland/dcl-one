@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest'
 import { isCancelKey, isEditableTarget, isSliderTarget, setBindingsSnapshot } from '../lib/bindingLabels'
+import { SLIDER_KEYS } from './sliderKeys'
 
 // A focused text field takes the keys as typing and a focused slider adjusts itself with them; a focused switch,
 // checkbox or radio leaves them to the engine. A slider types nothing, so its cancel key cancels.
@@ -65,7 +66,7 @@ describe('isCancelKey with a slider focused', () => {
   it('lets Escape through, and none of the keys that adjust the slider', () => {
     const slider = element('<input type="range">')
     expect(isCancelKey({ key: 'Escape', code: 'Escape', target: slider })).toBe(true)
-    for (const code of ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End', 'PageUp', 'PageDown']) {
+    for (const code of SLIDER_KEYS) {
       expect(isCancelKey({ key: code, code, target: slider }), code).toBe(false)
     }
   })

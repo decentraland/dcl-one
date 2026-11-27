@@ -144,7 +144,8 @@ export function cancelKeyCodes(): string[] {
 //   not move the avatar or the camera. It types nothing, so its cancel key, printable or not, closes the top layer
 //   on the first press, as the engine's Cancel does from a button: useEngineSession leaves the slider and
 //   dispatches Cancel itself while the engine reports the keyboard claimed, so never hears that key (before the
-//   claim lands a native engine still resolves the key, and its Cancel is the one close).
+//   claim lands a native engine still resolves the key, and its Cancel is the one close). A Ctrl, Alt or Meta chord
+//   closes nothing, as from a button.
 // - Any other element (a button, a switch, a checkbox, a radio) leaves the keys to the engine.
 
 /** Inputs that take no text: the HUD's switches are native checkboxes, the permission prompt's choices radios. */

@@ -5230,6 +5230,10 @@
           "kind": "regular"
         },
         {
+          "name": "sliderKeys.ts",
+          "kind": "regular"
+        },
+        {
           "name": "startupScreen.test.ts",
           "kind": "regular"
         },
@@ -10375,7 +10379,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/bootKeyForwarding.test.ts",
-      "sha256": "91f367b46ccac4458ef50a31bd084ec4ed5f08a47a4dcbbcf2939a1a09696869"
+      "sha256": "d3b7051f0eaf55cbf16ab5e23a8c7f23240df744fe894d592423175d0d178e8a"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/bootWatchdog.test.ts",
@@ -14205,7 +14209,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/session/useEngineSession.ts",
-      "sha256": "de749ea4b45c8dc28e833daeece5724bda33fd10ef8f34308415fe9f096d5b21"
+      "sha256": "325aa922311a4a56e20eedd66a2303ecee347f5ebaff894b162738f38ee7a7fe"
     },
     {
       "path": "library/ui/apps/hud/features/settings/KeyBindingsTab.module.css",
@@ -14457,7 +14461,7 @@
     },
     {
       "path": "library/ui/apps/hud/lib/bindingLabels.ts",
-      "sha256": "573bc484bdf362abd798f9ae9721e5c9cb814869d7168f420bf25e1e6bec925d"
+      "sha256": "c281aa55a065b66e79cceea0caa26d5a0b873b98fed7861c97f39bd52f6d9177"
     },
     {
       "path": "library/ui/apps/hud/lib/hudInset.ts",
@@ -14529,7 +14533,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/editableTarget.test.ts",
-      "sha256": "e9c667209c680ab5513370d35098cd19bbccdd51164b786fd2671c542947851b"
+      "sha256": "f62a29884b9830158ce26508a9416d6820d710ac1f3745a8dc2f65e9852bd0d1"
     },
     {
       "path": "library/ui/apps/hud/test/engineViewport.test.tsx",
@@ -15001,7 +15005,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/hosted/sliderCancel.test.tsx",
-      "sha256": "efecaf15a20356008e3d17193b5a43c744aa9e1e9f460dd6204b359b65601c16"
+      "sha256": "a46b202fc13f3851552df9aaeafc62c2ffa52376ca8531e8f902ab4f856f1c81"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/systemActionShortcuts.test.tsx",
@@ -15154,6 +15158,10 @@
     {
       "path": "library/ui/apps/hud/test/signOutOfWorld.test.ts",
       "sha256": "2e3717aca42abcf0c961807281a495d9b33ab16fc7d1735c37d272fcb72cd7be"
+    },
+    {
+      "path": "library/ui/apps/hud/test/sliderKeys.ts",
+      "sha256": "6c8b3628f87727b845f62d4353a68aca0701b3baa4fd58b910c888c9d4cbcdf4"
     },
     {
       "path": "library/ui/apps/hud/test/startupScreen.test.ts",
@@ -45250,6 +45258,21 @@
       "kind": "test:runtime"
     },
     {
+      "from": "library/ui/apps/hud/test/editableTarget.test.ts",
+      "to": "library/ui/apps/hud/test/sliderKeys.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/editableTarget.test.ts",
+      "to": "library/ui/apps/hud/test/sliderKeys.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/editableTarget.test.ts",
+      "to": "library/ui/apps/hud/test/sliderKeys.ts",
+      "kind": "test:runtime"
+    },
+    {
       "from": "library/ui/apps/hud/test/engineViewport.test.tsx",
       "to": "library/ui/apps/hud/features/engine/EngineViewport.tsx",
       "kind": "native:runtime"
@@ -51187,6 +51210,21 @@
     {
       "from": "library/ui/apps/hud/test/hosted/sliderCancel.test.tsx",
       "to": "library/ui/apps/hud/test/harness.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/sliderCancel.test.tsx",
+      "to": "library/ui/apps/hud/test/sliderKeys.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/sliderCancel.test.tsx",
+      "to": "library/ui/apps/hud/test/sliderKeys.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/sliderCancel.test.tsx",
+      "to": "library/ui/apps/hud/test/sliderKeys.ts",
       "kind": "test:runtime"
     },
     {
@@ -67525,6 +67563,11 @@
       "kind": "test:runtime"
     },
     {
+      "from": "rendering/bevy-explorer/source/react-web/src/test/bootKeyForwarding.test.ts",
+      "to": "library/ui/apps/hud/test/sliderKeys.ts",
+      "kind": "test:runtime"
+    },
+    {
       "from": "rendering/bevy-explorer/source/react-web/src/test/bridgeConnectivity.test.tsx",
       "to": "library/ui/apps/hud/design/index.ts",
       "kind": "test:runtime"
@@ -70757,6 +70800,11 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/ui/apps/hud/test/signOutOfWorld.test.ts",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/ui/apps/hud/test/sliderKeys.ts",
       "kind": "type"
     },
     {

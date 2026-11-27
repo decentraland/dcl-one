@@ -3,12 +3,13 @@
 // does from a button. A text field still spends its first press leaving the field, and a switch leaves the key to the
 // engine (bindingLabels states the rule; react-web's bootKeyForwarding test holds the web page to it).
 import { describe, it, expect, afterEach, vi } from 'vitest'
-import { act, fireEvent, render, screen } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { renderSession, enterAsGuest, type Harness } from '../harness'
 import { ColorPicker, openPopup, resetPopups, PopupHost } from '../../design'
 import { setBindingsSnapshot } from '../../lib/bindingLabels'
 import { lockInput } from '@explorer-core/lib/inputLock'
 import { Slider } from '@dcl/one-ui'
+import { SLIDER_KEYS } from '../sliderKeys'
 
 async function world(): Promise<Harness> {
   const h = renderSession({ userId: null })
@@ -84,7 +85,7 @@ describe('the cancel key on a focused slider', () => {
 
   it('leaves the keys that adjust the bar with it: nothing closes and the bar keeps the focus', async () => {
     const { h, bar } = await draggedHueBar()
-    for (const code of ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End', 'PageUp', 'PageDown']) {
+    for (const code of SLIDER_KEYS) {
       act(() => {
         fireEvent.keyDown(bar, { key: code, code })
       })
@@ -143,8 +144,14 @@ describe('the cancel key on a focused slider', () => {
     expect(screen.queryByTestId('popup')).toBeNull()
   })
 
-  it("leaves the press to the engine before the bar's claim lands: one close in all", async () => {
-    // natively the engine still hears the key until the HUD's text focus reaches it, and resolves Cancel itself
+  it('declares text focus for the bar, the claim the engine then reports', async () => {
+    const { h } = await draggedHueBar()
+    await waitFor(() => expect(h.driver.last('uiFocus')).toMatchObject({ kind: 'uiFocus', text: true }))
+  })
+
+  it("natively leaves the press to the engine before the bar's claim lands: one close in all", async () => {
+    // A native engine still hears the key until the HUD's text focus reaches it, and resolves Cancel itself. On the
+    // web the page withholds the key either way, so a press in that window only leaves the bar.
     const { h, bar } = await draggedHueBar()
     engineKeyboard.__engineTextFocus = false
     act(() => {
@@ -157,14 +164,33 @@ describe('the cancel key on a focused slider', () => {
     expect(h.session().backpack.open).toBe(true)
   })
 
-  it('leaves a press a widget took (preventDefault) with that widget', async () => {
+  it('leaves a press a widget took (preventDefault) with that widget: nothing closes and the bar keeps the focus', async () => {
     const { h, bar } = await draggedHueBar()
     bar.addEventListener('keydown', (e) => e.preventDefault())
     act(() => {
       fireEvent.keyDown(bar, { key: 'Escape', code: 'Escape' })
     })
     expect(popup()).not.toBeNull()
+    expect(document.activeElement).toBe(bar)
     expect(h.session().backpack.open).toBe(true)
+  })
+
+  it.each(['ctrlKey', 'altKey', 'metaKey'])('closes nothing on a chord with %s, as from a button', async (modifier) => {
+    const { h, bar } = await draggedHueBar()
+    act(() => {
+      fireEvent.keyDown(bar, { key: 'Escape', code: 'Escape', [modifier]: true })
+    })
+    expect(popup()).not.toBeNull()
+    expect(h.session().backpack.open).toBe(true)
+  })
+
+  it('closes nothing on Ctrl and a rebound printable cancel key', async () => {
+    const { bar } = await draggedHueBar()
+    act(() => setBindingsSnapshot([[{ System: 'Cancel' }, ['KeyR']]]))
+    act(() => {
+      fireEvent.keyDown(bar, { key: 'r', code: 'KeyR', ctrlKey: true })
+    })
+    expect(popup()).not.toBeNull()
   })
 })
 
