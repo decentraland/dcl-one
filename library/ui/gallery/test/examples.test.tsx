@@ -15,6 +15,7 @@ import { entries } from '../src/examples'
 import { covers, people, picture, placeholderFace } from '../src/examples/data'
 import { foundationPages } from '../src/foundations/FoundationPages'
 import type { GalleryEntry } from '../src/registry'
+import { stubElementScroll } from './hud/jsdom'
 import { instrumentComponents } from './instrument'
 
 // Every component the package root exports records its name when it mounts, so a page's `components` claim is
@@ -26,6 +27,8 @@ vi.mock('@dcl/one-ui', async (importOriginal) => {
     instrumentation.mounted.add(name)
   )
 })
+
+stubElementScroll()
 
 // Mounted as an element, as ExampleView mounts an example, so its hooks belong to the example.
 function mount(example: { render: () => ReactNode }) {

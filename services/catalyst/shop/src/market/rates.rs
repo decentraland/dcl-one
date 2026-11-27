@@ -28,6 +28,12 @@ fn bound(params: &Params<'_>, key: &str) -> Result<i64, ApiError> {
         })
 }
 
+/// A bounded timestamp's day since the epoch.
+fn day_of(ms: i64) -> Result<i32, ApiError> {
+    i32::try_from(ms / DAY_MS)
+        .map_err(|_| ApiError::bad_request("an epoch timestamp in milliseconds is out of range"))
+}
+
 pub(super) async fn get_mana_usd_rates(
     State(state): State<SharedState>,
     Query(pairs): Query<Vec<(String, String)>>,
@@ -48,8 +54,8 @@ pub(super) async fn get_mana_usd_rates(
          WHERE day BETWEEN DATE '1970-01-01' + $1::integer AND DATE '1970-01-01' + $2::integer
            AND usd IS NOT NULL ORDER BY day",
     )
-    .bind((from / DAY_MS) as i32)
-    .bind((to / DAY_MS) as i32)
+    .bind(day_of(from)?)
+    .bind(day_of(to)?)
     .fetch_all(&state.pool)
     .await?;
     Ok(Json(DataOnly { data }))

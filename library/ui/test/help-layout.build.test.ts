@@ -49,6 +49,8 @@ async function open(width: number, height: number) {
       await new Promise(resolve=>setTimeout(resolve,50))
     }
     await document.fonts.ready
+    // The selected pill tab pops in with a scale animation; measure it at rest (a cancelled one rejects, so settle).
+    await Promise.allSettled([...document.querySelectorAll('[role="tab"]')].flatMap((tab)=>tab.getAnimations()).map((animation)=>animation.finished))
     await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))
   })()`)
 }

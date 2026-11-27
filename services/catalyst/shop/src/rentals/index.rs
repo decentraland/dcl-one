@@ -185,8 +185,13 @@ fn lower(a: Address) -> String {
 
 /// One log as a row; `Ok(None)` for a topic this index does not model.
 pub fn decode_log(log: &RpcLog, block_time: i64) -> Result<Option<RentalEvent>, DecodeError> {
-    let (block, index) = chain_walk::log_position(log);
-    let index = index as i32;
+    let (block, log_index) = chain_walk::log_position(log);
+    let index = i32::try_from(log_index).map_err(|_| DecodeError {
+        block,
+        index: i32::MAX,
+        what: "logIndex",
+        why: format!("log index {log_index} does not fit its column"),
+    })?;
     let err = |what: &'static str, why: String| DecodeError {
         block,
         index,
@@ -357,7 +362,7 @@ pub(super) async fn insert_events(
         .bind(chunk.iter().map(|r| r.tx_hash.clone()).collect::<Vec<_>>())
         .execute(&mut *conn)
         .await?;
-        written += r.rows_affected() as usize;
+        written += usize::try_from(r.rows_affected()).unwrap_or(usize::MAX);
     }
     Ok(written)
 }

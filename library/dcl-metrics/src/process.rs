@@ -88,6 +88,7 @@ fn filetime_seconds(low: u32, high: u32) -> f64 {
     (((high as u64) << 32) | low as u64) as f64 / 10_000_000.
 }
 #[cfg(windows)]
+#[allow(unsafe_code, reason = "reads process times and memory through kernel32")]
 pub fn collect() -> Sample {
     #[repr(C)]
     #[derive(Default)]
@@ -124,7 +125,7 @@ pub fn collect() -> Sample {
         FileTime::default(),
         FileTime::default(),
     );
-    // Initialized ABI-sized buffers, borrowed only for these synchronous system calls.
+    // SAFETY: initialized ABI-sized buffers, borrowed only for these synchronous system calls.
     unsafe {
         let process = GetCurrentProcess();
         if GetProcessTimes(process, &mut created, &mut exited, &mut kernel, &mut user) != 0 {

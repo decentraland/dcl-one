@@ -705,6 +705,15 @@ impl Config {
     pub fn parse_env_for_tests<K: Into<String>, V: Into<String>>(
         vars: impl IntoIterator<Item = (K, V)>,
     ) -> Result<Self, clap::Error> {
+        Self::parse_env_with_flags_for_tests(vars, &[])
+    }
+
+    /// As above, with explicit `--name=value` flags taking precedence.
+    pub(crate) fn parse_env_with_flags_for_tests<K: Into<String>, V: Into<String>>(
+        vars: impl IntoIterator<Item = (K, V)>,
+        flags: &[&str],
+    ) -> Result<Self, clap::Error> {
+        let flags: Vec<String> = flags.iter().map(|flag| flag.to_string()).collect();
         let vars: Vec<(String, String)> = vars
             .into_iter()
             .map(|(k, v)| (k.into(), v.into()))
@@ -718,6 +727,13 @@ impl Config {
                     .find(|a| a.get_env().is_some_and(|e| e == key.as_str()))
                     .unwrap_or_else(|| panic!("{key} is not a serve variable"));
                 let long = arg.get_long().expect("every Config arg has a long flag");
+                if flags.iter().any(|flag| {
+                    flag.strip_prefix("--")
+                        .and_then(|flag| flag.split_once('='))
+                        .is_some_and(|(name, _)| name == long)
+                }) {
+                    continue;
+                }
                 if matches!(arg.get_action(), clap::ArgAction::SetTrue) {
                     if value == "true" {
                         argv.push(format!("--{long}"));
@@ -726,6 +742,7 @@ impl Config {
                     argv.push(format!("--{long}={value}"));
                 }
             }
+            argv.extend(flags);
             argv
         });
         let argv: Vec<&str> = argv.iter().map(String::as_str).collect();

@@ -7,7 +7,7 @@
 // then Block · Report, then Invite to Community.
 
 import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react'
-import { Avatar, BlockUserIcon, ContextMenu, ReportFlag, Submenu, VerifiedBadge, type ContextMenuItem } from '../../design'
+import { Avatar, BlockUserIcon, ContextMenu, Message, ReportFlag, Submenu, VerifiedBadge, type ContextMenuItem } from '../../design'
 import { inviteSubmenuItem } from '../communities/InviteToCommunity'
 import callIcon from '../../assets/voice/call.png'
 import giftIcon from '../../assets/gifting/gift.png'
@@ -54,13 +54,6 @@ function ViewProfileIcon(): React.JSX.Element {
       <rect x="3" y="5" width="18" height="14" rx="2.5" stroke="currentColor" strokeWidth="1.8" />
       <circle cx="8.5" cy="12" r="2.2" stroke="currentColor" strokeWidth="1.7" />
       <path d="M13.5 10.5h4M13.5 14h2.5" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" />
-    </svg>
-  )
-}
-function MessageIcon(): React.JSX.Element {
-  return (
-    <svg viewBox="0 0 24 24" width="20" height="20" fill="none" aria-hidden="true">
-      <path d="M4 6.5A2.5 2.5 0 0 1 6.5 4h11A2.5 2.5 0 0 1 20 6.5v8a2.5 2.5 0 0 1-2.5 2.5H9l-4.2 3.2A.5.5 0 0 1 4 19.8V6.5Z" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round" />
     </svg>
   )
 }
@@ -297,7 +290,7 @@ export function ProfileCardPresentation({
   const hasMenu = !isMe && (!!viewProfile || showMention || showMessage || showCall || showGift || showHush || showJump || hasDestructive || communityActions.length > 0 || !!invite)
   const message = showMessage && (
     <button type="button" className={styles.row} onClick={run(onMessage)}>
-      <MessageIcon />
+      <Message />
       <span>Chat</span>
     </button>
   )

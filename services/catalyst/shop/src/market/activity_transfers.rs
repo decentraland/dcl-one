@@ -393,13 +393,25 @@ pub async fn transfers_of_address(
     for (side, out) in [(sent, &mut legs.sent), (received, &mut legs.received)] {
         let mut side = side;
         side.sort_by(|a, b| a.0.cmp(&b.0));
-        out.extend(side.into_iter().take(cap as usize).map(|(_, t)| t));
+        out.extend(
+            side.into_iter()
+                .take(crate::market::casts::page(cap))
+                .map(|(_, t)| t),
+        );
     }
     legs
 }
 
 #[cfg(test)]
 mod tests {
+    #![allow(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        clippy::cast_possible_wrap,
+        clippy::cast_precision_loss,
+        reason = "test fixtures use small literal values"
+    )]
+
     use super::*;
     use crate::market::tests::support::OwnDb;
     use std::sync::Arc;

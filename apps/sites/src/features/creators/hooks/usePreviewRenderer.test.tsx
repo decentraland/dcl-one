@@ -12,7 +12,7 @@ vi.mock('@/data/lib/creators/featureFlags', async importOriginal => ({
   getIsFeatureEnabled: () => getIsFeatureEnabled()
 }))
 const measureDownlinkMbps = vi.fn()
-vi.mock('@/data/lib/creators/connectionSpeed', () => ({ measureDownlinkMbps: () => measureDownlinkMbps() }))
+vi.mock('@web-core/connection-speed', () => ({ measureDownlinkMbps: () => measureDownlinkMbps() }))
 const track = vi.fn()
 vi.mock('@/data/lib/creators/analytics', () => ({ track: (...args: unknown[]) => track(...args) }))
 

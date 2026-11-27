@@ -470,11 +470,30 @@ pub struct SceneDrivenAnimationFeedbackState {
 /// `PBVirtualCamera.fov` default, per the proto definition.
 pub const PLAYER_CAMERA_FOV: f32 = std::f32::consts::PI / 3.0;
 
+/// The player camera's zoom level. The wheel steps between the three; there is no zoom within one.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum CameraZoomLevel {
+    FirstPerson,
+    #[default]
+    ThirdPerson,
+    Drone,
+}
+
+/// Which shoulder the third-person and drone cameras look over while the cursor is locked.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum CameraShoulder {
+    #[default]
+    Right,
+    Left,
+}
+
 // main camera entity
 #[derive(Component)]
 pub struct PrimaryCamera {
     // settings
-    pub distance: f32,
+    /// The player's own zoom level; a scene's override wins while it is set.
+    pub level: CameraZoomLevel,
+    pub shoulder: CameraShoulder,
     pub sensitivity: f32,
     // impl details (todo: move to separate private struct)
     pub initialized: bool,
@@ -496,20 +515,22 @@ pub enum CameraView {
 }
 
 impl PrimaryCamera {
-    /// The camera is in first person when it is this close behind the player.
-    pub const FIRST_PERSON_DISTANCE: f32 = 0.05;
+    /// The zoom level in effect: a scene's override wins over the player's own. None while a
+    /// scene's cinematic camera has the view.
+    pub fn level_in_effect(&self) -> Option<CameraZoomLevel> {
+        match self.scene_override {
+            Some(CameraOverride::Cinematic(_)) => None,
+            Some(CameraOverride::Level(level)) => Some(level),
+            None => Some(self.level),
+        }
+    }
 
-    /// The view in effect: a scene's override wins over the player's own zoom.
+    /// The view in effect, as scenes are told it: the drone level is third person to them.
     pub fn view(&self) -> CameraView {
-        let distance = match self.scene_override {
-            Some(CameraOverride::Cinematic(_)) => return CameraView::Cinematic,
-            Some(CameraOverride::Distance(distance)) => distance,
-            None => self.distance,
-        };
-        if distance <= Self::FIRST_PERSON_DISTANCE {
-            CameraView::FirstPerson
-        } else {
-            CameraView::ThirdPerson
+        match self.level_in_effect() {
+            None => CameraView::Cinematic,
+            Some(CameraZoomLevel::FirstPerson) => CameraView::FirstPerson,
+            Some(CameraZoomLevel::ThirdPerson | CameraZoomLevel::Drone) => CameraView::ThirdPerson,
         }
     }
 }
@@ -536,14 +557,14 @@ pub enum AvatarControl {
 
 #[derive(Clone, Debug)]
 pub enum CameraOverride {
-    Distance(f32),
+    Level(CameraZoomLevel),
     Cinematic(CinematicSettings),
 }
 
 impl CameraOverride {
     pub fn effectively_equals(&self, other: &CameraOverride) -> bool {
         match (self, other) {
-            (CameraOverride::Distance(x), CameraOverride::Distance(y)) => x == y,
+            (CameraOverride::Level(x), CameraOverride::Level(y)) => x == y,
             (CameraOverride::Cinematic(c0), CameraOverride::Cinematic(c1)) => {
                 c0.origin == c1.origin
             }
@@ -560,7 +581,8 @@ impl Default for PrimaryCamera {
             yaw: Default::default(),
             pitch: Default::default(),
             roll: Default::default(),
-            distance: 1.0,
+            level: Default::default(),
+            shoulder: Default::default(),
             scene_override: None,
             scene_override_owner: None,
         }
@@ -741,8 +763,8 @@ pub struct AppConfig {
     /// The language the player chose (BCP-47); `None` follows the system language.
     pub language: Option<String>,
     /// Base url of an abgen Bevy variants service (prototype), when `--bevy-variants-url` /
-    /// `?bevyVariants=` is absent; `None` = the asset-bundle generator's CDN for the base
-    /// domain, `off` = off.
+    /// `?bevyVariants=` and an `abgen_cdn` override are absent and the endpoint feature flag
+    /// names none; `None` = the asset-bundle generator's CDN for the base domain, `off` = off.
     pub bevy_variants_url: Option<String>,
     // field-level default (0) so configs saved before this field existed read as outdated,
     // rather than taking the current generation from the container-level default
@@ -1375,6 +1397,8 @@ pub struct AudioSettings {
     pub avatar: i32,
     /// Whether [`Self::microphone_focus`] passes the client window's focus through.
     pub mute_mic_in_background: bool,
+    /// The chosen audio input's device id; `None` uses the system default.
+    pub microphone: Option<String>,
 }
 
 impl Default for AudioSettings {
@@ -1387,6 +1411,7 @@ impl Default for AudioSettings {
             system: 100,
             avatar: 100,
             mute_mic_in_background: true,
+            microphone: None,
         }
     }
 }
@@ -2007,6 +2032,9 @@ impl SceneImposterBake {
 #[derive(Resource, Default)]
 pub struct CursorLocks(pub HashSet<&'static str>);
 
+/// The `CursorLocks` entry held while the pointer turns the camera.
+pub const CAMERA_CURSOR_LOCK: &str = "camera";
+
 /// Controls engine-level overrides to avatar movement, independent of scene-driven movement.
 #[derive(Resource, Default)]
 pub struct EngineMovementControl {
@@ -2342,6 +2370,82 @@ impl ClientWindowFocus {
 /// reports the focus.
 #[derive(Event, Debug, Clone, Copy)]
 pub struct RequestClientWindowFocus;
+
+/// An audio input the host offers.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MicrophoneInput {
+    pub id: String,
+    pub label: String,
+}
+
+/// An input reported during this session, kept after it is unplugged.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct KnownMicrophone {
+    input: MicrophoneInput,
+    present: bool,
+}
+
+/// Every audio input the host reported this session, in first-report order. An input keeps its
+/// place once seen, so a choice index read from an older list still names the same input.
+#[derive(Resource, Default, Debug, Clone, PartialEq, Eq)]
+pub struct MicrophoneDevices {
+    known: Vec<KnownMicrophone>,
+}
+
+impl MicrophoneDevices {
+    /// Whether the host's latest report listed `id`.
+    pub fn offers(&self, id: &str) -> bool {
+        self.known
+            .iter()
+            .any(|known| known.present && known.input.id == id)
+    }
+
+    /// How many inputs the host's latest report listed.
+    pub fn offered(&self) -> usize {
+        self.known.iter().filter(|known| known.present).count()
+    }
+
+    /// Every known input's id, in choice order.
+    pub fn ids(&self) -> Vec<String> {
+        self.known
+            .iter()
+            .map(|known| known.input.id.clone())
+            .collect()
+    }
+
+    /// Every known input's name, in choice order.
+    pub fn labels(&self) -> Vec<String> {
+        self.known.iter().map(Self::shown).collect()
+    }
+
+    fn shown(known: &KnownMicrophone) -> String {
+        if known.present {
+            known.input.label.clone()
+        } else {
+            format!("{} (unplugged)", known.input.label)
+        }
+    }
+
+    /// Takes the host's current inputs.
+    pub fn replace(&mut self, reported: Vec<MicrophoneInput>) {
+        for known in self.known.iter_mut() {
+            known.present = reported.iter().any(|input| input.id == known.input.id);
+        }
+        for input in reported {
+            match self
+                .known
+                .iter_mut()
+                .find(|known| known.input.id == input.id)
+            {
+                Some(known) => known.input.label = input.label,
+                None => self.known.push(KnownMicrophone {
+                    input,
+                    present: true,
+                }),
+            }
+        }
+    }
+}
 
 #[derive(Resource, Default, Serialize, Deserialize, Clone)]
 pub struct MicState {
@@ -2943,6 +3047,7 @@ mod tests {
                 system: 20,
                 avatar: 10,
                 mute_mic_in_background: true,
+                microphone: None,
             }
         );
     }

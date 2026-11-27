@@ -1,9 +1,13 @@
 //! Prototype: GPU-ready "Bevy variants" of the textures and models of scenes, wearables and
 //! emotes, published by abgen.
 //!
-//! The variants base is `--bevy-variants-url`, `?bevyVariants=` or the `bevy_variants_url` config
-//! field, else the asset-bundle generator's CDN for the base domain (`https://abgen-cdn.<base>`);
-//! `off` in any of them turns the client off. For each scene, wearable and emote entity it loads, the
+//! The variants base is `--bevy-variants-url` / `?bevyVariants=`, else an `abgen_cdn` service
+//! override; either settles it at launch. Otherwise the feature flag [`ENDPOINT_FLAG`] settles it
+//! once the flags are read ([`flagged_base`]), falling back to the `bevy_variants_url` config
+//! field, else to the asset-bundle generator's CDN for the base domain
+//! (`https://abgen-cdn.<base>`). `off` turns the client off. The base is settled once per session
+//! (`Base`); until then manifests are requested but wait for it, files wait for their manifest,
+//! and far LODs are not known yet. For each scene, wearable and emote entity it loads, the
 //! explorer fetches
 //! `{base}/bevy/manifest/{entityId}.json` once; it maps original content CIDs to the
 //! paths of their variants, `bevy/{prefix}/{name}`, whose prefix letter is the variant's class
@@ -21,7 +25,8 @@
 //! session, its cached copy dropped, and its asset (a texture or a GLB) reloaded from the
 //! original. Manifests and variants are fetched in a single attempt with short timeouts: the
 //! original is their retry. An entity's files wait for its manifest for at most
-//! [`MANIFEST_DEADLINE`] from the request, then read their originals.
+//! [`MANIFEST_DEADLINE`] from the request, or from the base settling if that came later, then
+//! read their originals.
 //!
 //! The formats taken are the [`SUPPORTED_FORMATS`] table: a manifest variant is loaded when its
 //! `kind`/`format` pair has a row whose file types, GPU needs and decoder this client has: BC
@@ -66,7 +71,11 @@ use bevy::{
     render::renderer::RenderCapabilities,
     tasks::IoTaskPool,
 };
-use common::util::{TaskCompat, UrlLoopbackExt};
+use common::{
+    base_domain,
+    feature_flags::{FeatureFlags, FlagVariant, FlagsSource},
+    util::{TaskCompat, UrlLoopbackExt},
+};
 use serde::Deserialize;
 use tokio::sync::watch;
 use web_time::Duration;
@@ -264,6 +273,72 @@ impl Variant {
     }
 }
 
+/// The feature flag that names the variants base (`explorer-bevy-variants-endpoint` in Unleash).
+pub(crate) const ENDPOINT_FLAG: &str = "bevy-variants-endpoint";
+
+/// Whether a flag may name `url` as the variants base: `https` on a Decentraland host (one of
+/// [`base_domain::DECENTRALAND_DOMAINS`] or under it), on the default port, with no userinfo,
+/// query or fragment.
+fn is_decentraland_base(url: &str) -> bool {
+    url::Url::parse(url).is_ok_and(|parsed| {
+        parsed.scheme() == "https"
+            && parsed.username().is_empty()
+            && parsed.password().is_none()
+            && parsed.port().is_none()
+            && parsed.query().is_none()
+            && parsed.fragment().is_none()
+            && base_domain::decentraland_domain(url).is_some()
+    })
+}
+
+/// The variants base [`ENDPOINT_FLAG`] chooses, None for off, and how it chose it. Its enabled
+/// variant decides: `off` turns the variants off, `on` keeps `default`, and any other carries the
+/// base as a `string` payload. Anything else keeps `default` (None: off): the flag disabled or
+/// unread, no enabled variant, or a payload [`is_decentraland_base`] refuses, so a flag cannot
+/// send the variants' requests elsewhere.
+pub(crate) fn flagged_base(
+    variant: Option<&FlagVariant>,
+    default: Option<&str>,
+) -> (Option<String>, String) {
+    let default = || default.map(str::to_owned);
+    let Some(variant) = variant.filter(|variant| variant.enabled) else {
+        return (
+            default(),
+            "endpoint flag: no variant, the default".to_owned(),
+        );
+    };
+    match variant.name.as_str() {
+        "off" => return (None, "endpoint flag: `off`".to_owned()),
+        "on" => return (default(), "endpoint flag: `on`, the default".to_owned()),
+        _ => (),
+    }
+    let url = variant
+        .payload
+        .as_ref()
+        .filter(|payload| payload.kind == "string")
+        .map(|payload| payload.value.trim());
+    match url {
+        Some(url) if is_decentraland_base(url) => (
+            Some(url.to_owned()),
+            format!("endpoint flag: `{}`", variant.name),
+        ),
+        _ => {
+            warn!(
+                "bevy variants: the `{ENDPOINT_FLAG}` variant `{}` names no https Decentraland \
+                 base url; keeping the default",
+                variant.name
+            );
+            (
+                default(),
+                format!(
+                    "endpoint flag: `{}` names no https Decentraland base url, the default",
+                    variant.name
+                ),
+            )
+        }
+    }
+}
+
 #[derive(Debug)]
 pub struct Manifest {
     /// The generation each variant class was built from (`texture` → `t2`, …), for the debug
@@ -403,8 +478,8 @@ pub fn scene_eligibility(
 pub enum FarLodSource {
     /// abgen's mesh for the scene.
     Url(String),
-    /// Not known yet: the GPU has not reported its BC support, or the content context is being
-    /// written. Ask again later.
+    /// Not known yet: the variants base has not settled, the GPU has not reported its BC
+    /// support, or the content context is being written. Ask again later.
     NotYet,
     /// None for this scene in this session, and why.
     Unavailable(String),
@@ -477,9 +552,43 @@ impl Session {
     }
 }
 
+/// The session's variants base. It leaves `Pending` once and changes no more.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) enum Base {
+    /// Waiting for [`ENDPOINT_FLAG`]; the base it falls back to, None for off.
+    Pending(Option<String>),
+    Off,
+    /// The base url, and when it settled.
+    On(String, web_time::Instant),
+}
+
+/// The variants base and what set it.
+#[derive(Clone, Debug)]
+pub(crate) struct Route {
+    pub(crate) base: Base,
+    pub(crate) source: String,
+}
+
+impl Default for Route {
+    fn default() -> Self {
+        Route {
+            base: Base::Off,
+            source: "not set".to_owned(),
+        }
+    }
+}
+
+/// `url` as a variants base: an http(s) url in its serialised form without a trailing slash,
+/// so a prefix match agrees with a re-serialised remote url. None for anything else.
+fn normalized_base(url: &str) -> Option<String> {
+    let parsed = url::Url::parse(url.trim()).ok()?;
+    matches!(parsed.scheme(), "http" | "https")
+        .then(|| parsed.as_str().trim_end_matches('/').to_owned())
+}
+
 #[derive(Default)]
 pub struct BevyVariants {
-    base: OnceLock<String>,
+    route: watch::Sender<Route>,
     /// The GPU's BC support, once the renderer has reported it.
     bc: OnceLock<bool>,
     manifests: Mutex<HashMap<String, watch::Receiver<ManifestState>>>,
@@ -491,14 +600,49 @@ pub struct BevyVariants {
 }
 
 impl BevyVariants {
-    fn base(&self) -> Option<&str> {
-        self.base.get().map(String::as_str)
+    /// The settled base url; None while variants are off or the base is pending.
+    fn base(&self) -> Option<String> {
+        match &self.route.borrow().base {
+            Base::On(url, _) => Some(url.clone()),
+            Base::Pending(_) | Base::Off => None,
+        }
+    }
+
+    fn is_off(&self) -> bool {
+        self.route.borrow().base == Base::Off
+    }
+
+    fn is_pending(&self) -> bool {
+        matches!(self.route.borrow().base, Base::Pending(_))
+    }
+
+    /// The settled base url and when it settled, None for off; waits while the base is pending.
+    async fn settled(&self) -> Option<(String, web_time::Instant)> {
+        let mut route = self.route.subscribe();
+        let route = route
+            .wait_for(|route| !matches!(route.base, Base::Pending(_)))
+            .await
+            .ok()?;
+        match &route.base {
+            Base::On(url, at) => Some((url.clone(), *at)),
+            Base::Pending(_) | Base::Off => None,
+        }
+    }
+
+    /// The fallback and its source while the base waits for [`ENDPOINT_FLAG`].
+    fn pending_fallback(&self) -> Option<(Option<String>, String)> {
+        let route = self.route.borrow();
+        match &route.base {
+            Base::Pending(fallback) => Some((fallback.clone(), route.source.clone())),
+            Base::On(..) | Base::Off => None,
+        }
     }
 
     /// The scene whose far LOD `remote` is ([`IpfsIo::bevy_far_lod`]'s url), if it is one.
     fn far_lod_scene<'a>(&self, remote: &'a str) -> Option<&'a str> {
+        let base = self.base()?;
         remote
-            .strip_prefix(self.base()?)?
+            .strip_prefix(base.as_str())?
             .strip_prefix(FAR_LOD_DIR)?
             .strip_suffix(FAR_LOD_SUFFIX)
     }
@@ -507,22 +651,48 @@ impl BevyVariants {
         self.bc.get().copied().unwrap_or(false)
     }
 
-    fn set_base(&self, url: &str) {
-        let url = url.trim();
-        match url::Url::parse(url) {
-            Ok(parsed) if matches!(parsed.scheme(), "http" | "https") => {
-                // the serialised form, so a prefix match agrees with a re-serialised remote url
-                let url = parsed.as_str().trim_end_matches('/');
-                if self.base.set(url.to_owned()).is_ok() {
-                    info!("bevy variants: on, from `{url}`");
-                }
+    /// Settles the base: `url`, or off with None or a url that is not http(s).
+    fn settle(&self, url: Option<&str>, source: &str) {
+        let (base, source) = match url.map(|url| (url, normalized_base(url))) {
+            Some((_, Some(url))) => {
+                info!("bevy variants: on, from `{url}` ({source})");
+                (Base::On(url, web_time::Instant::now()), source.to_owned())
             }
-            _ => warn!("bevy variants: ignoring `{url}`, not an http(s) url"),
-        }
+            Some((url, None)) => {
+                warn!("bevy variants: off, `{url}` is not an http(s) url ({source})");
+                (Base::Off, format!("{source}: not an http(s) url"))
+            }
+            None => {
+                info!("bevy variants: off ({source})");
+                (Base::Off, source.to_owned())
+            }
+        };
+        self.route.send_replace(Route { base, source });
     }
 
-    /// A new pending manifest for `entity`, or None when one was already requested.
+    /// Leaves the base to [`ENDPOINT_FLAG`], falling back to `fallback`: None, or a url that is
+    /// not http(s), is off.
+    fn wait_for_flag(&self, fallback: Option<&str>, source: &str) {
+        let (fallback, source) = match fallback.map(|url| (url, normalized_base(url))) {
+            Some((_, Some(url))) => (Some(url), source.to_owned()),
+            Some((url, None)) => {
+                warn!("bevy variants: the fallback `{url}` is not an http(s) url; off");
+                (None, format!("{source}: not an http(s) url"))
+            }
+            None => (None, source.to_owned()),
+        };
+        self.route.send_replace(Route {
+            base: Base::Pending(fallback),
+            source,
+        });
+    }
+
+    /// A new pending manifest for `entity`, or None when one was already requested or variants
+    /// are off.
     fn begin(&self, entity: &str) -> Option<watch::Sender<ManifestState>> {
+        if self.is_off() {
+            return None;
+        }
         let mut manifests = self.manifests.lock_ignore_poison();
         if manifests.contains_key(entity) {
             return None;
@@ -535,14 +705,15 @@ impl BevyVariants {
         Some(sender)
     }
 
-    /// How much of [`MANIFEST_DEADLINE`] an entity's files may still wait for its manifest.
-    fn manifest_wait_left(&self, entity: &str) -> Duration {
-        self.requested_at
+    /// How much of [`MANIFEST_DEADLINE`] an entity's files may still wait for its manifest,
+    /// counted from its request, or from `settled_at` (the base settling) if that came later.
+    fn manifest_wait_left(&self, entity: &str, settled_at: web_time::Instant) -> Duration {
+        let from = self
+            .requested_at
             .lock_ignore_poison()
             .get(entity)
-            .map_or(MANIFEST_DEADLINE, |at| {
-                MANIFEST_DEADLINE.saturating_sub(at.elapsed())
-            })
+            .map_or(settled_at, |at| (*at).max(settled_at));
+        MANIFEST_DEADLINE.saturating_sub(from.elapsed())
     }
 
     fn manifest(&self, entity: &str) -> Option<watch::Receiver<ManifestState>> {
@@ -666,9 +837,22 @@ fn describe_fetch_error(error: &platform::FetchError<anyhow::Error>) -> String {
 }
 
 impl IpfsIo {
-    /// Turns the variants client on for the session. Startup only: a second call is ignored.
-    pub fn set_bevy_variants_base(&self, url: &str) {
-        self.bevy_variants.set_base(url);
+    /// Settles the variants base for the session: `url`, or off with None or a url that is not
+    /// http(s). `source` is what set it.
+    pub fn set_bevy_variants_base(&self, url: Option<&str>, source: &str) {
+        self.bevy_variants.settle(url, source);
+    }
+
+    /// Leaves the variants base to [`ENDPOINT_FLAG`] once the flags are read, falling back to
+    /// `fallback` (None: off), which `source` set. Until it settles, manifests wait for it and
+    /// far LODs are not known yet.
+    pub fn route_bevy_variants_by_flag(&self, fallback: Option<&str>, source: &str) {
+        self.bevy_variants.wait_for_flag(fallback, source);
+    }
+
+    /// Whether the variants base is waiting for [`ENDPOINT_FLAG`].
+    pub fn bevy_variants_pending(&self) -> bool {
+        self.bevy_variants.is_pending()
     }
 
     /// Whether the asset at `path` was last read from a variant (and so must not be
@@ -702,7 +886,8 @@ impl IpfsIo {
     }
 
     /// The asset pipeline's initial-scene-state descriptor for a scene, which places its near
-    /// LOD, under the variants base; `None` when variants are off.
+    /// LOD, under the variants base; `None` when variants are off or the base is pending
+    /// ([`IpfsIo::bevy_variants_pending`]).
     pub fn bevy_lod_descriptor(&self, scene: &str) -> Option<String> {
         let base = self.bevy_variants.base()?;
         Some(format!(
@@ -722,8 +907,10 @@ impl IpfsIo {
     /// session. Naming a url does not spend the breaker's probe: whether its download may start
     /// is [`IpfsIo::far_lod_may_request`].
     pub fn bevy_far_lod(&self, scene: &str) -> FarLodSource {
-        let Some(base) = self.bevy_variants.base() else {
-            return FarLodSource::Unavailable("bevy variants off".to_owned());
+        let base = match &self.bevy_variants.route.borrow().base {
+            Base::On(url, _) => url.clone(),
+            Base::Pending(_) => return FarLodSource::NotYet,
+            Base::Off => return FarLodSource::Unavailable("bevy variants off".to_owned()),
         };
         match self.bevy_variants.bc.get() {
             None => return FarLodSource::NotYet,
@@ -817,12 +1004,13 @@ impl IpfsIo {
             })
     }
 
-    /// Whether no far LOD can be offered this session: no variants base, a GPU known to have no
-    /// BC textures, or preview. Far LODs are not turned off with the variants client for the
-    /// session: an outage is the far LOD breaker's to handle, and it recovers.
+    /// Whether no far LOD can be offered this session: variants off, a GPU known to have no BC
+    /// textures, or preview. False while the base is pending. Far LODs are not turned off with
+    /// the variants client for the session: an outage is the far LOD breaker's to handle, and it
+    /// recovers.
     pub fn far_lods_off(&self) -> bool {
         self.is_preview
-            || self.bevy_variants.base().is_none()
+            || self.bevy_variants.is_off()
             || self.bevy_variants.bc.get() == Some(&false)
     }
 
@@ -834,12 +1022,9 @@ impl IpfsIo {
             .status(web_time::Instant::now())
     }
 
-    /// Asks abgen for an entity's manifest (a scene, wearable or emote), once per session. A
-    /// no-op when variants are off.
+    /// Asks abgen for an entity's manifest (a scene, wearable or emote), once per session, from
+    /// the base once it has settled. A no-op when variants are off.
     pub fn request_bevy_variants(self: &Arc<Self>, entity: &str) {
-        let Some(base) = self.bevy_variants.base().map(str::to_owned) else {
-            return;
-        };
         let Some(sender) = self.bevy_variants.begin(entity) else {
             return;
         };
@@ -847,7 +1032,10 @@ impl IpfsIo {
         let entity = entity.to_owned();
         IoTaskPool::get()
             .spawn_compat(async move {
-                let state = io.fetch_bevy_variants_manifest(&base, &entity).await;
+                let state = match io.bevy_variants.settled().await {
+                    Some((base, _)) => io.fetch_bevy_variants_manifest(&base, &entity).await,
+                    None => ManifestState::Failed("variants off".to_owned()),
+                };
                 sender.send_replace(state);
             })
             .detach();
@@ -904,7 +1092,9 @@ impl IpfsIo {
         path: &Path,
     ) -> Option<VariantRead> {
         let variants = &self.bevy_variants;
-        let base = variants.base()?;
+        if variants.is_off() {
+            return None;
+        }
         let (scene, file) = (ipfs_path.scene_hash()?, ipfs_path.content_path()?);
         if !could_have_variant(file) {
             return None;
@@ -912,9 +1102,10 @@ impl IpfsIo {
         let mut manifest = variants.manifest(scene)?;
         let state = manifest.borrow().clone();
         let state = if matches!(state, ManifestState::Pending) {
-            // wait for the manifest, but only until its deadline: a slow service must not
-            // hold the entity's files back
-            let left = variants.manifest_wait_left(scene);
+            // the base first, which settles once the flags are read, then the manifest, but
+            // only until its deadline: a slow service must not hold the entity's files back
+            let (_, settled_at) = variants.settled().await?;
+            let left = variants.manifest_wait_left(scene, settled_at);
             let arrived = if left.is_zero() {
                 None
             } else {
@@ -948,6 +1139,7 @@ impl IpfsIo {
         let ManifestState::Loaded(manifest) = state else {
             return None;
         };
+        let base = variants.base()?;
         let original = self
             .context
             .read()
@@ -1087,11 +1279,40 @@ impl IpfsIo {
     }
 }
 
+/// Once the flags are read, settles a base pending on [`ENDPOINT_FLAG`] where the flag says.
+fn route_by_endpoint_flag(flags: Res<FeatureFlags>, ipfs: Res<IpfsResource>) {
+    if flags.source() == FlagsSource::Pending {
+        return;
+    }
+    let Some((fallback, fallback_source)) = ipfs.bevy_variants.pending_fallback() else {
+        return;
+    };
+    let (base, source) = flagged_base(flags.variant(ENDPOINT_FLAG).as_ref(), fallback.as_deref());
+    ipfs.bevy_variants.settle(
+        base.as_deref(),
+        &format!("{source}; default: {fallback_source}"),
+    );
+}
+
+/// Settles a variants base pending on [`ENDPOINT_FLAG`] once the flags are read.
+pub(crate) struct EndpointFlagRoutingPlugin;
+
+impl Plugin for EndpointFlagRoutingPlugin {
+    fn build(&self, app: &mut App) {
+        app.add_systems(
+            Update,
+            route_by_endpoint_flag
+                .run_if(resource_exists::<IpfsResource>.and(resource_exists::<FeatureFlags>)),
+        );
+    }
+}
+
 pub(crate) struct BevyVariantsPlugin;
 
 impl Plugin for BevyVariantsPlugin {
     fn build(&self, app: &mut App) {
         app.add_systems(Update, detect_gpu_formats);
+        app.add_plugins(EndpointFlagRoutingPlugin);
         app.add_plugins(debug_panel::BevyVariantsDebugPanelPlugin);
     }
 
