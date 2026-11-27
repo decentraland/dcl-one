@@ -17,7 +17,7 @@ are external. Explorer images: pipeline.
   that handshake fails. `sslmode=require` (or `PGSSLMODE`) refuses plaintext but checks no
   certificate either; `disable` and `allow` turn TLS off; `verify-ca` is refused. An unrecognised
   `PGSSLMODE` value counts as the default; `catalyst serve` and `catalyst index` log the mode they
-  connect with.
+  connect with and warn when `sslrootcert` is set but ignored.
 - The APIs image carries the community chat message router at `/bin/catalyst-message-router`
   (`.#message-router`, `infra/packages/message-router.nix`: the catalyst workspace member built
   with `--features livekit`, from the same patched SDK and libwebrtc as `cast-bot`, its notices

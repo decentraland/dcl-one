@@ -140,11 +140,20 @@ pub async fn connect_pool(url: &str, settings: &PoolSettings) -> Result<PgPool, 
         .parse::<PgConnectOptions>()
         .map_err(PoolError::InvalidUrl)?
         .options(options);
-    // sqlx's verify-ca verifier needs a process-wide rustls provider, and none is installed.
-    if matches!(connect_opts.get_ssl_mode(), PgSslMode::VerifyCa) {
+    // sqlx's verify-ca skips the hostname check and needs a process-wide rustls provider.
+    let sslmode = connect_opts.get_ssl_mode();
+    if matches!(sslmode, PgSslMode::VerifyCa) {
         return Err(PoolError::VerifyCaUnsupported);
     }
-    tracing::info!(sslmode = ?connect_opts.get_ssl_mode(), "connecting the PostgreSQL pool");
+    tracing::info!(?sslmode, "connecting the PostgreSQL pool");
+    if !matches!(sslmode, PgSslMode::VerifyFull)
+        && (std::env::var_os("PGSSLROOTCERT").is_some() || url_names_root_cert(url))
+    {
+        tracing::warn!(
+            ?sslmode,
+            "sslrootcert is ignored: only sslmode=verify-full checks the server certificate"
+        );
+    }
 
     let mut pool_opts = PgPoolOptions::new()
         .max_connections(settings.max_connections)
@@ -181,6 +190,13 @@ pub async fn connect_pool(url: &str, settings: &PoolSettings) -> Result<PgPool, 
         .connect_with(connect_opts)
         .await
         .map_err(PoolError::Connect)
+}
+
+fn url_names_root_cert(url: &str) -> bool {
+    url::Url::parse(url).is_ok_and(|url| {
+        url.query_pairs()
+            .any(|(key, _)| matches!(&*key, "sslrootcert" | "ssl-root-cert" | "ssl-ca"))
+    })
 }
 
 #[derive(Debug, Error)]
@@ -928,6 +944,16 @@ mod tests {
         .await
         .unwrap_err();
         assert!(matches!(err, PoolError::VerifyCaUnsupported), "{err}");
+    }
+
+    #[test]
+    fn url_names_root_cert_matches_every_sqlx_spelling() {
+        for key in ["sslrootcert", "ssl-root-cert", "ssl-ca"] {
+            let url = format!("postgres://u@h/db?sslmode=require&{key}=/ca.pem");
+            assert!(url_names_root_cert(&url), "{key}");
+        }
+        assert!(!url_names_root_cert("postgres://u@h/db?sslmode=require"));
+        assert!(!url_names_root_cert("postgres://u@h/db"));
     }
 
     #[tokio::test]
