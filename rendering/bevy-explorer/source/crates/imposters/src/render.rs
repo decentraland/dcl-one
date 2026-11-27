@@ -218,6 +218,10 @@ pub fn spawn_imposters(
 ) {
     if config.scene_imposter_distances.is_empty() {
         tiling.set_if_neq(ImposterTiling::Off);
+    } else if *tiling == ImposterTiling::Off {
+        // imposters turned back on: no far LOD fits until the layout is published below, or
+        // far LODs would start out to the far ring and stop again once it is
+        *tiling = ImposterTiling::Pending;
     }
     if current_realm.is_changed() || config.scene_imposter_distances.is_empty() {
         if !config.scene_imposter_distances.is_empty() {

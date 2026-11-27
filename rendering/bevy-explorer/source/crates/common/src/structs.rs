@@ -727,9 +727,11 @@ pub struct AppConfig {
     /// it: preview mode, the server and `/scene_distance` set their own.
     pub scene_load_distance: f32,
     pub scene_unload_extra_distance: f32,
-    /// Set to replace the near LOD count the near ring gives ([`Self::near_lods_cap`]).
+    /// A near LOD count to use in place of the one the near ring gives
+    /// ([`Self::near_lods_cap`]). No setting writes it: it is set by hand in the config file to
+    /// measure memory and frame time at a fixed count, whatever the ring.
     pub near_lods_budget: Option<usize>,
-    /// Set to replace the far LOD count the far ring gives ([`Self::far_lods_cap`]).
+    /// The same for the far LOD count ([`Self::far_lods_cap`]).
     pub far_lods_budget: Option<usize>,
     /// Scenes within this Chebyshev parcel ring of the player's parcel go live whatever the load
     /// distance, and are kept one ring further. Within [`LIVE_SCENE_RINGS`].

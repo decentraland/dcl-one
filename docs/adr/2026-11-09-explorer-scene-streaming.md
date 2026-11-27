@@ -314,7 +314,8 @@ is the engine default); changing one shows the preset as Custom.
   (6, 12 and 20 at rings 2, 3 and 4), and `AppConfig::far_lods_cap` is 100, 200 and 400 at rings
   12, 20 and 30, linear between and 600 at ring 40. They bound memory where scenes are dense,
   nearest in view first. The config's `near_lods_budget` and `far_lods_budget` replace them when
-  set, for tests and measurements; no setting writes them.
+  set by hand in the config file, to measure memory and frame time at a fixed count; no setting
+  writes them.
 - **The rings move together.** Setting a ring moves the others along where they would cross it
   (`AppConfig::set_scene_ring`): one further out is pushed out, one further in is pulled in, so
   near LODs reach past the live ring, far LODs at least two rings past the near ring, and

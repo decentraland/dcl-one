@@ -62,9 +62,9 @@ impl AppSetting for ImposterSetting {
     }
 
     fn load(config: &AppConfig) -> Self {
-        match config.scene_imposter_distances.first() {
-            None => Self::Off,
-            Some(200.0) => Self::High,
+        match config.imposter_level() {
+            [] => Self::Off,
+            level if level == IMPOSTER_DISTANCES_ULTRA => Self::High,
             _ => Self::Low,
         }
     }
