@@ -127,11 +127,18 @@ type SharedHandles = (
 );
 
 impl HostState {
+    #[allow(unsafe_code, reason = "reads the host state V8 holds as isolate data")]
     pub(super) fn with<R>(
         isolate: &mut v8::Isolate,
         f: impl FnOnce(&RefCell<HostState>) -> R,
     ) -> R {
         let ptr = isolate.get_data(0) as *const RefCell<HostState>;
+        assert!(
+            !ptr.is_null(),
+            "HostState::with on an isolate without host state"
+        );
+        // SAFETY: non-null, so this is a scene isolate: run_scene_thread sets its slot 0 to a
+        // `HostState` box it keeps alive while scene code and host ops run.
         let cell = unsafe { &*ptr };
         f(cell)
     }
@@ -967,9 +974,12 @@ fn op_set_immediate(
     let ctx = scope.get_current_context();
     let global = ctx.global(scope);
     let key = str(scope, "__setImmediate").into();
-    let list = match global.get(scope, key) {
-        Some(v) if v.is_array() => v8::Local::<v8::Array>::try_from(v).unwrap(),
-        _ => {
+    let list = match global
+        .get(scope, key)
+        .and_then(|v| v8::Local::<v8::Array>::try_from(v).ok())
+    {
+        Some(arr) => arr,
+        None => {
             let arr = v8::Array::new(scope, 0);
             global.set(scope, key, arr.into());
             arr
@@ -1139,9 +1149,11 @@ fn call_export(
     let exports = global.get(scope, exports_key).ok_or("no exports")?;
     let exports = v8::Local::<v8::Object>::try_from(exports).map_err(|_| "exports not object")?;
     let fk = str(scope, name).into();
-    let f = match exports.get(scope, fk) {
-        Some(v) if v.is_function() => v8::Local::<v8::Function>::try_from(v).unwrap(),
-        _ => return Ok(()),
+    let Some(f) = exports
+        .get(scope, fk)
+        .and_then(|v| v8::Local::<v8::Function>::try_from(v).ok())
+    else {
+        return Ok(());
     };
 
     v8::tc_scope!(let tc, scope);
@@ -1163,9 +1175,11 @@ fn call_export(
 fn drain_set_immediate(scope: &mut v8::PinScope, context: v8::Local<v8::Context>) {
     let global = context.global(scope);
     let key = str(scope, "__setImmediate").into();
-    let list = match global.get(scope, key) {
-        Some(v) if v.is_array() => v8::Local::<v8::Array>::try_from(v).unwrap(),
-        _ => return,
+    let Some(list) = global
+        .get(scope, key)
+        .and_then(|v| v8::Local::<v8::Array>::try_from(v).ok())
+    else {
+        return;
     };
     let len = list.length();
     if len == 0 {
@@ -1177,9 +1191,8 @@ fn drain_set_immediate(scope: &mut v8::PinScope, context: v8::Local<v8::Context>
     let recv: v8::Local<v8::Value> = v8::undefined(scope).into();
     for i in 0..len {
         if let Some(item) = list.get_index(scope, i)
-            && item.is_function()
+            && let Ok(f) = v8::Local::<v8::Function>::try_from(item)
         {
-            let f = v8::Local::<v8::Function>::try_from(item).unwrap();
             v8::tc_scope!(let tc, scope);
             let _ = f.call(tc, recv, &[]);
         }
@@ -1216,10 +1229,9 @@ fn deliver_client_events(scope: &mut v8::PinScope, context: v8::Local<v8::Contex
 
     let global = context.global(scope);
     let obs_key = str(scope, "__observer").into();
-    let observer = match global.get(scope, obs_key) {
-        Some(v) if v.is_function() => Some(v8::Local::<v8::Function>::try_from(v).unwrap()),
-        _ => None,
-    };
+    let observer = global
+        .get(scope, obs_key)
+        .and_then(|v| v8::Local::<v8::Function>::try_from(v).ok());
     let recv: v8::Local<v8::Value> = v8::undefined(scope).into();
 
     if let Some(observer) = observer {

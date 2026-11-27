@@ -1,5 +1,5 @@
 import { useCallback, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router';
 import Chip from '@ui/atoms/Chip';
 import { SelectOption } from '@ui/atoms/Select';
 import Text from '@ui/atoms/Text';

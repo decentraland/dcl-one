@@ -24,6 +24,7 @@ use sqlx::Row;
 
 use super::errors::ApiError;
 use super::escrow::{Broker, BrokerError, BuyRequest};
+use super::metrics::{self, Pledge};
 use super::pricing::{
     Pricing, TradeLookup, charge_is_positive, payment_is_positive, split_validated_decimal,
 };
@@ -77,18 +78,21 @@ pub const CAPTCHA_PURGE_BATCH: i64 = 5_000;
 
 /// One tick's bookkeeping: expire stale authorizations (bounded by the
 /// CreditUsed index's folded chain time when one is configured, `$5` its
-/// chain: `usage::expiry_bound_sql`), purge one batch of old captcha
-/// challenges (`expires_at < $3`, the `captcha_challenges_expires_idx`
-/// statement), list the checkouts awaiting compensation and the outbox lines
-/// awaiting a broker attempt (a frozen checkout's lines only while their buy
-/// is unsettled), all in one statement; the clock is a bind.
-pub(crate) const OUTBOX_TICK_SQL: &str = "WITH expired AS ( \
-         UPDATE credits.authorizations SET status = CASE status WHEN 'retired' THEN 'released' ELSE 'expired' END \
-         WHERE status IN ('authorized', 'retired') AND expires_at <= LEAST($2, CASE WHEN $5::bigint IS NULL THEN $2 ELSE \
-         COALESCE((SELECT c.folded_block_time FROM credits.usage_index_cursor c WHERE c.chain_id = $5::bigint \
-                   AND (credits.authorizations.contract IS NULL OR c.contract = credits.authorizations.contract)), \
-                  '-infinity'::timestamp) END) RETURNING 1 \
-     ), purged AS ( \
+/// chain: `usage::expiry_bound_sql`) and queue the alerts the expiry shows
+/// (`alerts::expiry_ctes`), purge one batch of old captcha challenges
+/// (`expires_at < $3`, the `captcha_challenges_expires_idx` statement), list
+/// the checkouts awaiting compensation and the outbox lines awaiting a broker
+/// attempt (a frozen checkout's lines only while their buy is unsettled), all
+/// in one statement; the clock is a bind.
+pub(crate) static OUTBOX_TICK_SQL: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| {
+    format!(
+        "WITH {}, {OUTBOX_TICK_REST}",
+        super::alerts::expiry_ctes("$2", "$5")
+    )
+});
+
+/// [`OUTBOX_TICK_SQL`] after its expiry CTEs.
+const OUTBOX_TICK_REST: &str = "purged AS ( \
          DELETE FROM credits.captcha_challenges WHERE ctid = ANY (ARRAY( \
              SELECT ctid FROM credits.captcha_challenges WHERE expires_at < $3 ORDER BY expires_at LIMIT $4)) \
          RETURNING 1 \
@@ -105,7 +109,9 @@ pub(crate) const OUTBOX_TICK_SQL: &str = "WITH expired AS ( \
                  AND b.status IN ('sent', 'bought', 'forwarding', 'confirmed')))) \
          ORDER BY o.id LIMIT 50 \
      ) \
-     SELECT 'expired' AS kind, count(*)::bigint AS id, NULL::text AS address FROM expired \
+     SELECT 'expired' AS kind, count(*) FILTER (WHERE status = 'expired')::bigint AS id, NULL::text AS address FROM expired \
+     UNION ALL SELECT 'released', count(*) FILTER (WHERE status = 'released')::bigint, NULL FROM expired \
+     UNION ALL SELECT 'alerted', (SELECT count(*) FROM submitted_unconsumed) + (SELECT count(*) FROM repeated_expiry), NULL \
      UNION ALL SELECT 'captcha_purged', count(*)::bigint, NULL FROM purged \
      UNION ALL SELECT 'reversing', id, address FROM reversing \
      UNION ALL SELECT 'pending', id, NULL FROM pending";
@@ -158,7 +164,7 @@ impl OutboxWorker {
 
     pub async fn run_once(&self) -> Result<usize, ApiError> {
         let now = now();
-        let rows = sqlx::query(OUTBOX_TICK_SQL)
+        let rows = sqlx::query(OUTBOX_TICK_SQL.as_str())
             .bind(self.max_attempts)
             .bind(now)
             .bind(now - CAPTCHA_PURGE_AFTER)
@@ -167,19 +173,32 @@ impl OutboxWorker {
             .fetch_all(&self.credits.pool)
             .await?;
         let mut expired = 0i64;
+        let mut alerted = 0i64;
+        let mut released = 0i64;
         let mut captcha_purged = 0i64;
         let mut reversing: Vec<(i64, String)> = Vec::new();
         let mut candidates: Vec<i64> = Vec::new();
         for r in rows {
             match r.get::<String, _>("kind").as_str() {
                 "expired" => expired = r.get("id"),
+                "alerted" => alerted = r.get("id"),
+                "released" => released = r.get("id"),
                 "captcha_purged" => captcha_purged = r.get("id"),
                 "reversing" => reversing.push((r.get("id"), r.get("address"))),
                 _ => candidates.push(r.get("id")),
             }
         }
-        if expired > 0 {
-            tracing::info!(expired, "swept stale credit authorizations to 'expired'");
+        metrics::pledges(Pledge::Expired, u64::try_from(expired).unwrap_or(0));
+        metrics::pledges(Pledge::Released, u64::try_from(released).unwrap_or(0));
+        if expired > 0 || released > 0 {
+            tracing::info!(
+                expired,
+                released,
+                "swept stale credit authorizations to 'expired' and 'released'"
+            );
+        }
+        if alerted > 0 {
+            tracing::warn!(alerted, "the expiry sweep queued credits alerts");
         }
         if captcha_purged > 0 {
             tracing::info!(captcha_purged, "purged expired captcha challenges");

@@ -1,7 +1,7 @@
 //! The `Settings Snapshot` event: the settings whose value differs from their default. It is
 //! queued at startup (`reason: startup`) and again once a change has settled (`reason: changed`),
 //! so the latest event is the session's state. Every registered setting is reported except the
-//! ones in [`EXCLUDED`]. It reads the saved settings, not the host page's session overrides.
+//! ones in [`EXCLUDED`] and the ones whose choices are filled in at runtime. It reads the saved settings, not the host page's session overrides.
 //! `/settings_snapshot` and its debug panel section show the same result live.
 
 use std::time::Duration;
@@ -55,10 +55,23 @@ impl Plugin for SettingsSnapshotPlugin {
     }
 }
 
+/// The registry's changed settings, as the event reports them. A setting whose choices are filled
+/// in at runtime is left out: its choice names come from the device (the microphone list), not
+/// from the engine.
+pub(crate) fn snapshot(settings: &Settings) -> Changed {
+    changed_settings(
+        settings
+            .settings
+            .iter()
+            .filter(|setting| !setting.runtime_choices)
+            .map(|setting| &setting.info),
+    )
+}
+
 /// The settings that are not [`EXCLUDED`] and whose value differs from their default, by name:
 /// the variant's name when the setting has named variants, else the number. Unset (negative)
 /// values are skipped.
-pub(crate) fn changed_settings<'a>(settings: impl IntoIterator<Item = &'a SettingInfo>) -> Changed {
+fn changed_settings<'a>(settings: impl IntoIterator<Item = &'a SettingInfo>) -> Changed {
     let excluded: Vec<String> = EXCLUDED.iter().map(|title| title()).collect();
     let mut changed = std::collections::BTreeMap::new();
     for setting in settings {
@@ -127,8 +140,7 @@ fn report_snapshot(
     mut metrics: ResMut<SegmentMetricsEvents>,
     mut reporter: Local<Reporter>,
 ) {
-    let current = (reporter.sent.is_none() || settings.is_changed())
-        .then(|| changed_settings(settings.settings.iter().map(|s| &s.info)));
+    let current = (reporter.sent.is_none() || settings.is_changed()).then(|| snapshot(&settings));
     let Some((reason, changed)) = reporter.observe(current, time.elapsed()) else {
         return;
     };
@@ -154,7 +166,7 @@ fn settings_snapshot_command(
     if cmd.take().is_none() {
         return;
     }
-    let changed = changed_settings(settings.settings.iter().map(|s| &s.info));
+    let changed = snapshot(&settings);
     cmd.reply_ok(
         serde_json::json!({
             "changed_count": changed.len(),

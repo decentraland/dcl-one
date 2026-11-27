@@ -185,6 +185,18 @@ WORLDS_LIMIT = "limit_req zone=worlds burst=60 nodelay;"
 
 # First path segments of social's badges router (services/catalyst/social/src/badges/mod.rs).
 BADGES_MOUNTS = ("assets", "badges", "categories", "status", "users")
+# credits-server's own paths under /credits: on the credits host they are
+# prefixed like the rest of credits-server's paths, since the node serves them
+# at the same subpaths of its /credits mount. CREDITS_SERVER_PATHS match only
+# the bare path (the pack list, the pack purchase): the node's own /packs/...
+# and /checkout/{id} keep their already-prefixed form. CREDITS_SERVER_MOUNTS
+# take any tail (the orders, the credit authorizations). The publication fee
+# and the app-store purchases are prefixed for parity; the node does not serve
+# them yet. Any other /credits/... path is taken as already prefixed: Stripe
+# posts credits-server's webhook to /credits/webhook, which the node serves as
+# its mount's /webhook.
+CREDITS_SERVER_PATHS = ("checkout", "packs")
+CREDITS_SERVER_MOUNTS = ("authorize", "authorize-publication", "iap", "orders")
 
 
 # Sites pages under a prefix that an API alias serves (root-aliases.nix): Sites has the
@@ -212,6 +224,8 @@ def render(table, cfg, mime):
     # only a second segment the badges router mounts counts as prefixed. No
     # catalog badge id equals one (/badges/status is the mount, not a badge).
     badges_mounts = "|".join(BADGES_MOUNTS)
+    credits_paths = "|".join(CREDITS_SERVER_PATHS)
+    credits_mounts = "|".join(CREDITS_SERVER_MOUNTS)
     alias_moves, settled = [], []
     for name, target in host_aliases.items():
         alias_moves.extend([f'"~^gateway:/{name}/?$" "{target}/";',
@@ -407,6 +421,9 @@ def render(table, cfg, mime):
     # The hosted component gallery: static files the Sites image carries (infra/packages/sites.nix),
     # with no route file to claim the prefix.
     locations += pair("/ui-gallery", "sites", True)
+    # The avatar preview page from the Explorer build (infra/packages/sites.nix); its
+    # content-hashed files are under /assets/ above.
+    locations += pair("/avatar-preview", "sites", True)
     locations += location("/content/", proxy("apis", "limit_req zone=content burst=1000 nodelay;"))
     # Matched after host rewrites, so every storage host form shares this budget.
     storage_limits = ("limit_req zone=storage burst=400 nodelay; "
@@ -506,6 +523,7 @@ http {{
         {" ".join(settled)}
         "~^badges:/badges/({badges_mounts})(/|$)" "";
         "~^badges:(?<badges_own>/badges(/.*)?)$" /badges$badges_own;
+        "~^credits:(?<credits_own>/credits(/({credits_paths}|({credits_mounts})(/.*)?))?)$" /credits$credits_own;
         "~^([^:]+):/\\1(/|$)" "";
         "~^(worlds-content-server|realm-provider(-ea)?):/(comms-gatekeeper|cast-presenter-service)/" "";
         "~^[^:]+:/$" $gateway_prefix/;

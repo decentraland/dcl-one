@@ -20,9 +20,6 @@
 //! pending upload names, and [`delete_expired_uploads`] (the leased
 //! `worlds-partial-upload-cleanup` job and `/gc`) reclaims expired ones.
 
-// A refused batch is the answer itself, built where the refusal is decided.
-#![allow(clippy::result_large_err)]
-
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::{Arc, LazyLock};
@@ -575,6 +572,7 @@ async fn stage_batch(
     response
 }
 
+#[allow(clippy::too_many_arguments, reason = "one caller")]
 async fn stage_batch_on(
     state: &SharedState,
     session: &mut SessionEntityGuard,
@@ -1111,6 +1109,7 @@ enum Reservation {
 
 /// Charges the batch's bytes against the per-minute rate, then its receipts against the
 /// scene cap and the account, world, source and node staging budgets, atomically.
+#[allow(clippy::too_many_arguments, reason = "each limit is a distinct budget")]
 async fn reserve(
     state: &CoreState,
     conn: &mut PgConnection,

@@ -1,10 +1,9 @@
 import { useId, useState, type ReactNode } from 'react'
 import { InputField } from '../../../components/InputField/InputField'
 import { Switch } from '../../../components/Switch/Switch'
-import { GeneralClose } from '../../../foundations/icons'
-import { Button } from '../shared/Button/Button'
+import { Button } from '../../../components/Button/Button'
+import { Modal } from '../../../components/Modal/Modal'
 import { ADMIN_PERMISSIONS, adminCopy } from './admin-copy'
-import { Dialog } from './Dialog'
 import styles from './AdminModal.module.css'
 
 const WALLET = /^0x[0-9a-fA-F]{40}$/
@@ -50,7 +49,6 @@ export function PermissionsModal({
   onClose,
   onSubmit
 }: PermissionsModalProps) {
-  const titleId = useId()
   const descriptionPrefix = useId()
   const [address, setAddress] = useState(user?.address ?? '')
   const [permissions, setPermissions] = useState<string[]>([...initial])
@@ -80,26 +78,31 @@ export function PermissionsModal({
   // The signed-in account keeps its own user administration, whatever the dialog started from.
   const submitted =
     selfEdit && !permissions.includes(SELF_LOCKED) ? [...permissions, SELF_LOCKED] : permissions
-  const close = () => {
-    if (!busy) onClose()
-  }
   return (
-    <Dialog labelledBy={titleId} onClose={close} maxWidth={621}>
-      <div className={styles.panel}>
-        <div className={styles.header}>
-          <h2 id={titleId} className={styles.title}>
-            {editing ? adminCopy.permissions.editTitle : adminCopy.permissions.addTitle}
-          </h2>
-          <button
-            type="button"
-            className={styles.close}
-            aria-label={adminCopy.permissions.close}
-            disabled={busy}
-            onClick={close}
+    <Modal
+      title={editing ? adminCopy.permissions.editTitle : adminCopy.permissions.addTitle}
+      closeLabel={adminCopy.permissions.close}
+      dismissible={!busy}
+      onClose={onClose}
+      divider
+      actions={
+        <>
+          <Button size="lg" variant="secondary" disabled={busy} onClick={onClose}>
+            {adminCopy.permissions.cancel}
+          </Button>
+          <Button
+            size="lg"
+            disabled={!valid || busy}
+            onClick={() =>
+              onSubmit({ address: address.trim(), permissions: submitted, initial: [...start] })
+            }
           >
-            <GeneralClose size={24} aria-hidden="true" />
-          </button>
-        </div>
+            {adminCopy.permissions.save}
+          </Button>
+        </>
+      }
+    >
+      <div className={styles.form}>
         {user ? (
           <div className={styles.identity}>
             {user.avatarUrl ? (
@@ -158,20 +161,7 @@ export function PermissionsModal({
           })}
         </ul>
         {feedback}
-        <div className={styles.footer}>
-          <Button variant="secondary" disabled={busy} onClick={close}>
-            {adminCopy.permissions.cancel}
-          </Button>
-          <Button
-            disabled={!valid || busy}
-            onClick={() =>
-              onSubmit({ address: address.trim(), permissions: submitted, initial: [...start] })
-            }
-          >
-            {adminCopy.permissions.save}
-          </Button>
-        </div>
       </div>
-    </Dialog>
+    </Modal>
   )
 }

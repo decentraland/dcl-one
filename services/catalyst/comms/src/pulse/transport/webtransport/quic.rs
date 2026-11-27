@@ -1,3 +1,5 @@
+// Decodes untrusted input: malformed bytes must not panic.
+#![deny(clippy::indexing_slicing, clippy::expect_used)]
 // from: catalyrst/third_party/web_transport/src/host.rs (decentraland/rust-web-transport c5416501 + web_transport.patch; Apache-2.0, LICENSE in that tree)
 //! The WebTransport host: binds a QUIC endpoint, accepts WebTransport sessions, and pumps
 //! the reliable bidi stream and unreliable datagrams to/from a synchronously-polled event
@@ -6,10 +8,11 @@
 //! This crate is a *generic* byte pipe: it does no framing or sequencing. Pulse channel
 //! semantics (length framing on the stream, datagram sequencing/dedup) live in the C# layer.
 
+use parking_lot::Mutex;
 use std::collections::HashMap;
 use std::net::SocketAddr;
+use std::sync::Arc;
 use std::sync::mpsc::{Receiver, Sender};
-use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use bytes::Bytes;
@@ -126,9 +129,16 @@ impl Host {
         let bind_addr = config.bind_addr;
 
         let server_config = server_config(certs, key, config.idle_timeout)?;
+        let endpoint_config = quinn::EndpointConfig::default();
+        let socket =
+            std::net::UdpSocket::bind(bind_addr).map_err(|e| HostError::Endpoint(e.to_string()))?;
         // Binding a quinn endpoint needs a runtime context.
         let endpoint = runtime
-            .block_on(async move { quinn::Endpoint::server(server_config, bind_addr) })
+            .block_on(async move {
+                let runtime = quinn::default_runtime()
+                    .ok_or_else(|| std::io::Error::other("no async runtime found"))?;
+                quinn::Endpoint::new(endpoint_config, Some(server_config), socket, runtime)
+            })
             .map_err(|e| HostError::Endpoint(e.to_string()))?;
         let server = web_transport_quinn::Server::new(endpoint);
 
@@ -182,10 +192,7 @@ impl Host {
 
     /// Retains the byte owner's allocation and queue permits until the stream write completes.
     pub fn send_stream_bytes(&self, peer_id: u64, data: Bytes) -> bool {
-        let peers = self
-            .peers
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let peers = self.peers.lock();
         match peers.get(&peer_id) {
             Some(handle) => handle.cmd_tx.send(PeerCommand::Stream(data)).is_ok(),
             None => false,
@@ -194,10 +201,7 @@ impl Host {
 
     /// Send an unreliable datagram to the peer. Returns `false` on failure (gone / too large).
     pub fn send_datagram(&self, peer_id: u64, data: &[u8]) -> bool {
-        let peers = self
-            .peers
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let peers = self.peers.lock();
         match peers.get(&peer_id) {
             Some(handle) => handle
                 .session
@@ -209,10 +213,7 @@ impl Host {
 
     /// Close the peer's session with an application error code. Returns `false` if gone.
     pub fn disconnect(&self, peer_id: u64, reason: u32) -> bool {
-        let peers = self
-            .peers
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let peers = self.peers.lock();
         match peers.get(&peer_id) {
             Some(handle) => {
                 // `Session::close` must run inside the tokio runtime context.
@@ -228,10 +229,7 @@ impl Host {
 
     /// Current smoothed RTT to the peer in microseconds, if still connected.
     pub fn rtt_us(&self, peer_id: u64) -> Option<u64> {
-        let peers = self
-            .peers
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let peers = self.peers.lock();
         peers
             .get(&peer_id)
             .map(|handle| handle.session.rtt().as_micros() as u64)
@@ -262,16 +260,13 @@ async fn serve_connection(
     let remote_addr = session.remote_address().to_string();
 
     let (cmd_tx, cmd_rx) = unbounded_channel::<PeerCommand>();
-    peers
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .insert(
-            peer_id,
-            PeerHandle {
-                session: session.clone(),
-                cmd_tx,
-            },
-        );
+    peers.lock().insert(
+        peer_id,
+        PeerHandle {
+            session: session.clone(),
+            cmd_tx,
+        },
+    );
     let _ = events_tx.send(Event::Connect {
         peer_id,
         remote_addr,
@@ -290,10 +285,7 @@ async fn serve_connection(
     // This task is the disconnect monitor.
     let _ = session.closed().await;
     let _ = events_tx.send(Event::Disconnect { peer_id, reason: 0 });
-    peers
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .remove(&peer_id);
+    peers.lock().remove(&peer_id);
 }
 
 /// Forward inbound datagrams as [`Event::Datagram`] until the session closes.
@@ -324,7 +316,10 @@ async fn stream_loop(
     let reader = crate::shared::task::spawn(async move {
         let mut buf = vec![0u8; STREAM_READ_BUF];
         while let Ok(Some(n)) = recv.read(&mut buf).await {
-            let data = Bytes::copy_from_slice(&buf[..n]);
+            let Some(read) = buf.get(..n) else {
+                break;
+            };
+            let data = Bytes::copy_from_slice(read);
             if events_tx.send(Event::StreamData { peer_id, data }).is_err() {
                 break;
             }
@@ -359,19 +354,17 @@ fn server_config(
     key: rustls_pki_types::PrivateKeyDer<'static>,
     idle_timeout: Duration,
 ) -> Result<quinn::ServerConfig, HostError> {
-    let mut tls = rustls::ServerConfig::builder_with_provider(
-        web_transport_quinn::crypto::default_provider(),
-    )
-    .with_protocol_versions(&[&rustls::version::TLS13])
-    .map_err(|e| HostError::Cert(e.to_string()))?
-    .with_no_client_auth()
-    .with_single_cert(certs, key)
-    .map_err(|e| HostError::Cert(e.to_string()))?;
+    let mut tls = rustls::ServerConfig::builder_with_provider(super::tls_provider())
+        .with_protocol_versions(&[&rustls::version::TLS13])
+        .map_err(|e| HostError::Cert(e.to_string()))?
+        .with_no_client_auth()
+        .with_single_cert(certs, key)
+        .map_err(|e| HostError::Cert(e.to_string()))?;
     tls.alpn_protocols = vec![web_transport_quinn::ALPN.as_bytes().to_vec()];
-    let tls = quinn::crypto::rustls::QuicServerConfig::try_from(tls)
+    let tls = web_transport_quinn::crypto::QuicServerConfig::try_from(tls)
         .map_err(|e| HostError::Cert(e.to_string()))?;
     let mut config = quinn::ServerConfig::with_crypto(Arc::new(tls));
-    config.transport_config(Arc::new(transport_config(idle_timeout)));
+    config.transport_config(Arc::new(transport_config(idle_timeout)?));
     Ok(config)
 }
 
@@ -385,7 +378,12 @@ fn server_config(
 /// live client that sends nothing stays connected until Pulse ends its session with a reason
 /// (the authentication timeout equals the idle timeout), while one that stops answering still
 /// times out.
-fn transport_config(idle_timeout: Duration) -> quinn::TransportConfig {
+fn transport_config(idle_timeout: Duration) -> Result<quinn::TransportConfig, HostError> {
+    let max_idle = idle_timeout.try_into().map_err(|_| {
+        HostError::Endpoint(format!(
+            "idle timeout {idle_timeout:?} exceeds a QUIC varint"
+        ))
+    })?;
     let mut transport = quinn::TransportConfig::default();
     transport
         .max_concurrent_bidi_streams(MAX_CONCURRENT_BIDI_STREAMS.into())
@@ -393,13 +391,9 @@ fn transport_config(idle_timeout: Duration) -> quinn::TransportConfig {
         .stream_receive_window(STREAM_RECEIVE_WINDOW.into())
         .receive_window(CONNECTION_RECEIVE_WINDOW.into())
         .datagram_receive_buffer_size(Some(DATAGRAM_RECEIVE_BUFFER))
-        .max_idle_timeout(Some(
-            idle_timeout
-                .try_into()
-                .expect("the idle timeout fits a QUIC varint"),
-        ))
+        .max_idle_timeout(Some(max_idle))
         .keep_alive_interval(Some(idle_timeout / 3));
-    transport
+    Ok(transport)
 }
 
 /// Parse a PEM certificate chain and private key into the rustls types
@@ -430,6 +424,7 @@ fn parse_pem(
     Ok((certs, key))
 }
 
+#[allow(clippy::indexing_slicing, clippy::expect_used, reason = "test support")]
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -441,7 +436,7 @@ mod tests {
     #[test]
     fn the_transport_config_carries_every_pulse_limit() {
         // quinn exposes no getters, so read the values back from its field-by-field Debug.
-        let config = format!("{:?}", transport_config(IDLE_TIMEOUT));
+        let config = format!("{:?}", transport_config(IDLE_TIMEOUT).unwrap());
         for field in [
             "max_concurrent_bidi_streams: 4,",
             "max_concurrent_uni_streams: 16,",

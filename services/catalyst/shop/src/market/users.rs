@@ -42,10 +42,10 @@ pub struct UserAssetsFilters {
 pub fn parse_user_assets_params(pairs: &[(String, String)]) -> UserAssetsFilters {
     const MAX_LIMIT: i64 = 1000;
     let p = Params::new(pairs);
-    let limit = p.get_number("limit", None).map(|n| n as i64);
-    let offset = p.get_number("offset", None).map(|n| n as i64);
-    let first = p.get_number("first", None).map(|n| n as i64);
-    let skip = p.get_number("skip", None).map(|n| n as i64);
+    let limit = p.get_integer("limit");
+    let offset = p.get_integer("offset");
+    let first = p.get_integer("first");
+    let skip = p.get_integer("skip");
     let requested_limit = limit.or(first).unwrap_or(FIRST_DEFAULT);
     let requested_skip = offset.or(skip).unwrap_or(SKIP_DEFAULT).max(0);
     let item_type_list = p.get_list("itemType", &[]);
@@ -348,16 +348,17 @@ pub async fn profile_assets(
             .iter()
             .map(|(c, unlock)| profile_row(c, Some(*unlock))),
     );
-    let total = rows.len() as i64;
+    let total = crate::market::casts::len_i64(rows.len());
     let total_items = rows
         .iter()
         .map(|r| r.urn.as_str())
         .collect::<std::collections::HashSet<_>>()
-        .len() as i64;
+        .len();
+    let total_items = crate::market::casts::len_i64(total_items);
     Ok((
         rows.into_iter()
-            .skip(skip.max(0) as usize)
-            .take(first.max(0) as usize)
+            .skip(crate::market::casts::page(skip))
+            .take(crate::market::casts::page(first))
             .collect(),
         total,
         total_items,
@@ -494,11 +495,11 @@ pub async fn grouped_assets(
         let ord = if desc { ord.reverse() } else { ord };
         ord.then_with(|| a.urn.cmp(&b.urn))
     });
-    let total = rows.len() as i64;
+    let total = crate::market::casts::len_i64(rows.len());
     Ok((
         rows.into_iter()
-            .skip(f.skip.max(0) as usize)
-            .take(f.first.max(0) as usize)
+            .skip(crate::market::casts::page(f.skip))
+            .take(crate::market::casts::page(f.first))
             .collect(),
         total,
     ))
@@ -512,12 +513,12 @@ pub async fn urn_tokens(
     skip: i64,
 ) -> Result<(Vec<UrnToken>, i64), Response> {
     let owned = owned_or_unavailable(state, owner, category).await?;
-    let total = owned.len() as i64;
+    let total = crate::market::casts::len_i64(owned.len());
     Ok((
         owned
             .into_iter()
-            .skip(skip.max(0) as usize)
-            .take(first.max(0) as usize)
+            .skip(crate::market::casts::page(skip))
+            .take(crate::market::casts::page(first))
             .map(|c| UrnToken {
                 urn: c.urn,
                 token_id: c.token_id,
@@ -527,15 +528,24 @@ pub async fn urn_tokens(
     ))
 }
 
+/// The owner's NAMEs from the node's NAME source, a display read.
 async fn names_of(
     state: &MarketplaceState,
     owner: &str,
 ) -> Result<Vec<graph::OwnedName>, Response> {
-    readers::require_marketplace(state)?;
-    graph::owned_names(&state.index, owner)
+    use crate::chain_index::names::{NamesError, Purpose};
+    let source = state.name_source();
+    let authority = state
+        .names()
+        .map_err(|e| super::unavailable(source, &e.to_string()))?;
+    authority
+        .owned_names(owner, Purpose::Display)
         .await
-        .map(|n| (*n).clone())
-        .map_err(|e| readers::upstream_failed("/v1/users/names", &e))
+        .map(|answer| (*answer.value).clone())
+        .map_err(|e| match e {
+            NamesError::NotEstablished(message) => super::unavailable(source, &message),
+            NamesError::Failed(message) => readers::upstream_failed("/v1/users/names", &message),
+        })
 }
 
 fn respond<T: Serialize>(
@@ -634,11 +644,11 @@ pub async fn get_user_names(
     let f = parse_user_assets_params(&pairs);
     match names_of(&state, &address.to_lowercase()).await {
         Ok(names) => {
-            let total = names.len() as i64;
+            let total = crate::market::casts::len_i64(names.len());
             let data: Vec<ProfileName> = names
                 .into_iter()
-                .skip(f.skip.max(0) as usize)
-                .take(f.first.max(0) as usize)
+                .skip(crate::market::casts::page(f.skip))
+                .take(crate::market::casts::page(f.first))
                 .map(|n| ProfileName {
                     name: n.name,
                     contract_address: n.contract_address,
@@ -660,11 +670,11 @@ pub async fn get_user_names_only(
     let f = parse_user_assets_params(&pairs);
     match names_of(&state, &address.to_lowercase()).await {
         Ok(names) => {
-            let total = names.len() as i64;
+            let total = crate::market::casts::len_i64(names.len());
             let data: Vec<NameOnly> = names
                 .into_iter()
-                .skip(f.skip.max(0) as usize)
-                .take(f.first.max(0) as usize)
+                .skip(crate::market::casts::page(f.skip))
+                .take(crate::market::casts::page(f.first))
                 .map(|n| NameOnly { name: n.name })
                 .collect();
             respond(data, total, &f, None)

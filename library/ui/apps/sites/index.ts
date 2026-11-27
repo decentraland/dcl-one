@@ -125,6 +125,7 @@ export { ComeHangOut } from './home/ComeHangOut'
 export { Hero } from './home/Hero'
 export { WeeklyRituals } from './home/WeeklyRituals'
 export { WhatsOn, type WhatsOnCardData } from './home/WhatsOn'
+export { InviteLanding, type InviteLandingProps } from './invite/InviteLanding'
 export { JumpCard, type JumpCardProps } from './jump/JumpCard'
 export { JumpEventActions } from './jump/JumpEventActions'
 export { JumpInvalid } from './jump/JumpInvalid'
@@ -197,7 +198,6 @@ export {
   useFocusNewRows
 } from './profile/collectibles'
 export { ReelsEmpty, ReelsGallery, ReelsPage } from './reels/ReelsPage'
-export { Button as SitesButton } from './shared/Button/Button'
 export { Carousel, type CarouselLabels } from './shared/Carousel'
 export {
   CommunityDeciding,

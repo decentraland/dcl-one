@@ -244,13 +244,22 @@ impl Report {
 pub fn index_for(indexer: &str, net: ChainNet) -> anyhow::Result<Box<dyn ChainIndex>> {
     Ok(match (indexer, net) {
         (chain_walk::INDEXER_NFT, _) => Box::new(super::nft_index::NftIndex::new(net)),
-        (chain_walk::INDEXER_SALES, ChainNet::Matic) => Box::new(super::sales_index::SalesIndex),
+        (chain_walk::INDEXER_SALES, ChainNet::Ethereum) => {
+            Box::new(super::ethereum_sales::EthereumSalesIndex)
+        }
+        (chain_walk::INDEXER_SALES, ChainNet::Matic) => Box::new(super::sales_index::POLYGON),
         (chain_walk::INDEXER_TRADE_EVENTS, _) => Box::new(super::trade_events::TradeEventsIndex {
             net,
-            chain_id: chain_walk::mainnet_chain(net),
+            chain_id: net.chain_id(),
         }),
         (chain_walk::INDEXER_COMMITTEE, ChainNet::Matic) => {
             Box::new(super::committee_index::CommitteeIndex)
+        }
+        (chain_walk::INDEXER_COLLECTIONS, ChainNet::Matic) => {
+            Box::new(super::collections_index::CollectionsIndex::new())
+        }
+        (chain_walk::INDEXER_COLLECTIONS, ChainNet::Ethereum) => {
+            Box::new(super::collections_v1::CollectionsV1Index::default())
         }
         (chain_walk::INDEXER_THIRD_PARTY_REGISTRY, ChainNet::Matic) => {
             Box::new(super::third_party_registry::ThirdPartyRegistryIndex)
@@ -410,7 +419,7 @@ async fn measure(
     // The projection, the dataset, the database's cursor and the RPC must
     // name one chain before any window is read; the dataset is known
     // before any read.
-    let projection = chain_walk::mainnet_chain(req.net) as u64;
+    let projection = req.net.chain_id_u64();
     if req.reader.chain() != projection {
         out.refused = Some(format!(
             "the dataset {} serves chain {}, the {} {} projection reads chain {projection}",
@@ -443,7 +452,7 @@ async fn measure(
         Ok(row) => out.database_chain = row.flatten(),
     }
     if let Some(c) = out.database_chain
-        && c as u64 != projection
+        && u64::try_from(c).ok() != Some(projection)
     {
         out.refused = Some(format!(
             "the database's {} {} cursor is bound to chain {c}, the projection reads chain {projection}",

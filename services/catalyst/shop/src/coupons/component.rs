@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use chrono::{DateTime, NaiveDateTime, TimeZone, Utc};
 use futures::future::join_all;
-use sqlx::PgPool;
+use sqlx::{PgPool, Row};
 
 use super::chain::CouponChainReader;
 use super::contracts::{CouponContracts, coupon_contracts, find_coupon_contracts};
@@ -87,9 +87,19 @@ mod sql {
         )
     }
 
-    /// Who created each collection on the coupon's own chain, from the
-    /// collections mirror (the same address on another chain is another contract).
-    pub const COLLECTION_CREATORS: &str = "SELECT contract_address, creator FROM shop.collections WHERE contract_address = ANY($1) AND chain_id = $2";
+    /// Who created each collection on the coupon's own chain (the same
+    /// address on another chain is another contract), with the catalogue
+    /// state of the chain's network (`$3`) in the same statement: one row per
+    /// collection found, or one row of state alone.
+    pub static COLLECTION_CREATORS: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| {
+        format!(
+            "SELECT {columns}, c.contract_address AS collection, c.creator \
+             FROM (SELECT $3::text AS network) AS n {joins} \
+             LEFT JOIN shop.collections c ON c.contract_address = ANY($1) AND c.chain_id = $2",
+            columns = crate::market::catalogue::STATE_COLUMNS,
+            joins = *crate::market::catalogue::STATE_JOINS,
+        )
+    });
 }
 
 const REFRESH_BATCH: i64 = 200;
@@ -366,7 +376,10 @@ impl CouponsComponent {
         if chain_state.cancelled {
             return Err(CouponError::AlreadyUnusable(ALREADY_CANCELLED.to_string()));
         }
-        if chain_state.uses >= coupon.checks.uses as i64 {
+        let signed_uses = i64::try_from(coupon.checks.uses).map_err(|_| {
+            CouponError::InvalidChecks(format!("uses {} is past i64", coupon.checks.uses))
+        })?;
+        if chain_state.uses >= signed_uses {
             return Err(CouponError::AlreadyUnusable(NO_USES_LEFT.to_string()));
         }
         // The indexes were just checked against the manager, so nothing is revoked yet.
@@ -384,9 +397,17 @@ impl CouponsComponent {
             CouponError::InvalidChecks(format!("unrepresentable time {}", coupon.checks.expiration))
         })?;
 
+        let chain_id = i32::try_from(coupon.chain_id)
+            .map_err(|_| CouponError::UnsupportedChain(coupon.chain_id))?;
+        let discount_type = i16::try_from(coupon.discount_type)
+            .map_err(|_| CouponError::InvalidDiscount(ONLY_PERCENTAGE_DISCOUNTS.to_string()))?;
+        let discount_ppm = i32::try_from(coupon.discount)
+            .map_err(|_| CouponError::InvalidDiscount(discount_out_of_bounds()))?;
+        let state_uses = uses_column(state.uses)?;
+
         let inserted: (String, NaiveDateTime) = sqlx::query_as(sql::INSERT_COUPON_WITH_STATE)
             .bind(&validated.network)
-            .bind(coupon.chain_id as i32)
+            .bind(chain_id)
             .bind(coupon.signer.to_lowercase())
             .bind(&validated.signature)
             .bind(to_hex32(validated.hashed_signature))
@@ -394,13 +415,13 @@ impl CouponsComponent {
             .bind(validated.contracts.coupon_manager.address.to_lowercase())
             .bind(coupon.coupon_address.to_lowercase())
             .bind(&checks)
-            .bind(coupon.discount_type as i16)
-            .bind(coupon.discount as i32)
+            .bind(discount_type)
+            .bind(discount_ppm)
             .bind(to_hex32(validated.root))
             .bind(&validated.collections)
             .bind(effective_since.naive_utc())
             .bind(expires_at.naive_utc())
-            .bind(state.uses as i32)
+            .bind(state_uses)
             .bind(state.cancelled)
             .bind(state.revoked)
             .fetch_one(&self.pool)
@@ -424,21 +445,21 @@ impl CouponsComponent {
         let row = DbCouponWithState {
             id,
             network: validated.network,
-            chain_id: coupon.chain_id as i32,
+            chain_id,
             signer: coupon.signer.to_lowercase(),
             signature: validated.signature,
             state_key,
             coupon_manager: validated.contracts.coupon_manager.address.to_lowercase(),
             coupon_address: coupon.coupon_address.to_lowercase(),
             checks,
-            discount_type: coupon.discount_type as i16,
-            discount_ppm: coupon.discount as i32,
+            discount_type,
+            discount_ppm,
             root: to_hex32(validated.root),
             collections: validated.collections,
             effective_since: effective_since.naive_utc(),
             expires_at: expires_at.naive_utc(),
             created_at,
-            state_uses: Some(state.uses as i32),
+            state_uses: Some(state_uses),
             state_cancelled: Some(state.cancelled),
             state_revoked: Some(state.revoked),
             state_checked_at: ms_to_utc(now_ms).map(|t| t.naive_utc()),
@@ -452,15 +473,37 @@ impl CouponsComponent {
         collections: &[String],
         chain_id: i64,
     ) -> Result<(), CouponError> {
-        let rows: Vec<(String, Option<String>)> = sqlx::query_as(sql::COLLECTION_CREATORS)
+        let network = u64::try_from(chain_id)
+            .ok()
+            .and_then(crate::evm::contracts_addrs::mirror_network)
+            .unwrap_or("");
+        let chain_id_col =
+            i32::try_from(chain_id).map_err(|_| CouponError::UnsupportedChain(chain_id))?;
+        let rows = sqlx::query(sqlx::AssertSqlSafe(sql::COLLECTION_CREATORS.as_str()))
             .bind(collections)
-            .bind(chain_id as i32)
+            .bind(chain_id_col)
+            .bind(network)
             .fetch_all(&self.pool)
             .await?;
-        let creators: HashMap<String, Option<String>> = rows
-            .into_iter()
-            .map(|(id, creator)| (id.to_lowercase(), creator.map(|c| c.to_lowercase())))
-            .collect();
+        // On a network the collections index owns, a coupon is authorized
+        // only under its authorizing publication.
+        if let Some(first) = rows.first() {
+            let state = crate::market::catalogue::NetworkState::from_row(first)?;
+            if let Some(Err(why)) = state.owned_verdict(
+                chain_id,
+                crate::market::catalogue::Purpose::Authorize,
+                Utc::now(),
+            ) {
+                return Err(CouponError::CatalogueUnavailable(why));
+            }
+        }
+        let mut creators: HashMap<String, Option<String>> = HashMap::new();
+        for row in &rows {
+            if let Some(id) = row.try_get::<Option<String>, _>("collection")? {
+                let creator: Option<String> = row.try_get("creator")?;
+                creators.insert(id.to_lowercase(), creator.map(|c| c.to_lowercase()));
+            }
+        }
         let signer = signer.to_lowercase();
         for collection in collections {
             if creators.get(collection).and_then(|c| c.as_deref()) != Some(signer.as_str()) {
@@ -609,15 +652,15 @@ impl CouponsComponent {
         Ok(refreshed)
     }
 
-    async fn upsert_state(&self, id: &str, state: CouponStoredState) -> Result<(), sqlx::Error> {
+    async fn upsert_state(&self, id: &str, state: CouponStoredState) -> Result<(), CouponError> {
         sqlx::query(sql::UPSERT_COUPON_STATE)
             .bind(id)
-            .bind(state.uses as i32)
+            .bind(uses_column(state.uses)?)
             .bind(state.cancelled)
             .bind(state.revoked)
             .execute(&self.pool)
-            .await
-            .map(|_| ())
+            .await?;
+        Ok(())
     }
 }
 
@@ -642,6 +685,12 @@ pub(super) fn state_keys_of(row: &DbCouponWithState) -> Option<Vec<String>> {
         to_hex32(digest_coupon_state_key(&row.signer, digest).ok()?),
         row.state_key.clone(),
     ])
+}
+
+/// Consumed uses as the `integer` column that stores them.
+fn uses_column(uses: i64) -> Result<i32, CouponError> {
+    i32::try_from(uses)
+        .map_err(|_| CouponError::Internal(format!("coupon uses {uses} do not fit their column")))
 }
 
 fn index_key(row: &DbCouponWithState) -> String {
@@ -689,5 +738,117 @@ pub fn to_coupon(row: &DbCouponWithState, now_ms: i64) -> Coupon {
         created_at: row.created_at.and_utc().timestamp_millis(),
         state,
         status,
+    }
+}
+
+#[cfg(test)]
+mod creator_tests {
+    use super::super::chain::ChainReadError;
+    use super::super::types::{CouponChainIndexes, CouponChainState};
+    use super::*;
+    use crate::market::catalogue::owning;
+
+    const COLLECTION: &str = "0x00000000000000000000000000000000000c0c01";
+    const CREATOR: &str = "0x00000000000000000000000000000000000c4ea7";
+    const OTHER: &str = "0x00000000000000000000000000000000000000e5";
+
+    #[test]
+    fn coupon_uses_past_their_column_are_refused() {
+        assert_eq!(uses_column(3).unwrap(), 3);
+        assert!(matches!(
+            uses_column(i64::from(i32::MAX) + 1),
+            Err(CouponError::Internal(_))
+        ));
+    }
+
+    /// The creator check reads no chain.
+    struct NoChain;
+
+    #[async_trait::async_trait]
+    impl CouponChainReader for NoChain {
+        async fn read_coupon_allowed(
+            &self,
+            chain_id: i64,
+            _: &str,
+            _: &str,
+        ) -> Result<bool, ChainReadError> {
+            Err(ChainReadError::NotConfigured(chain_id))
+        }
+        async fn read_indexes(
+            &self,
+            chain_id: i64,
+            _: &str,
+            _: &str,
+        ) -> Result<CouponChainIndexes, ChainReadError> {
+            Err(ChainReadError::NotConfigured(chain_id))
+        }
+        async fn read_state(
+            &self,
+            chain_id: i64,
+            _: &str,
+            _: &[String],
+        ) -> Result<CouponChainState, ChainReadError> {
+            Err(ChainReadError::NotConfigured(chain_id))
+        }
+    }
+
+    /// A coupon prices its collections on every page that shows them, so
+    /// only their creator may store one. On a network the mirrors serve the
+    /// check reads the rows as it always has; on one the collections index
+    /// owns, only under its authorizing publication.
+    #[tokio::test]
+    async fn the_creator_check_follows_the_source_of_the_coupons_network() {
+        let Some(pool) = crate::db::scratch::isolated_pool(2).await else {
+            return;
+        };
+        sqlx::query("INSERT INTO shop.collections (network,contract_address,chain_id,name,creator,owner,urn,is_completed,is_approved,is_editable,created_at,updated_at,reviewed_at,mirrored_at) VALUES ('matic',$1,137,'Coupon fixture',$2,$2,'urn:coupon-creator',true,true,false,0,0,0,now())")
+            .bind(COLLECTION)
+            .bind(CREATOR)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let coupons = CouponsComponent::new(pool.clone(), Arc::new(NoChain));
+        let check = |signer: &'static str, collection: &'static str| {
+            let coupons = coupons.clone();
+            async move {
+                coupons
+                    .validate_creator(signer, &[collection.to_string()], 137)
+                    .await
+            }
+        };
+        let refused = |r: Result<(), CouponError>| match r {
+            Err(CouponError::CatalogueUnavailable(why)) => why,
+            other => panic!("expected the index to refuse: {other:?}"),
+        };
+
+        // The mirrors serve Polygon: as before this change.
+        check(CREATOR, COLLECTION).await.unwrap();
+        assert!(matches!(
+            check(OTHER, COLLECTION).await,
+            Err(CouponError::NotCollectionCreator(_))
+        ));
+        assert!(matches!(
+            check(CREATOR, OTHER).await,
+            Err(CouponError::NotCollectionCreator(_))
+        ));
+
+        // Owned and published a minute ago: the same answers.
+        owning::own(&pool, "matic", 137, 100, 60).await;
+        check(CREATOR, COLLECTION).await.unwrap();
+        assert!(matches!(
+            check(OTHER, COLLECTION).await,
+            Err(CouponError::NotCollectionCreator(_))
+        ));
+
+        // A creatorship transfer walked past the publication, a stale
+        // publication, a rewind: no coupon is authorized on them.
+        owning::walk_past(&pool, "matic", 101, COLLECTION).await;
+        assert!(refused(check(CREATOR, COLLECTION).await).contains("walked"));
+        owning::own(&pool, "matic", 137, 101, 31 * 60).await;
+        refused(check(CREATOR, COLLECTION).await);
+        owning::own(&pool, "matic", 137, 101, 60).await;
+        check(CREATOR, COLLECTION).await.unwrap();
+        owning::rewind(&pool, "matic").await;
+        refused(check(CREATOR, OTHER).await);
     }
 }

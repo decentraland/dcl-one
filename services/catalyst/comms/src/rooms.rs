@@ -21,9 +21,10 @@
 //! (formerly in `shared::livekit`) are named here too, so every LiveKit room
 //! name has this one owner.
 
-// `ParsedRoom` and `RoomClassification` carry a `ResolvedRoom` by value;
-// boxing it would ripple through every match.
-#![allow(clippy::large_enum_variant)]
+#![allow(
+    clippy::large_enum_variant,
+    reason = "`ParsedRoom` and `RoomClassification` carry a `ResolvedRoom` by value; boxing it would ripple through every match"
+)]
 
 use crate::shared::identity::CommunityId;
 use crate::world_identity::{
@@ -33,6 +34,8 @@ use crate::world_identity::{
 pub const WORLD_ROOM_PREFIX: &str = "world-";
 pub const LEGACY_WORLD_SCENE_ROOM_PREFIX: &str = "world-scene-room-";
 pub const GATEKEEPER_SCENE_ROOM_PREFIX: &str = "scene:";
+/// The one mark of a world scene room: `decode_world_scene_room` reads it,
+/// and SQL tells a world scene room by binding it (`starts_with(room_id, $n)`).
 pub const SCENE_ROOM_PREFIX: &str = "w1:";
 
 // Part of the w1 wire format: never reorder, renumber or derive this table

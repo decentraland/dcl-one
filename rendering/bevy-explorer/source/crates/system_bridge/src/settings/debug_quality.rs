@@ -10,6 +10,7 @@ const GROUPS: &[(&str, &str)] = &[
     ("Gameplay", "Gameplay settings"),
     ("Controls", "Control settings"),
     ("Audio", "Audio settings"),
+    ("Chat", "Chat settings"),
 ];
 
 pub(super) struct DebugQualityPlugin;
@@ -17,18 +18,24 @@ pub(super) struct DebugQualityPlugin;
 impl Plugin for DebugQualityPlugin {
     fn build(&self, app: &mut App) {
         app.add_console_command::<QualityCommand, _>(quality);
-        let settings = app.world().resource::<Settings>().get();
+        let settings: Vec<_> = app
+            .world()
+            .resource::<Settings>()
+            .settings
+            .iter()
+            .map(|setting| (setting.info.clone(), setting.runtime_choices))
+            .collect();
         for &(category, title) in GROUPS {
             register_group(app, &settings, category, title);
         }
     }
 }
 
-fn register_group(app: &mut App, settings: &[SettingInfo], category: &str, title: &str) {
+fn register_group(app: &mut App, settings: &[(SettingInfo, bool)], category: &str, title: &str) {
     let rows: Vec<_> = settings
         .iter()
         .enumerate()
-        .filter(|(_, s)| s.category == category)
+        .filter(|(_, (s, _))| s.category == category)
         .map(|(i, s)| {
             (
                 s,
@@ -39,14 +46,14 @@ fn register_group(app: &mut App, settings: &[SettingInfo], category: &str, title
         .collect();
     let variant_indices: Vec<_> = (0..rows
         .iter()
-        .map(|(s, _, _)| s.named_variants.len())
+        .map(|((s, _), _, _)| s.named_variants.len())
         .max()
         .unwrap_or(0))
         .map(|n| n.to_string())
         .collect();
     let variants: Vec<Vec<_>> = rows
         .iter()
-        .map(|(s, _, _)| {
+        .map(|((s, _), _, _)| {
             s.named_variants
                 .iter()
                 .zip(&variant_indices)
@@ -57,25 +64,45 @@ fn register_group(app: &mut App, settings: &[SettingInfo], category: &str, title
     let inputs: Vec<_> = rows
         .iter()
         .zip(&variants)
-        .map(|((s, field, command), options)| DebugInput {
-            label: &s.name,
-            field,
-            command,
-            kind: if options.is_empty() {
-                DebugInputKind::Number {
-                    min: step_number(s.min_value, s.step_size),
-                    max: step_number(s.max_value, s.step_size),
-                    step: step_number(s.step_size, s.step_size),
-                }
-            } else {
-                DebugInputKind::Select(options)
+        .map(
+            |(((s, runtime_choices), field, command), options)| DebugInput {
+                label: &s.name,
+                field,
+                command,
+                // a select is fixed here, so choices that change at runtime are set by index; the
+                // command checks it against the live range
+                kind: if *runtime_choices {
+                    DebugInputKind::Number {
+                        min: 0.0,
+                        max: f64::from(u16::MAX),
+                        step: 1.0,
+                    }
+                } else if options.is_empty() {
+                    DebugInputKind::Number {
+                        min: step_number(s.min_value, s.step_size),
+                        max: step_number(s.max_value, s.step_size),
+                        step: step_number(s.step_size, s.step_size),
+                    }
+                } else {
+                    DebugInputKind::Select(options)
+                },
             },
-        })
+        )
+        .collect();
+    // choices that change at runtime are listed beside their by-index input
+    let choice_fields: Vec<_> = rows
+        .iter()
+        .filter(|((_, runtime_choices), _, _)| *runtime_choices)
+        .map(|((s, _), field, _)| (format!("{} choices", s.name), format!("{field}:choices")))
+        .collect();
+    let fields: Vec<_> = choice_fields
+        .iter()
+        .map(|(label, field)| (label.as_str(), field.as_str()))
         .collect();
     app.add_debug_section(DebugSection {
         title,
         query: &format!("/debug_settings {category}"),
-        fields: &[],
+        fields: &fields,
         actions: &[],
         inputs: &inputs,
     });
@@ -127,18 +154,52 @@ fn quality(
             Err(error) => input.reply_failed(error.to_string()),
         }
     } else {
-        let values: Map<_, _> = settings
+        let mut values = Map::new();
+        for (i, s) in settings
             .settings
             .iter()
             .enumerate()
             .filter(|(_, s)| s.info.category == cmd.category)
-            .map(|(i, s)| {
-                (
-                    i.to_string(),
-                    Value::from(step_number(s.info.value, s.info.step_size)),
-                )
-            })
-            .collect();
+        {
+            values.insert(
+                i.to_string(),
+                Value::from(step_number(s.info.value, s.info.step_size)),
+            );
+            if s.runtime_choices {
+                let choices: Vec<_> = s
+                    .info
+                    .named_variants
+                    .iter()
+                    .enumerate()
+                    .map(|(index, variant)| format!("{index}: {}", variant.name))
+                    .collect();
+                values.insert(format!("{i}:choices"), Value::from(choices.join(", ")));
+            }
+        }
         input.reply_ok(Value::Object(values).to_string());
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::settings::SettingCategory;
+
+    #[test]
+    fn every_setting_category_has_a_panel_group() {
+        for category in [
+            SettingCategory::Gameplay,
+            SettingCategory::Graphics,
+            SettingCategory::Audio,
+            SettingCategory::Chat,
+            SettingCategory::Performance,
+            SettingCategory::Controls,
+        ] {
+            let name = category.to_string();
+            assert!(
+                GROUPS.iter().any(|(group, _)| *group == name),
+                "{name} settings have no debug panel group"
+            );
+        }
     }
 }

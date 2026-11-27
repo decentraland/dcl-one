@@ -22,6 +22,56 @@ use crate::shared::cache::TtlMap;
 use super::graph::{self, Network};
 use super::{MarketplaceState, Source, unavailable};
 
+/// Index snapshot SQL errors use the statement-bound 503 or a sanitized 500.
+pub(super) fn index_read_error(e: sqlx::Error) -> Response {
+    if super::nft_reads::cancelled(&e) {
+        super::nft_reads::timed_out()
+    } else {
+        super::wire::ApiError::from(e).into_response()
+    }
+}
+
+pub(super) fn index_source_error(e: super::owned_items::ReadError) -> Response {
+    match e {
+        super::owned_items::ReadError::Db(e) => index_read_error(e),
+        super::owned_items::ReadError::NotReady(source, why) => unavailable(source, &why),
+    }
+}
+
+/// Require the LAND publication for the served registries on the book's snapshot.
+pub(super) async fn require_land_on(
+    conn: &mut sqlx::PgConnection,
+    state: &MarketplaceState,
+    chain_id: i64,
+) -> Result<crate::land_authz::indexer::Cursor, Response> {
+    let unavailable = super::nft_reads::land_unavailable;
+    let served = super::nft_index::deployments::Deployments::for_chain(
+        super::chain_walk::ChainNet::Ethereum,
+        chain_id,
+    )
+    .and_then(|deployments| deployments.land);
+    let land = state
+        .land_network()
+        .filter(|land| Some(*land) == served)
+        .ok_or_else(unavailable)?;
+    let observed = crate::land_authz::indexer::cursor_observed(conn, land.network)
+        .await
+        .map_err(|error| {
+            tracing::warn!(%error, "cannot read the land-authz index for the marketplace book");
+            unavailable()
+        })?;
+    observed
+        .filter(|observed| {
+            crate::land_authz::indexer::observation_ready(
+                observed,
+                land.land_registry,
+                land.estate_registry,
+            )
+        })
+        .map(|observed| observed.cursor)
+        .ok_or_else(unavailable)
+}
+
 /// The freshness budgets the route table names.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Ttl {
@@ -201,6 +251,12 @@ impl Caches {
         self.map(ttl).get_fresh(&key.to_string()).is_some()
     }
 
+    /// Drops every answer under `ttl`, as their expiry would.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn forget_all(&self, ttl: Ttl) {
+        self.map(ttl).clear();
+    }
+
     #[cfg(any(test, feature = "test-support"))]
     pub fn clear(&self) {
         for m in [&self.s30, &self.s60, &self.m5, &self.m10, &self.m15] {
@@ -215,13 +271,13 @@ impl Caches {
 /// ended, a panic included: as failed unless [`RefreshClaim::succeeded`] was called.
 pub struct RefreshClaim {
     state: super::SharedState,
-    key: &'static str,
+    key: String,
     claim: ClaimId,
     succeeded: bool,
 }
 
 impl RefreshClaim {
-    pub fn new(state: super::SharedState, key: &'static str, claim: ClaimId) -> Self {
+    pub fn new(state: super::SharedState, key: String, claim: ClaimId) -> Self {
         Self {
             state,
             key,
@@ -239,7 +295,7 @@ impl Drop for RefreshClaim {
     fn drop(&mut self) {
         self.state
             .readers
-            .end_refresh(self.key, self.claim, self.succeeded);
+            .end_refresh(&self.key, self.claim, self.succeeded);
     }
 }
 
@@ -281,6 +337,30 @@ where
         .readers
         .map(ttl)
         .get_or_fetch(key, || async { fetch().await.map(Arc::new) })
+        .await
+}
+
+/// [`memoized`] for a fetch that reads through what the caller holds (its
+/// catalogue read), which only the fetching request keeps
+/// ([`crate::shared::cache::TtlMap::get_or_fetch_holding`]): a request that
+/// waits on another's fetch drops it first. `Ok(None)`: that fetch failed
+/// and the caller, its read gone, opens a new one and asks again.
+pub async fn memoized_holding<G, F, E>(
+    state: &MarketplaceState,
+    ttl: Ttl,
+    key: String,
+    held: &mut Option<G>,
+    fetch: F,
+) -> Result<Option<Arc<Value>>, E>
+where
+    F: AsyncFnOnce(&mut G) -> Result<Value, E>,
+{
+    state
+        .readers
+        .map(ttl)
+        .get_or_fetch_holding(key, held, async move |g: &mut G| {
+            fetch(g).await.map(Arc::new)
+        })
         .await
 }
 
@@ -434,6 +514,18 @@ pub fn at<'a>(v: &'a Value, path: &str) -> Option<&'a Value> {
         }
     }
     Some(cur)
+}
+
+/// Compare the two raw expiry encodings on the Graph before paging.
+/// Nest the OR under AND so it can share a query with field filters and
+/// the count cursor. The boundary matches the wire's unit conversion.
+pub(super) fn graph_unexpired(field: &str, now_ms: i64) -> Value {
+    let threshold = super::nft_index::LEGACY_EXPIRY_UNIT_THRESHOLD.to_string();
+    let gt = format!("{field}_gt");
+    json!([{ "or": [
+        { (&gt): now_ms.div_euclid(1_000).to_string(), (format!("{field}_lt")): threshold },
+        { (&gt): now_ms.to_string(), (format!("{field}_gte")): threshold },
+    ] }])
 }
 
 /// The subgraph's unix seconds as the wire's milliseconds.
@@ -640,36 +732,6 @@ pub async fn top_rows(
     read_top(state, network, url, ttl, p, want.min(DEEP_WINDOW)).await
 }
 
-/// What an aggregate over at most `max` rows read: every row, or more rows
-/// than the bound.
-pub enum Bounded {
-    Complete(Vec<Value>),
-    Overflow,
-}
-
-/// Every row of `p`'s order when there are at most `max`, else
-/// [`Bounded::Overflow`]: [`top_rows`] plus one probe row past the bound,
-/// which a list page never reads. `max` must be at most [`DEEP_WINDOW`].
-pub async fn bounded_rows(
-    state: &MarketplaceState,
-    network: Network,
-    url: &str,
-    ttl: Ttl,
-    p: &GraphPage<'_>,
-    max: i64,
-) -> Result<Bounded, String> {
-    debug_assert!(
-        (0..=DEEP_WINDOW).contains(&max),
-        "an aggregate bound of {max} is outside 0..={DEEP_WINDOW}"
-    );
-    let rows = read_top(state, network, url, ttl, p, max + 1).await?;
-    Ok(if rows.len() as i64 > max {
-        Bounded::Overflow
-    } else {
-        Bounded::Complete(rows)
-    })
-}
-
 async fn read_top(
     state: &MarketplaceState,
     network: Network,
@@ -696,7 +758,7 @@ async fn read_top(
             },
         )
         .await?;
-        let n = got.len() as i64;
+        let n = super::casts::len_i64(got.len());
         out.extend(got);
         if n < first {
             exhausted = true;
@@ -704,22 +766,23 @@ async fn read_top(
         }
         skip += first;
     }
-    while !exhausted && (out.len() as i64) < want {
+    while !exhausted && super::casts::len_i64(out.len()) < want {
         let Some(cursor) = out.last().and_then(|r| r.get(p.order_by)).cloned() else {
             return Err(format!("a keyset page needs `{}` in every row", p.order_by));
         };
-        let ties = out
-            .iter()
-            .rev()
-            .take_while(|r| r.get(p.order_by) == Some(&cursor))
-            .count() as i64;
+        let ties = super::casts::len_i64(
+            out.iter()
+                .rev()
+                .take_while(|r| r.get(p.order_by) == Some(&cursor))
+                .count(),
+        );
         if ties > GRAPH_MAX_SKIP {
             return Err(format!(
                 "more than {GRAPH_MAX_SKIP} rows share one `{}`",
                 p.order_by
             ));
         }
-        let first = (want - out.len() as i64).min(size);
+        let first = (want - super::casts::len_i64(out.len())).min(size);
         let where_ = keyset_where(&p.where_, p.order_by, p.direction, &cursor);
         let got = page(
             state,
@@ -734,7 +797,7 @@ async fn read_top(
             },
         )
         .await?;
-        let n = got.len() as i64;
+        let n = super::casts::len_i64(got.len());
         out.extend(got);
         exhausted = n < first;
     }
@@ -862,7 +925,7 @@ pub async fn count_to(
             )
             .await?;
             let ids = rows(&data, entity);
-            let n = ids.len() as i64;
+            let n = super::casts::len_i64(ids.len());
             total += n;
             last_id = ids.last().map(|r| str_of(r, "id"));
             if n < page_size {
@@ -919,7 +982,7 @@ mod refresh_tests {
         let third = readers.begin_refresh(KEY, Duration::ZERO).expect("claimed");
         let held = Arc::clone(&state);
         let refresh = tokio::spawn(async move {
-            let _claim = RefreshClaim::new(held, KEY, third);
+            let _claim = RefreshClaim::new(held, KEY.to_string(), third);
             panic!("a row that does not decode");
         });
         assert!(refresh.await.is_err());

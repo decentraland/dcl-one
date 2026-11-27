@@ -2,11 +2,11 @@ import { dirname, resolve } from 'path'
 import { Readable } from 'stream'
 import { Agent } from 'undici'
 import { Router } from '@well-known-components/http-server'
-import { IHttpServerComponent } from '@well-known-components/interfaces'
-import { ChainId } from '@dcl/schemas'
-import { AuthChain } from '@dcl/crypto'
+import type { IHttpServerComponent } from '@well-known-components/interfaces'
+import type { ChainId } from '@dcl/schemas'
+import type { AuthChain } from '@dcl/crypto'
 
-import { CliComponents } from '../components'
+import type { CliComponents } from '../components'
 
 const STRIPPED_REQUEST_HEADERS = new Set([
   'connection',

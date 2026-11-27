@@ -14,16 +14,8 @@
   color: var(--text-dim);
 }
 .mutuals {
-  display: flex;
-  align-items: center;
   justify-content: center;
-  gap: 4px;
   margin-bottom: 12px;
-  font-size: var(--type-12);
-  color: var(--text-dim);
-}
-.mutualFace + .mutualFace {
-  margin-left: -8px;
 }
 .message {
   width: 100%;

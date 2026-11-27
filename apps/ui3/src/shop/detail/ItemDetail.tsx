@@ -8,9 +8,7 @@
 import { Suspense, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { Link, useLocation, useNavigate, useParams } from "react-router";
 
-import Button from "../../atoms/Button";
-import Tooltip from "../../atoms/Tooltip";
-import EmptyState from "../../components/EmptyState";
+import { Button, Tooltip, EmptyState } from "@dcl/one-ui";
 import { useCart } from "../cart/store";
 import { itemAsset, tokenAsset, type AssetId } from "@shop/model/asset";
 import { parseEvmAddress, shortAddress, sameAddress } from "@shop/model/address";
@@ -476,6 +474,8 @@ export default function ItemDetail() {
   const atStockCap = !!cartLine && cartLine.quantity >= stockCap;
 
   const saleActive = useSaleActive({ priceCredits: current.priceCredits, compareAtCredits: current.compareAtCredits, saleEndsAt: current.saleEndsAt });
+  const [rarityAnchor, setRarityAnchor] = useState<HTMLElement | null>(null);
+  const [availabilityAnchor, setAvailabilityAnchor] = useState<HTMLSpanElement | null>(null);
   const [resaleListOpen, setResaleListOpen] = useState(false);
   const [buyingOrder, setBuyingOrder] = useState<{ order: LegacyOrderRef; quoted: ManaWei | null } | null>(null);
   // An order that went out (confirmed, or still confirming) has the page read again once its dialog closes, or the page
@@ -540,10 +540,12 @@ export default function ItemDetail() {
     return (
       <div className="shop-page" data-testid="item-not-found">
         <EmptyState
+          appearance="shop"
+          titleAs="h2"
           icon={<Icon name="cart" size={44} />}
           title={t("itemDetail.notAvailableTitle")}
           subtitle={t("itemDetail.notAvailableBody")}
-          actions={[{ label: t("notFound.cta"), onClick: () => navigate(`${SHOP_BASE}/items`) }]}
+          actions={<Button size="md" onClick={() => navigate(`${SHOP_BASE}/items`)}>{t("notFound.cta")}</Button>}
         />
       </div>
     );
@@ -684,13 +686,13 @@ export default function ItemDetail() {
                 {favItemId ? <FavoriteButton contractAddress={contractAddress} itemId={favItemId} name={current.name} placement="title" /> : null}
               </div>
               <div className="shop-detail__chips">
-                <Tooltip label={rarityTip(rarity)} side="top" className="shop-pdp__tip">
+                <Tooltip anchor={rarityAnchor} label={rarityTip(rarity)} side="top" keepInViewport maxWidth={240} arrow tipClassName="shop-pdp__tip">
                   {rarityHref(rarity) ? (
-                    <Link className="shop-detail__chip" data-variant="rarity" to={rarityHref(rarity)!} style={{ "--chip-bg": rarityCardPalette(rarity).label } as CSSProperties} data-testid="detail-rarity-link">
+                    <Link ref={setRarityAnchor} className="shop-detail__chip" data-variant="rarity" to={rarityHref(rarity)!} style={{ "--chip-bg": rarityCardPalette(rarity).label } as CSSProperties} data-testid="detail-rarity-link">
                       {rarityLabel(rarity)}
                     </Link>
                   ) : (
-                    <span className="shop-detail__chip" data-variant="rarity" tabIndex={0} style={{ "--chip-bg": rarityCardPalette(rarity).label } as CSSProperties}>
+                    <span ref={setRarityAnchor} className="shop-detail__chip" data-variant="rarity" tabIndex={0} style={{ "--chip-bg": rarityCardPalette(rarity).label } as CSSProperties}>
                       {rarityLabel(rarity)}
                     </span>
                   )}
@@ -859,8 +861,8 @@ export default function ItemDetail() {
                       <div className="shop-pay__pricecol">
                         <div className="shop-pay__price" data-variant="none" data-testid="item-price">
                           <span>{outOfStock ? t("itemDetail.soldOut") : t("itemDetail.notForSale")}</span>
-                          <Tooltip label={NOT_FOR_SALE_HINT} side="top" className="shop-pdp__tip">
-                            <span className="shop-pay__info" tabIndex={0} role="img" aria-label={NOT_FOR_SALE_HINT}>
+                          <Tooltip anchor={availabilityAnchor} label={NOT_FOR_SALE_HINT} side="top" keepInViewport maxWidth={240} arrow tipClassName="shop-pdp__tip">
+                            <span ref={setAvailabilityAnchor} className="shop-pay__info" tabIndex={0} role="img" aria-label="Availability information" aria-description={NOT_FOR_SALE_HINT}>
                               <Icon name="info" size={14} />
                             </span>
                           </Tooltip>

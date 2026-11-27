@@ -22,7 +22,7 @@ use crate::{
         SegmentEventExplorerError,
     },
     segment_system::{batch_body, SegmentConfig, SEGMENT_BATCH_URL},
-    settings_snapshot::changed_settings,
+    settings_snapshot::snapshot,
 };
 
 struct Snapshot {
@@ -60,7 +60,7 @@ pub fn refresh_crash_snapshot(
         common: config.common().clone(),
         feature_flags: (flags.source() != FlagsSource::Pending)
             .then(|| (flags.report(), flags.overrides_report())),
-        settings: changed_settings(settings.settings.iter().map(|s| &s.info)),
+        settings: snapshot(&settings),
     });
 }
 

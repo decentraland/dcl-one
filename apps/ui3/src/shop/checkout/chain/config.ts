@@ -21,8 +21,31 @@ const DEFAULT_RPC: Record<number, string> = {
   [CHAIN.SEPOLIA]: "https://rpc.decentraland.org/sepolia",
 };
 
-function env(name: string): string | undefined {
-  const value = typeof import.meta !== "undefined" ? (import.meta.env?.[name] as string | undefined) : undefined;
+type ShopEnvKey =
+  | "VITE_SHOP_RPC_POLYGON"
+  | "VITE_SHOP_RPC_ETHEREUM"
+  | "VITE_SHOP_RPC_AMOY"
+  | "VITE_SHOP_RPC_SEPOLIA"
+  | "VITE_SHOP_CREDITS_MANAGER"
+  | "VITE_SHOP_CHAIN_ID"
+  | "VITE_SHOP_RELAYER_URL"
+  | "VITE_SHOP_GASLESS";
+
+// One static read per key: Vite inlines `import.meta.env.X` as that value alone, but a computed
+// `import.meta.env[key]` as the whole env object, every build-time `VITE_*` value, into the bundle.
+function env(name: ShopEnvKey): string | undefined {
+  if (typeof import.meta === "undefined") return undefined;
+  const values: Record<ShopEnvKey, string | undefined> = {
+    VITE_SHOP_RPC_POLYGON: import.meta.env?.VITE_SHOP_RPC_POLYGON,
+    VITE_SHOP_RPC_ETHEREUM: import.meta.env?.VITE_SHOP_RPC_ETHEREUM,
+    VITE_SHOP_RPC_AMOY: import.meta.env?.VITE_SHOP_RPC_AMOY,
+    VITE_SHOP_RPC_SEPOLIA: import.meta.env?.VITE_SHOP_RPC_SEPOLIA,
+    VITE_SHOP_CREDITS_MANAGER: import.meta.env?.VITE_SHOP_CREDITS_MANAGER,
+    VITE_SHOP_CHAIN_ID: import.meta.env?.VITE_SHOP_CHAIN_ID,
+    VITE_SHOP_RELAYER_URL: import.meta.env?.VITE_SHOP_RELAYER_URL,
+    VITE_SHOP_GASLESS: import.meta.env?.VITE_SHOP_GASLESS,
+  };
+  const value = values[name];
   return value && value.trim() ? value.trim() : undefined;
 }
 

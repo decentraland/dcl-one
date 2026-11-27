@@ -2,7 +2,7 @@ import { useId, type CSSProperties, type MouseEvent } from 'react'
 import { GeneralLeftArrow, GeneralRightArrow } from '../../../foundations/icons'
 import { Tabs } from '../../../components/Tabs/Tabs'
 import { TabsBar } from '../../../components/TabsBar/TabsBar'
-import { Button } from '../shared/Button/Button'
+import { Button } from '../../../components/Button/Button'
 import { Busy } from './Busy'
 import { DayCard, UpcomingCard } from './cards'
 import { MyEvents, type MyEventsProps } from './MyEvents'
@@ -143,15 +143,16 @@ function AllEvents({
           className={styles.panel}
         >
           <nav className={styles.dates} aria-label={text('Event days')}>
-            <button
-              type="button"
-              className={styles.dateArrow}
+            <Button
+              variant="text"
+              size="sm"
+              iconOnly
               aria-label={text('Navigate to previous dates')}
               disabled={!canGoBack}
               onClick={onPrevious}
             >
-              <GeneralLeftArrow size={20} aria-hidden="true" />
-            </button>
+              <GeneralLeftArrow className={styles.dateIcon} size={20} aria-hidden="true" />
+            </Button>
             <ol className={styles.dateLabels}>
               {days.map((day) => (
                 <li
@@ -164,22 +165,23 @@ function AllEvents({
                 </li>
               ))}
             </ol>
-            <button
-              type="button"
-              className={styles.dateArrow}
+            <Button
+              variant="text"
+              size="sm"
+              iconOnly
               aria-label={text('Navigate to next dates')}
               disabled={!canGoForward}
               onClick={onNext}
             >
-              <GeneralRightArrow size={20} aria-hidden="true" />
-            </button>
+              <GeneralRightArrow className={styles.dateIcon} size={20} aria-hidden="true" />
+            </Button>
           </nav>
           {status === 'unavailable' ? (
             <div className={styles.message}>
               <Notice tone="error">
                 {text('Events are temporarily unavailable.')}{' '}
                 {onRetry ? (
-                  <Button variant="tertiary" size="sm" onClick={onRetry}>
+                  <Button variant="tertiary" size="md" onClick={onRetry}>
                     {text('Retry')}
                   </Button>
                 ) : null}

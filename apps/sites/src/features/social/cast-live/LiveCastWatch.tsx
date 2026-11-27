@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useAuth } from "@/data/lib/auth/context";
 import type { AuthIdentity } from "@/data/lib/auth/types";
 import { getWatcherToken, defaultDisplayName, type CastCredentials } from "@/data/lib/catalyst/cast";
+import { guestWatcherIdentity } from "@/data/lib/catalyst/cast-guest";
 import { CatalystError } from "@/data/lib/catalyst/client";
 import {
   fallbackPlaceName,
@@ -12,7 +13,6 @@ import {
 import type { TrackContext } from "@/core/lib/telemetry/track";
 import { usePageView } from "@/core/lib/telemetry/page-view";
 
-import { openSignIn } from "../../components/auth/signin-store";
 import CastWatch, { type WatchJoin, type WatchLive, type WatchRefusal } from "../cast-watch/CastWatch";
 import { WatcherStage, useCastTracks } from "./CastStage";
 import { CAST_WATCHER_TITLE, castPageView, type CastPageInfo } from "./page-view";
@@ -36,7 +36,7 @@ export function watchRefusal(err: unknown): WatchRefusal {
       message: "The stream link for this place has expired.",
     };
   }
-  if (status === 403) {
+  if (status === 403 || (status === 401 && server === "Access denied, you are not authorized to access this world")) {
     return { kind: "error", title: "You can't watch this Cast", message: server ?? "Access denied." };
   }
   return {
@@ -93,17 +93,21 @@ export async function joinAsWatcher(
   return { credentials, session };
 }
 
-/** `/cast/w/{location}`: watches the Cast of a parcel or a world with the viewer's own wallet. */
+/** `/cast/w/{location}`: watches a parcel or world with a session or temporary browser identity. */
 export default function LiveCastWatch({
   trackCtx,
   location,
   parcel,
+  scenes,
 }: {
   trackCtx: TrackContext;
   location: string;
   parcel?: string;
+  scenes?: Array<{ base: string; title: string }> | null;
 }) {
   const { identity } = useAuth();
+  const [pickedParcel, setPickedParcel] = useState<string>();
+  const chosenParcel = parcel ?? (scenes?.length === 1 ? scenes[0].base : pickedParcel);
   const [session, setSession] = useState<CastSession | null>(null);
   const sessionRef = useRef<CastSession | null>(null);
   const aborter = useRef<AbortController | null>(null);
@@ -123,29 +127,24 @@ export default function LiveCastWatch({
   );
 
   const join = useCallback(async (): Promise<WatchJoin> => {
-    if (!identity) {
-      openSignIn();
-      return {
-        refused: {
-          kind: "error",
-          title: "Sign in to watch",
-          message: "Watching a Cast needs your Decentraland account.",
-        },
-      };
-    }
     aborter.current?.abort();
     const controller = new AbortController();
     aborter.current = controller;
-    const joined = await joinAsWatcher(identity, { location, parcel }, controller.signal);
+    const signer = identity ?? await guestWatcherIdentity();
+    if (controller.signal.aborted) return new Promise<WatchJoin>(() => {});
+    const joined = await joinAsWatcher(signer, { location, parcel: chosenParcel }, controller.signal);
     // Abandoned: the page left or a newer join started. Never settles, so nothing renders.
     if (joined === null) return new Promise<WatchJoin>(() => {});
-    if ("refused" in joined) return { refused: joined.refused };
+    if ("refused" in joined) {
+      if (joined.refused.kind === "waiting") setPickedParcel(undefined);
+      return { refused: joined.refused };
+    }
     if (joined.credentials.placeName) setPlaceName(joined.credentials.placeName);
     setJoinedPlace({ placeName: joined.credentials.placeName || location, location, isWorld: isWorldLocation(location) });
     sessionRef.current = joined.session;
     setSession(joined.session);
     return { roomId: joined.credentials.roomId };
-  }, [identity, location, parcel]);
+  }, [identity, location, chosenParcel]);
 
   const leave = useCallback(() => {
     aborter.current?.abort();
@@ -174,6 +173,9 @@ export default function LiveCastWatch({
   const live = useMemo<WatchLive>(
     () => ({
       join,
+      chooseScene: scenes && scenes.length > 1 && !chosenParcel
+        ? { scenes, onChoose: setPickedParcel }
+        : undefined,
       leave,
       bindLost,
       stage: (muted) => <WatcherStage tracks={tracks} muted={muted} />,
@@ -181,7 +183,7 @@ export default function LiveCastWatch({
       audioBlocked,
       enableAudio: () => void session?.startAudio(),
     }),
-    [join, leave, bindLost, tracks, session, audioBlocked],
+    [join, leave, bindLost, tracks, session, audioBlocked, scenes, chosenParcel],
   );
 
   const watch: WatchResult = {

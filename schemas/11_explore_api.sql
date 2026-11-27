@@ -69,16 +69,22 @@ CREATE TABLE explore_api.feature_flags_local (
     PRIMARY KEY (app, name)
 );
 
--- The api.decentraland.org /v2/tiles grid (about 92k tiles, 38 MB of JSON),
--- gzip-compressed as one row so a restart renders map.png before the first
--- pass; last_updated_at is the upstream /v2/tiles/info stamp the grid carries.
+-- The explorer map's tile grid (about 92k tiles, 37 MB of JSON), built from
+-- the land-authz and marketplace indexes (DATABASE.md "Map grid build
+-- workload") and gzip-compressed as one row so a restart renders map.png
+-- before the first pass; the row is the grid's revision: last_updated_at
+-- is the /v2/tiles/info stamp, moved only when the body changes; etag is the
+-- hex SHA-256 of the stored body; fetched_at is the build time; checked_at
+-- is when a build last found this revision current (/v2/tiles/info
+-- checkedAt, the map's age label).
 CREATE TABLE explore_api.map_grid (
     id smallint PRIMARY KEY CHECK (id = 1),
     last_updated_at bigint NOT NULL,
     etag text,
     tile_count integer NOT NULL,
     body_gzip bytea NOT NULL,
-    fetched_at timestamp without time zone NOT NULL
+    fetched_at timestamp without time zone NOT NULL,
+    checked_at timestamp without time zone
 );
 
 -- /auth-api, the sign-in relay (DATABASE.md "Auth API relay state workload"):

@@ -1,3 +1,5 @@
+#![allow(clippy::unwrap_used, reason = "test support")]
+
 use dcl_scene_cli::scene::{b64_hash, machine_id};
 use futures::StreamExt;
 use serde_json::{Value, json};

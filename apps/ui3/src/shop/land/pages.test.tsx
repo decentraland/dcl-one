@@ -1,4 +1,5 @@
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { Hex } from "viem";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -7,6 +8,7 @@ import { estateRegistryAbi } from "./estate";
 import { estateResult, nameResult, NET, OWNER, parcelResult, rentalListing, sampleTiles, saleOrder, TENANT } from "./fixtures";
 import LandsPage from "./LandsPage";
 import ManageAsset from "./ManageAsset";
+import RentalTxModal from "./RentalTxModal";
 import RentPage from "./RentPage";
 import { rentalsAbi } from "./rentals";
 import { fakeWallet, stubClient, type Answer } from "./testkit";
@@ -177,6 +179,54 @@ describe("/shop/lands", () => {
     await waitFor(() => expect(marks()).toBe(1));
   });
 
+  it("shows the map's age in its corner, and in the filter bar that covers that corner on phones, from one read", async () => {
+    const reads: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) => {
+        reads.push(url);
+        return Response.json({ checkedAt: Date.now() - 12 * 60_000 });
+      }),
+    );
+    try {
+      render(
+        <QueryClientProvider client={new QueryClient()}>
+          <ShopHarness session="web3" path="/shop/lands?isMap=true" route="/shop/lands">
+            <LandsPage client={stubClient({})} loadTiles={tiles} />
+          </ShopHarness>
+        </QueryClientProvider>,
+      );
+      const map = await screen.findByRole("region", { name: /LAND map: drag/ });
+      await waitFor(() => expect(map.querySelector(".shop-landmap__status")).toHaveTextContent("Updated 12 min ago"));
+      // lands.css shows the bar's copy, and hides the corner's, at 768px and below.
+      expect(document.querySelector(".shop-lb-maptop .shop-lb-maptop__age")).toHaveTextContent("Updated 12 min ago");
+      expect(reads.filter((url) => url.endsWith("/v2/tiles/info"))).toHaveLength(1);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("shows no age over the map's load error, in the bar or elsewhere", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => Response.json({ checkedAt: Date.now() - 12 * 60_000 })),
+    );
+    try {
+      render(
+        <QueryClientProvider client={new QueryClient()}>
+          <ShopHarness session="web3" path="/shop/lands?isMap=true" route="/shop/lands">
+            <LandsPage client={stubClient({})} loadTiles={async () => { throw new Error("boom"); }} />
+          </ShopHarness>
+        </QueryClientProvider>,
+      );
+      expect(await screen.findByText("The LAND map could not be loaded.")).toBeInTheDocument();
+      expect(document.querySelector(".shop-lb-maptop__age")).toBeNull();
+      expect(screen.queryByText(/Updated/)).toBeNull();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
   it("shows the atlas image while the map waits for its tiles", async () => {
     renderLands("web3", "/shop/lands?isMap=true", {}, () => new Promise(() => {}));
     const map = await screen.findByRole("region", { name: /LAND map: drag/ });
@@ -232,6 +282,37 @@ describe("/shop/token/:contract/:tokenId/manage", () => {
     const highlights = await screen.findByRole("region", { name: "Highlights" });
     expect(within(highlights).getByText("Plaza")).toBeInTheDocument();
     noCredits();
+  });
+
+  it("keeps the Creator Hub action unavailable while LAND is rented", async () => {
+    const rental = rentalListing({ status: "executed", tenant: TENANT });
+    renderManage("web3", parcelResult({ rental }), {}, fakeWallet({ account: OWNER, chainId: 1 }));
+    const link = await screen.findByRole("link", { name: "Open in Creator Hub" });
+    expect(link).toHaveAttribute("aria-disabled", "true");
+    expect(link).not.toHaveAttribute("href");
+    expect(fireEvent.click(link)).toBe(false);
+  });
+
+  it("opens the removal confirmation from the outlined rental action without sending a transaction", async () => {
+    const wallet = fakeWallet({ account: OWNER, chainId: 1, reads: [{ abi: erc721Abi, name: "isApprovedForAll", answer: () => true }] });
+    renderManage("web3", parcelResult({ rental: rentalListing() }), {}, wallet);
+    fireEvent.click(await enabledButton("Edit listing"));
+    const editor = await screen.findByRole("dialog", { name: "Edit listing" });
+    const remove = await within(editor).findByRole("button", { name: "Remove listing" });
+    expect(remove).toHaveAttribute("data-tone", "danger");
+    expect(remove).toHaveAttribute("data-variant", "outline");
+    fireEvent.click(remove);
+    expect(await screen.findByRole("dialog", { name: "Remove listing" })).toBeInTheDocument();
+    expect(wallet.sent).toHaveLength(0);
+  });
+
+  it("marks removal as destructive in the rental confirmation", () => {
+    const rental = rentalListing();
+    const asset = { chainId: 1, contractAddress: NET.land, tokenId: rental.tokenId, openRentalId: rental.id, category: "parcel" as const };
+    render(<RentalTxModal kind="remove" account={OWNER} provider={fakeWallet({ account: OWNER, chainId: 1 })}
+      asset={asset} rental={rental} onDone={vi.fn()} onClose={vi.fn()} portal={false} />);
+    expect(screen.getByRole("button", { name: "Remove listing" })).toHaveAttribute("data-tone", "danger");
+    expect(screen.getByRole("button", { name: "Cancel" })).not.toHaveAttribute("data-tone");
   });
 
   it("refuses a visitor who does not own the LAND", async () => {

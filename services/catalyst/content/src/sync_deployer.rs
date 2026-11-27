@@ -66,6 +66,8 @@ struct ParsedEntity {
     auth_chain: Value,
     content: Vec<(String, String)>,
     report: Option<Arc<DeploymentReport>>,
+    /// What brought it here, for `total_deployments_count`.
+    context: DeploymentContext,
     /// Retry state the entity must be recorded with if the batch flush that carries it fails.
     /// The deployer is asynchronous -- `deploy_entity` returns once the entity is buffered, so
     /// the caller's attempt is already spent by the time a flush failure re-reports it, and
@@ -230,6 +232,7 @@ fn parse_entity_for_deploy(
         auth_chain: auth_chain_json,
         content,
         report: None,
+        context: DeploymentContext::Synced,
         retry_count: 0,
         backoff_ms: 0,
         backlog_permit: None,
@@ -405,7 +408,10 @@ fn spawn_flush(
 type Flushed = Result<HashMap<String, String>, SyncError>;
 
 /// [`spawn_flush`] with the batch written by `flush` (the tests' seam).
-#[allow(clippy::too_many_arguments)]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the flush task owns each shared handle it updates"
+)]
 fn spawn_flush_with<F>(
     pool: PgPool,
     storage: Option<Arc<Storage>>,
@@ -1128,6 +1134,12 @@ async fn flush_batch(
     tx.commit()
         .await
         .map_err(|e| SyncError::Storage(e.to_string()))?;
+    for e in entities
+        .iter()
+        .filter(|e| id_map.contains_key(e.entity_id.as_str()))
+    {
+        crate::series::deployment_stored(&e.entity_type, e.context.label());
+    }
 
     tracing::info!(
         count = rows.len(),
@@ -1169,13 +1181,16 @@ impl LiveSyncDeployer {
     /// `content[]` when the store holds them: each is touched
     /// ([`crate::deploy_remote_entity::touch_renders`]) once the entity is verified and holds
     /// its backlog slot, just before it is buffered.
-    #[allow(clippy::too_many_arguments)]
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "the remote deploy carries its context, report, retry and renders"
+    )]
     pub async fn deploy_entity_with_files(
         &self,
         entity_data: &[u8],
         entity_id: &str,
         auth_chain: &AuthChain,
-        _context: DeploymentContext,
+        context: DeploymentContext,
         report: Option<&Arc<DeploymentReport>>,
         retry_state: Option<(u32, u64)>,
         renders: Option<(&crate::storage::Storage, Vec<(String, String)>)>,
@@ -1184,6 +1199,7 @@ impl LiveSyncDeployer {
         let verdict = self
             .verify_entity(entity_data, entity_id, auth_chain, SyncedContent::Fetched)
             .await?;
+        parsed.context = context;
         parsed.buffered = Some(BufferedMark::new(entity_id));
         scene_parcels::report_drift(
             &parsed.entity_type,

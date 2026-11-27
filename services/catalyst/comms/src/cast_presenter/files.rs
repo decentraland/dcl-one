@@ -95,7 +95,8 @@ pub fn file_type_from_name(name: &str) -> Option<FileType> {
 /// The presentation's display name: the file name without its last
 /// extension, or `Presentation` when nothing is left.
 pub fn presentation_name(file_name: &str) -> String {
-    static EXT: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\.[^.]+$").unwrap());
+    static EXT: LazyLock<Regex> =
+        LazyLock::new(|| Regex::new(r"\.[^.]+$").expect("literal regex is valid"));
     let stem = EXT.replace(file_name, "");
     if stem.is_empty() {
         "Presentation".to_string()
@@ -131,7 +132,8 @@ pub fn check_livekit_url(value: &str, own: &LiveKitTarget) -> Result<(), &'stati
 /// address; anything else is stored as none (and never refused).
 pub fn presenter_identity(value: Option<&str>) -> Option<String> {
     static PATTERN: LazyLock<Regex> = LazyLock::new(|| {
-        Regex::new(r"^(stream:[A-Za-z0-9:_.-]{1,121}|0x[0-9a-fA-F]{40})$").unwrap()
+        Regex::new(r"^(stream:[A-Za-z0-9:_.-]{1,121}|0x[0-9a-fA-F]{40})$")
+            .expect("literal regex is valid")
     });
     value.filter(|v| PATTERN.is_match(v)).map(str::to_string)
 }
@@ -148,10 +150,12 @@ pub struct ResolvedFileUrl {
 /// download URL, anything else unchanged.
 pub fn resolve_file_url(url: &str) -> ResolvedFileUrl {
     static SLIDES: LazyLock<Regex> = LazyLock::new(|| {
-        Regex::new(r"^https://docs\.google\.com/presentation/d/([a-zA-Z0-9_-]+)").unwrap()
+        Regex::new(r"^https://docs\.google\.com/presentation/d/([a-zA-Z0-9_-]+)")
+            .expect("literal regex is valid")
     });
     static DRIVE: LazyLock<Regex> = LazyLock::new(|| {
-        Regex::new(r"^https://drive\.google\.com/file/d/([a-zA-Z0-9_-]+)").unwrap()
+        Regex::new(r"^https://drive\.google\.com/file/d/([a-zA-Z0-9_-]+)")
+            .expect("literal regex is valid")
     });
     if let Some(id) = SLIDES.captures(url).map(|c| c[1].to_string()) {
         return ResolvedFileUrl {
@@ -177,8 +181,9 @@ pub fn resolve_file_url(url: &str) -> ResolvedFileUrl {
 /// decoded when it decodes), else the final URL's last path segment as it
 /// stands, else `presentation`.
 pub fn download_filename(content_disposition: Option<&str>, final_url: &url::Url) -> String {
-    static FILENAME: LazyLock<Regex> =
-        LazyLock::new(|| Regex::new(r#"filename\*?=(?:UTF-8''|"?)([^";]+)"?"#).unwrap());
+    static FILENAME: LazyLock<Regex> = LazyLock::new(|| {
+        Regex::new(r#"filename\*?=(?:UTF-8''|"?)([^";]+)"?"#).expect("literal regex is valid")
+    });
     if let Some(raw) = content_disposition
         .and_then(|d| FILENAME.captures(d))
         .map(|c| c[1].to_string())

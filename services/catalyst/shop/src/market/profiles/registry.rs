@@ -292,12 +292,20 @@ fn project(
 
 #[cfg(test)]
 mod tests {
+    #![allow(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        clippy::cast_possible_wrap,
+        clippy::cast_precision_loss,
+        reason = "test fixtures use small literal values"
+    )]
+
     use super::*;
     use axum::body::{Body, to_bytes};
     use axum::http::Request;
     use tower::ServiceExt;
 
-    use crate::market::tests::support::{state_with_empty_readers, state_without_db};
+    use crate::market::tests::support::{OwnDb, state_with_empty_readers, state_without_db};
 
     fn values(raw: Vec<Box<RawValue>>) -> Vec<Value> {
         raw.iter()
@@ -354,7 +362,7 @@ mod tests {
         let recorder = crate::comms::metrics::prometheus_builder()
             .unwrap()
             .build_recorder();
-        let _recording = metrics::set_default_local_recorder(&recorder);
+        let _recording = dcl_metrics::set_default_local_recorder(&recorder);
         for path in ["/profiles", "/profiles/metadata"] {
             assert_eq!(
                 call(
@@ -435,12 +443,24 @@ mod tests {
 
     #[tokio::test]
     async fn registry_malformed_entity_is_left_out_not_the_batch() {
-        let state = state_with_empty_readers(None).await;
+        // The walk's NAMEs read the published (empty) Ethereum index.
+        let Some(db) = OwnDb::create("registry_malformed").await else {
+            return;
+        };
+        crate::market::owned_items::test_support::publish(
+            &db.pool,
+            &[crate::market::chain_walk::ChainNet::Ethereum],
+            false,
+            std::time::Duration::ZERO,
+        )
+        .await;
+        let state = state_with_empty_readers(Some(db.pool.clone())).await;
         let mut broken = entity();
         broken.as_object_mut().unwrap().remove("timestamp");
         let full = values(project_profiles(&state, &[broken, entity()], false).await);
         assert_eq!(full.len(), 1);
         assert_eq!(full[0]["timestamp"], 1700000000000_u64);
+        db.drop().await;
     }
 
     /// The Registry's CORS (`captures/abr/AB-12-preflight.json`): the
@@ -571,7 +591,7 @@ mod tests {
         let recorder = crate::comms::metrics::prometheus_builder()
             .unwrap()
             .build_recorder();
-        let _recording = metrics::set_default_local_recorder(&recorder);
+        let _recording = dcl_metrics::set_default_local_recorder(&recorder);
         let failed = format!("0x{:040x}", OWNERSHIP_CHUNK);
         let graph = Router::new().route(
             "/",
@@ -673,7 +693,18 @@ mod tests {
 
     #[tokio::test]
     async fn registry_projection_uses_shared_ownership_and_entity_snapshot_identity() {
-        let state = state_with_empty_readers(None).await;
+        // The walk's NAMEs read the published (empty) Ethereum index.
+        let Some(db) = OwnDb::create("registry_projection").await else {
+            return;
+        };
+        crate::market::owned_items::test_support::publish(
+            &db.pool,
+            &[crate::market::chain_walk::ChainNet::Ethereum],
+            false,
+            std::time::Duration::ZERO,
+        )
+        .await;
+        let state = state_with_empty_readers(Some(db.pool.clone())).await;
         let mut entity = entity();
         entity["metadata"]["avatars"][0]["avatar"]["snapshots"] = json!({
             "face256": "https://external.example/face", "body": "old",
@@ -713,6 +744,7 @@ mod tests {
                 "thumbnailUrl":"http://localhost/profile-images/entities/bafkprofile/face.png"
             })]
         );
+        db.drop().await;
     }
 
     /// Like the Registry sanitizer, an avatar without an `avatar` object

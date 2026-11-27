@@ -101,7 +101,7 @@ pub struct HighlightPostPipelines {
     blur_layout: BindGroupLayout,
     composite_layout: BindGroupLayout,
     sampler: Sampler,
-    /// one texel along the blur's axis, as a `vec2<f32>` padded to 16 bytes
+    /// the blur's axis, in the xy of the shader's `vec4<f32>`
     horizontal: Buffer,
     vertical: Buffer,
     blur_replace: CachedRenderPipelineId,

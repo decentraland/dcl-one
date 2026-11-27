@@ -214,6 +214,10 @@ fn signed_fetch_error(e: SignedFetchError) -> ApiError {
         SignedFetchError::MalformedChain { ref detail } if e.is_metadata_refusal() => {
             ApiError::bad_request(format!("Invalid signer: {detail}"))
         }
+        // The client source spent its contract-wallet checks: retry later.
+        SignedFetchError::RateLimited => {
+            ApiError::Status(StatusCode::TOO_MANY_REQUESTS, e.to_string())
+        }
         other => {
             tracing::debug!(error = %other, "signed-fetch verification failed for /notify-requests");
             ApiError::Unauthorized
@@ -315,6 +319,8 @@ async fn create(
         .map_err(|e| ApiError::bad_request(format!("invalid request body: {e}")))?;
     validate_create(&req).map_err(ApiError::bad_request)?;
     let contract = req.contract_address.to_ascii_lowercase();
+    let chain_id = i32::try_from(req.chain_id)
+        .map_err(|_| ApiError::bad_request("chainId is out of range"))?;
     let stored = state
         .store
         .upsert_capped(
@@ -322,7 +328,7 @@ async fn create(
             &req.email,
             &contract,
             &req.item_id,
-            req.chain_id as i32,
+            chain_id,
             MAX_PENDING_PER_WALLET,
             MAX_PENDING_PER_EMAIL,
         )

@@ -19,6 +19,14 @@ const MAX_AGE_SECONDS: i64 = 120;
 const CLOCK_SKEW_SECONDS: i64 = 30;
 const ADMISSION_LOCK: &str = "explore_api.magic_deletion_attempts:admission";
 const RATE_LIMITED: &str = "explore_magic_deletion_rate_limited_total";
+const RATE_LIMITED_COUNTER: dcl_metrics::CounterFamily<1> = dcl_metrics::CounterFamily::new(
+    RATE_LIMITED,
+    "Magic account deletion requests refused by a rate limit.",
+    Some(dcl_metrics::Unit::Count),
+    &["cap"],
+);
+pub const FAMILIES: &[dcl_metrics::Descriptor] = &[RATE_LIMITED_COUNTER.descriptor];
+
 const API_URL: &str = "https://api.magic.link/v1/admin/user/deletion/request";
 
 #[derive(Clone, Copy)]
@@ -310,7 +318,7 @@ pub(super) async fn delete_account(
             return forbidden("token_reused", "Magic DID token was already used");
         }
         Ok(Attempt::RateLimited(cap)) => {
-            metrics::counter!(RATE_LIMITED, "cap" => cap.label()).increment(1);
+            RATE_LIMITED_COUNTER.handle([cap.label()]).increment(1);
             let message = match cap {
                 Cap::Global => "Account deletion is busy",
                 Cap::Address | Cap::Network => "Too many account deletion requests",
@@ -633,9 +641,9 @@ mod tests {
         .execute(&db.pool)
         .await
         .unwrap();
-        let recorder = metrics_exporter_prometheus::PrometheusBuilder::new().build_recorder();
+        let recorder = dcl_metrics::PrometheusBuilder::new().build_recorder();
         let handle = recorder.handle();
-        let _recording = metrics::set_default_local_recorder(&recorder);
+        let _recording = dcl_metrics::set_default_local_recorder(&recorder);
         let state = crate::api::tests::node_on_pool_state(with_magic(None), db.pool.clone()).await;
         let app = crate::api::router(state);
         let owner = crate::shared::signed_fetch::test_support::wallet();

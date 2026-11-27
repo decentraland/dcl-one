@@ -26,6 +26,9 @@
 //! fetch. The native route serves a final JPEG or PNG for WebP and GIF event
 //! posters, using the same source limits and slots as a thumbnail.
 
+// Decodes untrusted input: malformed bytes must not panic.
+#![deny(clippy::indexing_slicing, clippy::expect_used)]
+
 use std::time::Duration;
 
 use axum::body::Bytes;
@@ -119,18 +122,18 @@ fn media_content_type(body: &[u8]) -> Result<String, Response> {
 }
 
 fn is_mp4(body: &[u8]) -> bool {
-    let Some(header) = body.get(..8) else {
+    let Some((size, rest)) = body.split_first_chunk::<4>() else {
         return false;
     };
-    if &header[4..8] != b"ftyp" {
+    if rest.get(..4) != Some(b"ftyp".as_slice()) {
         return false;
     }
-    let size = u32::from_be_bytes(header[..4].try_into().unwrap());
+    let size = u32::from_be_bytes(*size);
     let (size, offset) = if size == 1 {
-        let Some(extended) = body.get(8..16) else {
+        let Some(extended) = rest.get(4..).and_then(<[u8]>::first_chunk::<8>) else {
             return false;
         };
-        (u64::from_be_bytes(extended.try_into().unwrap()), 16)
+        (u64::from_be_bytes(*extended), 16)
     } else {
         (u64::from(size), 8)
     };
@@ -143,12 +146,15 @@ fn is_mp4(body: &[u8]) -> bool {
     let Some(payload) = body.get(offset..size) else {
         return false;
     };
+    let (Some(major), Some(compatible)) = (payload.get(..4), payload.get(8..)) else {
+        return false;
+    };
     let brands = || {
-        payload[..4]
+        major
             .as_chunks::<4>()
             .0
             .iter()
-            .chain(payload[8..].as_chunks::<4>().0.iter())
+            .chain(compatible.as_chunks::<4>().0.iter())
     };
     if brands().any(|brand| matches!(brand, b"avif" | b"avis")) {
         return false;
@@ -182,13 +188,13 @@ fn ebml_vint(input: &mut &[u8], id: bool) -> Option<u64> {
     } else {
         first & (0x7f >> (length - 1))
     });
-    for byte in &bytes[1..] {
+    for byte in bytes.iter().skip(1) {
         value = (value << 8) | u64::from(*byte);
     }
     if !id && value == (1_u64 << (7 * length)) - 1 {
         return None;
     }
-    *input = &input[length..];
+    *input = input.get(length..)?;
     Some(value)
 }
 
@@ -215,7 +221,7 @@ fn is_webm(body: &[u8]) -> bool {
         else {
             return false;
         };
-        let Some(value) = header.get(..length) else {
+        let Some((value, rest)) = header.split_at_checked(length) else {
             return false;
         };
         if id == 0x4282 {
@@ -224,7 +230,7 @@ fn is_webm(body: &[u8]) -> bool {
             }
             doctype = Some(value);
         }
-        header = &header[length..];
+        header = rest;
     }
     doctype == Some(b"webm".as_slice())
 }
@@ -594,6 +600,7 @@ fn cacheable(status: StatusCode, content_type: &str, body: Bytes) -> Result<Conv
 }
 
 #[path = "convert"]
+#[allow(clippy::indexing_slicing, clippy::expect_used, reason = "test support")]
 #[cfg(test)]
 mod tests {
     use super::*;

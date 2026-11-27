@@ -85,7 +85,9 @@ pub struct CreditUsageDiff {
     pub replayed: bool,
     #[serde(rename = "newBalance")]
     pub new_balance: String,
-    /// `purchase` (the group's charged cents) or `remainder` (a later use of the same credit).
+    /// `purchase` (the group's charged cents), `remainder` (a later use of the
+    /// same credit) or `deferred` (an earlier use of the credit is not settled
+    /// yet; a pass covering it settles both in order).
     pub kind: String,
 }
 
@@ -326,7 +328,7 @@ impl Credits {
 
             tracing::info!(chunk = chunks, wallets_scanned, adjustments_this_chunk = applied_here, adjustments_total = out.len(), cursor = %cursor, "ledger realign progress");
 
-            if (addresses.len() as i64) < batch {
+            if i64::try_from(addresses.len()).is_ok_and(|n| n < batch) {
                 break;
             }
         }

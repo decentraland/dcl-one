@@ -2,7 +2,6 @@ import { useEffect, useId, useState, type ReactNode } from 'react'
 import {
   GeneralAddToCalendar,
   GeneralBell,
-  GeneralClose,
   GeneralCopy,
   GeneralJumpIn,
   GeneralLive,
@@ -10,8 +9,8 @@ import {
   GeneralPlayers,
   GeneralPublic
 } from '../../../foundations/icons'
-import { Button } from '../shared/Button/Button'
-import { Button as SharedButton } from '../../../components/Button/Button'
+import { Button } from '../../../components/Button/Button'
+import { CloseButton } from '../../../components/CloseButton/CloseButton'
 import { EventCardHost } from '../../../components/EventCard/EventCard'
 import { hostOf } from './cards'
 import type { EventCardCreator, EventCardTime, JumpIn, RemindControl } from './types'
@@ -20,6 +19,8 @@ import { useEventsCopy } from './locale'
 import styles from './DetailModal.module.css'
 
 const reminderActionSize = { size: 'md', viewport: 'responsive' } as const
+/** Calendar and Copy beside the large Jump In, when no reminder sets the row's size. */
+const largeActionSize = { size: 'lg' } as const
 
 type Location = { label: string; world: boolean; jumpIn?: JumpIn }
 
@@ -73,23 +74,16 @@ function CopyLink({ url, responsive = false }: { url: string; responsive?: boole
       () => setState('failed')
     )
   }
-  const label = text('Copy link')
   return (
     <>
-      {responsive ? (
-        <SharedButton
-          {...reminderActionSize}
-          variant="secondaryLight"
-          iconOnly
-          aria-label={label}
-          startIcon={<GeneralCopy aria-hidden="true" />}
-          onClick={copy}
-        />
-      ) : (
-        <button type="button" className={styles.iconButton} aria-label={label} onClick={copy}>
-          <GeneralCopy size={20} aria-hidden="true" />
-        </button>
-      )}
+      <Button
+        {...(responsive ? reminderActionSize : largeActionSize)}
+        variant="secondaryLight"
+        iconOnly
+        aria-label={text('Copy link')}
+        startIcon={<GeneralCopy aria-hidden="true" />}
+        onClick={copy}
+      />
       <span role="status" className={state === 'idle' ? styles.visuallyHidden : styles.copyNotice}>
         {state === 'copied'
           ? text('Copied!')
@@ -103,24 +97,17 @@ function CopyLink({ url, responsive = false }: { url: string; responsive?: boole
 
 function CalendarLink({ href, responsive }: { href: string; responsive: boolean }) {
   const { text } = useEventsCopy()
-  const link = {
-    href,
-    target: '_blank',
-    rel: 'noopener noreferrer',
-    'aria-label': text('Add to calendar')
-  }
-  return responsive ? (
-    <SharedButton
-      {...link}
-      {...reminderActionSize}
+  return (
+    <Button
+      href={href}
+      target="_blank"
+      rel="noopener noreferrer"
+      aria-label={text('Add to calendar')}
+      {...(responsive ? reminderActionSize : largeActionSize)}
       variant="secondaryLight"
       iconOnly
       startIcon={<GeneralAddToCalendar aria-hidden="true" />}
     />
-  ) : (
-    <a {...link} className={styles.iconButton}>
-      <GeneralAddToCalendar size={20} aria-hidden="true" />
-    </a>
   )
 }
 
@@ -155,9 +142,13 @@ function LocationChip({ location }: { location: Location }) {
 function JumpInButton({ jumpIn }: { jumpIn: JumpIn }) {
   const { text } = useEventsCopy()
   return (
-    <Button href={jumpIn.href} onClick={jumpIn.onJumpIn}>
+    <Button
+      size="lg"
+      href={jumpIn.href}
+      onClick={jumpIn.onJumpIn}
+      trailingIcon={<GeneralJumpIn size={20} aria-hidden="true" />}
+    >
       {text('Jump In')}
-      <GeneralJumpIn size={20} aria-hidden="true" />
     </Button>
   )
 }
@@ -183,9 +174,12 @@ function Hero({
     <div className={styles.hero}>
       {image ? <img className={styles.heroImage} src={image} alt="" /> : null}
       <div className={styles.heroShade} aria-hidden="true" />
-      <button type="button" className={styles.close} aria-label={text('Close')} onClick={onClose}>
-        <GeneralClose size={24} aria-hidden="true" />
-      </button>
+      <CloseButton
+        variant="filled"
+        className={styles.close}
+        aria-label={text('Close')}
+        onClick={onClose}
+      />
       <div className={styles.heroContent}>
         {kicker ? <div className={styles.kicker}>{kicker}</div> : null}
         <h2 id={titleId} className={styles.title}>
@@ -241,7 +235,7 @@ function EventDetailModal(props: EventDetailModalProps) {
         <div className={styles.actions}>
           {live && jumpIn ? <JumpInButton jumpIn={jumpIn} /> : null}
           {reminder ? (
-            <SharedButton
+            <Button
               {...reminderActionSize}
               variant={reminder.active ? 'primary' : 'secondaryLight'}
               startIcon={<GeneralBell aria-hidden="true" />}
@@ -250,7 +244,7 @@ function EventDetailModal(props: EventDetailModalProps) {
               onClick={reminder.onToggle}
             >
               {text('Remind me')}
-            </SharedButton>
+            </Button>
           ) : null}
           {calendarHref ? (
             <CalendarLink href={calendarHref} responsive={Boolean(reminder)} />

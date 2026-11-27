@@ -30,6 +30,7 @@ use anyhow::Context;
 use chrono::{DateTime, Duration as ChronoDuration, NaiveDateTime, Utc};
 use sqlx::{PgConnection, PgPool};
 
+use super::casts;
 use crate::chain_index::rpc::{BlockHeader, RpcLog};
 
 pub(crate) fn topic_address(topic: &str) -> Option<String> {
@@ -47,19 +48,37 @@ pub const INDEXER_MANA: &str = "mana_transfers";
 
 pub const INDEXER_COMMITTEE: &str = "committee";
 
+pub use crate::chain_index::catalogue::INDEXER_COLLECTIONS;
+
 pub const INDEXER_NFT: &str = "nft";
 pub const INDEXER_SALES: &str = "sales";
 pub const INDEXER_TRADE_EVENTS: &str = "trade_events";
 pub const INDEXER_THIRD_PARTY_REGISTRY: &str = "third_party_registry";
 
-/// How old a publish may be before readers stop trusting it (a stopped job).
-pub const READY_WINDOW: ChronoDuration = ChronoDuration::minutes(30);
+/// The indexers whose projection triggers in `schemas/30_shop.sql` require
+/// writers to lock the cursor before touching the triggered rows.
+pub(super) const CURSOR_FIRST_INDEXERS: &[&str] = &[INDEXER_NFT, INDEXER_SALES];
+
+pub(super) fn locks_cursor_before_projection_write(indexer: &str) -> bool {
+    CURSOR_FIRST_INDEXERS.contains(&indexer)
+}
+
+pub use crate::chain_index::catalogue::READY_WINDOW;
 
 /// The two chains the marketplace indexes walk; the `network` column's spelling.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum ChainNet {
     Ethereum,
     Matic,
+}
+
+impl From<super::graph::Network> for ChainNet {
+    fn from(net: super::graph::Network) -> Self {
+        match net {
+            super::graph::Network::Ethereum => Self::Ethereum,
+            super::graph::Network::Matic => Self::Matic,
+        }
+    }
 }
 
 impl ChainNet {
@@ -81,9 +100,35 @@ impl ChainNet {
     }
 
     pub fn chain_id(self) -> i64 {
+        i64::from(self.chain_number())
+    }
+
+    /// [`Self::chain_id`] as an `integer` (advisory lock keys, `chain_id` columns).
+    pub fn chain_id_i32(self) -> i32 {
+        i32::from(self.chain_number())
+    }
+
+    /// [`Self::chain_id`] as JSON-RPC answers it.
+    pub fn chain_id_u64(self) -> u64 {
+        u64::from(self.chain_number())
+    }
+
+    fn chain_number(self) -> u16 {
         match self {
             ChainNet::Ethereum => 1,
             ChainNet::Matic => 137,
+        }
+    }
+
+    #[allow(
+        clippy::cast_possible_wrap,
+        reason = "the Sepolia and Amoy chain ids are small constants"
+    )]
+    pub fn testnet_chain_id(self) -> i64 {
+        use crate::types::ChainId;
+        match self {
+            Self::Ethereum => ChainId::SEPOLIA.0 as i64,
+            Self::Matic => ChainId::AMOY.0 as i64,
         }
     }
 
@@ -142,6 +187,12 @@ pub struct IndexSettings {
     pub committee_enabled: bool,
     /// `MARKETPLACE_THIRD_PARTY_REGISTRY_INDEX_ENABLED`: Polygon providers and slots.
     pub third_party_registry_enabled: bool,
+    /// `MARKETPLACE_COLLECTIONS_INDEX_ENABLED`: the Polygon collection factories and collections,
+    /// and Ethereum's collections-v1 contracts.
+    pub collections_enabled: bool,
+    /// `MARKETPLACE_COLLECTIONS_INDEX_OWNS`: the networks whose catalogue rows that walk's fold
+    /// takes from the collections mirror and writes.
+    pub collections_owned: Vec<ChainNet>,
     /// `MARKETPLACE_INDEX_INTERVAL_SECS` (5; 30 under the mirror posture): pause between passes.
     pub interval: Duration,
     /// `MARKETPLACE_INDEX_REQUESTS_PER_PASS` (100): `eth_getLogs` calls one
@@ -165,8 +216,8 @@ pub struct IndexSettings {
     /// `MARKETPLACE_COUPON_REFRESH_INTERVAL_SECS` (300): between two coupon state reads.
     pub coupon_refresh_interval: Duration,
     /// `MARKETPLACE_INDEX_CHAIN_ID_{ETHEREUM,MATIC}` (1, 137): the chain the
-    /// trade-events walk of each network reads, its mainnet or its testnet
-    /// (11155111, 80002). The other indexes read mainnet only.
+    /// NFT and trade-event walks of each network read. A catalogue database holds
+    /// the mainnet pair or the Sepolia/Amoy pair.
     pub chain_id_ethereum: i64,
     pub chain_id_matic: i64,
 }
@@ -180,6 +231,8 @@ impl Default for IndexSettings {
             sales_enabled: false,
             committee_enabled: false,
             third_party_registry_enabled: false,
+            collections_enabled: false,
+            collections_owned: Vec::new(),
             interval: Duration::from_secs(5),
             requests_per_pass: 100,
             window_blocks: 10_000,
@@ -197,7 +250,7 @@ impl Default for IndexSettings {
 }
 
 impl IndexSettings {
-    /// The chain the trade-events walk of `net` reads.
+    /// The served chain of this network.
     pub fn chain_id(&self, net: ChainNet) -> i64 {
         match net {
             ChainNet::Ethereum => self.chain_id_ethereum,
@@ -205,18 +258,28 @@ impl IndexSettings {
         }
     }
 
+    pub fn serves_mainnet(&self, net: ChainNet) -> bool {
+        self.chain_id(net) == net.chain_id()
+    }
+
     /// Refuses a chain that is neither the network's mainnet nor its
     /// testnet: the walk would read another network's contracts.
-    pub fn check_chains(&self) -> Result<(), String> {
+    pub fn check_supported_chain_ids(&self) -> Result<(), String> {
         for (net, allowed, var) in [
             (
                 ChainNet::Ethereum,
-                [1, 11_155_111],
+                [
+                    ChainNet::Ethereum.chain_id(),
+                    ChainNet::Ethereum.testnet_chain_id(),
+                ],
                 "MARKETPLACE_INDEX_CHAIN_ID_ETHEREUM",
             ),
             (
                 ChainNet::Matic,
-                [137, 80_002],
+                [
+                    ChainNet::Matic.chain_id(),
+                    ChainNet::Matic.testnet_chain_id(),
+                ],
                 "MARKETPLACE_INDEX_CHAIN_ID_MATIC",
             ),
         ] {
@@ -230,6 +293,74 @@ impl IndexSettings {
                 ));
             }
         }
+        Ok(())
+    }
+
+    pub fn check_catalogue_pair(&self) -> Result<(), String> {
+        self.check_supported_chain_ids()?;
+        if (self.nft_enabled || self.sales_enabled)
+            && (self.serves_mainnet(ChainNet::Ethereum) != self.serves_mainnet(ChainNet::Matic))
+        {
+            return Err("the NFT catalogue requires the Ethereum/Polygon mainnet pair (1/137) or Sepolia/Amoy (11155111/80002)".into());
+        }
+        Ok(())
+    }
+
+    /// All catalogue writers sharing this DB must agree before starting jobs.
+    /// The independently keyed Rentals histories may coexist on either pair.
+    pub async fn check_catalogue_db(
+        &self,
+        pool: &PgPool,
+        writes_catalogue: bool,
+        sources: [Option<&str>; 2],
+    ) -> anyhow::Result<()> {
+        if !writes_catalogue {
+            return Ok(());
+        }
+        let mut tx = pool.begin().await?;
+        let pair = vec![
+            self.chain_id_ethereum.to_string(),
+            self.chain_id_matic.to_string(),
+        ];
+        sqlx::query(
+            "INSERT INTO shop.worker_progress(worker, scope, key_position)
+                         VALUES ('nft_catalogue_pair',0,$1) ON CONFLICT (worker,scope) DO NOTHING",
+        )
+        .bind(&pair)
+        .execute(&mut *tx)
+        .await?;
+        let bound: Option<Vec<String>> = sqlx::query_scalar(
+            "SELECT key_position FROM shop.worker_progress
+              WHERE worker='nft_catalogue_pair' AND scope=0",
+        )
+        .fetch_optional(&mut *tx)
+        .await?;
+        anyhow::ensure!(
+            bound.as_ref().is_none_or(|b| b == &pair),
+            "marketplace catalogue chain pair {pair:?} conflicts with database binding {bound:?}"
+        );
+        let wrong: Option<(String, String, i64)> = sqlx::query_as(
+            "SELECT source, network, chain_id FROM (
+                 SELECT indexer AS source, network, chain_id FROM shop.chain_cursor
+                   WHERE indexer IN ('nft','sales')
+                 UNION ALL SELECT mirror, network, chain_id FROM shop.mirror_state
+             ) AS bindings WHERE chain_id <> CASE network WHEN 'ethereum' THEN $1::bigint ELSE $2::bigint END LIMIT 1")
+             .bind(self.chain_id_ethereum).bind(self.chain_id_matic).fetch_optional(&mut *tx).await?;
+        if let Some((source, network, id)) = wrong {
+            anyhow::bail!(
+                "marketplace catalogue chain pair {pair:?} conflicts with {source}/{network} already bound to chain {id}"
+            );
+        }
+        if self.chain_id_ethereum == ChainNet::Ethereum.testnet_chain_id() {
+            let incompatible: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM shop.mirror_state
+                WHERE chain_id IS NULL AND source_url <> CASE network WHEN 'ethereum' THEN $1::text ELSE $2::text END)")
+                .bind(sources[0]).bind(sources[1]).fetch_one(&mut *tx).await?;
+            anyhow::ensure!(
+                !incompatible,
+                "unbound catalogue copy is from a different source; check the catalogue rebind procedure in DATABASE.md"
+            );
+        }
+        tx.commit().await?;
         Ok(())
     }
 
@@ -277,7 +408,7 @@ pub struct Cursor {
     pub diverged_at: Option<NaiveDateTime>,
 }
 
-const CURSOR_COLUMNS: &str = "indexer, network, start_block, last_block, last_block_hash, last_block_time, fold_through, folded_block, folded_at, full_history, reorg_rewinds, updated_at, chain_id, owner_generation, quarantined_at, quarantine_reason, rebuild_requested_at, diverged_at";
+pub(crate) const CURSOR_COLUMNS: &str = "indexer, network, start_block, last_block, last_block_hash, last_block_time, fold_through, folded_block, folded_at, full_history, reorg_rewinds, updated_at, chain_id, owner_generation, quarantined_at, quarantine_reason, rebuild_requested_at, diverged_at";
 
 /// Runs `ANALYZE <table>` in the fold's transaction only when the fold needs
 /// statistics the table does not have yet: a rebuild (`since` -1), a table
@@ -340,6 +471,12 @@ const STARTED_AGE: ChronoDuration = READY_WINDOW
     .checked_add(&ChronoDuration::seconds(1))
     .expect("a small sum");
 
+#[allow(
+    clippy::cast_possible_truncation,
+    reason = "STARTED_AGE is a few minutes of seconds"
+)]
+const STARTED_SECONDS: i32 = STARTED_AGE.num_seconds() as i32;
+
 /// Marks the cursor of a walk `owner` just started, standing at `at`, as
 /// advanced [`STARTED_AGE`] ago, unless it advanced later: [`is_walked`] reads
 /// it as behind, not abandoned and not live, until its first window really
@@ -361,7 +498,7 @@ pub async fn touch_started(
     .bind(owner.net.db_name())
     .bind(at.0)
     .bind(at.1)
-    .bind(STARTED_AGE.num_seconds() as f64)
+    .bind(f64::from(STARTED_SECONDS))
     .execute(&mut *tx)
     .await?
     .rows_affected();
@@ -421,14 +558,16 @@ pub(crate) async fn touch_once(
 
 /// One projection as the job that walks it holds it: the cursor row
 /// (`indexer`, `net`), the chain its history is bound to and the generation
-/// [`claim`] granted. Every transaction that writes the projection ends with
-/// [`Owner::check`], so a job that lost the projection commits nothing.
+/// [`claim`] granted. Transactions fence projection writes with [`Owner::check`].
+/// For NFT and sales, take the chain cursor lock after any notification
+/// cursor locks and before the projection writes.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Owner {
     pub indexer: &'static str,
     pub net: ChainNet,
     pub chain_id: i64,
     pub generation: i64,
+    verify_sales: bool,
     /// Whether this generation's walk touched its cursor at its start.
     pub started: Started,
 }
@@ -494,8 +633,8 @@ impl Spent {
 impl Owner {
     /// Locks the cursor row until the caller's commit and refuses unless the
     /// row still carries this generation, is bound to this chain and is not
-    /// in quarantine. Call it last, right before the commit, so the row lock
-    /// lasts only as long as the commit.
+    /// in quarantine. Take this lock before writing projection tables
+    /// covered by the publication trigger.
     pub async fn check(&self, conn: &mut PgConnection) -> anyhow::Result<()> {
         let row: Option<(i64, Option<i64>, Option<String>)> = sqlx::query_as(
             "SELECT owner_generation, chain_id, quarantine_reason FROM shop.chain_cursor \
@@ -551,14 +690,14 @@ pub async fn claim(
         .execute(&mut *tx)
         .await?;
     let generation: i64 = sqlx::query_scalar(
-        "INSERT INTO shop.chain_cursor (indexer, network, start_block, last_block, full_history, chain_id, owner_generation) \
-         VALUES ($1, $2, $3, $3 - 1, $4, $5, 1) \
+        "INSERT INTO shop.chain_cursor (indexer, network, start_block, last_block, full_history, chain_id, owner_generation, sepolia_trade_v1) \
+         VALUES ($1, $2, $3, $3 - 1, $4, $5, 1, $1 = 'trade_events' AND $5 = 11155111) \
          ON CONFLICT (indexer, network) DO UPDATE SET owner_generation = shop.chain_cursor.owner_generation + 1 \
          RETURNING owner_generation",
     )
     .bind(indexer)
     .bind(net.db_name())
-    .bind(start_block as i64)
+    .bind(casts::to_i64(start_block)?)
     .bind(full_history)
     .bind(chain_id)
     .fetch_one(&mut *tx)
@@ -625,6 +764,9 @@ impl Holdings {
             net,
             chain_id,
             generation,
+            verify_sales: settings.sales_enabled
+                && super::sale_history::required(indexer)
+                && chain_id == net.chain_id(),
             started,
         })
     }
@@ -647,16 +789,21 @@ pub const CHECKPOINTS_KEPT: i64 = 64;
 /// else moved fails the transaction
 /// instead of skipping or repeating a range. `header` must have been read in
 /// the window's bracket, after a predecessor read that proved `expected`.
-/// The caller ends the transaction with [`Owner::check`].
+/// The caller fences the same transaction with [`Owner::check`]. NFT and
+/// sales writers check before writing the window rows.
 pub async fn advance(
     conn: &mut PgConnection,
     indexer: &str,
     net: ChainNet,
     expected: (i64, Option<&str>),
     header: &BlockHeader,
+    verified_sales: bool,
 ) -> Result<(), sqlx::Error> {
     let updated = sqlx::query(
         "UPDATE shop.chain_cursor SET last_block = $5, last_block_hash = $6, last_block_time = $7, \
+             sale_covered_rewinds = CASE WHEN $8 AND ($3 = start_block - 1 OR (sale_covered_rewinds = reorg_rewinds AND sale_input_version = $9 AND sale_verified_through = $3)) THEN reorg_rewinds ELSE sale_covered_rewinds END, \
+             sale_input_version = CASE WHEN $8 AND ($3 = start_block - 1 OR (sale_covered_rewinds = reorg_rewinds AND sale_input_version = $9 AND sale_verified_through = $3)) THEN $9 ELSE sale_input_version END, \
+             sale_verified_through = CASE WHEN $8 AND ($3 = start_block - 1 OR (sale_covered_rewinds = reorg_rewinds AND sale_input_version = $9 AND sale_verified_through = $3)) THEN $5 ELSE sale_verified_through END, \
              updated_at = timezone('UTC', now()) \
          WHERE indexer = $1 AND network = $2 AND last_block = $3 AND last_block_hash IS NOT DISTINCT FROM $4 \
            AND last_block < $5",
@@ -665,9 +812,11 @@ pub async fn advance(
     .bind(net.db_name())
     .bind(expected.0)
     .bind(expected.1)
-    .bind(header.number as i64)
+    .bind(casts::to_i64(header.number)?)
     .bind(&header.hash)
     .bind(header.timestamp)
+    .bind(verified_sales)
+    .bind(super::sale_history::VERSION)
     .execute(&mut *conn)
     .await?;
     if updated.rows_affected() != 1 {
@@ -691,7 +840,7 @@ pub async fn advance(
     )
     .bind(indexer)
     .bind(net.db_name())
-    .bind(header.number as i64)
+    .bind(casts::to_i64(header.number)?)
     .bind(&header.hash)
     .bind(header.timestamp)
     .execute(&mut *conn)
@@ -728,7 +877,9 @@ pub async fn rewind(
     let updated = sqlx::query(
         "UPDATE shop.chain_cursor SET last_block = $5, last_block_hash = $6, last_block_time = $7, \
              fold_through = NULL, folded_block = NULL, folded_at = NULL, diverged_at = NULL, \
-             reorg_rewinds = reorg_rewinds + 1, updated_at = timezone('UTC', now()) \
+             sale_covered_rewinds = CASE WHEN sale_covered_rewinds = reorg_rewinds THEN reorg_rewinds + 1 END, \
+             sale_verified_through = CASE WHEN sale_verified_through IS NOT NULL THEN least(sale_verified_through, $5) END, \
+             sale_repair_upper = NULL, sale_dirty_from = least(sale_dirty_from, $5::bigint + 1), sale_history_revision = sale_history_revision + 1, reorg_rewinds = reorg_rewinds + 1, updated_at = timezone('UTC', now()) \
          WHERE indexer = $1 AND network = $2 AND last_block = $3 AND last_block_hash IS NOT DISTINCT FROM $4 \
            AND last_block >= $5",
     )
@@ -833,9 +984,11 @@ pub async fn record_fold(pool: &PgPool, owner: &Owner, block: i64) -> anyhow::Re
 
 /// Sets `folded_block` to the block a completed fold covered, only on the
 /// row still at that block, with its whole history walked and not in
-/// quarantine.
+/// quarantine; and, in the same transaction, writes what `ix` derives from
+/// the published fold ([`ChainIndex::publish`]).
 pub async fn mark_folded(
     pool: &PgPool,
+    ix: &dyn ChainIndex,
     owner: &Owner,
     block: i64,
     now: DateTime<Utc>,
@@ -852,9 +1005,15 @@ pub async fn mark_folded(
     .bind(now.naive_utc())
     .execute(&mut *tx)
     .await?;
+    let published = updated.rows_affected() == 1;
+    if published {
+        ix.publish(&mut tx, block)
+            .await
+            .context("publishing what the fold derived")?;
+    }
     owner.check(&mut tx).await?;
     tx.commit().await?;
-    Ok(updated.rows_affected() == 1)
+    Ok(published)
 }
 
 /// Withdraws the publish of the row still at `block`: a fold that may not
@@ -872,31 +1031,141 @@ pub async fn unpublish(pool: &PgPool, owner: &Owner, block: i64) -> anyhow::Resu
     Ok(())
 }
 
-/// The chain every index but `trade_events` reads on `net` (mainnet only).
-pub fn mainnet_chain(net: ChainNet) -> i64 {
-    net.chain_id()
-}
-
 /// The readiness rule, at the caller's clock, for a projection read on
 /// chain `chain_id`: a whole history folded through its last block within
 /// [`READY_WINDOW`], bound to that chain and not in quarantine.
 pub fn is_ready_on(c: &Cursor, chain_id: i64, now: DateTime<Utc>) -> bool {
-    let Some(folded_at) = c.folded_at else {
-        return false;
-    };
-    let age = now.naive_utc().signed_duration_since(folded_at);
-    c.full_history
-        && c.folded_block == Some(c.last_block)
-        && c.chain_id == Some(chain_id)
-        && c.quarantined_at.is_none()
-        && age >= ChronoDuration::zero()
-        && age <= READY_WINDOW
+    fresh_fold_on(c, chain_id, now) == Some(c.last_block)
+}
+
+/// The published height for a reader that bounds every event query by that
+/// height. A forward walk may already have committed the next window.
+pub(crate) fn fresh_fold_on(c: &Cursor, chain_id: i64, now: DateTime<Utc>) -> Option<i64> {
+    let age = now.naive_utc().signed_duration_since(c.folded_at?);
+    c.folded_block.filter(|folded| {
+        c.full_history
+            && *folded <= c.last_block
+            && c.chain_id == Some(chain_id)
+            && c.quarantined_at.is_none()
+            && age >= ChronoDuration::zero()
+            && age <= READY_WINDOW
+    })
+}
+
+/// The fresh published height on this chain, including while its walk is ahead.
+pub(crate) async fn published_block<'e>(
+    executor: impl sqlx::PgExecutor<'e>,
+    indexer: &str,
+    net: ChainNet,
+    chain_id: i64,
+    now: DateTime<Utc>,
+) -> Result<Option<i64>, sqlx::Error> {
+    Ok(cursor(executor, indexer, net)
+        .await?
+        .and_then(|c| fresh_fold_on(&c, chain_id, now)))
+}
+
+/// Whether a projection holds exactly the fold its cursor `c` published,
+/// judged by `marker`: the block the projection's own fold wrote with its
+/// rows, in the fold's transaction (`None` before its first such fold).
+///
+/// The walk commits a fold, then records it ([`record_fold`]) and publishes
+/// it ([`mark_folded`]) after reading the head, each in a transaction of its
+/// own. Between the fold's commit and its publication the projection's rows
+/// already hold the next fold while `folded_block` still names the previous
+/// one, and a stalled head read stretches that interval; `fold_through` and
+/// `folded_block` do not move with the rows, so they cannot tell. A marker
+/// written with the rows can: a reader serves the projection only while it
+/// equals the published block, read on the same snapshot as the rows. A walk
+/// that advanced without folding leaves both at the published block, still
+/// served.
+pub fn holds_published_fold(marker: Option<i64>, c: &Cursor) -> bool {
+    marker.is_some() && marker == c.folded_block
+}
+
+/// [`holds_published_fold`] for the cursor of `indexer` on `net`, read on
+/// `conn` (the reader's snapshot); false without a cursor.
+pub async fn holds_published_fold_on(
+    conn: &mut PgConnection,
+    indexer: &str,
+    net: ChainNet,
+    marker: Option<i64>,
+) -> Result<bool, sqlx::Error> {
+    Ok(cursor(&mut *conn, indexer, net)
+        .await?
+        .is_some_and(|c| holds_published_fold(marker, &c)))
+}
+
+/// Whether every projection named in `projections` holds the fold the
+/// cursor of `indexer` on `net` published, read on `conn` (the reader's
+/// snapshot): its `folded_block` is set and none of them holds a write that
+/// no publication has acknowledged since. `shop.projection_write` marks each
+/// write pending through statement triggers in the schema, and a trigger on
+/// the cursor clears it when a publication commits, whichever binary wrote
+/// or published. This holds also against a writer that predates a
+/// projection's own fold marker ([`holds_published_fold`]), as an earlier
+/// binary is during a rollout, and against a write at the published height.
+/// A raw walk advance writes nothing and stays served.
+/// When `required_projection` is set, that projection also needs an
+/// acknowledged row. This lets an upgraded reader distinguish missing
+/// proof from an empty projection that a writer has published.
+pub(super) async fn rows_published_on(
+    conn: &mut PgConnection,
+    indexer: &str,
+    net: ChainNet,
+    projections: &[&str],
+    required_projection: Option<&str>,
+) -> Result<bool, sqlx::Error> {
+    let published: Option<bool> = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
+        "SELECT {ROWS_PUBLISHED} AND ($4::text IS NULL OR EXISTS ( \
+            SELECT 1 FROM shop.projection_write w WHERE w.indexer = c.indexer \
+            AND w.network = c.network AND w.projection = $4 AND NOT w.pending)) \
+         FROM shop.chain_cursor c WHERE c.indexer = $1 AND c.network = $2"
+    )))
+    .bind(indexer)
+    .bind(net.db_name())
+    .bind(projections)
+    .bind(required_projection)
+    .fetch_optional(conn)
+    .await?;
+    Ok(published.unwrap_or(false))
+}
+
+const ROWS_PUBLISHED: &str = "c.folded_block IS NOT NULL AND NOT EXISTS ( \
+    SELECT 1 FROM shop.projection_write w \
+    WHERE w.indexer = c.indexer AND w.network = c.network AND w.projection = ANY($3) AND w.pending)";
+
+#[derive(sqlx::FromRow)]
+struct CursorPublication {
+    #[sqlx(flatten)]
+    cursor: Cursor,
+    rows_published: bool,
+}
+
+/// Read the cursor and the same row-publication proof as [`rows_published_on`]
+/// when both are required on the read snapshot.
+pub(super) async fn cursor_with_rows_publication(
+    conn: &mut PgConnection,
+    indexer: &str,
+    net: ChainNet,
+    projections: &[&str],
+) -> Result<Option<(Cursor, bool)>, sqlx::Error> {
+    let publication = sqlx::query_as::<_, CursorPublication>(sqlx::AssertSqlSafe(format!(
+        "SELECT {CURSOR_COLUMNS}, {ROWS_PUBLISHED} AS rows_published \
+         FROM shop.chain_cursor c WHERE c.indexer = $1 AND c.network = $2"
+    )))
+    .bind(indexer)
+    .bind(net.db_name())
+    .bind(projections)
+    .fetch_optional(conn)
+    .await?;
+    Ok(publication.map(|p| (p.cursor, p.rows_published)))
 }
 
 /// [`is_ready_on`] for the indexes that read mainnet only: every index but
 /// `trade_events`, whose readers pass the chain they configured.
 pub fn is_ready(c: &Cursor, now: DateTime<Utc>) -> bool {
-    ChainNet::parse(&c.network).is_some_and(|net| is_ready_on(c, mainnet_chain(net), now))
+    ChainNet::parse(&c.network).is_some_and(|net| is_ready_on(c, net.chain_id(), now))
 }
 
 /// [`is_ready`] as SQL over a `shop.chain_cursor` alias, for statements
@@ -905,8 +1174,8 @@ pub fn ready_sql(alias: &str, now_p: &str) -> String {
     ready_sql_on(
         alias,
         now_p,
-        mainnet_chain(ChainNet::Ethereum),
-        mainnet_chain(ChainNet::Matic),
+        ChainNet::Ethereum.chain_id(),
+        ChainNet::Matic.chain_id(),
     )
 }
 
@@ -921,9 +1190,7 @@ pub fn ready_sql_on(alias: &str, now_p: &str, ethereum_chain: i64, matic_chain: 
     )
 }
 
-/// How far ahead of the caller's clock the database's `updated_at` may be and
-/// still count as advanced.
-pub(crate) const MAX_CLOCK_SKEW: ChronoDuration = ChronoDuration::minutes(10);
+pub(crate) use crate::chain_index::catalogue::MAX_CLOCK_SKEW;
 
 /// A liveness heuristic for whether cursor `c` serves its index at `now`:
 /// ready, or bound to its network's mainnet chain, out of quarantine, not
@@ -938,8 +1205,7 @@ pub fn is_walked(c: &Cursor, now: DateTime<Utc>, horizon: ChronoDuration) -> boo
     // As readiness asks: bound to the chain its readers expect, out of
     // quarantine and not diverged (its recovery still searching); otherwise
     // no claim it takes can settle yet.
-    let bound =
-        ChainNet::parse(&c.network).is_some_and(|net| c.chain_id == Some(mainnet_chain(net)));
+    let bound = ChainNet::parse(&c.network).is_some_and(|net| c.chain_id == Some(net.chain_id()));
     if !bound || c.quarantined_at.is_some() || c.diverged_at.is_some() {
         return false;
     }
@@ -980,7 +1246,7 @@ pub async fn ready_cursor(
     net: ChainNet,
     now: DateTime<Utc>,
 ) -> Option<Cursor> {
-    ready_cursor_on(pool, indexer, net, mainnet_chain(net), now).await
+    ready_cursor_on(pool, indexer, net, net.chain_id(), now).await
 }
 
 pub use crate::chain_index::logs::{
@@ -995,7 +1261,10 @@ pub fn block_at_or_before(net: ChainNet, anchor: (u64, i64), t: i64) -> u64 {
     if t >= time {
         return block;
     }
-    let blocks = ((time - t) as u128 * 1000).div_ceil(net.min_block_ms() as u128) as u64;
+    // `t < time`, so the gap is positive.
+    let gap = u128::try_from(time - t).unwrap_or(0);
+    let blocks =
+        u64::try_from((gap * 1000).div_ceil(u128::from(net.min_block_ms()))).unwrap_or(u64::MAX);
     block.saturating_sub(blocks)
 }
 
@@ -1003,7 +1272,9 @@ pub fn block_at_or_before(net: ChainNet, anchor: (u64, i64), t: i64) -> u64 {
 /// at or before it: `anchor.timestamp + (block - anchor.number) * max_block`.
 pub fn time_at_most(net: ChainNet, anchor: (u64, i64), block: u64) -> i64 {
     let (at, time) = anchor;
-    time + (block.saturating_sub(at) as i64).saturating_mul(net.max_block_ms() as i64) / 1000
+    let blocks = i64::try_from(block.saturating_sub(at)).unwrap_or(i64::MAX);
+    let max_block_ms = i64::try_from(net.max_block_ms()).unwrap_or(i64::MAX);
+    time + blocks.saturating_mul(max_block_ms) / 1000
 }
 
 /// A pass's outcome, for the job trace, the tests and the measurement.
@@ -1034,6 +1305,10 @@ impl PassOutcome {
     }
 
     /// `blocks/s` and `rows/s` of the pass, the catch-up measure.
+    #[allow(
+        clippy::cast_precision_loss,
+        reason = "a throughput figure for the trace; rounding past 2^53 is harmless"
+    )]
     pub fn rates(&self) -> (f64, f64) {
         let secs = (self.elapsed_ms.max(1) as f64) / 1000.0;
         (self.blocks() as f64 / secs, self.rows_written as f64 / secs)
@@ -1074,7 +1349,7 @@ impl PassOutcome {
 
 /// Whether a cursor at `last_block` is held at its stop block, with nothing left to walk.
 fn held_at_stop(last_block: i64, stop: Option<u64>) -> bool {
-    stop.is_some_and(|s| last_block >= s as i64)
+    stop.is_some_and(|s| i64::try_from(s).is_ok_and(|s| last_block >= s))
 }
 
 /// Clamp the chain's safe head to an optional operator stop block.
@@ -1096,7 +1371,7 @@ pub trait ChainIndex: Send + Sync {
     /// The chain the index reads on `net`: mainnet for every index but
     /// `trade_events`, which may read a testnet.
     fn chain_id(&self) -> i64 {
-        mainnet_chain(self.net())
+        self.net().chain_id()
     }
     /// The first block a full history reads (the contracts' deployment).
     fn start_block(&self) -> u64;
@@ -1117,6 +1392,15 @@ pub trait ChainIndex: Send + Sync {
         logs: &[RpcLog],
         times: &HashMap<i64, i64>,
     ) -> anyhow::Result<usize>;
+    /// Record filter-specific coverage in the same transaction as the cursor advance.
+    async fn record_coverage(
+        &self,
+        _conn: &mut PgConnection,
+        _previous: (i64, Option<&str>),
+        _end: &BlockHeader,
+    ) -> anyhow::Result<()> {
+        Ok(())
+    }
     /// Deletes the log past `to` and refolds what it touched, in the
     /// transaction that rewinds the cursor.
     async fn rewind(&self, conn: &mut PgConnection, to: i64) -> anyhow::Result<()>;
@@ -1131,8 +1415,8 @@ pub trait ChainIndex: Send + Sync {
     /// whether the result may be published (nothing still owed). A fold
     /// that may not be published clears its cursor's `folded_block` in the
     /// transaction that commits its rows: the pass clears it only after it
-    /// reads the head again, and that read can fail. Every transaction it
-    /// commits ends with `owner.check`.
+    /// reads the head again, and that read can fail. Fence each transaction
+    /// with `owner.check`. NFT and sales folds check before projection writes.
     async fn fold(
         &self,
         pool: &PgPool,
@@ -1140,10 +1424,20 @@ pub trait ChainIndex: Send + Sync {
         upto: i64,
         owner: &Owner,
     ) -> anyhow::Result<bool>;
+    /// Writes what readers take from the fold at `upto` beside the fold's
+    /// own rows, inside the transaction that publishes it ([`mark_folded`]),
+    /// so a reader's snapshot sees the publication and that state together,
+    /// never one without the other. Runs only when the fold is published.
+    /// Every index but the collections index (its catalogue projection)
+    /// derives nothing here.
+    async fn publish(&self, _conn: &mut PgConnection, _upto: i64) -> anyhow::Result<()> {
+        Ok(())
+    }
     /// Work walked before the main range under the same budget (the nft
     /// backfill lane), read from the pass's source: what it charged the
     /// budget and the requests it sent ([`Spent`]).
-    /// Every transaction it commits ends with `owner.check`. With the
+    /// Fence each transaction with `owner.check` after any notification
+    /// cursor locks and before writing the backfill rows. With the
     /// cursor's block and stored hash (`cursor`), each read is bracketed by
     /// that block's header, which must stay that hash: a stable bracket on
     /// another branch fails it with [`Diverged`], writing nothing.
@@ -1162,6 +1456,21 @@ pub trait ChainIndex: Send + Sync {
         _cursor: Option<(u64, &str)>,
     ) -> anyhow::Result<Spent> {
         Ok(Spent::default())
+    }
+    /// After the publication at `upto` committed: what the index reports of
+    /// the committed state (a gauge), read on `pool`. It never fails the
+    /// pass; the index logs what it could not read. By default nothing.
+    async fn published(&self, _pool: &PgPool, _upto: i64) {}
+    /// One optional historical log window after publication, using spare log budget.
+    async fn after_publish(
+        &self,
+        _pool: &PgPool,
+        _source: &dyn LogSource,
+        _owner: &Owner,
+        _window_blocks: u64,
+        _remaining: usize,
+    ) -> anyhow::Result<usize> {
+        Ok(0)
     }
     /// Forgets what the index keeps in memory between its calls (the nft
     /// walk's collection set and pending contracts) after a pass failed past
@@ -1225,7 +1534,7 @@ async fn bind(
         Ok(())
     } else if let Some(stored) = checkpoint {
         let header = source
-            .header(cur.last_block as u64)
+            .header(casts::to_u64(cur.last_block)?)
             .await
             .context("the cursor block's header, to prove its history")?;
         out.requests += header.requests;
@@ -1245,6 +1554,30 @@ async fn bind(
     };
     match proof {
         Ok(()) => {
+            if owner.indexer == INDEXER_TRADE_EVENTS && owner.chain_id == 11_155_111 {
+                let requested = sqlx::query(
+                    "UPDATE shop.chain_cursor SET chain_id = $6, sepolia_trade_v1 = true, \
+                         start_block = CASE WHEN start_block = 9455328 THEN 6770056 ELSE start_block END, \
+                         last_block = CASE WHEN last_block < start_block AND start_block = 9455328 THEN 6770055 ELSE last_block END, \
+                         rebuild_requested_at = timezone('UTC', now()), fold_through = NULL, folded_at = NULL, folded_block = NULL, \
+                         owner_generation = owner_generation + 1 \
+                     WHERE indexer = $1 AND network = $2 AND owner_generation = $3 AND chain_id IS NULL AND NOT sepolia_trade_v1 \
+                       AND quarantine_reason IS NULL AND last_block = $4 AND last_block_hash IS NOT DISTINCT FROM $5",
+                )
+                .bind(owner.indexer)
+                .bind(owner.net.db_name())
+                .bind(owner.generation)
+                .bind(cur.last_block)
+                .bind(checkpoint)
+                .bind(owner.chain_id)
+                .execute(pool)
+                .await?.rows_affected();
+                if requested == 1 {
+                    return Err(owner
+                        .fenced("recheck the adopted Sepolia cursor before its V1 rebuild".into())
+                        .into());
+                }
+            }
             let adopted = sqlx::query(
                 "UPDATE shop.chain_cursor SET chain_id = $6 \
                  WHERE indexer = $1 AND network = $2 AND owner_generation = $3 AND chain_id IS NULL \
@@ -1316,11 +1649,11 @@ async fn quarantine(pool: &PgPool, owner: &Owner, cur: &Cursor, why: &str) -> an
 /// (`rebuild_requested_at`), in one transaction:
 /// 1. the notification producers' replay is planned from the state before
 ///    the cleanup;
-/// 2. the projection's own cleanup runs down to `start_block - 1`, and the
-///    producers' cursors move back;
+/// 2. the producers' cursors move back and the chain cursor is locked and
+///    checked. The projection's own cleanup runs down to `start_block - 1`,
+///    after the chain cursor lock for NFT and sales, before it for other indexes;
 /// 3. the cursor restarts there, bound to the owner's chain, unpublished and
-///    out of quarantine, with the request cleared; its row is locked only
-///    for this last step and the commit.
+///    out of quarantine, with the request cleared.
 ///
 /// A rebuild keeps the projection's chain and start block. It is refused,
 /// with the history kept and the cursor in quarantine, when the cursor is
@@ -1339,10 +1672,12 @@ async fn rebuild(
     cur: &Cursor,
     out: &mut PassOutcome,
 ) -> anyhow::Result<Option<String>> {
-    let start = settings
-        .start_override(owner.net)
-        .unwrap_or(ix.start_block()) as i64;
-    let full_history = start <= ix.start_block() as i64;
+    let start = casts::to_i64(
+        settings
+            .start_override(owner.net)
+            .unwrap_or(ix.start_block()),
+    )?;
+    let full_history = start <= casts::to_i64(ix.start_block())?;
     let mut refusal = match cur.chain_id {
         Some(chain) if chain != owner.chain_id => Some(format!(
             "its history is from chain {chain}, and this node indexes chain {}",
@@ -1366,7 +1701,7 @@ async fn rebuild(
             )),
             Some(stored) => {
                 let header = source
-                    .header(cur.last_block as u64)
+                    .header(casts::to_u64(cur.last_block)?)
                     .await
                     .context("the cursor block's header, to prove the history a rebuild clears")?;
                 out.requests += header.requests;
@@ -1421,10 +1756,8 @@ async fn rebuild(
         return Ok(Some(why));
     }
     let mut tx = pool.begin().await?;
-    // Checked without a lock first, so a stale owner does no cleanup. The
-    // cursor row is locked last, after the cleanup and the producers' cursor
-    // moves, so it is held only for the commit; every writer takes the
-    // notification cursor rows before the chain cursor row.
+    // Reject stale owners before planning. The producers' cursors precede
+    // the chain cursor, which precedes projection-write locks for the books.
     let held: Option<(i64, bool, i64, Option<String>)> = sqlx::query_as(read(""))
         .bind(owner.indexer)
         .bind(owner.net.db_name())
@@ -1439,9 +1772,12 @@ async fn rebuild(
     let replay =
         super::notice_cursor::plan_replay(&mut tx, owner.indexer, owner.net, to, cur.last_block)
             .await?;
-    ix.clear(&mut tx, to)
-        .await
-        .context("the projection's cleanup for its rebuild")?;
+    let cursor_first = locks_cursor_before_projection_write(owner.indexer);
+    if !cursor_first {
+        ix.clear(&mut tx, to)
+            .await
+            .context("the projection's cleanup for its rebuild")?;
+    }
     if let Some(replay) = replay {
         replay.apply(&mut tx).await?;
     }
@@ -1455,11 +1791,18 @@ async fn rebuild(
             .fenced("its rebuild, or the checkpoint it read, changed".into())
             .into());
     }
+    if cursor_first {
+        ix.clear(&mut tx, to)
+            .await
+            .context("the projection's cleanup for its rebuild")?;
+    }
     sqlx::query(
         "UPDATE shop.chain_cursor SET last_block = $3, last_block_hash = NULL, last_block_time = NULL, \
+             sale_input_epoch = gen_random_uuid(), sale_repair_upper = NULL, sale_dirty_from = NULL, sale_input_version = NULL, sale_verified_through = NULL, sale_history_revision = sale_history_revision + 1, \
              fold_through = NULL, folded_block = NULL, folded_at = NULL, full_history = $4, chain_id = $5, \
+             sepolia_trade_v1 = sepolia_trade_v1 OR ($1 = 'trade_events' AND $5 = 11155111), \
              quarantined_at = NULL, quarantine_reason = NULL, rebuild_requested_at = NULL, diverged_at = NULL, \
-             updated_at = timezone('UTC', now()) \
+             rebuilds = rebuilds + 1, updated_at = timezone('UTC', now()) \
          WHERE indexer = $1 AND network = $2",
     )
     .bind(owner.indexer)
@@ -1673,7 +2016,7 @@ pub(crate) async fn open(
         .await?
         .context("the chain cursor row is missing (claiming the projection creates it)")?;
     let configured = settings.start_override(net).unwrap_or(ix.start_block());
-    if cur.start_block != configured as i64 {
+    if u64::try_from(cur.start_block).ok() != Some(configured) {
         tracing::info!(
             indexer = name,
             network = net.db_name(),
@@ -1696,27 +2039,28 @@ pub(crate) async fn open(
             }
             Some(why) => out.quarantined = Some(why),
         }
-        out.elapsed_ms = started.elapsed().as_millis() as u64;
+        out.elapsed_ms = casts::millis(started.elapsed());
         return Ok(Opening::Ended(out));
     }
     if let Bound::Quarantined(why) = bind(pool, source, owner, &cur, &mut out).await? {
         out.quarantined = Some(why);
-        out.elapsed_ms = started.elapsed().as_millis() as u64;
+        out.elapsed_ms = casts::millis(started.elapsed());
         return Ok(Opening::Ended(out));
     }
     if cur.last_block >= cur.start_block {
         let stored = cur.last_block_hash.as_deref().unwrap_or("");
-        let header = match at_checkpoint.filter(|h| h.number as i64 == cur.last_block) {
-            Some(h) => h.clone(),
-            None => {
-                let header = source
-                    .header(cur.last_block as u64)
-                    .await
-                    .context("eth_getBlockByNumber at the cursor")?;
-                out.requests += header.requests;
-                header.value
-            }
-        };
+        let header =
+            match at_checkpoint.filter(|h| u64::try_from(cur.last_block).ok() == Some(h.number)) {
+                Some(h) => h.clone(),
+                None => {
+                    let header = source
+                        .header(casts::to_u64(cur.last_block)?)
+                        .await
+                        .context("eth_getBlockByNumber at the cursor")?;
+                    out.requests += header.requests;
+                    header.value
+                }
+            };
         if header.hash != stored {
             tracing::warn!(indexer = name, network = net.db_name(), block = cur.last_block, stored, chain = %header.hash, "marketplace index: the cursor block's hash changed (a reorg past the confirmation depth); its publication is withdrawn");
             withdraw(
@@ -1726,11 +2070,11 @@ pub(crate) async fn open(
             )
             .await?;
             if !recover_here {
-                out.elapsed_ms = started.elapsed().as_millis() as u64;
+                out.elapsed_ms = casts::millis(started.elapsed());
                 return Ok(Opening::Diverged(out));
             }
             recover(pool, source, ix, owner, &cur, &mut out).await?;
-            out.elapsed_ms = started.elapsed().as_millis() as u64;
+            out.elapsed_ms = casts::millis(started.elapsed());
             return Ok(Opening::Ended(out));
         }
         if cur.diverged_at.is_some() {
@@ -1756,8 +2100,9 @@ pub(crate) async fn open(
 /// chain, the rewind goes to the start block. A header read that fails ends
 /// the recovery with nothing rewound (the next pass searches again); the
 /// reads count in the pass but are not cut by its budget, so a slow search
-/// still ends in one pass. The rewind's transaction runs the notification
-/// cursors' moves before the cursor row's lock, as every writer does.
+/// still ends in one pass. The rewind moves notification cursors before
+/// locking the chain cursor. NFT and sales rewind their projection after
+/// taking that lock.
 pub(crate) async fn recover(
     pool: &PgPool,
     source: &dyn LogSource,
@@ -1785,7 +2130,7 @@ pub(crate) async fn recover(
     for (block, hash, time) in candidates {
         probed += 1;
         let header = source
-            .header(block as u64)
+            .header(casts::to_u64(block)?)
             .await
             .with_context(|| format!("the header at recovery point {block}"))?;
         out.requests += header.requests;
@@ -1799,8 +2144,8 @@ pub(crate) async fn recover(
         None => (cur.start_block - 1, None),
     };
     let mut tx = pool.begin().await?;
-    // Checked without a lock first, so a stale owner does no cleanup; the
-    // cursor row is locked by the rewind, after the producers' cursors.
+    // Reject stale owners before planning; the cursor lock is taken
+    // after notification cursor locks for projections that write book rows.
     let held: Option<(i64, i64, Option<String>)> = sqlx::query_as(
         "SELECT owner_generation, last_block, last_block_hash FROM shop.chain_cursor WHERE indexer = $1 AND network = $2",
     )
@@ -1820,11 +2165,20 @@ pub(crate) async fn recover(
             .into());
     }
     let replay = super::notice_cursor::plan_replay(&mut tx, name, net, to, cur.last_block).await?;
-    ix.rewind(&mut tx, to)
-        .await
-        .context("undoing the reorged range")?;
+    let cursor_first = locks_cursor_before_projection_write(name);
+    if !cursor_first {
+        ix.rewind(&mut tx, to)
+            .await
+            .context("undoing the reorged range")?;
+    }
     if let Some(replay) = replay {
         replay.apply(&mut tx).await?;
+    }
+    if cursor_first {
+        owner.check(&mut tx).await?;
+        ix.rewind(&mut tx, to)
+            .await
+            .context("undoing the reorged range")?;
     }
     rewind(
         &mut tx,
@@ -1886,11 +2240,45 @@ pub(crate) async fn commit_window(
     times: &HashMap<i64, i64>,
 ) -> anyhow::Result<usize> {
     let mut tx = pool.begin().await?;
-    let written = ix.write(&mut tx, logs, times).await?;
-    advance(&mut tx, ix.indexer(), ix.net(), expected, header)
-        .await
-        .context("advancing the cursor")?;
-    owner.check(&mut tx).await?;
+    let mut verified_sales = owner.verify_sales;
+    let mut usable = std::borrow::Cow::Borrowed(logs);
+    if owner.verify_sales
+        && let Err(error) = super::sale_history::validate_window(ix, logs, times)
+    {
+        tracing::warn!(indexer=ix.indexer(), network=ix.net().db_name(), from=expected.0+1,
+            through=header.number, %error, "sales coverage withheld for this window");
+        verified_sales = false;
+        // Only the Ethereum sales writer requires this filter. The other
+        // projections consume the original stream under their own rules.
+        if ix.indexer() == INDEXER_SALES && ix.net() == ChainNet::Ethereum {
+            usable = std::borrow::Cow::Owned(
+                logs.iter()
+                    .filter(|log| super::sale_history::validate_log(ix, log, times).is_ok())
+                    .cloned()
+                    .collect(),
+            );
+        }
+    }
+    let cursor_first = locks_cursor_before_projection_write(owner.indexer);
+    if cursor_first {
+        // The fold also updates contract discoveries and the refold queue.
+        owner.check(&mut tx).await?;
+    }
+    let written = ix.write(&mut tx, &usable, times).await?;
+    advance(
+        &mut tx,
+        ix.indexer(),
+        ix.net(),
+        expected,
+        header,
+        verified_sales,
+    )
+    .await
+    .context("advancing the cursor")?;
+    ix.record_coverage(&mut tx, expected, header).await?;
+    if !cursor_first {
+        owner.check(&mut tx).await?;
+    }
     tx.commit().await?;
     Ok(written)
 }
@@ -1928,10 +2316,10 @@ async fn walk(
     )
     .await?;
     let anchor = match cur.last_block_time {
-        Some(t) => (cur.last_block.max(0) as u64, t),
+        Some(t) => (casts::to_u64(cur.last_block).unwrap_or(0), t),
         None => {
             let h = source
-                .header(cur.last_block.max(0) as u64)
+                .header(casts::to_u64(cur.last_block).unwrap_or(0))
                 .await
                 .context("the time anchor")?;
             out.requests += h.requests;
@@ -1948,7 +2336,8 @@ async fn walk(
         .last_block_hash
         .as_deref()
         .filter(|_| cur.last_block >= cur.start_block)
-        .map(|h| (cur.last_block as u64, h));
+        .map(|h| casts::to_u64(cur.last_block).map(|b| (b, h)))
+        .transpose()?;
     let spent = match ix
         .lanes(pool, source, anchor, total, &mut chunk, owner, durable)
         .await
@@ -1958,7 +2347,7 @@ async fn walk(
             out.requests += e.downcast_ref::<Diverged>().map_or(0, |d| d.requests);
             // Lanes bracket only a cursor with a hash (`durable`).
             let (block, hash) = durable.expect("a lane divergence is about the cursor's hash");
-            let at = (block as i64, hash.to_string());
+            let at = (casts::to_i64(block)?, hash.to_string());
             return diverged(pool, source, ix, owner, at, out, started).await;
         }
         Err(e) => return Err(e),
@@ -1966,7 +2355,7 @@ async fn walk(
     // The budget pays what the lanes charged; the pass reports what they sent.
     let mut log_requests = spent.charge;
     out.requests += spent.requests;
-    let mut next = (cur.last_block + 1) as u64;
+    let mut next = casts::to_u64(cur.last_block + 1)?;
     let mut expected = (cur.last_block, cur.last_block_hash.clone());
     while next <= target {
         if cancel.is_some_and(|c| c.is_cancelled()) {
@@ -2009,7 +2398,7 @@ async fn walk(
         };
         let predecessor = match expected.1.as_deref() {
             Some(_) => {
-                let p = source.header(expected.0 as u64).await?;
+                let p = source.header(casts::to_u64(expected.0)?).await?;
                 out.requests += p.requests;
                 Some(p.value)
             }
@@ -2030,9 +2419,10 @@ async fn walk(
             return diverged(pool, source, ix, owner, at, out, started).await;
         }
         let header = reached.unwrap_or(after.value);
+        let reached_at = casts::to_i64(window.reached)?;
         // Accepted, not yet committed (the commit may still fail).
         source.accepted(&crate::chain_index::portal::compare::AcceptedView {
-            chain_id: ix.chain_id() as u64,
+            chain_id: casts::to_u64(ix.chain_id())?,
             from: next,
             reached: window.reached,
             reached_hash: &header.hash,
@@ -2054,8 +2444,8 @@ async fn walk(
         ix.window_committed().await;
         out.logs += window.logs.len();
         out.rows_written += written;
-        out.indexed_to = window.reached as i64;
-        expected = (window.reached as i64, Some(header.hash.clone()));
+        out.indexed_to = reached_at;
+        expected = (out.indexed_to, Some(header.hash.clone()));
         next = window.reached + 1;
         progress(format!(
             "{} {}: indexed to {} of {} ({} requests this pass)",
@@ -2066,9 +2456,67 @@ async fn walk(
             out.requests
         ));
     }
-    if out.paused || (out.indexed_to as u64) < target {
-        out.elapsed_ms = started.elapsed().as_millis() as u64;
+    // A negative `indexed_to` counts as past `target`.
+    if out.paused || u64::try_from(out.indexed_to).is_ok_and(|b| b < target) {
+        out.elapsed_ms = casts::millis(started.elapsed());
         return Ok(out);
+    }
+    let mut remaining = total.saturating_sub(log_requests);
+    if owner.verify_sales
+        && let Some(hash) = expected.1.as_deref()
+    {
+        let at = casts::to_u64(expected.0)?;
+        // Repair the old prefix with spare budget. Always leave the primary
+        // projection free to publish after an incomplete or unavailable replay.
+        let reserved = if name == INDEXER_NFT && net == ChainNet::Ethereum {
+            remaining.div_ceil(2)
+        } else {
+            0
+        };
+        while remaining > reserved && !cancel.is_some_and(|c| c.is_cancelled()) {
+            match super::sale_history::repair(
+                pool,
+                source,
+                ix,
+                owner,
+                Some((at, hash)),
+                remaining - reserved,
+                &mut chunk,
+            )
+            .await
+            {
+                Ok(spent) if spent.charge > 0 => {
+                    remaining = remaining.saturating_sub(spent.charge);
+                    out.requests += spent.requests;
+                }
+                Ok(_) => break,
+                Err(e) if let Some(requests) = e.downcast_ref::<Diverged>().map(|d| d.requests) => {
+                    out.requests += requests;
+                    return diverged(
+                        pool,
+                        source,
+                        ix,
+                        owner,
+                        (expected.0, hash.to_owned()),
+                        out,
+                        started,
+                    )
+                    .await;
+                }
+                Err(e) if e.downcast_ref::<Fenced>().is_some() => return Err(e),
+                Err(e) => {
+                    if let Some(attempt) = e.downcast_ref::<super::sale_history::RepairAttempt>() {
+                        out.requests += attempt.requests;
+                    }
+                    super::sale_history::REPAIR_FAILURES
+                        .handle([name, net.db_name()])
+                        .increment(1);
+                    tracing::error!(indexer=name, network=net.db_name(), error=%format!("{e:#}"), "sales history repair will retry");
+                    // Leave the independent estate repair its reserved budget.
+                    remaining = reserved;
+                }
+            }
+        }
     }
     close(
         pool,
@@ -2076,11 +2524,14 @@ async fn walk(
         ix,
         settings,
         owner,
-        cur.fold_through,
+        Close {
+            fold_since: cur.fold_through,
+            remaining,
+        },
         &mut out,
     )
     .await?;
-    out.elapsed_ms = started.elapsed().as_millis() as u64;
+    out.elapsed_ms = casts::millis(started.elapsed());
     Ok(out)
 }
 
@@ -2109,8 +2560,13 @@ async fn diverged(
     }
     ix.abandon();
     recover(pool, source, ix, owner, &cur, &mut out).await?;
-    out.elapsed_ms = started.elapsed().as_millis() as u64;
+    out.elapsed_ms = casts::millis(started.elapsed());
     Ok(out)
+}
+
+pub struct Close {
+    pub fold_since: Option<i64>,
+    pub remaining: usize,
 }
 
 /// The close of a pass that reached its target at `out.indexed_to`: the fold
@@ -2122,13 +2578,13 @@ pub(crate) async fn close(
     ix: &dyn ChainIndex,
     settings: &IndexSettings,
     owner: &Owner,
-    fold_since: Option<i64>,
+    close: Close,
     out: &mut PassOutcome,
 ) -> anyhow::Result<()> {
     let net = ix.net();
     let stop = settings.stop_block(net);
     let may_publish = ix
-        .fold(pool, fold_since, out.indexed_to, owner)
+        .fold(pool, close.fold_since, out.indexed_to, owner)
         .await
         .context("folding")?;
     record_fold(pool, owner, out.indexed_to).await?;
@@ -2153,13 +2609,38 @@ pub(crate) async fn close(
     let held_short = stop.is_some_and(|s| s < latest_safe);
     if may_publish
         && !held_short
-        && out.indexed_to >= 0
-        && out.indexed_to as u64 <= latest_safe
-        && within_publish_lag(net, latest, out.indexed_to as u64)
+        && u64::try_from(out.indexed_to)
+            .is_ok_and(|b| b <= latest_safe && within_publish_lag(net, latest, b))
     {
-        out.published = mark_folded(pool, owner, out.indexed_to, Utc::now()).await?;
+        out.published = mark_folded(pool, ix, owner, out.indexed_to, Utc::now()).await?;
+        if out.published {
+            ix.published(pool, out.indexed_to).await;
+        }
     } else {
         unpublish(pool, owner, out.indexed_to).await?;
+    }
+    if out.published && close.remaining > 0 {
+        match ix
+            .after_publish(
+                pool,
+                source,
+                owner,
+                settings.window_blocks.max(1),
+                close.remaining,
+            )
+            .await
+        {
+            Ok(requests) => out.requests += requests,
+            Err(e)
+                if e.chain()
+                    .any(|cause| cause.downcast_ref::<Fenced>().is_some()) =>
+            {
+                return Err(e);
+            }
+            Err(e) => {
+                tracing::warn!(indexer = ix.indexer(), error = %e, "post-publication repair will retry")
+            }
+        }
     }
     Ok(())
 }
@@ -2214,21 +2695,57 @@ mod tests {
             ),
             (1, 137)
         );
-        assert!(defaults.check_chains().is_ok());
+        assert!(defaults.check_catalogue_pair().is_ok());
         let testnet = IndexSettings {
             chain_id_ethereum: 11_155_111,
             chain_id_matic: 80_002,
             ..defaults.clone()
         };
-        assert!(testnet.check_chains().is_ok());
+        assert!(testnet.check_catalogue_pair().is_ok());
+        let mixed = IndexSettings {
+            nft_enabled: true,
+            chain_id_matic: 80_002,
+            ..defaults.clone()
+        };
+        assert!(mixed.check_catalogue_pair().is_err());
+        assert!(
+            IndexSettings {
+                chain_id_ethereum: ChainNet::Ethereum.testnet_chain_id(),
+                chain_id_matic: ChainNet::Matic.chain_id(),
+                ..mixed
+            }
+            .check_catalogue_pair()
+            .is_err()
+        );
         for (ethereum, matic) in [(137, 137), (1, 1), (1, 80_001), (80_002, 80_002), (1, 0)] {
             let wrong = IndexSettings {
                 chain_id_ethereum: ethereum,
                 chain_id_matic: matic,
                 ..defaults.clone()
             };
-            assert!(wrong.check_chains().is_err(), "{ethereum} / {matic}");
+            assert!(
+                wrong.check_catalogue_pair().is_err(),
+                "{ethereum} / {matic}"
+            );
         }
+    }
+
+    /// A projection is served only at the fold its cursor published: a
+    /// marker its fold wrote ahead of the publication (committed, not yet
+    /// published), behind it (folded by a writer that kept no marker), or
+    /// missing does not stand; a walk advanced past an unchanged fold does.
+    #[test]
+    fn a_projection_holds_only_the_published_fold() {
+        let now = Utc::now();
+        let published = cursor_row(100, Some(100), Some(now), true);
+        assert!(holds_published_fold(Some(100), &published));
+        assert!(!holds_published_fold(Some(101), &published));
+        assert!(!holds_published_fold(Some(99), &published));
+        assert!(!holds_published_fold(None, &published));
+        let advanced = cursor_row(120, Some(100), Some(now), true);
+        assert!(holds_published_fold(Some(100), &advanced));
+        let unpublished = cursor_row(120, None, None, true);
+        assert!(!holds_published_fold(Some(120), &unpublished));
     }
 
     fn cursor_row(last: i64, folded: Option<i64>, at: Option<DateTime<Utc>>, full: bool) -> Cursor {

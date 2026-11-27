@@ -8,6 +8,7 @@ use bevy::{
     platform::collections::HashMap,
     prelude::error,
 };
+use common::structs::MicrophoneInput;
 use futures_channel::mpsc::{unbounded, UnboundedSender};
 use futures_lite::StreamExt;
 use js_sys::{Object, Reflect};
@@ -19,7 +20,7 @@ use super::{
     LocalAudioTrack, LocalParticipant, LocalTrackPublication, ObjectId, Participant,
     ParticipantIdentity, ParticipantSid, RemoteAudioTrack, RemoteParticipant, RemoteTrack,
     RemoteTrackPublication, RemoteVideoTrack, Reply, RequestId, RoomEvent, RoomId, RoomOptions,
-    TrackKind, TrackPublishOptions, TrackSid, TrackSource, HOST,
+    TrackInput, TrackKind, TrackPublishOptions, TrackSid, TrackSource, HOST,
 };
 
 #[wasm_bindgen(module = "/livekit_web_bindings.js")]
@@ -29,6 +30,10 @@ extern "C" {
     fn is_microphone_available() -> bool;
     #[wasm_bindgen(js_name = "promptMicrophonePermission", catch)]
     fn prompt_microphone_permission() -> Result<(), JsValue>;
+    #[wasm_bindgen(js_name = "watchMicrophoneDevices")]
+    fn watch_microphone_devices(on_change: &Closure<dyn FnMut(JsValue)>);
+    #[wasm_bindgen(js_name = "watchMicrophoneTrackInputs")]
+    fn watch_microphone_track_inputs(on_input: &Closure<dyn FnMut(f64, String, String)>);
 
     #[wasm_bindgen(catch)]
     async fn room_connect(
@@ -90,6 +95,10 @@ extern "C" {
     fn local_audio_track_set_enabled(track: &JsValue, enabled: bool) -> Result<(), JsValue>;
     #[wasm_bindgen(catch)]
     fn local_audio_track_stop(track: &JsValue) -> Result<(), JsValue>;
+    fn local_audio_track_report_input(track: &JsValue);
+    #[wasm_bindgen(catch)]
+    fn local_audio_track_set_device(track: &JsValue, device: Option<String>)
+        -> Result<(), JsValue>;
 
     #[wasm_bindgen(catch)]
     fn local_track_publication_sid(local_track_publication: &JsValue) -> Result<String, JsValue>;
@@ -291,6 +300,17 @@ pub fn livekit_host_main() {
         panic!("livekit host already started");
     }
 
+    let input_events = events_tx.clone();
+    let on_input = Closure::new(move |track: f64, device: String, label: String| {
+        let _ = input_events.unbounded_send(LivekitEvent::MicrophoneTrackInput {
+            track: track as ObjectId,
+            input: TrackInput { device, label },
+        });
+    });
+    watch_microphone_track_inputs(&on_input);
+    // lives as long as the page
+    on_input.forget();
+
     wasm_bindgen_futures::spawn_local(async move {
         let host: SharedHost = Rc::default();
         while let Some(command) = commands_rx.next().await {
@@ -417,7 +437,40 @@ fn serve(command: LivekitCommand, host: &SharedHost, events: &UnboundedSender<Li
                 .and_then(|track| Reflect::get(&track, &"videoElement".into()).ok())
                 .and_then(|element| element.dyn_into::<HtmlVideoElement>().ok());
             match element {
-                Some(element) => media::host::adopt_video_element(media_id, element),
+                Some(element) => {
+                    // Each output owns its element: disposing a selected screen must not
+                    // pause the automatic showcase or another screen using this track.
+                    let copy = match element.clone_node() {
+                        Ok(node) => match node.dyn_into::<HtmlVideoElement>() {
+                            Ok(copy) => copy,
+                            Err(_) => {
+                                error!("remote video track {track}: cloned node is not a video element");
+                                return;
+                            }
+                        },
+                        Err(err) => {
+                            error!("remote video track {track}: clone failed: {err:?}");
+                            return;
+                        }
+                    };
+                    let stream = match Reflect::get(&element, &"srcObject".into()) {
+                        Ok(stream) => stream,
+                        Err(err) => {
+                            error!("remote video track {track}: reading srcObject failed: {err:?}");
+                            return;
+                        }
+                    };
+                    match Reflect::set(&copy, &"srcObject".into(), &stream) {
+                        Ok(true) => {
+                            copy.set_autoplay(true);
+                            copy.set_muted(true);
+                            media::host::adopt_video_element(media_id, copy);
+                        }
+                        result => error!(
+                            "remote video track {track}: setting srcObject failed: {result:?}"
+                        ),
+                    }
+                }
                 None => error!("remote video track {track} has no video element to attach"),
             }
         }
@@ -433,6 +486,8 @@ fn serve(command: LivekitCommand, host: &SharedHost, events: &UnboundedSender<Li
                     Err(js_error(err))
                 } else {
                     let id = host.borrow_mut().registry.id_of(&track, None);
+                    // stamped with its id now, so the report names it
+                    local_audio_track_report_input(&track);
                     Ok(LocalAudioTrack {
                         id,
                         // assigned when the track is published
@@ -456,6 +511,14 @@ fn serve(command: LivekitCommand, host: &SharedHost, events: &UnboundedSender<Li
                 }
             }
         }
+        LivekitCommand::SetLocalAudioDevice { track, device } => {
+            let track = host.borrow().registry.get(track);
+            if let Some(track) = track {
+                if let Err(err) = local_audio_track_set_device(&track, device) {
+                    warn!("failed to switch the microphone input: {}", js_error(err));
+                }
+            }
+        }
         LivekitCommand::StopLocalAudio {
             request,
             track,
@@ -468,6 +531,7 @@ fn serve(command: LivekitCommand, host: &SharedHost, events: &UnboundedSender<Li
             if release {
                 host.borrow_mut().registry.release(track);
             }
+            let _ = events.unbounded_send(LivekitEvent::MicrophoneTrackStopped { track });
             reply(events, request, Reply::LocalAudioStopped(result));
         }
         LivekitCommand::PublishTrack {
@@ -541,9 +605,27 @@ fn serve(command: LivekitCommand, host: &SharedHost, events: &UnboundedSender<Li
             });
         }
         LivekitCommand::SetupMicrophonePermission => {
-            let events = events.clone();
+            let device_events = events.clone();
+            let on_devices = Closure::new(move |devices: JsValue| {
+                let devices = js_sys::Array::from(&devices)
+                    .iter()
+                    .filter_map(|device| {
+                        Some(MicrophoneInput {
+                            id: get_string(&device, "id")?,
+                            label: get_string(&device, "label")?,
+                        })
+                    })
+                    .collect();
+                let _ = device_events.unbounded_send(LivekitEvent::MicrophoneDevices(devices));
+            });
+            // installed first: it does not depend on the permission query
+            watch_microphone_devices(&on_devices);
+            // lives as long as the page
+            on_devices.forget();
+
+            let permission_events = events.clone();
             let on_change = Closure::new(move |permission: String| {
-                let _ = events.unbounded_send(LivekitEvent::Microphone {
+                let _ = permission_events.unbounded_send(LivekitEvent::Microphone {
                     available: is_microphone_available(),
                     permission,
                 });
@@ -672,6 +754,12 @@ fn track_publish_options(options: &TrackPublishOptions) -> JsValue {
 
 fn audio_capture_options(options: &AudioCaptureOptions) -> JsValue {
     let object = Object::new();
+    if let Some(id) = &options.device_id {
+        // `ideal`, unlike `exact`, falls back to another input when this one is gone
+        let device_id = Object::new();
+        set(&device_id, "ideal", id.as_str());
+        set(&object, "deviceId", device_id);
+    }
     if let Some(v) = options.auto_gain_control {
         set(&object, "autoGainControl", v);
     }

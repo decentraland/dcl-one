@@ -1,10 +1,9 @@
 import { Component, useRef, useSyncExternalStore, type ReactNode } from 'react'
 import { ModalShell } from './Modal'
-import { Button } from './Button'
 import { useFocusTrap } from '../lib/useFocusTrap'
 import { isInputLocked, subscribeInputLock } from '@explorer-core/lib/inputLock'
 import { nextLayerOrder } from '@explorer-core/lib/cancelLayers'
-import styles from './popups.module.css'
+import { Button, ModalBackdrop } from '@dcl/one-ui'
 
 /** A popup is a render function given its own `close` callback; it returns the overlay to render. */
 type PopupRender = (close: () => void) => ReactNode
@@ -158,20 +157,22 @@ function PopupLayer({ node, isTop, locked }: { node: PopupNode; isTop: boolean; 
   // leak focus out of the crash modal's trap instead of staying put — see inputLock.
   useFocusTrap(ref, isTop && !locked)
 
-  // No backdrop → the content owns its own scrim (dialogs). Otherwise the popup layer draws it:
-  // `.dim` is the shared dimmed+blurred modal scrim; without `dim` it's a transparent click-catcher
-  // for an anchored popover (the profile card).
+  // No backdrop → the content owns its own scrim (dialogs). Otherwise the shared ModalBackdrop draws the layer:
+  // the dimmed+blurred modal scrim that scales its content in, or, without `dim`, a transparent click-catcher
+  // for an anchored popover (the profile card), which just appears.
   if (!node.options.backdrop) return <>{content}</>
-  let className = styles.backdrop
-  if (node.options.dim) className += ` ${styles.dim}`
-  if (node.options.dim && node.options.fixed) className += ` ${styles.fixed}`
-  if (node.options.dim && node.options.deep) className += ` ${styles.deep}`
-  if (node.options.className) className += ` ${node.options.className}`
+  const tone = !node.options.dim ? 'clear' : node.options.deep ? 'deep' : 'dim'
   return (
-    <div ref={ref} className={className} tabIndex={-1} onClick={() => { if (closesOnBackdrop(node.options)) close() }}>
-      {/* dim popups scale in via the pop layer; an anchored popover (dim:false) just appears. */}
-      {node.options.dim ? <div className={styles.pop}>{content}</div> : content}
-    </div>
+    <ModalBackdrop
+      ref={ref}
+      tone={tone}
+      fixed={node.options.fixed}
+      className={node.options.className}
+      tabIndex={-1}
+      onClick={() => { if (closesOnBackdrop(node.options)) close() }}
+    >
+      {content}
+    </ModalBackdrop>
   )
 }
 
@@ -265,7 +266,7 @@ export function showDialog(opts: DialogOptions): Promise<string | null> {
           width={opts.width ?? 420}
           actionsEqual={opts.actionsEqual ?? opts.actions.length === 2}
           actions={opts.actions.map((a) => (
-            <Button
+            <Button appearance="hud"
               key={a.id}
               variant={a.variant ?? 'primary'}
               onClick={() => {

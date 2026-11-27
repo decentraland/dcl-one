@@ -1,5 +1,5 @@
-import { Color4 } from '@dcl/ecs/dist/components/generated/pb/decentraland/common/colors.gen'
-import { ScaleUnit } from '../types'
+import type { Color4 } from '@dcl/ecs/dist/components/generated/pb/decentraland/common/colors.gen'
+import type { ScaleUnit } from '../types'
 
 /**
  * Label component props
@@ -16,7 +16,7 @@ export interface UiLabelProps {
   textAlign?: TextAlignType | undefined
   /** Label font type. @defaultValue 'sans-serif' */
   font?: UiFontType | undefined
-  /** Path to a `.ttf` file in the scene content. `font` is used when it can't be loaded. */
+  /** A `.ttf` file in the scene content, or a Google Fonts family name. `font` is used when it can't be loaded. */
   fontSrc?: string | undefined
   /** Behaviour when text reached. @defaultValue 'wrap' */
   textWrap?: UiTextWrapType | undefined

@@ -112,6 +112,9 @@ impl SceneIdentity for MountedCatalogue {
     ) -> Result<Option<ActiveDeployment>, ResolveError> {
         Ok(None)
     }
+    async fn world_scene_count(&self, world: &WorldName) -> Result<usize, ResolveError> {
+        Ok(usize::from(self.world_active_scene(world).await?.is_some()))
+    }
 }
 
 async fn mounted_worker_fixture() -> (

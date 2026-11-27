@@ -115,7 +115,7 @@ async fn start(pool: &PgPool, chain_id: i64) -> anyhow::Result<Option<&'static s
     // Gifts are told from sales by matching the two indexes at the same
     // heights: both must read the same chain, and the nft walk reads
     // Polygon mainnet only.
-    if chain_id != chain_walk::mainnet_chain(ChainNet::Matic) {
+    if chain_id != ChainNet::Matic.chain_id() {
         return Ok(Some(
             "transfer notices need both indexes on Polygon mainnet; the nft index reads no other chain",
         ));
@@ -228,7 +228,7 @@ async fn pages(pool: &PgPool, chain_id: i64) -> anyhow::Result<Pass> {
         emitted += insert_notifications(&mut *txn, &batch).await?;
         notice_cursor::advance(&mut txn, PRODUCER, None, last_block, last_log).await?;
         txn.commit().await?;
-        if rows.len() < PAGE_SIZE as usize {
+        if rows.len() < crate::market::casts::page(PAGE_SIZE) {
             break;
         }
     }

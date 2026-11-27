@@ -11,8 +11,8 @@ use common::{
     dynamics::{PLAYER_COLLIDER_HEIGHT, PLAYER_COLLIDER_RADIUS},
     sets::SceneSets,
     structs::{
-        CameraOverride, CinematicSettings, PermissionState, PermissionType, PrimaryCamera,
-        PrimaryUser, PLAYER_CAMERA_FOV,
+        CameraOverride, CameraZoomLevel, CinematicSettings, PermissionState, PermissionType,
+        PrimaryCamera, PrimaryUser, PLAYER_CAMERA_FOV,
     },
 };
 use dcl_component::{
@@ -226,10 +226,12 @@ pub fn update_camera_mode_area(
         if permitted {
             match maybe_area.map(|area| area.0.mode()) {
                 Some(CameraType::CtFirstPerson) => {
-                    camera.scene_override = Some(CameraOverride::Distance(0.0))
+                    camera.scene_override =
+                        Some(CameraOverride::Level(CameraZoomLevel::FirstPerson))
                 }
                 Some(CameraType::CtThirdPerson) => {
-                    camera.scene_override = Some(CameraOverride::Distance(1.0))
+                    camera.scene_override =
+                        Some(CameraOverride::Level(CameraZoomLevel::ThirdPerson))
                 }
                 Some(CameraType::CtCinematic) => {
                     let Some(cinematic_settings) =
@@ -290,10 +292,13 @@ pub fn update_camera_mode_area(
                     }));
                 }
             }
+            // every arm that gets here wrote the override; one that could not has returned
+            camera.scene_override_owner = Some(scene_ent.root);
         }
     } else {
         // no camera areas
         camera.scene_override = None;
+        camera.scene_override_owner = None;
     }
 
     if current_areas.is_empty() {

@@ -5,7 +5,7 @@
 // read a page at a time (Announcements.tsx).
 
 import { useEffect, useState } from 'react'
-import { Avatar, BanIcon, Button, ControlButton, EmptyState, SwapLabel, DemoteModeratorIcon, Kebab, MaskIcon, Pencil, Plus, PromoteModeratorIcon, RemoveMemberIcon, Tabs, TransferIcon, Trash, openPopup, showConfirm, type TabItem } from '../../design'
+import { Avatar, BanIcon, ControlButton, DemoteModeratorIcon, Kebab, Pencil, Plus, PromoteModeratorIcon, RemoveMemberIcon, Tabs, TransferIcon, Trash, openPopup, showConfirm, type TabItem } from '../../design'
 import joinStreamIcon from '../../assets/voice/join-stream.png'
 import streamIcon from '../../assets/voice/stream-small.png'
 import endStreamIcon from '../../assets/voice/end-stream.png'
@@ -43,6 +43,7 @@ import styles from './CommunityModal.module.css'
 import { getHudScale } from '@explorer-core/lib/hudScale'
 import { siteUrl } from '@hud-host'
 import { Mark } from '../../design/Glyphs'
+import { Button, EmptyState, MaskIcon, SwapLabel } from '@dcl/one-ui'
 
 type Tab = 'announcements' | 'members' | 'places' | 'photos'
 const TABS: TabItem<Tab>[] = [
@@ -235,7 +236,7 @@ function PlaceCardFace({ place, onDelete, deleting, actions, onOpen, likeRate = 
       <div className={styles.placeCover} style={{ background: place.thumbnail ? undefined : nameColor(place.id) }}>
         {place.thumbnail && <img src={place.thumbnail} alt="" />}
         {onOpen != null && (
-          <Button size="bare" variant="clear" radius="md" className={styles.placeOpen} aria-label={`Open ${place.title}`} onClick={(e) => { e.stopPropagation(); onOpen() }} />
+          <Button appearance="hud" size="bare" variant="clear" radius="md" className={styles.placeOpen} aria-label={`Open ${place.title}`} onClick={(e) => { e.stopPropagation(); onOpen() }} />
         )}
         {onDelete != null && (
           <button type="button" className={styles.placeDelete} aria-label={`Delete ${place.title}`} disabled={deleting} onClick={(e) => { e.stopPropagation(); onDelete() }}>
@@ -573,7 +574,7 @@ export function CommunityModal({
   }
 
   return (
-    // Just the card: the popup layer (PopupHost .dim/.pop) draws the scrim, DPI-scales it and animates
+    // Just the card: the popup layer (PopupHost's ModalBackdrop) draws the scrim, DPI-scales it and animates
     // it in. stopPropagation keeps a click on the card from reaching the scrim (and closing it).
     <div className={styles.modal} onClick={(e) => e.stopPropagation()}>
       <div className={styles.main}>
@@ -597,16 +598,16 @@ export function CommunityModal({
           </div>
           <div className={styles.headActions}>
             {stream != null && stream.inStream ? (
-              <Button size="sm" variant="secondary" onClick={stream.onLeave}><MaskIcon src={endStreamIcon} size={14} /> Leave stream</Button>
+              <Button appearance="hud" size="sm" variant="secondary" onClick={stream.onLeave}><MaskIcon src={endStreamIcon} size={14} /> Leave stream</Button>
             ) : stream != null && stream.live ? (
-              <Button size="sm" variant="accent" aria-label="Join stream" disabled={stream.pending} onClick={stream.onJoin}><MaskIcon src={joinStreamIcon} size={14} /> Live · Join stream</Button>
+              <Button appearance="hud" size="sm" variant="accent" aria-label="Join stream" disabled={stream.pending} onClick={stream.onJoin}><MaskIcon src={joinStreamIcon} size={14} /> Live · Join stream</Button>
             ) : stream != null && stream.canStart ? (
-              <Button size="sm" variant="secondary" disabled={stream.pending} onClick={stream.onStart}><MaskIcon src={streamIcon} size={14} /> Start stream</Button>
+              <Button appearance="hud" size="sm" variant="secondary" disabled={stream.pending} onClick={stream.onStart}><MaskIcon src={streamIcon} size={14} /> Start stream</Button>
             ) : null}
             {inviteId != null && (
               <>
-                <Button size="sm" onClick={() => onAcceptInvite?.(community.id, inviteId)}>ACCEPT INVITE</Button>
-                <Button size="sm" variant="secondary" onClick={() => void confirmRejectInvite(community).then((yes) => yes && onRejectInvite?.(community.id, inviteId))}>
+                <Button appearance="hud" size="sm" onClick={() => onAcceptInvite?.(community.id, inviteId)}>ACCEPT INVITE</Button>
+                <Button appearance="hud" size="sm" variant="secondary" onClick={() => void confirmRejectInvite(community).then((yes) => yes && onRejectInvite?.(community.id, inviteId))}>
                   REJECT INVITE
                 </Button>
               </>
@@ -618,15 +619,15 @@ export function CommunityModal({
               <button type="button" className={styles.iconBtn} aria-label="Open chat" onClick={onOpenChat}><ChatIcon /></button>
             )}
             {inviteId != null ? null : member ? (
-              <Button size="sm" variant="ghost" className={styles.joined} disabled><Mark name="check" /> Joined</Button>
+              <Button appearance="hud" size="sm" variant="ghost" disabled><Mark name="check" /> Joined</Button>
             ) : isPrivate && community.pendingRequestId != null ? (
-              <Button size="sm" variant="ghost" aria-label="Cancel join request" onClick={() => onCancelRequest(community.id, community.pendingRequestId!)}>
+              <Button appearance="hud" size="sm" variant="ghost" aria-label="Cancel join request" onClick={() => onCancelRequest(community.id, community.pendingRequestId!)}>
                 <SwapLabel idle="Request Sent" hover="Cancel Request" />
               </Button>
             ) : isPrivate ? (
-              <Button size="sm" onClick={() => onRequestToJoin(community.id)}>Request to Join</Button>
+              <Button appearance="hud" size="sm" onClick={() => onRequestToJoin(community.id)}>Request to Join</Button>
             ) : (
-              <Button size="sm" onClick={() => onJoin(community.id)}>Join</Button>
+              <Button appearance="hud" size="sm" onClick={() => onJoin(community.id)}>Join</Button>
             )}
             <div className={styles.kebabWrap}>
               <button type="button" className={styles.kebab} aria-label="More" onClick={() => setMenuOpen((o) => !o)}><Mark name="kebab" /></button>

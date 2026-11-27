@@ -1,14 +1,12 @@
 import { ReadWriteByteBuffer } from '@dcl/ecs/dist/serialization/ByteBuffer'
+import type { CrdtMessageHeader, IEngine, INetowrkEntity, ComponentDefinition } from '@dcl/ecs'
 import {
-  CrdtMessageHeader,
   CrdtMessageProtocol,
   CrdtMessageType,
-  IEngine,
   PutComponentOperation,
   PutNetworkComponentOperation,
   SyncComponents as _SyncComponents,
   NetworkEntity as _NetworkEntity,
-  INetowrkEntity,
   VideoEvent,
   AudioEvent,
   EngineInfo,
@@ -25,8 +23,7 @@ import {
   UiInputResult,
   UiText,
   UiTransform,
-  TriggerAreaResult,
-  ComponentDefinition
+  TriggerAreaResult
 } from '@dcl/ecs'
 import { LIVEKIT_MAX_SIZE } from '@dcl/ecs/dist/systems/crdt'
 

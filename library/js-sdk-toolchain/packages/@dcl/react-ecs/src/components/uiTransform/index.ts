@@ -13,7 +13,7 @@ import {
   parsePosition,
   parseSize
 } from './utils'
-import { UiTransformProps } from './types'
+import type { UiTransformProps } from './types'
 import {
   PointerFilterMode,
   YGAlign,
@@ -24,7 +24,7 @@ import {
   YGPositionType,
   YGUnit
 } from '@dcl/ecs'
-import { PBUiTransform } from '@dcl/ecs/dist/components'
+import type { PBUiTransform } from '@dcl/ecs/dist/components'
 
 /**
  * @internal

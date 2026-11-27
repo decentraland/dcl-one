@@ -93,17 +93,6 @@ pub struct OwnedName {
     pub price: Option<String>,
 }
 
-/// A Genesis parcel as the marketplace subgraph indexes it: the parcel NFT's
-/// owner (the estate contract when the parcel sits in an estate) and, then,
-/// the estate's owner.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct LandParcel {
-    pub x: i32,
-    pub y: i32,
-    pub owner: String,
-    pub estate_owner: Option<String>,
-}
-
 /// One parcel or estate NFT the owner holds, as the marketplace subgraph
 /// indexes it: the columns the old `/lambdas/users/{a}/lands` row projected.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -130,8 +119,6 @@ pub struct Caches {
     pub names: TtlMap<String, Arc<Vec<OwnedName>>>,
     /// `owner` -> every ENS name the owner holds ([`FULL_WALK_PAGES`]).
     all_names: TtlMap<String, Arc<Vec<OwnedName>>>,
-    /// The sorted coordinate list of a place -> its parcels and their owners.
-    land: TtlMap<Vec<(i32, i32)>, Arc<Vec<LandParcel>>>,
     /// lowercased DCL name -> its holder.
     pub name_owner: TtlMap<String, Arc<Option<String>>>,
     /// `owner` -> the parcels and estates the owner holds, newest transfer first.
@@ -154,7 +141,6 @@ impl Default for Caches {
         Self {
             names: TtlMap::bounded(OWNED_TTL, OWNED_CACHE_MAX_ENTRIES),
             all_names: TtlMap::bounded(OWNED_TTL, OWNED_CACHE_MAX_ENTRIES),
-            land: TtlMap::bounded(OWNED_TTL, OWNED_CACHE_MAX_ENTRIES),
             name_owner: TtlMap::bounded(OWNED_TTL, OWNED_CACHE_MAX_ENTRIES),
             lands: TtlMap::bounded(OWNED_TTL, OWNED_CACHE_MAX_ENTRIES),
         }
@@ -204,45 +190,21 @@ pub async fn graph_query_classified(
     }
     let client = &state.http;
     let body = json!({ "query": query, "variables": variables });
+    let label = url_label(url);
+    let label = label.as_str();
     let outcome = retry_with_backoff("subgraph", RETRY_ATTEMPTS, RETRY_BASE_MS, || {
         let body = body.clone();
         async move {
-            let resp = match client
-                .post(url)
-                .timeout(REQUEST_TIMEOUT)
-                .json(&body)
-                .send()
-                .await
-            {
-                Ok(resp) => resp,
-                Err(e) if e.is_connect() || e.is_timeout() || e.is_request() => {
-                    tracing::debug!(error = %e, "subgraph request failed; retrying");
-                    return Ok(RetryDecision::Retry {
-                        after: None,
-                        rate_limited: false,
-                    });
-                }
-                Err(e) => return Err(anyhow::anyhow!("subgraph request failed: {e}")),
+            let timer = AttemptTimer {
+                url: label,
+                started: std::time::Instant::now(),
             };
-            let status = resp.status();
-            if is_transient_status(status) {
-                let after = resp
-                    .headers()
-                    .get(reqwest::header::RETRY_AFTER)
-                    .and_then(|v| v.to_str().ok())
-                    .and_then(parse_retry_after);
-                return Ok(RetryDecision::Retry {
-                    after,
-                    rate_limited: status == reqwest::StatusCode::TOO_MANY_REQUESTS,
-                });
+            let (attempt, timed_out) = graph_attempt(client, url, &body).await;
+            drop(timer);
+            if !matches!(attempt, Ok(RetryDecision::Done(_))) {
+                subgraph_error(label, if timed_out { "timeout" } else { "unknown" });
             }
-            if !status.is_success() {
-                return Err(anyhow::anyhow!("subgraph returned HTTP {status}"));
-            }
-            let bytes = read_body_capped(resp, BODY_CAP).await?;
-            let parsed: Value = serde_json::from_slice(&bytes)
-                .map_err(|e| anyhow::anyhow!("failed to parse subgraph response: {e}"))?;
-            Ok(RetryDecision::Done(parsed))
+            attempt
         }
     })
     .await
@@ -256,20 +218,184 @@ pub async fn graph_query_classified(
     })?;
     let body = outcome
         .ok_or_else(|| GraphQueryError::Transient("subgraph unavailable after retries".into()))?;
-    if let Some(errors) = body
-        .get("errors")
-        .and_then(Value::as_array)
-        .filter(|e| !e.is_empty())
-    {
+    // As `@dcl/thegraph-component` 0.1.2: any `errors` key, even `[]`, fails
+    // the answer.
+    if let Some(errors) = body.get("errors") {
+        let errors = errors.to_string();
+        let kind = if errors.contains("Failed to decode `block.number`") {
+            "invalid_block"
+        } else if errors.contains("Unexpected `") {
+            "syntax_error"
+        } else {
+            "unknown"
+        };
+        subgraph_error(label, kind);
         return Err(GraphQueryError::Invalid(format!(
-            "subgraph errors: {}",
-            Value::Array(errors.clone())
+            "subgraph errors: {errors}"
         )));
     }
-    body.get("data")
-        .cloned()
-        .filter(|d| !d.is_null())
-        .ok_or_else(|| GraphQueryError::Invalid(format!("subgraph response without data: {body}")))
+    let data = body.get("data").filter(|d| has_data(d)).cloned();
+    match &data {
+        Some(_) => SUBGRAPH_OK
+            .handle_owned([label.to_owned().into()])
+            .increment(1),
+        None => subgraph_error(label, "unknown"),
+    }
+    data.ok_or_else(|| GraphQueryError::Invalid(format!("subgraph response without data: {body}")))
+}
+
+/// The subgraph series lamb2 and the content server exported
+/// (`@dcl/thegraph-component` 0.1.2), labelled by the configured subgraph URL
+/// without any key it may carry ([`url_label`]):
+/// every attempt's duration, each valid answer, and each failed attempt or
+/// invalid answer by `kind` (`timeout`, `invalid_block`, `syntax_error`,
+/// `unknown`).
+const SUBGRAPH_OK: dcl_metrics::CounterFamily<1> = dcl_metrics::CounterFamily::new(
+    "subgraph_ok_total",
+    "Subgraph request counter",
+    None,
+    &["url"],
+);
+const SUBGRAPH_ERRORS: dcl_metrics::CounterFamily<2> = dcl_metrics::CounterFamily::new(
+    "subgraph_errors_total",
+    "Subgraph error counter",
+    None,
+    &["url", "kind"],
+);
+const SUBGRAPH_DURATION: dcl_metrics::HistogramFamily<1> = dcl_metrics::HistogramFamily::new(
+    "subgraph_query_duration_seconds",
+    "Request duration in seconds.",
+    Some(dcl_metrics::Unit::Seconds),
+    &["url"],
+    &[0.1, 0.3, 0.5, 1., 2., 5., 10., 20., 30., 60.],
+);
+pub const FAMILIES: &[dcl_metrics::Descriptor] = &[
+    SUBGRAPH_OK.descriptor,
+    SUBGRAPH_ERRORS.descriptor,
+    SUBGRAPH_DURATION.descriptor,
+];
+
+/// Whether `data` holds an answer, as 0.1.2 judged it (`!data ||
+/// Object.keys(data).length === 0` fails): `null`, `{}`, `[]`, `""`, a number
+/// or a boolean does not.
+fn has_data(data: &Value) -> bool {
+    match data {
+        Value::Object(fields) => !fields.is_empty(),
+        Value::Array(items) => !items.is_empty(),
+        Value::String(text) => !text.is_empty(),
+        _ => false,
+    }
+}
+
+/// The `url` label of a subgraph URL, without the places a URL can carry a
+/// secret, so no key reaches a scrape: userinfo (`user:token@`), the query
+/// string and the fragment are dropped, and the path segment after `/api/`,
+/// where a gateway URL carries its API key (`/api/<key>/subgraphs/id/<id>`),
+/// reads `[redacted]`. A keyless gateway URL (`/api/subgraphs/...`,
+/// `/api/deployments/...`) keeps its path.
+fn url_label(url: &str) -> String {
+    let url = &url[..url.find(['?', '#']).unwrap_or(url.len())];
+    let authority = url.find("://").map_or(0, |scheme| scheme + 3);
+    let path = url[authority..]
+        .find('/')
+        .map_or(url.len(), |at| authority + at);
+    let host = url[authority..path]
+        .rfind('@')
+        .map_or(authority, |at| authority + at + 1);
+    let label = format!("{}{}", &url[..authority], &url[host..]);
+    let path = path - (host - authority);
+    let Some(api) = label[path..].find("/api/") else {
+        return label;
+    };
+    let key = path + api + "/api/".len();
+    match label[key..].find('/') {
+        Some(end) if !matches!(&label[key..key + end], "" | "subgraphs" | "deployments") => {
+            format!("{}[redacted]{}", &label[..key], &label[key + end..])
+        }
+        _ => label,
+    }
+}
+
+/// Records an attempt's duration when dropped, so an attempt whose caller
+/// stops waiting is timed too, as 0.1.2 timed every attempt in a `finally`.
+struct AttemptTimer<'a> {
+    url: &'a str,
+    started: std::time::Instant,
+}
+
+impl Drop for AttemptTimer<'_> {
+    fn drop(&mut self) {
+        SUBGRAPH_DURATION
+            .handle_owned([self.url.to_owned().into()])
+            .record(self.started.elapsed().as_secs_f64());
+    }
+}
+
+fn subgraph_error(url: &str, kind: &'static str) {
+    SUBGRAPH_ERRORS
+        .handle_owned([url.to_owned().into(), kind.into()])
+        .increment(1);
+}
+
+/// One subgraph request; `true` with a request that timed out.
+async fn graph_attempt(
+    client: &crate::http::Outbound,
+    url: &str,
+    body: &Value,
+) -> (anyhow::Result<RetryDecision<Value>>, bool) {
+    let resp = match client
+        .post(url)
+        .timeout(REQUEST_TIMEOUT)
+        .json(body)
+        .send()
+        .await
+    {
+        Ok(resp) => resp,
+        Err(e) if e.is_connect() || e.is_timeout() || e.is_request() => {
+            tracing::debug!(error = %e, "subgraph request failed; retrying");
+            let retry = RetryDecision::Retry {
+                after: None,
+                rate_limited: false,
+            };
+            return (Ok(retry), e.is_timeout());
+        }
+        Err(e) => {
+            return (Err(anyhow::anyhow!("subgraph request failed: {e}")), false);
+        }
+    };
+    let status = resp.status();
+    if is_transient_status(status) {
+        let after = resp
+            .headers()
+            .get(reqwest::header::RETRY_AFTER)
+            .and_then(|v| v.to_str().ok())
+            .and_then(parse_retry_after);
+        let retry = RetryDecision::Retry {
+            after,
+            rate_limited: status == reqwest::StatusCode::TOO_MANY_REQUESTS,
+        };
+        return (Ok(retry), false);
+    }
+    if !status.is_success() {
+        return (
+            Err(anyhow::anyhow!("subgraph returned HTTP {status}")),
+            false,
+        );
+    }
+    let parsed = async {
+        let bytes = read_body_capped(resp, BODY_CAP).await?;
+        serde_json::from_slice::<Value>(&bytes)
+            .map_err(|e| anyhow::anyhow!("failed to parse subgraph response: {e}"))
+    };
+    match parsed.await {
+        Ok(parsed) => (Ok(RetryDecision::Done(parsed)), false),
+        Err(e) => {
+            let timed_out = e
+                .downcast_ref::<reqwest::Error>()
+                .is_some_and(reqwest::Error::is_timeout);
+            (Err(e), timed_out)
+        }
+    }
 }
 
 fn str_of(v: &Value, key: &str) -> String {
@@ -291,7 +417,13 @@ fn next_nft_cursor(data: &Value, previous: &str) -> Result<Option<String>, Strin
         .get("nfts")
         .and_then(Value::as_array)
         .ok_or("subgraph response without nfts")?;
-    match rows.len().cmp(&(THE_GRAPH_PAGE_SIZE as usize)) {
+    #[allow(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        reason = "THE_GRAPH_PAGE_SIZE is the constant 1000"
+    )]
+    let page = THE_GRAPH_PAGE_SIZE as usize;
+    match rows.len().cmp(&page) {
         std::cmp::Ordering::Less => Ok(None),
         std::cmp::Ordering::Greater => Err("subgraph returned more NFTs than requested".into()),
         std::cmp::Ordering::Equal => last_id(data)
@@ -392,6 +524,15 @@ async fn walk_names(
         .await
 }
 
+/// Whether [`all_owned_names`] would answer from its memo, without a subgraph call.
+pub fn all_owned_names_memoized(state: &ChainIndex, owner: &str) -> bool {
+    state
+        .graph
+        .all_names
+        .get_fresh(&owner.to_lowercase())
+        .is_some()
+}
+
 /// [`all_owned_names`] for the lambdas `/users/{a}/names` list alone: when the
 /// subgraph fails, the last good list fetched within
 /// [`NAMES_STALE_MAX_AGE`], as lamb2 serves its stale entry. Never for an
@@ -408,105 +549,6 @@ pub async fn owned_names_or_stale(
             .get_within(&owner.to_lowercase(), NAMES_STALE_MAX_AGE)
             .ok_or(err)
     })
-}
-
-/// The parcel NFTs standing on the requested coordinates. `searchParcelX_in`
-/// x `searchParcelY_in` is a superset (the cross product of the distinct
-/// columns and rows), filtered back to the requested pairs here; the old
-/// comms crate ran the same shape over the squid `nft` table
-/// (`search_parcel_x/y`, `search_parcel_estate_id`).
-const QUERY_PARCELS_AT: &str = r#"
-query parcelsAt($xs: [BigInt!]!, $ys: [BigInt!]!, $idFrom: ID!, $first: Int!) {
-  nfts(where: { category: parcel, searchParcelX_in: $xs, searchParcelY_in: $ys, id_gt: $idFrom }, orderBy: id, orderDirection: asc, first: $first) {
-    id
-    searchParcelX
-    searchParcelY
-    owner { id }
-    parcel { estate { owner { id } } }
-  }
-}"#;
-
-pub(crate) fn parse_parcels(data: &Value) -> Vec<LandParcel> {
-    data.get("nfts")
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-        .filter_map(|nft| {
-            let coord = |key: &str| -> Option<i32> {
-                match nft.get(key)? {
-                    Value::String(s) => s.parse().ok(),
-                    Value::Number(n) => i32::try_from(n.as_i64()?).ok(),
-                    _ => None,
-                }
-            };
-            let (x, y) = (coord("searchParcelX")?, coord("searchParcelY")?);
-            let owner = nft.get("owner")?.get("id")?.as_str()?.to_lowercase();
-            let estate_owner = nft
-                .pointer("/parcel/estate/owner/id")
-                .and_then(Value::as_str)
-                .map(str::to_lowercase);
-            Some(LandParcel {
-                x,
-                y,
-                owner,
-                estate_owner,
-            })
-        })
-        .collect()
-}
-
-/// The parcels at `coords` (deduplicated, sorted), from the marketplace
-/// subgraph. `Ok(empty)` when no marketplace subgraph is configured, so a
-/// caller deciding ownership refuses rather than guesses.
-pub async fn parcels_at(
-    state: &ChainIndex,
-    coords: &[(i32, i32)],
-) -> Result<Arc<Vec<LandParcel>>, String> {
-    let mut key: Vec<(i32, i32)> = coords.to_vec();
-    key.sort_unstable();
-    key.dedup();
-    if key.is_empty() {
-        return Ok(Arc::new(Vec::new()));
-    }
-    state
-        .graph
-        .land
-        .get_or_fetch(key.clone(), || async move {
-            let Some(url) = state.settings.marketplace_subgraph_url.as_deref() else {
-                return Ok(Arc::new(Vec::new()));
-            };
-            let mut xs: Vec<String> = key.iter().map(|(x, _)| x.to_string()).collect();
-            let mut ys: Vec<String> = key.iter().map(|(_, y)| y.to_string()).collect();
-            xs.sort_unstable();
-            xs.dedup();
-            ys.sort_unstable();
-            ys.dedup();
-            let mut out = Vec::new();
-            let mut id_from = String::new();
-            for _ in 0..MAX_PAGES {
-                let data = graph_query(
-                    state,
-                    url,
-                    QUERY_PARCELS_AT,
-                    json!({ "xs": xs, "ys": ys, "idFrom": id_from, "first": THE_GRAPH_PAGE_SIZE }),
-                )
-                .await?;
-                let next = next_nft_cursor(&data, &id_from)?;
-                out.extend(
-                    parse_parcels(&data)
-                        .into_iter()
-                        .filter(|p| key.binary_search(&(p.x, p.y)).is_ok()),
-                );
-                match next {
-                    Some(id) => id_from = id,
-                    None => return Ok(Arc::new(out)),
-                }
-            }
-            Err(format!(
-                "no terminal parcel NFT page after {MAX_PAGES} pages"
-            ))
-        })
-        .await
 }
 
 /// The ENS name's holder: `searchText` is the subgraph's lowercased name, so
@@ -747,23 +789,6 @@ pub async fn owned_lands_or_stale(
     })
 }
 
-/// Whether `owner` holds any of the parcels at `coords`, directly or through
-/// the estate the parcel sits in: the LAND half of "scene owner".
-pub async fn owns_land_at(
-    state: &ChainIndex,
-    owner: &str,
-    coords: &[(i32, i32)],
-) -> Result<bool, String> {
-    if !is_valid_eth_address(owner) {
-        return Ok(false);
-    }
-    let owner = owner.to_lowercase();
-    let parcels = parcels_at(state, coords).await?;
-    Ok(parcels
-        .iter()
-        .any(|p| p.owner == owner || p.estate_owner.as_deref() == Some(owner.as_str())))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -832,35 +857,6 @@ mod tests {
     }
 
     #[test]
-    fn parcels_parse_the_owner_and_the_estate_owner() {
-        let data = json!({ "nfts": [
-            { "id": "0xland-1", "searchParcelX": "10", "searchParcelY": "20", "owner": { "id": "0xAAAA" }, "parcel": { "estate": null } },
-            { "id": "0xland-2", "searchParcelX": 10, "searchParcelY": 21, "owner": { "id": "0xestatecontract" },
-              "parcel": { "estate": { "owner": { "id": "0xBBBB" } } } },
-            { "id": "no-coords", "owner": { "id": "0xcccc" } },
-            { "id": "no-owner", "searchParcelX": "1", "searchParcelY": "1" }
-        ]});
-        let parcels = parse_parcels(&data);
-        assert_eq!(
-            parcels,
-            vec![
-                LandParcel {
-                    x: 10,
-                    y: 20,
-                    owner: "0xaaaa".into(),
-                    estate_owner: None
-                },
-                LandParcel {
-                    x: 10,
-                    y: 21,
-                    owner: "0xestatecontract".into(),
-                    estate_owner: Some("0xbbbb".into())
-                },
-            ]
-        );
-    }
-
-    #[test]
     fn network_of_urn_follows_the_third_segment() {
         assert_eq!(
             Network::of_urn("urn:decentraland:ethereum:collections-v1:x:y"),
@@ -923,6 +919,239 @@ mod tests {
         assert!(err.contains("not a publicly routable"), "{err}");
     }
 
+    fn subgraph_recorder() -> dcl_metrics::PrometheusRecorder {
+        dcl_metrics::Registry::new(&[FAMILIES])
+            .unwrap()
+            .builder(dcl_metrics::PrometheusBuilder::new())
+            .unwrap()
+            .build_recorder()
+    }
+
+    /// A subgraph whose paths answer each failure the series classify:
+    /// `/flaky` a 503 on its first call then data, `/stall` never.
+    async fn failing_subgraph() -> String {
+        use axum::response::IntoResponse;
+        use std::sync::atomic::{AtomicBool, Ordering};
+        let answer = |body: Value| axum::routing::post(move || async move { axum::Json(body) });
+        let failed_once = Arc::new(AtomicBool::new(false));
+        let app = axum::Router::new()
+            .route(
+                "/syntax",
+                answer(json!({ "errors": [{ "message": "Unexpected `}`" }] })),
+            )
+            .route(
+                "/block",
+                answer(
+                    json!({ "errors": [{ "message": "Failed to decode `block.number` value" }] }),
+                ),
+            )
+            .route("/null-data", answer(json!({ "data": null })))
+            .route("/empty-data", answer(json!({ "data": {} })))
+            .route(
+                "/empty-errors",
+                answer(json!({ "errors": [], "data": { "nfts": [] } })),
+            )
+            .route(
+                "/flaky",
+                axum::routing::post(move || async move {
+                    if failed_once.swap(true, Ordering::Relaxed) {
+                        axum::Json(json!({ "data": { "nfts": [] } })).into_response()
+                    } else {
+                        axum::http::StatusCode::SERVICE_UNAVAILABLE.into_response()
+                    }
+                }),
+            )
+            .route(
+                "/stall",
+                axum::routing::post(std::future::pending::<axum::Json<Value>>),
+            );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        base
+    }
+
+    fn assert_rendered(rendered: &str, lines: &[String]) {
+        for line in lines {
+            assert!(rendered.contains(line), "missing {line}:\n{rendered}");
+        }
+    }
+
+    /// The legacy subgraph series: a valid answer counts in `subgraph_ok_total`,
+    /// each invalid answer in `subgraph_errors_total{kind}` as 0.1.2 classified
+    /// it (`errors: []` and `data: {}` included), and each attempt in the
+    /// duration histogram with its declared buckets, labelled by URL. A 503
+    /// counts `unknown` and a duration for its attempt, then the retry's.
+    #[tokio::test(flavor = "current_thread")]
+    async fn subgraph_queries_record_the_legacy_series() {
+        let recorder = subgraph_recorder();
+        let handle = recorder.handle();
+        let _recording = dcl_metrics::set_default_local_recorder(&recorder);
+        let (index, _) = test_support::index_with_names().await;
+        let good = index.settings.marketplace_subgraph_url.clone().unwrap();
+        graph_query(&index, &good, "{ nfts { id } }", json!({}))
+            .await
+            .unwrap();
+        let base = failing_subgraph().await;
+        for (path, kind) in [
+            ("syntax", "syntax_error"),
+            ("block", "invalid_block"),
+            ("null-data", "unknown"),
+            ("empty-data", "unknown"),
+            ("empty-errors", "unknown"),
+        ] {
+            let url = format!("{base}/{path}");
+            graph_query(&index, &url, "{ nfts { id } }", json!({}))
+                .await
+                .unwrap_err();
+            assert_rendered(
+                &handle.render(),
+                &[
+                    format!("subgraph_errors_total{{url=\"{url}\",kind=\"{kind}\"}} 1"),
+                    format!("subgraph_query_duration_seconds_count{{url=\"{url}\"}} 1"),
+                ],
+            );
+        }
+        let flaky = format!("{base}/flaky");
+        graph_query(&index, &flaky, "{ nfts { id } }", json!({}))
+            .await
+            .unwrap();
+        let rendered = handle.render();
+        assert_rendered(
+            &rendered,
+            &[
+                format!("subgraph_ok_total{{url=\"{good}\"}} 1"),
+                format!("subgraph_query_duration_seconds_count{{url=\"{good}\"}} 1"),
+                format!("subgraph_query_duration_seconds_bucket{{url=\"{good}\",le=\"60\"}} 1"),
+                format!("subgraph_errors_total{{url=\"{flaky}\",kind=\"unknown\"}} 1"),
+                format!("subgraph_ok_total{{url=\"{flaky}\"}} 1"),
+                format!("subgraph_query_duration_seconds_count{{url=\"{flaky}\"}} 2"),
+            ],
+        );
+        assert!(
+            !rendered.contains(&format!("subgraph_ok_total{{url=\"{base}/empty")),
+            "{rendered}"
+        );
+    }
+
+    /// Every attempt that times out counts `kind="timeout"` and its duration.
+    #[tokio::test(flavor = "current_thread", start_paused = true)]
+    async fn timed_out_attempts_count_as_timeouts() {
+        let recorder = subgraph_recorder();
+        let handle = recorder.handle();
+        let _recording = dcl_metrics::set_default_local_recorder(&recorder);
+        let (index, _) = test_support::index_with_names().await;
+        let stall = format!("{}/stall", failing_subgraph().await);
+        graph_query(&index, &stall, "{ nfts { id } }", json!({}))
+            .await
+            .unwrap_err();
+        assert_rendered(
+            &handle.render(),
+            &[
+                format!(
+                    "subgraph_errors_total{{url=\"{stall}\",kind=\"timeout\"}} {RETRY_ATTEMPTS}"
+                ),
+                format!(
+                    "subgraph_query_duration_seconds_count{{url=\"{stall}\"}} {RETRY_ATTEMPTS}"
+                ),
+            ],
+        );
+    }
+
+    /// A query its caller stops waiting for still records the attempt's
+    /// duration, and no error: the attempt has no outcome.
+    #[tokio::test(flavor = "current_thread")]
+    async fn an_abandoned_attempt_records_its_duration() {
+        let recorder = subgraph_recorder();
+        let handle = recorder.handle();
+        let _recording = dcl_metrics::set_default_local_recorder(&recorder);
+        let (index, _) = test_support::index_with_names().await;
+        let stall = format!("{}/stall", failing_subgraph().await);
+        let query = graph_query(&index, &stall, "{ nfts { id } }", json!({}));
+        tokio::time::timeout(Duration::from_millis(200), query)
+            .await
+            .unwrap_err();
+        let rendered = handle.render();
+        assert_rendered(
+            &rendered,
+            &[format!(
+                "subgraph_query_duration_seconds_count{{url=\"{stall}\"}} 1"
+            )],
+        );
+        assert!(!rendered.contains("subgraph_errors_total{"), "{rendered}");
+    }
+
+    #[test]
+    fn the_url_label_drops_every_place_a_key_can_hide() {
+        for (url, label) in [
+            (
+                "https://gateway.thegraph.com/api/example-key-123/subgraphs/id/Qm1",
+                "https://gateway.thegraph.com/api/[redacted]/subgraphs/id/Qm1",
+            ),
+            (
+                "https://api.studio.thegraph.com/query/1/names/v1",
+                "https://api.studio.thegraph.com/query/1/names/v1",
+            ),
+            ("http://api/api/", "http://api/api/"),
+            (
+                "https://gateway.thegraph.com/api/subgraphs/id/Qm1",
+                "https://gateway.thegraph.com/api/subgraphs/id/Qm1",
+            ),
+            ("http://127.0.0.1:1/subgraph", "http://127.0.0.1:1/subgraph"),
+            (
+                "https://api.example.com/subgraphs/name/x?api-key=example-key-123",
+                "https://api.example.com/subgraphs/name/x",
+            ),
+            (
+                "https://api.example.com/subgraphs/name/x#example-key-123",
+                "https://api.example.com/subgraphs/name/x",
+            ),
+            (
+                "https://user:example-key-123@api.example.com/subgraphs/name/x",
+                "https://api.example.com/subgraphs/name/x",
+            ),
+            (
+                "https://example-key-123@api.example.com",
+                "https://api.example.com",
+            ),
+            (
+                "https://user:example-key-123@gateway.example.com/api/example-key-123/subgraphs/id/Qm1?token=example-key-123",
+                "https://gateway.example.com/api/[redacted]/subgraphs/id/Qm1",
+            ),
+        ] {
+            assert_eq!(url_label(url), label);
+        }
+    }
+
+    /// A keyed URL's series carry the redacted label and never the key.
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_keyed_subgraph_url_never_shows_its_key() {
+        let recorder = subgraph_recorder();
+        let handle = recorder.handle();
+        let _recording = dcl_metrics::set_default_local_recorder(&recorder);
+        let (index, _) = test_support::index_with_names().await;
+        let app = axum::Router::new().route(
+            "/api/{key}/subgraphs/id/names",
+            axum::routing::post(|| async { axum::Json(json!({ "data": { "nfts": [] } })) }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let keyed = format!(
+            "http://{}/api/example-key-123/subgraphs/id/names",
+            listener.local_addr().unwrap()
+        );
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        graph_query(&index, &keyed, "{ nfts { id } }", json!({}))
+            .await
+            .unwrap();
+        let rendered = handle.render();
+        let redacted = keyed.replace("example-key-123", "[redacted]");
+        assert_rendered(
+            &rendered,
+            &[format!("subgraph_ok_total{{url=\"{redacted}\"}} 1")],
+        );
+        assert!(!rendered.contains("example-key-123"), "{rendered}");
+    }
+
     #[tokio::test]
     async fn name_owners_answers_many_names_in_one_query_without_caching() {
         let (index, names) = test_support::index_with_names().await;
@@ -946,6 +1175,7 @@ mod tests {
 /// mutable registry: the name authority of the worlds tests (the old tests
 /// seeded squid's `ens`/`nft` tables).
 #[cfg(any(test, feature = "test-support"))]
+#[allow(clippy::unwrap_used, reason = "test support")]
 pub mod test_support {
     use std::collections::HashMap;
     use std::sync::{Arc, Mutex};

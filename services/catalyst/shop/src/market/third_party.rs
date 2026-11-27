@@ -386,10 +386,11 @@ fn rpc_url_for(state: &MarketplaceState, network: &str) -> Option<String> {
         .trade_rpc_urls
         .for_chain(chain_id)
         .map(str::to_string);
-    let (l1, l2) = match state.settings.eth_network.trim() {
-        "sepolia" => ("sepolia", "amoy"),
-        _ => ("mainnet", "matic"),
-    };
+    let (l1, l2) =
+        match crate::shared::network::ChainPair::from_eth_network(&state.settings.eth_network) {
+            Some(crate::shared::network::ChainPair::Testnet) => ("sepolia", "amoy"),
+            _ => ("mainnet", "matic"),
+        };
     if network == l2 {
         state.settings.polygon_rpc_url.clone().or(listed)
     } else if network == l1 {
@@ -925,7 +926,11 @@ async fn rpc_batch(
             ));
         };
         for item in items {
-            let Some(idx) = item.get("id").and_then(Value::as_u64).map(|id| id as usize) else {
+            let Some(idx) = item
+                .get("id")
+                .and_then(Value::as_u64)
+                .map(super::casts::to_usize)
+            else {
                 continue;
             };
             if idx < base || idx >= base + chunk.len() {
@@ -1266,7 +1271,7 @@ async fn fetch_collection_entities(state: &MarketplaceState, collection_id: &str
     else {
         return Vec::new();
     };
-    let short = (first.entities.len() as i64) < PAGE;
+    let short = crate::market::casts::len_i64(first.entities.len()) < PAGE;
     retain_non_denylisted(&mut first.entities, &state.denylist);
     let mut out: Vec<Value> = first
         .entities
@@ -1278,14 +1283,14 @@ async fn fetch_collection_entities(state: &MarketplaceState, collection_id: &str
         return out;
     }
     let rest = (PAGE..first.total)
-        .step_by(PAGE as usize)
+        .step_by(crate::market::casts::page(PAGE))
         .map(|offset| active_entity_docs_by_prefix(&state.pool, collection_id, offset, PAGE));
     let mut pages = futures::stream::iter(rest).buffered(PAGE_CONCURRENCY);
     while let Some(page) = pages.next().await {
         let Ok(mut page) = page else {
             break;
         };
-        let short = (page.entities.len() as i64) < PAGE;
+        let short = crate::market::casts::len_i64(page.entities.len()) < PAGE;
         retain_non_denylisted(&mut page.entities, &state.denylist);
         out.extend(
             page.entities

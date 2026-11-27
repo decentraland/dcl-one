@@ -15,7 +15,9 @@ use serde_json::{Value, json};
 use sqlx::types::Json as SqlJson;
 use sqlx::{PgConnection, PgPool};
 
-use super::chain_walk::{ChainIndex, ChainNet, INDEXER_THIRD_PARTY_REGISTRY, LogGroup, Owner};
+use super::chain_walk::{
+    ChainIndex, ChainNet, INDEXER_THIRD_PARTY_REGISTRY, LogGroup, LogSource, Owner,
+};
 use super::third_party::{ThirdPartyProvider, TpContract};
 use super::{MarketplaceState, SharedState, Source, lambdas_error, unavailable};
 use crate::chain_index::rpc::{RpcLog, hex_to_i64};
@@ -24,6 +26,7 @@ pub const CONTRACT: &str = "0x1c436c1efb4608dffdc8bace99d2b03c314f3348";
 pub const START_BLOCK: u64 = 26_860_700;
 
 sol! {
+    #[allow(clippy::too_many_arguments, reason = "generated event constructor")]
     interface Registry {
         event ThirdPartyAdded(string id, string metadata, string resolver, bool approved, address[] managers, uint256 slots, bool programmatic, address sender);
         event ThirdPartyUpdated(string id, string metadata, string resolver, address[] managers, bool[] managerValues, uint256 slots, address sender);
@@ -36,6 +39,9 @@ sol! {
         event ThirdPartyAdded(string id, string metadata, string resolver, bool approved, address[] managers, uint256 slots, address sender);
     }
 }
+
+#[path = "third_party_registry_repair.rs"]
+mod repair;
 
 const TOPICS: [B256; 7] = [
     Registry::ThirdPartyAdded::SIGNATURE_HASH,
@@ -352,6 +358,14 @@ fn apply(
     Ok(Some((provider, receipt)))
 }
 
+fn log_group() -> LogGroup {
+    let topics: Vec<String> = TOPICS.iter().map(|topic| format!("{topic:#x}")).collect();
+    LogGroup {
+        addresses: vec![CONTRACT.into()],
+        topics: json!([topics]),
+    }
+}
+
 pub struct ThirdPartyRegistryIndex;
 
 #[async_trait::async_trait]
@@ -375,11 +389,7 @@ impl ChainIndex for ThirdPartyRegistryIndex {
         _: u64,
         _: (u64, i64),
     ) -> anyhow::Result<Vec<LogGroup>> {
-        let topics: Vec<String> = TOPICS.iter().map(|topic| format!("{topic:#x}")).collect();
-        Ok(vec![LogGroup {
-            addresses: vec![CONTRACT.into()],
-            topics: json!([topics]),
-        }])
+        Ok(vec![log_group()])
     }
 
     async fn write(
@@ -409,11 +419,12 @@ impl ChainIndex for ThirdPartyRegistryIndex {
             .fetch_optional(&mut *conn)
             .await?
             .map(|state| state.0);
+            let is_review = matches!(event.change, Change::Reviewed { .. });
             if let Some((provider, receipt)) = apply(event.id, event.change, previous)? {
                 written += sqlx::query(
                     "INSERT INTO shop.third_party_registry_event
-                     (block_number, log_index, block_time, provider_id, state, receipt)
-                     VALUES ($1, $2, $3, $4, $5, $6)
+                     (block_number, log_index, block_time, provider_id, state, receipt, is_review)
+                     VALUES ($1, $2, $3, $4, $5, $6, $7)
                      ON CONFLICT (block_number, log_index) DO NOTHING",
                 )
                 .bind(event.block)
@@ -426,12 +437,24 @@ impl ChainIndex for ThirdPartyRegistryIndex {
                 .bind(&provider.id)
                 .bind(SqlJson(&provider))
                 .bind(receipt.map(SqlJson))
+                .bind(is_review)
                 .execute(&mut *conn)
                 .await?
                 .rows_affected();
             }
         }
-        Ok(written as usize)
+        Ok(crate::market::casts::to_usize(written))
+    }
+
+    async fn after_publish(
+        &self,
+        pool: &PgPool,
+        source: &dyn LogSource,
+        owner: &Owner,
+        window_blocks: u64,
+        remaining: usize,
+    ) -> anyhow::Result<usize> {
+        repair::backfill_reviews(pool, source, owner, window_blocks, remaining).await
     }
 
     async fn rewind(&self, conn: &mut PgConnection, to: i64) -> anyhow::Result<()> {
@@ -577,7 +600,19 @@ pub(super) async fn provider(State(state): State<SharedState>, Path(id): Path<St
 
 #[cfg(test)]
 mod tests {
+    #![allow(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        clippy::cast_possible_wrap,
+        clippy::cast_precision_loss,
+        reason = "test fixtures use small literal values"
+    )]
+
     use super::*;
+    use crate::chain_index::{
+        logs::{Read, Window},
+        rpc::{BlockHeader, RpcError},
+    };
     use crate::market::tests::support::OwnDb;
     use crate::market::{Settings, router};
     use alloy_primitives::address;
@@ -678,6 +713,333 @@ mod tests {
             .unwrap()
             .unwrap();
         assert!(provider.approved && provider.root.is_none());
+    }
+
+    struct RepairArchive {
+        logs: Vec<RpcLog>,
+        tip: u64,
+        changed_tip_read: Option<usize>,
+        forked_block: Option<u64>,
+        tip_reads: std::sync::atomic::AtomicUsize,
+    }
+
+    fn repair_header(number: u64) -> crate::chain_index::rpc::BlockHeader {
+        crate::chain_index::rpc::BlockHeader {
+            number,
+            hash: format!("0x{number:064x}"),
+            timestamp: number as i64,
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl LogSource for RepairArchive {
+        async fn chain_id(&self) -> Result<Read<u64>, RpcError> {
+            unreachable!("the writer already proved its chain")
+        }
+
+        async fn head(&self) -> Result<Read<u64>, RpcError> {
+            unreachable!("repair uses the published fold")
+        }
+
+        async fn finalized(&self) -> Result<Read<BlockHeader>, RpcError> {
+            unreachable!("repair checks the publication's specific header")
+        }
+
+        async fn header(&self, number: u64) -> Result<Read<BlockHeader>, RpcError> {
+            let mut value = repair_header(number);
+            if self.forked_block == Some(number) {
+                value.hash = repair_header(number + 100).hash;
+            }
+            if number == self.tip
+                && self.changed_tip_read
+                    == Some(
+                        self.tip_reads
+                            .fetch_add(1, std::sync::atomic::Ordering::Relaxed),
+                    )
+            {
+                value.hash = repair_header(number + 1).hash;
+            }
+            Ok(Read { value, requests: 1 })
+        }
+
+        async fn window(
+            &self,
+            _: u64,
+            _: u64,
+            _: &[LogGroup],
+            _: &mut usize,
+        ) -> Result<Window, RpcError> {
+            unreachable!("repair uses the bounded archive reader")
+        }
+
+        async fn archive_window(
+            &self,
+            from: u64,
+            to: u64,
+            groups: &[LogGroup],
+            _: &mut usize,
+            budget: usize,
+        ) -> Result<Window, RpcError> {
+            assert_eq!(groups.len(), 1);
+            assert_eq!(groups[0].addresses, log_group().addresses);
+            assert_eq!(groups[0].topics, log_group().topics);
+            assert!(budget >= 1);
+            Ok(Window {
+                logs: self
+                    .logs
+                    .iter()
+                    .filter(|log| {
+                        (from as i64..=to as i64)
+                            .contains(&crate::chain_index::logs::log_position(log).0)
+                    })
+                    .cloned()
+                    .collect(),
+                reached: to,
+                requests: 1,
+                charge: 1,
+                ..Window::default()
+            })
+        }
+
+        async fn block_times(&self, _: &[RpcLog]) -> Result<Read<HashMap<i64, i64>>, RpcError> {
+            unreachable!("the archived flags do not change block timestamps")
+        }
+    }
+
+    #[tokio::test]
+    async fn review_repair_classifies_old_rows_only_after_a_complete_canonical_read() {
+        let Some(db) = OwnDb::create("third_party_review_repair").await else {
+            return;
+        };
+        let pool = &db.pool;
+        let tip = START_BLOCK + 3;
+        let mut logs = vec![
+            log(
+                Registry::ThirdPartyAdded {
+                    id: ID.into(),
+                    metadata: "tp:1:Provider:Example".into(),
+                    resolver: String::new(),
+                    approved: false,
+                    managers: vec![MANAGER],
+                    slots: U256::ZERO,
+                    programmatic: false,
+                    sender: MANAGER,
+                },
+                START,
+                0,
+            ),
+            log(
+                Registry::ThirdPartyReviewed {
+                    id: ID.into(),
+                    approved: true,
+                    sender: MANAGER,
+                },
+                START + 1,
+                0,
+            ),
+            log(
+                Registry::ThirdPartyReviewedWithRoot {
+                    id: ID.into(),
+                    root: B256::repeat_byte(1),
+                    approved: true,
+                    sender: MANAGER,
+                },
+                START + 2,
+                0,
+            ),
+        ];
+        for (offset, entry) in logs.iter_mut().enumerate() {
+            entry.block_hash = Some(repair_header(START_BLOCK + offset as u64).hash);
+        }
+        let index = ThirdPartyRegistryIndex;
+        let settings = crate::market::chain_walk::IndexSettings::default();
+        let owner = crate::market::chain_walk::Holdings::default()
+            .owner(pool, None, &index, &settings)
+            .await
+            .unwrap();
+        let mut tx = pool.begin().await.unwrap();
+        let times = (START..=START + 2).map(|block| (block, block)).collect();
+        assert_eq!(index.write(&mut tx, &logs, &times).await.unwrap(), 3);
+        sqlx::query(
+            "UPDATE shop.chain_cursor SET last_block=$2::bigint+2,folded_block=$2,folded_at=timezone('UTC',now())
+             WHERE indexer=$1 AND network='matic'",
+        ).bind(index.indexer()).bind(tip as i64).execute(&mut *tx).await.unwrap();
+        let checkpoint =
+            "INSERT INTO shop.chain_checkpoint(indexer,network,block_number,block_hash,block_time)
+            VALUES ($1,'matic',$2,$3,$2)";
+        for block in [START_BLOCK, START_BLOCK + 1, tip] {
+            sqlx::query(checkpoint)
+                .bind(index.indexer())
+                .bind(block as i64)
+                .bind(repair_header(block).hash)
+                .execute(&mut *tx)
+                .await
+                .unwrap();
+        }
+        tx.commit().await.unwrap();
+
+        let flags = || {
+            sqlx::query_scalar::<_, Option<bool>>(
+            "SELECT is_review FROM shop.third_party_registry_event ORDER BY block_number,log_index",
+        ).fetch_all(pool)
+        };
+        assert_eq!(
+            flags().await.unwrap(),
+            [Some(false), Some(true), Some(true)]
+        );
+        sqlx::query(
+            "UPDATE shop.third_party_registry_event SET is_review=CASE WHEN block_number<$1 THEN NULL ELSE false END",
+        )
+        .bind(START + 2)
+        .execute(pool)
+        .await
+        .unwrap();
+        let pending = [None, None, Some(false)];
+        assert_eq!(flags().await.unwrap(), pending);
+
+        let mut settings = Settings::for_tests();
+        settings.market.indexes.third_party_registry_enabled = true;
+        let state = Arc::new(MarketplaceState::new(
+            pool.clone(),
+            crate::http::Outbound::for_tests(),
+            settings,
+        ));
+        let path = format!("/lambdas/third-party-integrations/providers/{ID}");
+        let current_provider = get(&state, &path).await;
+        assert_eq!(current_provider.0, StatusCode::OK);
+
+        let archive = |logs, changed_tip_read| RepairArchive {
+            logs,
+            tip,
+            changed_tip_read,
+            forked_block: None,
+            tip_reads: 0.into(),
+        };
+        let mut wrong_branch = logs.clone();
+        wrong_branch[1].block_hash = Some(repair_header(tip + 1).hash);
+        for (source, expected) in [
+            (
+                archive(vec![logs[0].clone(), logs[2].clone()], None),
+                "archive omitted an indexed event",
+            ),
+            (
+                archive(wrong_branch, None),
+                "log was not on the canonical branch",
+            ),
+            (archive(logs.clone(), Some(0)), "anchor changed"),
+            (archive(logs.clone(), Some(1)), "anchor changed"),
+        ] {
+            let error = index
+                .after_publish(pool, &source, &owner, 10, 10)
+                .await
+                .unwrap_err();
+            assert!(error.to_string().contains(expected), "{error:#}");
+            assert_eq!(flags().await.unwrap(), pending);
+        }
+
+        let mut other_branch = logs.clone();
+        other_branch[1] = log(
+            Registry::ThirdPartyItemSlotsBought {
+                id: ID.into(),
+                price: U256::ZERO,
+                slots: U256::ZERO,
+                sender: MANAGER,
+            },
+            START + 1,
+            0,
+        );
+        other_branch[1].block_hash = Some(repair_header(START_BLOCK + 101).hash);
+        let forked_source = RepairArchive {
+            forked_block: Some(START_BLOCK + 1),
+            ..archive(other_branch, None)
+        };
+        let error = index
+            .after_publish(pool, &forked_source, &owner, 10, 10)
+            .await
+            .unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("no matching published checkpoint"),
+            "{error:#}"
+        );
+        assert_eq!(flags().await.unwrap(), pending);
+
+        let source = archive(logs, None);
+        sqlx::query("DELETE FROM shop.chain_checkpoint WHERE indexer=$1 AND network='matic' AND block_number=$2")
+            .bind(index.indexer()).bind(START + 1).execute(pool).await.unwrap();
+        assert_eq!(
+            index
+                .after_publish(pool, &source, &owner, 10, 10)
+                .await
+                .unwrap(),
+            4
+        );
+        assert_eq!(flags().await.unwrap(), [Some(false), None, Some(false)]);
+        let request_count = source.tip_reads.load(std::sync::atomic::Ordering::Relaxed);
+        assert_eq!(
+            index
+                .after_publish(pool, &source, &owner, 10, 10)
+                .await
+                .unwrap(),
+            0
+        );
+        assert_eq!(
+            source.tip_reads.load(std::sync::atomic::Ordering::Relaxed),
+            request_count
+        );
+        assert_eq!(flags().await.unwrap(), [Some(false), None, Some(false)]);
+
+        sqlx::query(checkpoint)
+            .bind(index.indexer())
+            .bind(START + 1)
+            .bind(repair_header(START_BLOCK + 1).hash)
+            .execute(pool)
+            .await
+            .unwrap();
+        sqlx::query(
+            "UPDATE shop.third_party_registry_event SET is_review=NULL WHERE block_number=$1",
+        )
+        .bind(START)
+        .execute(pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            index
+                .after_publish(pool, &source, &owner, 10, 4)
+                .await
+                .unwrap(),
+            4
+        );
+        assert_eq!(flags().await.unwrap(), [Some(false), None, Some(false)]);
+        let new_owner = crate::market::chain_walk::Holdings::default()
+            .owner(
+                pool,
+                None,
+                &index,
+                &crate::market::chain_walk::IndexSettings::default(),
+            )
+            .await
+            .unwrap();
+        let error = index
+            .after_publish(pool, &source, &owner, 10, 10)
+            .await
+            .unwrap_err();
+        assert!(
+            error.to_string().contains("another job took it"),
+            "{error:#}"
+        );
+        assert_eq!(flags().await.unwrap(), [Some(false), None, Some(false)]);
+        index
+            .after_publish(pool, &source, &new_owner, 10, 10)
+            .await
+            .unwrap();
+        assert_eq!(
+            flags().await.unwrap(),
+            [Some(false), Some(true), Some(false)]
+        );
+        assert_eq!(get(&state, &path).await, current_provider);
+        db.drop().await;
     }
 
     #[tokio::test]

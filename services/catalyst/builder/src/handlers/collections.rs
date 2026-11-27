@@ -44,6 +44,14 @@ fn should_paginate(page: Option<i64>, limit: Option<i64>) -> bool {
 
 /// Counts published-collection creator reads that failed, so the stored
 /// (possibly previous) owner answered.
+const CREATOR_READ_FAILURE_COUNTER: dcl_metrics::CounterFamily<0> = dcl_metrics::CounterFamily::new(
+    CREATOR_READ_FAILURES,
+    "Collection creator lookups that failed and used the stored owner.",
+    Some(dcl_metrics::Unit::Count),
+    &[],
+);
+pub const FAMILIES: &[dcl_metrics::Descriptor] = &[CREATOR_READ_FAILURE_COUNTER.descriptor];
+
 pub const CREATOR_READ_FAILURES: &str = "builder_collection_creator_read_failures_total";
 
 /// The collection with a published standard collection's owner taken from
@@ -85,7 +93,7 @@ pub(super) async fn synced_collection(
             Ok::<_, std::convert::Infallible>(match read.await {
                 Ok(creator) => Some(creator),
                 Err(error) => {
-                    metrics::counter!(CREATOR_READ_FAILURES).increment(1);
+                    CREATOR_READ_FAILURE_COUNTER.handle([]).increment(1);
                     tracing::warn!(collection = %id, error = ?error, "collection creator read failed; the stored owner answers");
                     None
                 }
@@ -887,8 +895,8 @@ mod tests {
             eprintln!("skipping: CATALYST_TEST_DATABASE_URL not set");
             return;
         };
-        let recorder = metrics_exporter_prometheus::PrometheusBuilder::new().build_recorder();
-        let _recording = metrics::set_default_local_recorder(&recorder);
+        let recorder = dcl_metrics::PrometheusBuilder::new().build_recorder();
+        let _recording = dcl_metrics::set_default_local_recorder(&recorder);
         let (owner, next) = (address_of(OWNER_KEY), address_of(STRANGER_KEY));
         let contract = format!("0x{}00000000", Uuid::new_v4().simple());
         let polygon = Arc::new(Mutex::new(FakePolygon {

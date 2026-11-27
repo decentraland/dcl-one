@@ -1,5 +1,6 @@
-import { Observer } from './internal/Observable'
-import { IEvents, onCommsMessage } from './observables'
+import type { Observer } from './internal/Observable'
+import type { IEvents } from './observables'
+import { onCommsMessage } from './observables'
 import * as communicationsController from '~system/CommunicationsController'
 
 /**

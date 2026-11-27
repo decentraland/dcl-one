@@ -16,7 +16,7 @@ use common::{
     sets::{SceneSets, SetupSets},
     structs::{
         AppConfig, CurrentRealm, CursorLocks, DebugInfo, PreviewCommand, PreviewMode, PrimaryUser,
-        StartupScenes, UiRoot, Version, ZOrder,
+        StartupScenes, UiRoot, Version, ZOrder, CAMERA_CURSOR_LOCK,
     },
     util::{ModifyComponentExt, TryPushChildrenEx},
 };
@@ -792,7 +792,7 @@ fn update_crosshair(
     mut prev: Local<Option<bool>>,
     mut crosshair: Query<&mut ImageNode, With<CrossHair>>,
 ) {
-    let locked = locks.0.contains("Camera");
+    let locked = locks.0.contains(CAMERA_CURSOR_LOCK);
     if Some(locked) != *prev {
         let Ok(mut img) = crosshair.single_mut() else {
             return;

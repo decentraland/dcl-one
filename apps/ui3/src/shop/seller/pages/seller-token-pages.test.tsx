@@ -117,7 +117,10 @@ describe("Remove from sale", () => {
         { method: "GET", path: /^\/v1\/trades\/old-1$/, reply: () => ({ body: { ok: true, data: { ...old, id: "old-1", contract: MARKET } } }) },
       ],
     });
-    fireEvent.click(await screen.findByRole("button", { name: "Confirm" }));
+    const confirm = await screen.findByRole("button", { name: "Confirm" });
+    expect(confirm).toHaveAttribute("data-variant", "primary");
+    expect(confirm).toHaveAttribute("data-tone", "danger");
+    fireEvent.click(confirm);
     expect(await screen.findByTestId("shop-gasless-failed")).toBeInTheDocument();
     expect(wallet.sent).toHaveLength(0);
     fireEvent.click(screen.getByRole("button", { name: "Cancel and pay the gas" }));
@@ -125,11 +128,33 @@ describe("Remove from sale", () => {
     expect(decodeFunctionData({ abi: MARKETPLACE_ABI, data: wallet.sent[0]!.data }).functionName).toBe("cancelSignature");
   });
 
+  it("offers destructive confirmation for a legacy sale and reports a removed order without sending a transaction", async () => {
+    const wallet = fakeWallet();
+    const token = nftRow({ tokenId: "105313", name: "Cyber Boots", owner: wallet.address, onSale: { price: MANA(1) } });
+    token.order!.tradeId = null;
+    mountShop({
+      path: `/shop/token/${BOOK.collection}/105313/cancel`,
+      who: "web3",
+      wallet,
+      routes: [nfts(token), { method: "GET", path: /^\/v1\/orders$/, reply: () => ({ body: { data: [], total: 0 } }) }],
+    });
+    const confirm = await screen.findByRole("button", { name: "Confirm" });
+    expect(confirm).toHaveAttribute("data-tone", "danger");
+    expect(confirm).toHaveAttribute("data-variant", "primary");
+    fireEvent.click(confirm);
+    expect(screen.getByRole("button", { name: "Removing…" })).toBeDisabled();
+    expect(await screen.findByRole("alert")).toHaveTextContent("This listing is already gone.");
+    expect(wallet.sent).toHaveLength(0);
+  });
+
   it("a token that is not on sale says so, and Confirm stays disabled", async () => {
     const wallet = fakeWallet();
     mountShop({ path: `/shop/token/${BOOK.collection}/105313/cancel`, who: "web3", wallet, routes: [nfts(nftRow({ tokenId: "105313", name: "x", owner: wallet.address }))] });
     expect(await screen.findByTestId("shop-not-on-sale")).toHaveTextContent("There are no active listings for x.");
-    expect(screen.getByRole("button", { name: "Confirm" })).toBeDisabled();
+    const confirm = screen.getByRole("button", { name: "Confirm" });
+    expect(confirm).toBeDisabled();
+    expect(confirm).toHaveAttribute("data-variant", "primary");
+    expect(confirm).toHaveAttribute("data-tone", "danger");
   });
 
   it("signed out, sell and cancel are not drawn: a visitor without a web3 session goes to the overview", async () => {

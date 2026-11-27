@@ -23,19 +23,19 @@ use axum::Json;
 use axum::extract::{Path, Request, State};
 use axum::response::{IntoResponse, Response};
 use serde_json::{Map, Value, json};
-use sqlx::PgPool;
 
 use crate::shared::cache::TtlMap;
 use crate::shared::http_util::lambdas_internal_error;
 use crate::shared::query_params::{parse_int_js, parse_query_string, qs_get_array, qs_get_string};
 
 use super::base_wearables::{self, BASE_AVATARS_COLLECTION_ID, BaseWearable};
+use super::catalogue::{self, Access, CatalogueRead, Purpose};
 use super::definitions::{
     SORTED_RARITIES, default_sort_direction, extract_emote_definition, extract_wearable_definition,
     locale_cmp, validate_rarity, validate_sort,
 };
 use super::graph::{self, Network, THE_GRAPH_PAGE_SIZE, graph_query};
-use super::mirrors::{self, Mirror};
+use super::mirrors::Mirror;
 use super::{MarketplaceState, SharedState, Source, bad_request, not_found, unavailable};
 
 const COLLECTIONS_TTL: Duration = Duration::from_secs(300);
@@ -49,7 +49,9 @@ const COLLECTIONS_PER_NETWORK: i64 = 1000;
 
 /// The catalogue's memo.
 pub struct Caches {
-    collections: TtlMap<(), Value>,
+    /// `/lambdas/collections`, filed under the catalogue read it came from.
+    collections: TtlMap<String, Value>,
+    /// Catalogue pages, filed under their source and the read it came from.
     catalog: TtlMap<String, Value>,
     /// The on-chain URN leg from the subgraphs, per query, while the mirror has no pass.
     catalog_urns: TtlMap<String, Arc<Vec<String>>>,
@@ -64,7 +66,7 @@ pub struct Caches {
 impl Default for Caches {
     fn default() -> Self {
         Self {
-            collections: TtlMap::bounded(COLLECTIONS_TTL, 1),
+            collections: TtlMap::bounded(COLLECTIONS_TTL, 4),
             catalog: TtlMap::bounded(CATALOG_TTL, 4096),
             catalog_urns: TtlMap::bounded(CATALOG_TTL, 4096),
             base_wearables: TtlMap::bounded(BASE_WEARABLES_TTL, 1),
@@ -371,12 +373,12 @@ fn parse_catalog_query(
     } else {
         "emotes"
     };
-    if item_ids.len() as i64 > MAX_LIMIT {
+    if crate::market::casts::len_i64(item_ids.len()) > MAX_LIMIT {
         return Err(Box::new(bad_request(&format!(
             "You can't ask for more than {MAX_LIMIT} {items_label}"
         ))));
     }
-    if collection_ids.len() as i64 > MAX_LIMIT {
+    if crate::market::casts::len_i64(collection_ids.len()) > MAX_LIMIT {
         return Err(Box::new(bad_request(&format!(
             "You can't filter for more than {MAX_LIMIT} collection ids"
         ))));
@@ -431,7 +433,7 @@ enum Bind {
 /// in byte order (the Rust merge's order). The mirror is a few tens of
 /// thousands of rows: the filters scan it.
 async fn fetch_item_urns(
-    pool: &PgPool,
+    conn: &mut sqlx::PgConnection,
     item_type_prefix: &str,
     filters: &CatalogFilters,
     limit: i64,
@@ -533,37 +535,64 @@ async fn fetch_item_urns(
             Bind::Int(n) => query.bind(n),
         };
     }
-    query.fetch_all(pool).await
+    query.fetch_all(conn).await
 }
 
 /// Where the on-chain leg's URNs come from.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum UrnSource {
-    /// `shop.items` after a complete pass.
-    Mirror,
+    /// `shop.items`, read in the catalogue gate's snapshot.
+    Catalogue(Box<CatalogueRead>),
     /// The configured collections subgraphs, asked per request.
     Subgraphs,
 }
 
+impl UrnSource {
+    /// What the URNs were read from, for a memo key.
+    fn key(&self) -> String {
+        match self {
+            UrnSource::Catalogue(read) => format!("catalogue:{}", read.key()),
+            UrnSource::Subgraphs => "subgraphs".to_string(),
+        }
+    }
+}
+
+/// Where the URNs come from: the catalogue, read through its gate; the
+/// subgraphs only where the mirrors refused and no network belongs to the
+/// collections index or is waiting for its first native publication.
 async fn urn_source(state: &MarketplaceState) -> Result<UrnSource, Response> {
-    match mirrors::require_ready(state, Mirror::Items).await {
-        Ok(()) => Ok(UrnSource::Mirror),
-        Err(_) if graph::any_collections_reader(&state.index) => Ok(UrnSource::Subgraphs),
-        Err(envelope) => Err(envelope),
+    match catalogue::begin_checked(
+        state,
+        Purpose::Describe,
+        &[Mirror::Items],
+        None,
+        Access::ReadOnly,
+    )
+    .await
+    {
+        Ok(read) => Ok(UrnSource::Catalogue(Box::new(read))),
+        // The snapshot could not be read: nothing says which networks the
+        // index owns, so no subgraph stands in; lamb2's own 500.
+        Err(refusal) if refusal.refused.is_none() => Err(lambdas_internal_error()),
+        Err(refusal)
+            if refusal.may_fall_back_to_graph && graph::any_collections_reader(&state.index) =>
+        {
+            Ok(UrnSource::Subgraphs)
+        }
+        Err(refusal) => Err(refusal.into_response()),
     }
 }
 
 async fn item_urns(
     state: &MarketplaceState,
-    source: UrnSource,
+    source: &mut UrnSource,
     item_type_prefix: &str,
     filters: &CatalogFilters,
     limit: i64,
     last_id: &Option<String>,
 ) -> Result<Vec<String>, Response> {
     match source {
-        UrnSource::Mirror => {
-            fetch_item_urns(&state.pool, item_type_prefix, filters, limit, last_id)
+        UrnSource::Catalogue(read) => {
+            fetch_item_urns(&mut read.tx, item_type_prefix, filters, limit, last_id)
                 .await
                 .map_err(|e| {
                     tracing::error!(error = %e, "lambdas catalogue query failed");
@@ -726,7 +755,7 @@ fn merge_items(mut items: Vec<SubgraphItem>, ext: &ExtendedFilters, limit: i64) 
         let primary = if desc { primary.reverse() } else { primary };
         primary.then_with(|| a.urn.to_lowercase().cmp(&b.urn.to_lowercase()))
     });
-    items.truncate(limit.max(0) as usize);
+    items.truncate(crate::market::casts::page(limit));
     items.into_iter().map(|i| i.urn).collect()
 }
 
@@ -799,9 +828,9 @@ fn paginate_merged(
 ) -> (Vec<Value>, Option<String>) {
     on_chain.sort_by(|a, b| locale_cmp(&id_key(a), &id_key(b)));
     merged.extend(on_chain);
-    let has_more = merged.len() as i64 > limit;
+    let has_more = crate::market::casts::len_i64(merged.len()) > limit;
     if has_more {
-        merged.truncate(limit as usize);
+        merged.truncate(crate::market::casts::page(limit));
     }
     let next = if has_more {
         merged
@@ -914,7 +943,22 @@ async fn catalog_wearables_with_base(state: &MarketplaceState, query: CatalogQue
         query.last_id.clone()
     };
     let want_on_chain = !only_base_collection && filters.extended.allows(CollectionType::OnChain);
-    let source = if want_on_chain {
+    // The base leg reads through the pool, so it runs before the catalogue
+    // read holds a connection: never wait on a second one while holding it.
+    let off_chain = if in_base_range {
+        let base = cached_base_wearables(state).await;
+        filter_and_extract_base_wearables(
+            &base,
+            filters,
+            &query.last_id,
+            crate::market::casts::page(limit + 1),
+            &state.settings.content_public_url,
+        )
+    } else {
+        Vec::new()
+    };
+    // The urn leg is fetched at limit+1 and cut to what the base leg leaves.
+    let mut source = if want_on_chain {
         match urn_source(state).await {
             Ok(s) => Some(s),
             Err(envelope) => return envelope,
@@ -922,46 +966,31 @@ async fn catalog_wearables_with_base(state: &MarketplaceState, query: CatalogQue
     } else {
         None
     };
-
-    // The urn leg is fetched at limit+1 concurrently and cut to what the base leg leaves.
-    let base_leg = async {
-        if !in_base_range {
-            return Vec::new();
+    let urns = match source.as_mut() {
+        Some(source) => {
+            item_urns(
+                state,
+                source,
+                "wearable",
+                filters,
+                limit + 1,
+                &on_chain_cursor,
+            )
+            .await
         }
-        let base = cached_base_wearables(state).await;
-        filter_and_extract_base_wearables(
-            &base,
-            filters,
-            &query.last_id,
-            (limit + 1) as usize,
-            &state.settings.content_public_url,
-        )
+        None => Ok(Vec::new()),
     };
-    let urns_leg = async {
-        match source {
-            Some(source) => {
-                item_urns(
-                    state,
-                    source,
-                    "wearable",
-                    filters,
-                    limit + 1,
-                    &on_chain_cursor,
-                )
-                .await
-            }
-            None => Ok(Vec::new()),
-        }
-    };
-    let (off_chain, urns) = tokio::join!(base_leg, urns_leg);
     let mut urns = match urns {
         Ok(u) => u,
         Err(resp) => return resp,
     };
-    let remaining = limit - off_chain.len() as i64;
+    // The definitions are read through the pool: the catalogue read's
+    // connection goes back first.
+    drop(source);
+    let remaining = limit - crate::market::casts::len_i64(off_chain.len());
     let mut on_chain_defs = Vec::new();
     if want_on_chain && remaining >= 0 {
-        urns.truncate((remaining + 1) as usize);
+        urns.truncate(crate::market::casts::page(remaining + 1));
         let pointers = urns.iter().map(|u| u.to_lowercase()).collect();
         on_chain_defs = match definitions_for(state, pointers, extract_wearable_definition).await {
             Ok(definitions) => definitions,
@@ -988,37 +1017,56 @@ async fn catalog(
     items_key: &str,
     extract: fn(&Value, &str) -> Option<Value>,
 ) -> Response {
-    let source = match urn_source(state).await {
+    let mut source = match urn_source(state).await {
         Ok(s) => s,
         Err(envelope) => return envelope,
     };
     let key = format!(
-        "{item_type_prefix}|{}|{}|{:?}",
+        "{item_type_prefix}|{}|{}|{}|{:?}",
+        source.key(),
         query.limit,
         query.last_id.as_deref().unwrap_or(""),
         query.filters
     );
-    let page = state
-        .lambdas
-        .catalog
-        .get_or_fetch(key, || async {
-            let urns = item_urns(
+    // A hit answers without the read. A miss reads its URNs on the read and
+    // releases it before entering the memo: a request waiting on another's
+    // fetch holds no connection, and the definitions are read through the
+    // pool.
+    let page = match state.lambdas.catalog.get_fresh(&key) {
+        Some(page) => {
+            drop(source);
+            Ok(page)
+        }
+        None => {
+            let urns = match item_urns(
                 state,
-                source,
+                &mut source,
                 item_type_prefix,
                 &query.filters,
                 query.limit,
                 &query.last_id,
             )
-            .await?;
-            let pointers = urns.iter().map(|u| u.to_lowercase()).collect();
-            let definitions = definitions_for(state, pointers, extract)
+            .await
+            {
+                Ok(urns) => urns,
+                Err(envelope) => return envelope,
+            };
+            drop(source);
+            let q = &query;
+            state
+                .lambdas
+                .catalog
+                .get_or_fetch(key, || async move {
+                    let pointers = urns.iter().map(|u| u.to_lowercase()).collect();
+                    let definitions = definitions_for(state, pointers, extract)
+                        .await
+                        .map_err(|()| lambdas_internal_error())?;
+                    let (items, next_last_id) = paginate(definitions, q.limit);
+                    Ok::<Value, Response>(json!({ "items": items, "next": next_last_id }))
+                })
                 .await
-                .map_err(|()| lambdas_internal_error())?;
-            let (items, next_last_id) = paginate(definitions, query.limit);
-            Ok::<Value, Response>(json!({ "items": items, "next": next_last_id }))
-        })
-        .await;
+        }
+    };
     let page = match page {
         Ok(p) => p,
         Err(resp) => return resp,
@@ -1092,14 +1140,16 @@ fn base_collections() -> Vec<Value> {
 
 /// The first 1,000 collections of each network in urn byte order, the old
 /// squid query's page (`collections_from_squid`).
-async fn mirrored_collections(pool: &PgPool) -> Result<Vec<(String, String)>, sqlx::Error> {
+async fn mirrored_collections(
+    conn: &mut sqlx::PgConnection,
+) -> Result<Vec<(String, String)>, sqlx::Error> {
     sqlx::query_as(
         "(SELECT urn, name FROM shop.collections WHERE network = 'ethereum' ORDER BY urn COLLATE \"C\" LIMIT $1) \
          UNION ALL \
          (SELECT urn, name FROM shop.collections WHERE network = 'matic' ORDER BY urn COLLATE \"C\" LIMIT $1)",
     )
     .bind(COLLECTIONS_PER_NETWORK)
-    .fetch_all(pool)
+    .fetch_all(conn)
     .await
 }
 
@@ -1107,30 +1157,43 @@ async fn mirrored_collections(pool: &PgPool) -> Result<Vec<(String, String)>, sq
 /// collections and the mirrored ones; before the mirror's first complete pass
 /// the unavailable envelope.
 pub async fn nfts_collections(State(state): State<SharedState>) -> Response {
-    if let Err(envelope) = mirrors::require_ready(&state, Mirror::Collections).await {
-        return envelope;
+    let mut read = match catalogue::begin_checked(
+        &state,
+        Purpose::Describe,
+        &[Mirror::Collections],
+        None,
+        Access::ReadOnly,
+    )
+    .await
+    {
+        Ok(read) => read,
+        // An unreadable snapshot is lamb2's bare 500.
+        Err(refusal) if refusal.refused.is_none() => return lambdas_internal_error(),
+        Err(refusal) => return refusal.into_response(),
+    };
+    let key = read.key();
+    // A hit answers without the read; a miss reads on its own connection and
+    // files the answer, so no request waits on another while holding one.
+    if let Some(v) = state.lambdas.collections.get_fresh(&key) {
+        return Json(v).into_response();
     }
-    let cached = state
-        .lambdas
-        .collections
-        .get_or_fetch((), || async {
-            let mut collections = base_collections();
-            let items = mirrored_collections(&state.pool).await?;
-            collections.extend(
-                items
-                    .into_iter()
-                    .map(|(urn, name)| json!({ "id": urn, "name": name })),
-            );
-            Ok::<Value, sqlx::Error>(json!({ "collections": collections }))
-        })
-        .await;
-    match cached {
-        Ok(v) => Json(v).into_response(),
+    let items = match mirrored_collections(&mut read.tx).await {
+        Ok(items) => items,
         Err(e) => {
             tracing::error!(error = %e, "lambdas collections query failed");
-            lambdas_internal_error()
+            return lambdas_internal_error();
         }
-    }
+    };
+    drop(read);
+    let mut collections = base_collections();
+    collections.extend(
+        items
+            .into_iter()
+            .map(|(urn, name)| json!({ "id": urn, "name": name })),
+    );
+    let v = json!({ "collections": collections });
+    state.lambdas.collections.insert(key, v.clone());
+    Json(v).into_response()
 }
 
 /// `GET /lambdas/outfits/{address}`, `/outfits/{address}`: the address's
@@ -1210,12 +1273,54 @@ async fn read_outfits(
     if !has_outfits {
         return Ok((entity, None));
     }
-    // `owned_names` answers empty without a marketplace subgraph or for an
-    // id that is not an address.
-    let (sanitized, names) = tokio::join!(
-        sanitize_outfits(state, address, &mut entity),
-        super::graph::owned_names(&state.index, address)
-    );
+    // A node that walks the nft index reads the NAMEs in the items'
+    // snapshot, Ethereum always, so the answer is filed under one
+    // observation.
+    if super::owned_items::walks_here(state)
+        && state.name_authority.as_ref().is_some_and(|a| a.observes())
+    {
+        let owner = address.to_lowercase();
+        let requested = outfit_requested(
+            &owner,
+            entity
+                .pointer("/metadata/outfits")
+                .and_then(Value::as_array)
+                .map(Vec::as_slice)
+                .unwrap_or(&[]),
+        );
+        let (owned, mut names, observed) = super::owned_items::owned_tokens_and_names(
+            &state.pool,
+            state.settings.catalogue(),
+            &requested,
+            std::slice::from_ref(&owner),
+            super::owned_items::Rule::Fresh,
+        )
+        .await
+        .map_err(|e| e.into_response(|m| super::third_party::fetch_error(address, m)))?;
+        sanitize_outfits(state, address, &mut entity, Some(owned)).await?;
+        let owned_names: Vec<String> = names
+            .remove(&owner)
+            .unwrap_or_default()
+            .into_iter()
+            .map(|n| n.name)
+            .collect();
+        apply_names(&mut entity, &owned_names);
+        return Ok((entity, Some(observed)));
+    }
+    // One that does not reads them from the subgraph beside the items, or
+    // owns none, as it serves the items as deployed.
+    let names = async {
+        match state.name_authority.as_ref() {
+            Some(authority) if !authority.observes() => authority
+                .owned_names(address, crate::chain_index::names::Purpose::Display)
+                .await
+                .map(|answer| answer.value)
+                .map_err(|e| e.to_string()),
+            _ => Ok(std::sync::Arc::new(Vec::new())),
+        }
+    };
+    let (sanitized, names) =
+        tokio::join!(sanitize_outfits(state, address, &mut entity, None), names);
     let observed = sanitized?;
     let owned_names: Vec<String> = names
         .map_err(|e| super::third_party::fetch_error(address, &e))?
@@ -1241,10 +1346,37 @@ async fn read_outfits(
 /// 502 `FetcherError`; a
 /// failed third-party check lamb2's bare 500, as its checker's error is not
 /// one `errorHandler` maps.
+/// The `(owner, URN)` pairs of the on-chain items the outfits wear.
+fn outfit_requested(owner: &str, outfits: &[Value]) -> HashSet<(String, String)> {
+    outfits
+        .iter()
+        .filter_map(|outfit| {
+            outfit
+                .pointer("/outfit/wearables")
+                .and_then(Value::as_array)
+        })
+        .flatten()
+        .filter_map(Value::as_str)
+        .filter(|w| {
+            !w.contains("off-chain")
+                && !w.contains("base-avatars")
+                && !super::third_party::is_third_party_urn(w)
+        })
+        .map(|w| {
+            let (urn, _) = super::profiles::split_urn_and_token_id(w);
+            (owner.to_string(), urn.to_string())
+        })
+        .collect()
+}
+
+/// `given`: the owner's tokens already read in the caller's snapshot (the
+/// composite read); `None` reads them here, and returns what that read
+/// observed.
 async fn sanitize_outfits(
     state: &MarketplaceState,
     address: &str,
     entity: &mut Value,
+    given: Option<super::owned_items::OwnedTokens>,
 ) -> Result<Option<super::owned_items::Observed>, Response> {
     let Some(outfits) = entity
         .pointer_mut("/metadata/outfits")
@@ -1271,32 +1403,20 @@ async fn sanitize_outfits(
         return Ok(None);
     }
     let owner = address.to_lowercase();
-    let requested: HashSet<(String, String)> = outfits
-        .iter()
-        .filter_map(|outfit| {
-            outfit
-                .pointer("/outfit/wearables")
-                .and_then(Value::as_array)
-        })
-        .flatten()
-        .filter_map(Value::as_str)
-        .filter(|w| {
-            !w.contains("off-chain")
-                && !w.contains("base-avatars")
-                && !super::third_party::is_third_party_urn(w)
-        })
-        .map(|w| {
-            let (urn, _) = super::profiles::split_urn_and_token_id(w);
-            (owner.clone(), urn.to_string())
-        })
-        .collect();
-    let (mut owned, observed) = super::owned_items::owned_tokens_observed(
-        &state.pool,
-        &requested,
-        super::owned_items::Rule::Fresh,
-    )
-    .await
-    .map_err(|e| e.into_response(|m| super::third_party::fetch_error(address, m)))?;
+    let (mut owned, observed) = match given {
+        Some(owned) => (owned, None),
+        None => {
+            let requested = outfit_requested(&owner, outfits);
+            super::owned_items::owned_tokens_observed(
+                &state.pool,
+                state.settings.catalogue(),
+                &requested,
+                super::owned_items::Rule::Fresh,
+            )
+            .await
+            .map_err(|e| e.into_response(|m| super::third_party::fetch_error(address, m)))?
+        }
+    };
     let held = owned.remove(&owner).unwrap_or_default();
     let tokens: HashMap<&str, Vec<&str>> = held
         .iter()
@@ -1837,6 +1957,7 @@ mod tests {
             &state,
             "0x0000000000000000000000000000000000000001",
             &mut entity,
+            None,
         )
         .await
         .unwrap_err();

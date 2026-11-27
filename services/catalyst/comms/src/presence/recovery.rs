@@ -1,4 +1,6 @@
 //! Read-only recovery through the gatekeeper-owned adapter. No event replay.
+use crate::metrics::declarations;
+
 use super::*;
 use crate::gatekeeper::CommsState;
 use crate::rooms::RoomClassification;
@@ -401,7 +403,9 @@ impl Presence {
         } = tokio::time::timeout(SCAN, self.candidate(state, None))
             .await
             .map_err(|_| RecoveryFailure::Deadline)??;
-        metrics::gauge!("comms_presence_refused_rooms").set(refused.len() as f64);
+        declarations::PRESENCE_REFUSED_ROOMS
+            .handle([])
+            .set(refused.len() as f64);
         if !refused.is_empty() {
             tracing::warn!(
                 count = refused.len(),
@@ -607,10 +611,7 @@ impl Presence {
                     _ = ctx.cancel.cancelled() => return Ok(()),
                     result = presence.recover_complete(&state) => result,
                 };
-                metrics::counter!(
-                    "comms_presence_recovery_passes_total",
-                    "result" => result.as_ref().map_or_else(RecoveryFailure::reason, |()| "ok")
-                )
+                declarations::PRESENCE_RECOVERY_PASSES.handle([result.as_ref().map_or_else(RecoveryFailure::reason, |()| "ok")])
                 .increment(1);
                 let delay = match result {
                     Ok(()) => { ctx.progress("complete LiveKit occupancy observation"); retry = Duration::from_secs(1); Duration::from_secs(30) },

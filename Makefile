@@ -7,6 +7,7 @@ check:
 	python3 tooling/ui_standards.py
 	python3 tooling/ui_standards.py --token-floor
 	python3 tooling/ui_standards.py --shared-imports
+	python3 tooling/ui_standards.py --kit-ceiling
 
 # Fails when the private Figma file key (FIGMA_FILE_KEY) or a Figma file URL is in the working tree or
 # in origin/main..HEAD. Extra flags through ARGS, e.g. ARGS="--path library/ui/figma/review/review-dist".

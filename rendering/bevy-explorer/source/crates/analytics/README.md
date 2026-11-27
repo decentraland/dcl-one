@@ -80,8 +80,9 @@ the session's state. `changed` holds the settings whose value differs from their
 setting's name, and `changed_count` the number of entries in it (0 and an empty `changed` when
 nothing differs, so adoption has a denominator). Every registered setting is reported except the
 ones in `EXCLUDED` in that file: DM privacy (the server's value, unknown until after sign-in), disk
-cache size, scene threads, max videos, max downloads and window mode. A new setting is reported
-without a change there. A setting with named variants reports the variant's name, any other the
+cache size, scene threads, max videos, max downloads and window mode. A setting whose choices are
+filled in at runtime (the microphone, whose choices are the device's own labels) is left out too.
+Any other new setting is reported without a change there. A setting with named variants reports the variant's name, any other the
 number; a setting still unset (negative) is left out. It reads the player's saved settings, not
 the host page's session overrides. The startup event is queued before sign-in, so it carries no
 wallet; analysis joins on `session_id`. `/settings_snapshot` and the debug panel's "Settings

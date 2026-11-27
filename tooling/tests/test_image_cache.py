@@ -275,7 +275,7 @@ class WorkflowSetupTest(unittest.TestCase):
                     'library/ui/apps/sites/assets/video_landing.webm',
                     'library/ui/assets/logo-pattern.webp',
                     'library/ui/foundations/typography/fonts/inter-latin-wght-normal.woff2',
-                    'apps/ui3/public/assets/invite/referral.webm')
+                    'library/ui/apps/sites/assets/invite/referral.webm')
         for path in required:
             with self.subTest(path=path):
                 self.assertTrue(any(fnmatch.fnmatchcase(path, pattern) for pattern in patterns))
@@ -332,13 +332,13 @@ class WorkflowSetupTest(unittest.TestCase):
             assets = root / 'library/ui/apps/sites/assets'
             shared = root / 'library/ui/assets'
             fonts = root / 'library/ui/foundations/typography/fonts'
-            invite = root / 'apps/ui3/public/assets/invite'
-            for path in (work, assets, shared, fonts, invite):
+            for path in (work, assets, shared, fonts):
                 path.mkdir(parents=True)
             media = assets / 'hero.webp'
             pattern = shared / 'logo-pattern.webp'
             font = fonts / 'inter.woff2'
-            clip = invite / 'referral.webm'
+            clip = assets / 'invite/referral.webm'
+            clip.parent.mkdir()
             payload = b'actual\0binary'
             media.write_bytes(payload)
             pattern.write_bytes(payload)
@@ -704,6 +704,39 @@ class CacheSweepBudgetTest(unittest.TestCase):
         _, deleted, code, output = self.sweep(rows, states={'93': 'CLOSED'}, states_error=self.RATE_LIMITED)
         self.assertEqual((code, deleted), (None, [1]))
         self.assertIn('closed-PR cleanup deferred', output)
+
+    def test_a_failed_state_lookup_still_prunes_main_and_fails_the_run(self):
+        rows = [self.image(1), self.image(2), self.image(3), self.image(4, 'pr-93')]
+        # An empty stderr (a killed gh) must fail the run as well.
+        for error in ('gh: Bad credentials (HTTP 401)', ''):
+            with self.subTest(error=error):
+                calls, deleted, code, output = self.sweep(rows, states={'93': 'CLOSED'}, states_error=error)
+                self.assertEqual((code, deleted), (1, [1]))
+                self.assertEqual(sum('graphql' in call for call in calls), 1)
+                self.assertIn('::error::PR states unresolved', output)
+                self.assertNotIn('deferred', output)
+                self.assertNotIn('query=', output)
+
+    def test_a_failed_batch_keeps_the_states_resolved_before_it(self):
+        # 101 PRs make two state queries; only the second fails, so the closed PR of the first is still freed.
+        rows = [self.image(number, f'pr-{number}') for number in range(1, 102)]
+        for error, code, line in (('gh: Bad credentials (HTTP 401)', 1, 'unresolved for 1 of 101'),
+                                  (self.RATE_LIMITED, None, 'deferred to the next sweep for 1 of 101')):
+            with self.subTest(error=error):
+                calls, deleted, exit_code, output = self.sweep(rows, states={'1': 'CLOSED', '101': 'CLOSED'},
+                                                               states_error=error, states_error_from=1)
+                self.assertEqual((exit_code, deleted), (code, [1]))
+                self.assertEqual(sum('graphql' in call for call in calls), 2)
+                self.assertIn(line, output)
+
+    def test_a_graphql_query_error_is_retried_before_it_fails_the_run(self):
+        rows = [self.image(1), self.image(2), self.image(3), self.image(4, 'pr-93')]
+        error = 'gh: Something went wrong while executing your query. Please include `ABCD:1234` when reporting this issue.'
+        with patch('time.sleep') as slept:
+            calls, deleted, code, _ = self.sweep(rows, states={'93': 'CLOSED'}, states_error=error)
+        self.assertEqual(sum('graphql' in call for call in calls), 4)
+        self.assertEqual(slept.call_count, 3)
+        self.assertEqual((code, deleted), (1, [1]))
 
 
 if __name__ == '__main__':
