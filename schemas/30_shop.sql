@@ -839,6 +839,8 @@ CREATE INDEX legacy_order_updated_idx ON shop.legacy_order (updated_at DESC);
 -- (/v1/orders?status=open&sortBy=cheapest).
 CREATE INDEX legacy_order_open_idx ON shop.legacy_order (contract_address, price) WHERE status = 'open';
 CREATE INDEX legacy_order_open_price_idx ON shop.legacy_order (price) WHERE status = 'open';
+-- The next expiry in the catalogue's memo key, read on its publication snapshot.
+CREATE INDEX legacy_order_open_expiry_idx ON shop.legacy_order (network, expires_at) WHERE status = 'open';
 -- Unscoped token ID sorts walk this index in either direction.
 -- PostgreSQL sorts the equal-token ties by order ID.
 CREATE INDEX legacy_order_issued_idx ON shop.legacy_order (token_id);
