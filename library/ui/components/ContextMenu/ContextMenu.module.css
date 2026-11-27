@@ -174,21 +174,23 @@
   color: rgba(255, 255, 255, 0.45); /* = HUD --ink-45 */
   font-size: 1.05rem; /* = HUD --fs-lg */
 }
-/* Beside the row, a 4px gap from the surface it opens from, its first row level with the row. */
+/* Beside the row, a 4px gap from the surface it opens from, its first row level with the row. The box starts at the
+   row's edge and that distance is its padding: the pointer crossing it stays inside the row's wrapper, so the list
+   stays open on the way to it. */
 .flyout {
   --menu-width: initial;
   position: absolute;
   top: calc(-1 * var(--menu-edge, 0px));
-  left: calc(100% + var(--menu-edge, 0px));
-  padding-left: var(--dcl-space-4);
+  left: 100%;
+  padding-left: calc(var(--menu-edge, 0px) + var(--dcl-space-4));
   z-index: 10000; /* = HUD --z-popup */
 }
 /* No room on the right: the list opens on the row's left. */
 .flyoutLeft {
   left: auto;
-  right: calc(100% + var(--menu-edge, 0px));
+  right: 100%;
   padding-left: 0;
-  padding-right: var(--dcl-space-4);
+  padding-right: calc(var(--menu-edge, 0px) + var(--dcl-space-4));
 }
 /* No room below: the list's last row lines up with the row. */
 .flyoutUp {

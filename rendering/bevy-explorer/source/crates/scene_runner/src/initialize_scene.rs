@@ -1034,6 +1034,28 @@ impl ScenePointers {
             .or_else(|| self.all_scenes_known.then_some(&PointerResult::NOTHING))
     }
 
+    /// The hash of the scene on `parcel`, or why the parcel has none (yet). A scene refused to
+    /// the player is still the parcel's scene here: [`Self::admitted_hash`] tells those apart.
+    pub(crate) fn scene_hash(&self, parcel: IVec2) -> Result<&str, NoParcelScene> {
+        match self.get(parcel) {
+            Some(PointerResult::Exists { hash, .. }) => Ok(hash),
+            Some(PointerResult::Nothing) => Err(NoParcelScene::Empty),
+            None => Err(NoParcelScene::Unresolved),
+        }
+    }
+
+    /// The hash of the scene on `parcel` that the local player is let into, or why there is
+    /// none (yet): [`Self::scene_hash`], with a scene `bans` refuses the player answered as
+    /// [`NoParcelScene::Refused`]. A refused scene has no live root and gets none, so the
+    /// teleport's release of the player and the settling commands (`util::settle`) both read
+    /// this and wait for no scene there.
+    pub fn admitted_hash(&self, parcel: IVec2, bans: &SceneBanGate) -> Result<&str, NoParcelScene> {
+        match self.scene_hash(parcel) {
+            Ok(hash) if bans.is_banned(hash) => Err(NoParcelScene::Refused),
+            other => other,
+        }
+    }
+
     /// The realm's scenes are all placed: parcels none of them covers are empty from now on.
     pub fn set_all_scenes_known(&mut self) {
         if !self.all_scenes_known {
@@ -1251,6 +1273,33 @@ pub enum PointerResult {
 
 impl PointerResult {
     const NOTHING: Self = Self::Nothing;
+}
+
+/// Why a parcel has no live scene (yet): what the parcel lookups ([`ScenePointers::scene_hash`],
+/// [`ScenePointers::admitted_hash`], `ContainingScene::parcel_scene`) answer instead of one.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum NoParcelScene {
+    /// The parcel's pointer has not resolved.
+    Unresolved,
+    /// The parcel has no scene.
+    Empty,
+    /// The parcel's scene refuses the local player (a scene or world ban): it is not loaded
+    /// for them. Only the lookups that take the ban gate answer this.
+    Refused,
+    /// The parcel's scene is known and has not spawned.
+    NotSpawned,
+}
+
+impl NoParcelScene {
+    /// The reason, as the scene readouts print it.
+    pub(crate) fn reason(self) -> &'static str {
+        match self {
+            Self::Unresolved => "Waiting for the parcel's scene definition.",
+            Self::Empty => "There is no scene on this parcel.",
+            Self::Refused => "The scene on this parcel refuses this player.",
+            Self::NotSpawned => "Waiting for the parcel scene to load.",
+        }
+    }
 }
 
 impl PointerResult {

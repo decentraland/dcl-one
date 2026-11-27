@@ -31,6 +31,14 @@ pub(super) fn index_read_error(e: sqlx::Error) -> Response {
     }
 }
 
+/// Adapt an indexed query that also returns marketplace parameter or internal errors.
+pub(super) fn index_api_error(error: super::wire::ApiError) -> Response {
+    match error {
+        super::wire::ApiError::Database(e) => index_read_error(e),
+        e => e.into_response(),
+    }
+}
+
 pub(super) fn index_source_error(e: super::owned_items::ReadError) -> Response {
     match e {
         super::owned_items::ReadError::Db(e) => index_read_error(e),
