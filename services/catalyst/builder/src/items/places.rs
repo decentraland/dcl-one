@@ -11,7 +11,9 @@
 //! ([`Timing::most`] over [`Timing::deadline`]), counted from its body's
 //! first read, so the checks between its admission and that read count
 //! against neither. An upload whose request declares its length is not
-//! behind while that length arrives by its deadline at its rate.
+//! behind while, at its rate, that length arrives within the idle bound
+//! plus the time it needs at the pace, so a tiny declared length buys no
+//! more than that.
 //! While every place is held and some upload is behind, a newcomer takes an
 //! extra place and reads its body, one newcomer for each upload behind. It
 //! earns a place once it has received what the pace brings in one idle bound
@@ -88,6 +90,7 @@ struct Progress {
     started: OnceLock<Instant>,
     pace: f64,
     deadline: Instant,
+    idle: Duration,
     declared: Option<u64>,
     received: AtomicU64,
     cut: AtomicBool,
@@ -111,12 +114,23 @@ impl Progress {
                 .is_some_and(|rate| rate < self.pace && !self.finishes(rate, now))
     }
 
-    /// Its declared length arrives by its deadline at `rate`.
+    /// Its declared length arrives at `rate` by [`Progress::spared_until`].
     fn finishes(&self, rate: f64, now: Instant) -> bool {
-        self.declared.is_some_and(|declared| {
-            let left = declared.saturating_sub(self.received.load(Ordering::SeqCst));
-            left as f64 <= rate * self.deadline.saturating_duration_since(now).as_secs_f64()
-        })
+        let (Some(declared), Some(until)) = (self.declared, self.spared_until()) else {
+            return false;
+        };
+        let left = declared.saturating_sub(self.received.load(Ordering::SeqCst));
+        left as f64 <= rate * until.saturating_duration_since(now).as_secs_f64()
+    }
+
+    /// The idle bound after its first read plus the time its declared
+    /// length needs at the pace, within its deadline.
+    fn spared_until(&self) -> Option<Instant> {
+        let started = *self.started.get()?;
+        let needs = Duration::try_from_secs_f64(self.declared? as f64 / self.pace)
+            .ok()
+            .and_then(|needs| started.checked_add(self.idle + needs));
+        Some(needs.map_or(self.deadline, |end| end.min(self.deadline)))
     }
 }
 
@@ -229,6 +243,7 @@ impl Places {
             started: OnceLock::new(),
             pace: timing.pace(),
             deadline: now + timing.deadline,
+            idle: timing.idle,
             declared,
             received: AtomicU64::new(0),
             cut: AtomicBool::new(false),
@@ -542,12 +557,14 @@ mod tests {
         assert!(newcomer.gave_way() && !holder.gave_way());
     }
 
-    /// An upload below the pace whose declared length and rate show it
-    /// finishes by its deadline is not behind; one whose declared length
-    /// won't arrive by then at that rate is.
+    /// An upload below the pace is not behind while, at its rate, its
+    /// declared length arrives within the idle bound plus the time that
+    /// length needs at the pace (5 bytes a second: 250 bytes within 55
+    /// seconds, 300 within 60); a longer one, or one only the deadline
+    /// leaves time for (400 bytes in 70 seconds), is behind.
     #[tokio::test(start_paused = true)]
-    async fn an_upload_below_the_pace_that_finishes_by_its_deadline_is_not_behind() {
-        for (declared, behind) in [(400, false), (1_000, true)] {
+    async fn an_upload_below_the_pace_is_spared_only_within_the_time_its_length_needs() {
+        for (declared, behind) in [(250, false), (300, false), (400, true), (1_000, true)] {
             let places = Places::new("uploads", 1, 1, 2);
             let mut holder = places
                 .admit("0xholder", None, TIMING, Some(declared))
