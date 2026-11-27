@@ -6,7 +6,7 @@ use bevy::{
 };
 
 use super::*;
-use crate::test_wait::update_until;
+use pipeline_test::update_until;
 
 fn app() -> App {
     let mut app = App::new();
@@ -272,17 +272,17 @@ fn modified<M: Asset>(event: &AssetEvent<M>) -> bool {
 fn materials_are_touched_when_a_texture_is_replaced() {
     use crate::{
         coast::{self, CliffMaterial},
-        grass::{self, grass_base, GrassExtension, GrassMaterial},
-        terrain::{self, TerrainExtension, TerrainFlatMaterial, TerrainParams},
+        grass::{grass_base, GrassExtension, GrassMaterial},
+        terrain::{TerrainExtension, TerrainFlatMaterial, TerrainParams},
     };
 
     let mut app = app();
     app.init_asset::<TerrainFlatMaterial>()
         .init_asset::<GrassMaterial>()
         .init_asset::<CliffMaterial>();
-    grass::rebind_materials(&mut app);
-    terrain::rebind_materials(&mut app);
-    coast::rebind_materials(&mut app);
+    rebind_on_replace::<GrassMaterial>(&mut app);
+    rebind_on_replace::<TerrainFlatMaterial>(&mut app);
+    rebind_on_replace::<CliffMaterial>(&mut app);
     let textures = app.world().resource::<LandscapeTextures>().clone();
     let world = app.world_mut();
     // held, so the materials stay alive

@@ -414,9 +414,12 @@ fn a_tuft_is_two_crossed_cards() {
 #[test]
 #[ignore = "needs a GPU; run with --ignored"]
 fn grass_wind_compiles() {
-    use crate::landscape_pipeline_test;
+    use pipeline_test::{compile_pipelines, fragment_pipelines, spawn_prepass_cameras};
 
-    let mut app = landscape_pipeline_test::app();
+    use crate::landscape_textures::LandscapeTexturesPlugin;
+
+    let mut app = pipeline_test::web_limited_app();
+    app.add_plugins(LandscapeTexturesPlugin);
     terrain::embed_shaders(&mut app);
     embed_shaders(&mut app);
     app.add_plugins(MaterialPlugin::<GrassMaterial>::default());
@@ -457,10 +460,10 @@ fn grass_wind_compiles() {
         ));
     }
 
-    landscape_pipeline_test::assert_pipelines_compile(
-        &mut app,
-        Vec3::new(0.0, 2.0, 12.0),
-        Vec3::ZERO,
-        &["grass_wind.wgsl"],
-    );
+    spawn_prepass_cameras(&mut app, Vec3::new(0.0, 2.0, 12.0), Vec3::ZERO);
+    compile_pipelines(&mut app);
+    let ShaderRef::Path(path) = grass_shader() else {
+        unreachable!("the grass shader is embedded");
+    };
+    assert!(fragment_pipelines(&app, &path.to_string()) >= 1);
 }

@@ -5,8 +5,6 @@ mod day_night;
 mod debug_panel;
 mod environment;
 mod grass;
-#[cfg(test)]
-mod landscape_pipeline_test;
 mod landscape_textures;
 mod lens_flare;
 mod mips;
@@ -17,8 +15,6 @@ mod solids;
 mod stars;
 mod stylized_sky;
 pub mod terrain;
-#[cfg(test)]
-mod test_wait;
 mod trees;
 pub mod upscale;
 

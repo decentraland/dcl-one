@@ -477,14 +477,16 @@ fn soft_shadow_pipelines_compile() {
 
     use bevy::{asset::io::embedded::EmbeddedAssetRegistry, pbr::NotShadowCaster};
 
+    use pipeline_test::{compile_pipelines, fragment_pipelines, spawn_prepass_cameras};
+
     use crate::{
         coast::{self, cliff_material, CliffMaterial, WaterExtension, WaterMaterial},
-        landscape_pipeline_test,
-        landscape_textures::LandscapeTextures,
+        landscape_textures::{LandscapeTextures, LandscapeTexturesPlugin},
         trees::{SoftShadowMaterial, SoftShadows},
     };
 
-    let mut app = landscape_pipeline_test::app();
+    let mut app = pipeline_test::web_limited_app();
+    app.add_plugins(LandscapeTexturesPlugin);
     embed_shaders(&mut app);
     coast::embed_shaders(&mut app);
     // as `TreesPlugin` embeds it; that plugin needs the scene runner
@@ -565,17 +567,20 @@ fn soft_shadow_pipelines_compile() {
         Transform::from_xyz(0.0, -0.1, 1.0),
     ));
 
-    landscape_pipeline_test::assert_pipelines_compile(
-        &mut app,
-        Vec3::new(0.0, 2.0, 6.0),
-        Vec3::ZERO,
-        &[
-            "soft_shadows.wgsl",
-            "terrain_flat.wgsl",
-            "coast_cliff.wgsl",
-            "coast_water.wgsl",
-        ],
-    );
+    spawn_prepass_cameras(&mut app, Vec3::new(0.0, 2.0, 6.0), Vec3::ZERO);
+    compile_pipelines(&mut app);
+    for shader in [
+        "soft_shadows.wgsl",
+        "terrain_flat.wgsl",
+        "coast_cliff.wgsl",
+        "coast_water.wgsl",
+    ] {
+        let path = format!("embedded://visuals/{shader}");
+        assert!(
+            fragment_pipelines(&app, &path) >= 1,
+            "nothing drew with {path}"
+        );
+    }
 }
 
 /// The landscape's systems (terrain, grass, trees, props, coast) fit the explorer's PostUpdate

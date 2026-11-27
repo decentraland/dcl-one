@@ -70,7 +70,8 @@ pub(crate) struct CoastPlugin;
 impl Plugin for CoastPlugin {
     fn build(&self, app: &mut App) {
         embed_shaders(app);
-        rebind_materials(app);
+        // the cliff material binds the landscape textures
+        rebind_on_replace::<CliffMaterial>(app);
 
         app.init_resource::<CoastState>()
             .add_plugins(MaterialPlugin::<CliffMaterial>::default())
@@ -89,11 +90,6 @@ pub(crate) fn embed_shaders(app: &mut App) {
     embedded_asset!(app, "coast_surf.wgsl");
     embedded_asset!(app, "coast_cliff.wgsl");
     embedded_asset!(app, "coast_water.wgsl");
-}
-
-/// The cliff material binds the landscape textures: prepare it again when one is replaced.
-pub(crate) fn rebind_materials(app: &mut App) {
-    rebind_on_replace::<CliffMaterial>(app);
 }
 
 fn shader(path: &std::path::Path) -> ShaderRef {

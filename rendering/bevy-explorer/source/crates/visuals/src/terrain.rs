@@ -78,18 +78,17 @@ pub(crate) struct TerrainPlugin;
 impl Plugin for TerrainPlugin {
     fn build(&self, app: &mut App) {
         embed_shaders(app);
+        add_surface_systems(app);
 
-        app.init_resource::<TerrainSurface>()
-            .init_resource::<LandscapeDistance>()
-            .init_resource::<TerrainTextureWrites>()
+        app.init_resource::<TerrainTextureWrites>()
             .add_plugins(ExtractResourcePlugin::<TerrainTextureWrites>::default())
             .add_plugins(MaterialPlugin::<TerrainFlatMaterial>::default())
             .add_systems(Startup, (setup, spawn_ground.in_set(SetupSets::Main)))
             .add_systems(
                 PostUpdate,
                 (
-                    (sync, update_texture)
-                        .chain()
+                    update_texture
+                        .after(sync)
                         .in_set(TerrainSet)
                         .before(PostUpdateSets::ColliderUpdate),
                     update_ground_params.after(TerrainSet),
@@ -98,7 +97,8 @@ impl Plugin for TerrainPlugin {
                 ),
             );
         add_player_floor(app);
-        rebind_materials(app);
+        // the flat ground binds the landscape textures
+        rebind_on_replace::<TerrainFlatMaterial>(app);
 
         if let Some(render_app) = app.get_sub_app_mut(RenderApp) {
             render_app.add_systems(
@@ -111,18 +111,16 @@ impl Plugin for TerrainPlugin {
     }
 }
 
-/// The surface's per-frame systems alone, without the ground, its material or the collider: for
-/// tests elsewhere that need a surface following `ScenePointers`.
-#[cfg(test)]
+/// The surface following `ScenePointers`, which the plugin builds on. Registered on its own so
+/// tests elsewhere can run it without the ground, its material or the collider.
 pub(crate) fn add_surface_systems(app: &mut App) {
     app.init_resource::<TerrainSurface>()
         .init_resource::<LandscapeDistance>()
-        .add_systems(PostUpdate, sync.in_set(TerrainSet));
-}
-
-/// The flat ground binds the landscape textures: prepare it again when one is replaced.
-pub(crate) fn rebind_materials(app: &mut App) {
-    rebind_on_replace::<TerrainFlatMaterial>(app);
+        .add_systems(
+            PostUpdate,
+            sync.in_set(TerrainSet)
+                .before(PostUpdateSets::ColliderUpdate),
+        );
 }
 
 pub(crate) fn embed_shaders(app: &mut App) {

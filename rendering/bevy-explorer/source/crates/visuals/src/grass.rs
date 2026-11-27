@@ -80,13 +80,9 @@ impl Plugin for GrassPlugin {
             .add_systems(Startup, setup)
             .add_systems(PostUpdate, update_material.after(TerrainSet));
         add_parcel_systems(app);
-        rebind_materials(app);
+        // the grass material binds the landscape textures
+        rebind_on_replace::<GrassMaterial>(app);
     }
-}
-
-/// The grass material binds the landscape textures: prepare it again when one is replaced.
-pub(crate) fn rebind_materials(app: &mut App) {
-    rebind_on_replace::<GrassMaterial>(app);
 }
 
 pub(crate) fn embed_shaders(app: &mut App) {
