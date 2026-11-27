@@ -407,6 +407,37 @@ describe('Dropdown', () => {
     })
   })
 
+  describe('when dark', () => {
+    it('marks the variant, which is light unless asked', () => {
+      const { container, rerender } = render(<Dropdown label="Sort by" options={SORTS} value="name" onChange={() => {}} />)
+      expect(container.firstElementChild).toHaveAttribute('data-variant', 'light')
+      rerender(<Dropdown variant="dark" label="Sort by" options={SORTS} value="name" onChange={() => {}} />)
+      expect(container.firstElementChild).toHaveAttribute('data-variant', 'dark')
+    })
+
+    it('keeps the listbox, the chosen option and the keyboard of the light one', async () => {
+      const user = userEvent.setup()
+      const onChange = vi.fn()
+      render(<Dropdown variant="dark" label="Sort by" labelHidden options={SORTS} value="newest" onChange={onChange} />)
+      await user.click(combobox())
+      expect(screen.getByRole('option', { name: 'Newest' })).toHaveAttribute('aria-selected', 'true')
+      await user.keyboard('{ArrowDown}{Enter}')
+      expect(onChange).toHaveBeenCalledWith('cheapest')
+      expect(screen.queryByRole('listbox')).toBeNull()
+    })
+
+    it('closes on Escape without a choice', async () => {
+      const user = userEvent.setup()
+      const onChange = vi.fn()
+      render(<Dropdown variant="dark" label="Sort by" options={SORTS} value="newest" onChange={onChange} />)
+      await user.click(combobox())
+      await user.keyboard('{ArrowDown}{Escape}')
+      expect(screen.queryByRole('listbox')).toBeNull()
+      expect(onChange).not.toHaveBeenCalled()
+      expect(combobox()).toHaveFocus()
+    })
+  })
+
   describe('when disabled', () => {
     it('closes the list and omits its value from the form', async () => {
       const user = userEvent.setup()
