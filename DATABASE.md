@@ -1901,9 +1901,17 @@ operator must hear about (`shop/src/credits/alerts.rs`), one row per
   - otherwise it reads the day's figures on one REPEATABLE READ, READ ONLY
     snapshot with a 10-second statement timeout. The figures come from
     `purchases`, `usage_settlements` with `usages` and `authorization_lines`,
-    `wallets`, `goal_grants`, `authorizations` and `payment_reversals`.
-    `usage_settlements` and `purchases` are scanned for the day: one read a
-    day, of tables with a row per purchase;
+    `wallets`, `goal_grants`, `authorizations` and `payment_reversals`;
+  - the day filters' time columns carry no index, so each figure scans its
+    table once a day. The tables are `purchases` (a row per purchase),
+    `usage_settlements` and `usages` (a row per CreditUsed log),
+    `authorizations` (a row per checkout attempt), `payment_reversals` (a
+    row per reversed intent) and `wallets`. New buyers aggregate every
+    purchase settlement in that same single scan. A claimed goal grant's
+    usage is read by salt through `usages_salt_idx`;
+  - a pass whose reads fail is retried after 5 minutes, doubling up to an
+    hour. A failure in the day's last UTC hour queues the day with
+    `figuresUnavailable`, so the channel shows the gap;
   - it then reads the CreditsManager's MANA balance and the MANA/USD round
     over the CreditUsed index's RPC, 10 seconds each. A failed read is stored
     as `unavailable`, and the row is queued anyway;

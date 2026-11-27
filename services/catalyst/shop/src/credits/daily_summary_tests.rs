@@ -325,13 +325,16 @@ async fn the_figures_read_the_closed_day() {
 
     expired_on(&pool, at(19, 23, 59, 59)).await;
     expired_on(&pool, at(20, 5, 0, 0)).await;
-    for (intent, cents, when) in [
-        ("pi_in", 500, at(20, 8, 0, 0)),
-        ("pi_after", 900, at(21, 0, 0, 0)),
+    // A dispute records no amount: it is counted apart from the refunds.
+    for (intent, cents, disputed, when) in [
+        ("pi_in", 500, false, at(20, 8, 0, 0)),
+        ("pi_disputed", 0, true, at(20, 9, 0, 0)),
+        ("pi_after", 900, false, at(21, 0, 0, 0)),
     ] {
-        sqlx::query("INSERT INTO credits.payment_reversals (payment_intent, refunded_cents, updated_at) VALUES ($1, $2, $3)")
+        sqlx::query("INSERT INTO credits.payment_reversals (payment_intent, refunded_cents, disputed, updated_at) VALUES ($1, $2, $3, $4)")
             .bind(intent)
             .bind(cents as i64)
+            .bind(disputed)
             .bind(when)
             .execute(&pool)
             .await
@@ -357,7 +360,7 @@ async fn the_figures_read_the_closed_day() {
             "unspentCredits": "27",
             "owed": { "credits": "32", "manaWei": "0" },
             "outflow7dWei": "9100000000000000000",
-            "integrity": { "expired": 1, "reversals": 1, "reversedCents": 500 },
+            "integrity": { "expired": 1, "refunds": 1, "refundedCents": 500, "chargebacks": 1 },
         })
     );
 }
@@ -416,7 +419,7 @@ fn fixture() -> Value {
         "unspentCredits": "27",
         "owed": { "credits": "32", "manaWei": "0" },
         "outflow7dWei": "70000000000000000000",
-        "integrity": { "expired": 1, "reversals": 1, "reversedCents": 500 },
+        "integrity": { "expired": 1, "refunds": 1, "refundedCents": 500, "chargebacks": 1 },
         "floatWei": "1000000000000000000000",
         "manaUsd18": "250000000000000000",
     })
@@ -433,11 +436,11 @@ fn the_message_spells_out_the_day() {
             ":shopping_bags: *Items bought*  4 items in 2 checkouts · 13 credits ($1.30) · AOV $0.65",
             ":busts_in_silhouette: *Buyers*  2 unique, 1 new · 8.1 MANA moved ($1.30)",
             ":receipt: *Card checkout*  2 credited · 1 abandoned · 1 declined → 50% completed · 1 still open",
-            ":bank: *Unspent*  $2.70 in credits sold and not yet spent",
+            ":bank: *Unspent*  $2.70 in paid credits (sold or granted) not yet spent",
             ":fuelpump: *Float now*  CreditsManager 1,000 MANA ($250 · 2,500 credits)",
             ":shield: *Coverage*  78.1× the $3.20 owed in unspent credits · ~100 days at the 7-day pace (10 MANA/day)",
             "",
-            "1 reservation expired unused · :warning: 1 refund/chargeback ($5.00)",
+            "1 reservation expired unused · :warning: 1 refund ($5.00) · :warning: 1 chargeback",
         ]
         .join("\n")
     );
@@ -453,7 +456,7 @@ fn a_quiet_day_has_no_money_line_and_no_warning() {
         "unspentCredits": "0",
         "owed": { "credits": "0", "manaWei": "0" },
         "outflow7dWei": "0",
-        "integrity": { "expired": 0, "reversals": 0, "reversedCents": 0 },
+        "integrity": { "expired": 0, "refunds": 0, "refundedCents": 0, "chargebacks": 0 },
         "floatWei": null,
         "manaUsd18": null,
     });
@@ -465,7 +468,7 @@ fn a_quiet_day_has_no_money_line_and_no_warning() {
             ":shopping_bags: *Items bought*  0 items",
             ":busts_in_silhouette: *Buyers*  0 unique, 0 new · 0 MANA moved",
             ":receipt: *Card checkout*  0 credited · 0 abandoned · 0 declined",
-            ":bank: *Unspent*  $0.00 in credits sold and not yet spent",
+            ":bank: *Unspent*  $0.00 in paid credits (sold or granted) not yet spent",
         ]
         .join("\n")
     );
@@ -576,5 +579,47 @@ fn the_hour_is_an_hour_of_the_day() {
     assert_eq!(
         super::Settings::for_tests().daily_summary_hour_utc,
         super::daily_summary::DEFAULT_HOUR_UTC
+    );
+}
+
+/// Reads that fail are an error before the day's last hour, so the pass is
+/// retried; in that hour the day is queued without its figures, and says so.
+#[tokio::test]
+async fn a_day_whose_reads_keep_failing_is_queued_without_figures() {
+    let Some(db) = OwnDatabase::create("daily_summary_failing").await else {
+        return;
+    };
+    let credits = Credits::new(db.pool.clone());
+    let summary = DailySummary {
+        hour_utc: 9,
+        chain: Arc::new(NoChain),
+    };
+    sqlx::query("ALTER TABLE credits.payment_reversals RENAME TO payment_reversals_gone")
+        .execute(&db.pool)
+        .await
+        .unwrap();
+
+    assert!(
+        summary
+            .run_pass(&credits, at(21, 22, 59, 59))
+            .await
+            .is_err()
+    );
+    assert!(summaries(&db.pool).await.is_empty());
+
+    let last = summary.run_pass(&credits, at(21, 23, 0, 0)).await.unwrap();
+    assert_eq!(
+        last,
+        PassOutcome::Queued(NaiveDate::from_ymd_opt(2026, 11, 20).unwrap())
+    );
+    let rows = summaries(&db.pool).await;
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].1["figuresUnavailable"], true);
+    let text = message(&rows[0].1);
+    assert!(
+        text.starts_with(
+            ":bar_chart: *Shop — 2026-11-20 (UTC)*\n:warning: The day's figures could not be read"
+        ),
+        "{text}"
     );
 }

@@ -42,8 +42,25 @@
 //!   (`credits.usages`); the pace is the value used over the seven days
 //!   ending with the reported day;
 //! - **warnings** (only when non-zero): authorizations created that day that
-//!   expired, and Stripe reversals (`credits.payment_reversals`) last
-//!   updated that day, at their cumulative refunded amount.
+//!   expired, and the Stripe reversals (`credits.payment_reversals`) last
+//!   updated that day: refunds at their cumulative refunded amount, and
+//!   chargebacks (a disputed intent) counted apart, since a dispute records
+//!   no amount.
+//!
+//! "Unspent" is the `paid` bucket, which holds the credits sold and the
+//! credits an operator granted alike; the line says so.
+//!
+//! The reads are once a day. The day filters' columns carry no index, so
+//! each day read scans its table: `purchases` (a row per card or MANA
+//! purchase), `usage_settlements` and `usages` (a row per CreditUsed log),
+//! `authorizations` (a row per checkout attempt), `payment_reversals` (a
+//! row per reversed intent) and `wallets`. New buyers aggregate the
+//! purchase settlements of all history, in the same one scan. A goal
+//! grant's usage is read by salt (`usages_salt_idx`). When the reads fail
+//! (past the statement timeout), the pass is retried with a backoff of up
+//! to an hour; a failure in the day's last hour, [`LAST_HOUR`], queues the
+//! day without its figures, so the channel sees the gap rather than
+//! nothing.
 //!
 //! What credits-server reports that this does not:
 //! - **collections published**: the node takes no credits for a publication;
@@ -79,6 +96,11 @@ pub const DAILY_SUMMARY: &str = "daily_summary";
 /// `CREDITS_DAILY_SUMMARY_HOUR_UTC`'s default.
 pub const DEFAULT_HOUR_UTC: u32 = 9;
 const INTERVAL: Duration = Duration::from_secs(300);
+/// The longest wait between failed passes: a day whose reads keep failing
+/// is tried about once an hour, not every [`INTERVAL`].
+const MAX_ERROR_BACKOFF: Duration = Duration::from_secs(3600);
+/// The UTC hour whose failed pass queues the day without its figures.
+pub const LAST_HOUR: u32 = 23;
 /// Each chain read (the balance, the rate) is given up after this long.
 pub const CHAIN_READ_TIMEOUT: Duration = Duration::from_secs(10);
 /// Fewer days of float at the seven-day pace than this raise a warning.
@@ -274,7 +296,14 @@ impl DailySummary {
         if queued {
             return Ok(PassOutcome::AlreadyQueued(day));
         }
-        let mut payload = figures(credits, day, now).await?;
+        let mut payload = match figures(credits, day, now).await {
+            Ok(payload) => payload,
+            Err(e) if now.hour() >= LAST_HOUR => {
+                tracing::error!(job = JOB_NAME, %day, error = %e, "the daily summary's figures could not be read today; queueing the day without them");
+                json!({ "day": key, "figuresUnavailable": true })
+            }
+            Err(e) => return Err(e),
+        };
         // Read after the figures, so the RPC is hit once a day rather than
         // on every tick; a balance is a right-now figure, labelled as such.
         let float = self.chain.float_wei().await;
@@ -375,9 +404,9 @@ pub(crate) async fn figures(
     .await?;
 
     let owed_mana: String = sqlx::query_scalar(
-        "SELECT TRUNC(COALESCE(sum(GREATEST(g.amount_wei - COALESCE(u.used, 0), 0)), 0))::text \
+        "SELECT TRUNC(COALESCE(sum(GREATEST(g.amount_wei - COALESCE( \
+                    (SELECT sum(u.value_wei) FROM credits.usages u WHERE u.salt = g.salt), 0), 0)), 0))::text \
          FROM credits.goal_grants g \
-         LEFT JOIN (SELECT salt, sum(value_wei) AS used FROM credits.usages GROUP BY salt) u ON u.salt = g.salt \
          WHERE g.claimed_at IS NOT NULL AND g.expires_at > $1",
     )
     .bind(now)
@@ -403,7 +432,9 @@ pub(crate) async fn figures(
     .await?;
 
     let reversals = sqlx::query(
-        "SELECT count(*) AS n, COALESCE(sum(refunded_cents), 0)::bigint AS cents \
+        "SELECT count(*) FILTER (WHERE NOT disputed) AS refunds, \
+                COALESCE(sum(refunded_cents) FILTER (WHERE NOT disputed), 0)::bigint AS cents, \
+                count(*) FILTER (WHERE disputed) AS chargebacks \
          FROM credits.payment_reversals WHERE updated_at >= $1 AND updated_at < $2",
     )
     .bind(from)
@@ -436,8 +467,9 @@ pub(crate) async fn figures(
         "outflow7dWei": outflow,
         "integrity": {
             "expired": expired,
-            "reversals": reversals.get::<i64, _>("n"),
-            "reversedCents": reversals.get::<i64, _>("cents"),
+            "refunds": reversals.get::<i64, _>("refunds"),
+            "refundedCents": reversals.get::<i64, _>("cents"),
+            "chargebacks": reversals.get::<i64, _>("chargebacks"),
         },
     }))
 }
@@ -498,6 +530,11 @@ fn plural(n: i64, one: &str, many: &str) -> String {
 pub(crate) fn message(payload: &Value) -> String {
     let n = |v: &Value| v.as_i64().unwrap_or(0);
     let day = payload["day"].as_str().unwrap_or("an unknown day");
+    if payload["figuresUnavailable"].as_bool() == Some(true) {
+        return format!(
+            ":bar_chart: *Shop — {day} (UTC)*\n:warning: The day's figures could not be read: every pass that day failed. The node's `{JOB_NAME}` errors say why."
+        );
+    }
     let packs = &payload["packs"];
     let (pack_count, charged) = (n(&packs["count"]), n(&packs["chargedCents"]));
     let pack_credits = credits_ceil(&packs["credits"]);
@@ -588,7 +625,7 @@ pub(crate) fn message(payload: &Value) -> String {
         ":receipt: *Card checkout*  {credited} credited · {abandoned} abandoned · {failed} declined{completion}{open}"
     ));
     lines.push(format!(
-        ":bank: *Unspent*  {} in credits sold and not yet spent",
+        ":bank: *Unspent*  {} in paid credits (sold or granted) not yet spent",
         usd(credits_ceil(&payload["unspentCredits"]) * USD_CENTS_PER_CREDIT)
     ));
 
@@ -603,12 +640,19 @@ pub(crate) fn message(payload: &Value) -> String {
             plural(expired, "reservation", "reservations")
         ));
     }
-    let reversals = n(&integrity["reversals"]);
-    if reversals > 0 {
+    let refunds = n(&integrity["refunds"]);
+    if refunds > 0 {
         warnings.push(format!(
             ":warning: {} ({})",
-            plural(reversals, "refund/chargeback", "refunds/chargebacks"),
-            usd(n(&integrity["reversedCents"]))
+            plural(refunds, "refund", "refunds"),
+            usd(n(&integrity["refundedCents"]))
+        ));
+    }
+    let chargebacks = n(&integrity["chargebacks"]);
+    if chargebacks > 0 {
+        warnings.push(format!(
+            ":warning: {}",
+            plural(chargebacks, "chargeback", "chargebacks")
         ));
     }
     let mut text = lines.join("\n");
@@ -711,7 +755,7 @@ pub fn spawn(jobs: &Jobs, credits: Credits, summary: DailySummary, writes_enable
         JOB_NAME,
         PeriodicCfg::every(INTERVAL)
             .with_jitter(Duration::from_secs(30))
-            .with_error_backoff(Duration::from_secs(300)),
+            .with_error_backoff(MAX_ERROR_BACKOFF),
         move |ctx: JobContext| {
             let credits = credits.clone();
             let summary = summary.clone();
