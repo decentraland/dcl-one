@@ -29,7 +29,7 @@ message PBPostProcessing {
   optional float exposure = 2;
   optional ColorGrading color_grading = 3;
   // multiplier of the explorer's bloom (the glow around bright areas). 0 removes it.
-  // range 0 to 4, default 1
+  // range 0 to 2, default 1
   optional float bloom_intensity = 4;
   optional DepthOfField depth_of_field = 5;
 }
@@ -63,7 +63,8 @@ message ColorGrading {
 }
 
 // Blur for distant objects. Objects nearer than focus_start are sharp; the blur rises evenly
-// from focus_start to focus_end and stays at its focus_end value beyond.
+// from focus_start to focus_end and stays at its focus_end value beyond. Distances range from 0
+// to 10000. An orthographic texture camera has no depth of field.
 message DepthOfField {
   // the blur reached at focus_end, as a fraction of the explorer's strongest blur. 0 turns depth
   // of field off. range 0 to 1, default: the strength of the player's depth of field setting

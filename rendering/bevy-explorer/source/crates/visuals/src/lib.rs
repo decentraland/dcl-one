@@ -42,9 +42,9 @@ use bevy_console::ConsoleCommand;
 use common::{
     sets::SetupSets,
     structs::{
-        sun_cascades, AppConfig, DofConfig, FogSetting, PrimaryCamera, PrimaryCameraRes,
-        PrimaryUser, SceneGlobalLight, StageLight, TimeOfDay, AMBIENT_BRIGHTNESS_DEFAULT,
-        PRIMARY_AVATAR_LIGHT_LAYER,
+        sun_cascades, AppConfig, CameraLook, DofConfig, FogSetting, PrimaryCamera,
+        PrimaryCameraRes, PrimaryUser, SceneGlobalLight, StageLight, TimeOfDay,
+        AMBIENT_BRIGHTNESS_DEFAULT, PRIMARY_AVATAR_LIGHT_LAYER,
     },
 };
 use console::DoAddConsoleCommand;
@@ -593,10 +593,13 @@ struct DofConsoleCommand {
 
 fn dof_console_command(
     mut input: ConsoleCommand<DofConsoleCommand>,
-    mut cam: Query<(&mut DepthOfField, &mut DofConfig)>,
+    mut cam: Query<(&mut CameraLook, &mut DofConfig)>,
 ) {
     if let Some(Ok(command)) = input.take() {
-        let Ok((mut dof, mut mydof)) = cam.single_mut() else {
+        let Ok((mut look, mut mydof)) = cam.single_mut() else {
+            return;
+        };
+        let Some(dof) = look.dof.as_mut() else {
             return;
         };
 
@@ -618,10 +621,13 @@ fn dof_console_command(
 }
 
 fn update_dof(
-    mut cam: Query<(&Transform, &DofConfig, &mut DepthOfField), With<PrimaryCamera>>,
+    mut cam: Query<(&Transform, &DofConfig, &mut CameraLook), With<PrimaryCamera>>,
     player: Query<&Transform, With<PrimaryUser>>,
 ) {
-    let (Ok((cam, mydof, mut dof)), Ok(player)) = (cam.single_mut(), player.single()) else {
+    let (Ok((cam, mydof, mut look)), Ok(player)) = (cam.single_mut(), player.single()) else {
+        return;
+    };
+    let Some(dof) = look.dof.as_mut() else {
         return;
     };
 
@@ -753,11 +759,11 @@ struct TonemapConsoleCommand {
 
 fn tonemap_console_command(
     mut input: ConsoleCommand<TonemapConsoleCommand>,
-    mut cam: Query<&mut bevy::core_pipeline::tonemapping::Tonemapping, With<PrimaryCamera>>,
+    mut cam: Query<&mut CameraLook, With<PrimaryCamera>>,
 ) {
     use bevy::core_pipeline::tonemapping::Tonemapping;
     if let Some(Ok(command)) = input.take() {
-        let Ok(mut tonemapping) = cam.single_mut() else {
+        let Ok(mut look) = cam.single_mut() else {
             return;
         };
         let mode = match command.mode.as_str() {
@@ -774,7 +780,7 @@ fn tonemap_console_command(
                 return;
             }
         };
-        *tonemapping = mode;
+        look.tonemapping = mode;
         input.reply_ok(format!("tonemapping: {}", command.mode));
     }
 }
@@ -788,12 +794,13 @@ struct ExposureConsoleCommand {
 
 fn exposure_console_command(
     mut input: ConsoleCommand<ExposureConsoleCommand>,
-    mut cam: Query<&mut bevy::render::view::ColorGrading, With<PrimaryCamera>>,
+    mut cam: Query<&mut CameraLook, With<PrimaryCamera>>,
 ) {
     if let Some(Ok(command)) = input.take() {
-        let Ok(mut grading) = cam.single_mut() else {
+        let Ok(mut look) = cam.single_mut() else {
             return;
         };
+        let grading = &mut look.grading;
         grading.global.exposure = command.exposure;
         input.reply_ok(format!("exposure: {}", command.exposure));
     }
@@ -810,12 +817,13 @@ struct GammaConsoleCommand {
 
 fn gamma_console_command(
     mut input: ConsoleCommand<GammaConsoleCommand>,
-    mut cam: Query<&mut bevy::render::view::ColorGrading, With<PrimaryCamera>>,
+    mut cam: Query<&mut CameraLook, With<PrimaryCamera>>,
 ) {
     if let Some(Ok(command)) = input.take() {
-        let Ok(mut grading) = cam.single_mut() else {
+        let Ok(mut look) = cam.single_mut() else {
             return;
         };
+        let grading = &mut look.grading;
         let midtones = command.midtones.unwrap_or(command.shadows);
         let highlights = command.highlights.unwrap_or(midtones);
         grading.shadows.gamma = command.shadows;
@@ -840,12 +848,13 @@ struct SaturationConsoleCommand {
 
 fn saturation_console_command(
     mut input: ConsoleCommand<SaturationConsoleCommand>,
-    mut cam: Query<&mut bevy::render::view::ColorGrading, With<PrimaryCamera>>,
+    mut cam: Query<&mut CameraLook, With<PrimaryCamera>>,
 ) {
     if let Some(Ok(command)) = input.take() {
-        let Ok(mut grading) = cam.single_mut() else {
+        let Ok(mut look) = cam.single_mut() else {
             return;
         };
+        let grading = &mut look.grading;
         let midtones = command.midtones.unwrap_or(command.shadows);
         let highlights = command.highlights.unwrap_or(midtones);
         grading.shadows.saturation = command.shadows;
@@ -867,10 +876,13 @@ struct BloomConsoleCommand {
 
 fn bloom_console_command(
     mut input: ConsoleCommand<BloomConsoleCommand>,
-    mut cam: Query<&mut bevy::core_pipeline::bloom::Bloom, With<PrimaryCamera>>,
+    mut cam: Query<&mut CameraLook, With<PrimaryCamera>>,
 ) {
     if let Some(Ok(command)) = input.take() {
-        let Ok(mut bloom) = cam.single_mut() else {
+        let Ok(mut look) = cam.single_mut() else {
+            return;
+        };
+        let Some(bloom) = look.bloom.as_mut() else {
             return;
         };
         bloom.intensity = command.intensity;
@@ -878,6 +890,8 @@ fn bloom_console_command(
     }
 }
 
+#[cfg(test)]
+mod post_processing_pipelines_test;
 #[cfg(test)]
 mod skinned_pipelines_test;
 

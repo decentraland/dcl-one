@@ -25,7 +25,7 @@ use bevy::{
 };
 use common::{
     sets::{PostUpdateSets, SceneSets},
-    structs::{sun_cascades, AppConfig, StageCamera, StageLight, MIN_CASCADE},
+    structs::{sun_cascades, AppConfig, CameraLook, StageCamera, StageLight, MIN_CASCADE},
 };
 use scene_runner::{initialize_scene::SuperUserScene, renderer_context::RendererSceneContext};
 use system_bridge::{settings::NewCameraEvent, LobbyStage, SystemApi};
@@ -323,7 +323,14 @@ fn unprocessed(commands: &mut Commands, camera: Entity) {
     commands
         .entity(camera)
         .try_insert((StageCamera, Tonemapping::None, ColorGrading::default()))
-        .try_remove::<Bloom>();
+        .try_remove::<Bloom>()
+        .queue_silenced(|mut camera: EntityWorldMut| {
+            if let Some(mut look) = camera.get_mut::<CameraLook>() {
+                look.tonemapping = Tonemapping::None;
+                look.grading = ColorGrading::default();
+                look.bloom = None;
+            }
+        });
 }
 
 /// A camera the stage no longer shows gets the engine's processing back, and the settings

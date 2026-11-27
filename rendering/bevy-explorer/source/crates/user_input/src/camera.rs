@@ -9,9 +9,9 @@ use avatar::animate::{is_emoting, ActiveEmote, MaskedEmote};
 use common::{
     inputs::{Action, SystemAction, CAMERA_SET, CAMERA_ZOOM, POINTER_SET},
     structs::{
-        AppConfig, AvatarDynamicState, CameraOverride, CameraShoulder, CameraView, CameraZoomLevel,
-        ClientWindowFocus, CursorLocks, HeadSync, MoveKind, PhotoMode, PrimaryCamera, PrimaryUser,
-        RequestClientWindowFocus, CAMERA_CURSOR_LOCK, PLAYER_CAMERA_FOV,
+        AppConfig, AvatarDynamicState, CameraMove, CameraOverride, CameraShoulder, CameraView,
+        CameraZoomLevel, ClientWindowFocus, CursorLocks, HeadSync, MoveKind, PhotoMode,
+        PrimaryCamera, PrimaryUser, RequestClientWindowFocus, CAMERA_CURSOR_LOCK, PLAYER_CAMERA_FOV,
     },
     util::ModifyComponentExt,
 };
@@ -202,7 +202,7 @@ pub(crate) fn update_camera_position(
         (
             Entity,
             &Transform,
-            &PrimaryCamera,
+            &mut PrimaryCamera,
             &mut CameraZoom,
             &mut Projection,
             Option<&mut SystemTween>,
@@ -235,7 +235,7 @@ pub(crate) fn update_camera_position(
         Ok((
             camera_ent,
             camera_transform,
-            options,
+            mut options,
             mut zoom,
             mut projection,
             maybe_tween,
@@ -418,6 +418,7 @@ pub(crate) fn update_camera_position(
         debug!("changed cam to {:?}", options.scene_override);
         *prev_override = scene_camera.cloned();
         *prev_oow = is_oow;
+        let started = time.elapsed_secs_f64();
         let time = match target_transition {
             TransitionMode::Time(t) => t,
             TransitionMode::Speed(s) => {
@@ -434,6 +435,11 @@ pub(crate) fn update_camera_position(
             target: target_transform,
             time,
             fov: Some(target_fov),
+        });
+        options.last_move = Some(CameraMove {
+            to: options.scene_override.clone(),
+            time,
+            started,
         });
     } else if let Some(mut tween) = maybe_tween {
         let tween = tween.bypass_change_detection();

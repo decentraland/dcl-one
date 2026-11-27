@@ -1,6 +1,8 @@
 use super::SettingCategory;
-use bevy::{core_pipeline::bloom::Bloom, ecs::system::SystemParamItem, prelude::*};
-use common::structs::{scatter_bloom, AppConfig, BloomSetting, StageCamera, BLOOM_SCATTER};
+use bevy::{ecs::system::SystemParamItem, prelude::*};
+use common::structs::{
+    scatter_bloom, AppConfig, BloomSetting, CameraLook, StageCamera, BLOOM_SCATTER,
+};
 
 use super::{AppSetting, EnumAppSetting};
 
@@ -64,13 +66,8 @@ impl AppSetting for BloomSetting {
             if camera.contains::<StageCamera>() {
                 return;
             }
-            match bloom {
-                Some(bloom) => {
-                    camera.insert(bloom);
-                }
-                None => {
-                    camera.remove::<Bloom>();
-                }
+            if let Some(mut look) = camera.get_mut::<CameraLook>() {
+                look.bloom = bloom;
             }
         });
     }

@@ -24,8 +24,8 @@ use dcl_component::proto_components::{
     social_service::v2::PrivateMessagePrivacySetting,
 };
 pub use platform::{
-    default_color_grading, scatter_bloom, scatter_lerp, BLOOM_SCATTER, GRADING_MIDTONES_RANGE,
-    GRADING_SHADOWS_WEIGHT,
+    default_color_grading, scaled_bloom, scatter_bloom, scatter_lerp, CameraLook, BLOOM_SCATTER,
+    GRADING_MIDTONES_RANGE, GRADING_SHADOWS_WEIGHT,
 };
 use serde::{Deserialize, Serialize};
 use system_api_types::SatelliteView;
@@ -504,6 +504,19 @@ pub struct PrimaryCamera {
     pub scene_override: Option<CameraOverride>,
     /// The scene whose camera mode area or virtual camera set `scene_override`.
     pub scene_override_owner: Option<Entity>,
+    /// The last move to a new view the camera started; set by `user_input`'s `update_camera`.
+    pub last_move: Option<CameraMove>,
+}
+
+/// A move of the primary camera to a new view: what it moves to and over how long.
+#[derive(Clone, Debug)]
+pub struct CameraMove {
+    /// the override in effect at the end of the move
+    pub to: Option<CameraOverride>,
+    /// seconds; 0 when the camera snaps
+    pub time: f32,
+    /// `Time::elapsed_secs_f64` when the move started
+    pub started: f64,
 }
 
 /// Where the camera sits relative to the player, with a scene's override applied.
@@ -585,6 +598,7 @@ impl Default for PrimaryCamera {
             shoulder: Default::default(),
             scene_override: None,
             scene_override_owner: None,
+            last_move: None,
         }
     }
 }
@@ -2997,6 +3011,40 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn scaled_bloom_multiplies_the_whole_glow() {
+        let own = scatter_bloom(BLOOM_SCATTER);
+        let max_mip = 7.0;
+        let weights = |b: &bevy::core_pipeline::bloom::Bloom| {
+            let mut weight = 1.0;
+            (0..=7)
+                .map(|mip| {
+                    weight *= bevy_bloom_blend(b, mip as f32, max_mip);
+                    weight
+                })
+                .collect::<Vec<f32>>()
+        };
+        let base = weights(&own);
+        for scale in [0.0, 0.5, 1.5, 2.0] {
+            for (mip, (w, b)) in weights(&scaled_bloom(&own, scale))
+                .iter()
+                .zip(&base)
+                .enumerate()
+            {
+                assert!(
+                    (w - b * scale).abs() < 1e-5,
+                    "scale {scale}, mip {mip}: {w} vs {b}"
+                );
+            }
+        }
+        // capped where the composite reaches full weight
+        assert_eq!(scaled_bloom(&own, 4.0).intensity, 1.0);
+        assert_eq!(
+            weights(&scaled_bloom(&own, 4.0)),
+            weights(&scaled_bloom(&own, 2.0))
+        );
     }
 
     #[test]

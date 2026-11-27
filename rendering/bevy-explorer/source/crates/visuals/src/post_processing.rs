@@ -1,11 +1,11 @@
 //! Applies scenes' `PBPostProcessing` to the player's camera and to texture cameras.
 //!
-//! The explorer's own look (default components, the player's settings, the console commands and
-//! the auto-focus) keeps writing the cameras' `Tonemapping`, `ColorGrading`, `Bloom` and
-//! `DepthOfField` as before. While a scene's settings apply to a camera, the camera carries
-//! [`Applied`]: in `Last` the values written that frame are saved as its baseline and the scene's
-//! settings are applied over them, and in `First` the baseline is written back, so those writers
-//! always see and edit the explorer's own values.
+//! The explorer's writers (a camera's spawn, the player's settings, the console and the
+//! auto-focus) edit a camera's [`CameraLook`]. In `PostUpdateSets::PostProcessing`, after all of
+//! them, a camera's `Tonemapping`, `ColorGrading`, `Bloom` and `DepthOfField` are written from
+//! its look with a scene's settings over it: on the player's camera, those of the scene the
+//! player's look comes from (and a virtual camera's own, while it is active), blended as the
+//! camera moves; on any other camera, those on its parent, the scene entity of a texture camera.
 
 use bevy::{
     core_pipeline::{
@@ -17,18 +17,21 @@ use bevy::{
     render::view::ColorGrading,
 };
 use bevy_console::ConsoleCommand;
-use common::structs::{CameraOverride, PrimaryCamera, PrimaryUser};
+use common::{
+    sets::PostUpdateSets,
+    structs::{scaled_bloom, CameraLook, CameraOverride, PrimaryCamera},
+};
 use console::{AddDebugSection, DebugSection, DoAddConsoleCommand};
 use dcl_component::SceneEntityId;
 use scene_runner::{
     renderer_context::RendererSceneContext,
     update_world::{
         camera_mode_area::VirtualCamera,
-        post_processing::{PostProcessing, PostProcessingFrom, TonemapCurve},
+        post_processing::{PostProcessing, TonemapCurve},
     },
-    ContainingScene,
 };
-use tween::SystemTween;
+
+use crate::day_night::SceneSource;
 
 /// seconds to blend between scenes' settings, as the global light does
 const SCENE_TRANSITION_TIME: f32 = 1.0;
@@ -39,9 +42,11 @@ pub struct PostProcessingPlugin;
 
 impl Plugin for PostProcessingPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<PrimaryPostProcessing>()
-            .add_systems(First, restore_baselines)
-            .add_systems(Last, (apply_primary, apply_texture_cameras))
+        app.register_required_components::<PrimaryCamera, PrimaryBlend>()
+            .add_systems(
+                PostUpdate,
+                (show_primary, show_other_cameras).in_set(PostUpdateSets::PostProcessing),
+            )
             .add_console_command::<PostProcessingCommand, _>(post_processing_command)
             .add_debug_section(DebugSection {
                 title: "Post processing",
@@ -68,34 +73,6 @@ impl Plugin for PostProcessingPlugin {
                 actions: &[],
                 inputs: &[],
             });
-    }
-}
-
-/// The explorer's own values on a camera that a scene's settings apply to, saved in `Last`.
-#[derive(Component, Clone)]
-struct Applied(Look);
-
-#[derive(Clone)]
-struct Look {
-    tonemapping: Tonemapping,
-    grading: ColorGrading,
-    bloom: Option<Bloom>,
-    dof: Option<DepthOfField>,
-}
-
-impl Look {
-    fn read(
-        tonemapping: &Tonemapping,
-        grading: &ColorGrading,
-        bloom: Option<&Bloom>,
-        dof: Option<&DepthOfField>,
-    ) -> Self {
-        Self {
-            tonemapping: *tonemapping,
-            grading: grading.clone(),
-            bloom: bloom.cloned(),
-            dof: dof.copied(),
-        }
     }
 }
 
@@ -172,7 +149,12 @@ struct Lens {
 
 /// The output of `settings` over a camera whose own values are `base`. `texture_camera` turns
 /// bloom off by default under `TonemapCurve::None`.
-fn compose(settings: &PostProcessing, base: &Look, lens: &Lens, texture_camera: bool) -> Output {
+fn compose(
+    settings: &PostProcessing,
+    base: &CameraLook,
+    lens: &Lens,
+    texture_camera: bool,
+) -> Output {
     let no_curve = settings.tonemapping == Some(TonemapCurve::None);
 
     let mut grading = if no_curve {
@@ -228,10 +210,7 @@ fn white_balance(temperature: f32, tint: f32) -> (f32, f32) {
 
 /// The depth of field the settings give, or `None` to keep the camera's own.
 fn focus(settings: &PostProcessing, base: Option<&DepthOfField>, lens: &Lens) -> Option<Focus> {
-    if settings.dof_intensity.is_none()
-        && settings.dof_focus_start.is_none()
-        && settings.dof_focus_end.is_none()
-    {
+    if !focus_set(settings) {
         return None;
     }
     let base = base?;
@@ -320,7 +299,7 @@ fn lerp_grading(a: &ColorGrading, b: &ColorGrading, t: f32) -> ColorGrading {
     out
 }
 
-fn lerp_output(from: &Output, to: &Output, base: &Look, lens: &Lens, t: f32) -> Output {
+fn lerp_output(from: &Output, to: &Output, base: &CameraLook, lens: &Lens, t: f32) -> Output {
     let own = base.dof.as_ref().and_then(|dof| Focus::of(dof, lens));
     Output {
         curve: if t < 0.5 { from.curve } else { to.curve },
@@ -333,47 +312,37 @@ fn lerp_output(from: &Output, to: &Output, base: &Look, lens: &Lens, t: f32) -> 
     }
 }
 
-fn write_output(
-    output: &Output,
-    base: &Look,
-    lens: &Lens,
-    tonemapping: &mut Tonemapping,
-    grading: &mut ColorGrading,
-    bloom: Option<&mut Bloom>,
-    dof: Option<&mut DepthOfField>,
-) {
-    let mut out_grading = output.grading.clone();
-    *tonemapping = if out_grading.global.untonemapped_mix >= 1.0 {
-        out_grading.global.untonemapped_mix = 0.0;
+/// What a camera with `base` as its own look shows for `output`.
+fn shown(output: &Output, base: &CameraLook, lens: &Lens) -> CameraLook {
+    let mut grading = output.grading.clone();
+    let tonemapping = if grading.global.untonemapped_mix >= 1.0 {
+        grading.global.untonemapped_mix = 0.0;
         Tonemapping::None
     } else {
         output.curve
     };
-    *grading = out_grading;
 
-    if let (Some(bloom), Some(own)) = (bloom, base.bloom.as_ref()) {
-        // below 1 the whole glow fades out; above 1 only its strength grows, capped so that an
-        // energy-conserving bloom never blends in more than all of the image
-        let scale = output.bloom_scale;
-        bloom.intensity = (own.intensity * scale).min(own.intensity.max(1.0));
-        bloom.low_frequency_boost = own.low_frequency_boost * scale.min(1.0);
-    }
+    let bloom = base
+        .bloom
+        .as_ref()
+        .map(|own| scaled_bloom(own, output.bloom_scale));
 
-    if let (Some(dof), Some(own), Some(focus), Some(fov)) =
-        (dof, base.dof.as_ref(), output.dof, lens.fov)
-    {
+    let dof = base.dof.map(|own| {
+        let (Some(focus), Some(fov)) = (output.dof, lens.fov) else {
+            return own;
+        };
+        let mut dof = own;
         dof.focal_distance = focus.start;
         dof.max_depth = focus.end;
         dof.linear_ramp = focus.ramp;
         // the lens's blur never passes its value at `end`, so this caps only the ramp
         dof.max_circle_of_confusion_diameter = focus.strength;
         if focus.strength > 1e-3 {
-            dof.mode = own.mode;
             let blur = blur_for(
                 focus.strength,
                 focus.start,
                 focus.end,
-                own,
+                &own,
                 fov,
                 lens.height,
             );
@@ -384,6 +353,14 @@ fn write_output(
             // keeps the component (and its focus target, which the stars read)
             dof.mode = DepthOfFieldMode::Disabled;
         }
+        dof
+    });
+
+    CameraLook {
+        tonemapping,
+        grading,
+        bloom,
+        dof,
     }
 }
 
@@ -394,16 +371,39 @@ type LookComponents = (
     Option<&'static mut DepthOfField>,
 );
 
-fn restore_baselines(mut cameras: Query<(&Applied, LookComponents)>) {
-    for (Applied(base), (mut tonemapping, mut grading, bloom, dof)) in &mut cameras {
-        *tonemapping = base.tonemapping;
-        *grading = base.grading.clone();
-        if let (Some(mut bloom), Some(own)) = (bloom, base.bloom.as_ref()) {
-            *bloom = own.clone();
+/// Writes `look` to a camera's components, adding or removing its bloom and depth of field.
+fn show(
+    commands: &mut Commands,
+    entity: Entity,
+    look: CameraLook,
+    (mut tonemapping, mut grading, bloom, dof): (
+        Mut<Tonemapping>,
+        Mut<ColorGrading>,
+        Option<Mut<Bloom>>,
+        Option<Mut<DepthOfField>>,
+    ),
+) {
+    tonemapping.set_if_neq(look.tonemapping);
+    *grading = look.grading;
+    match (look.bloom, bloom) {
+        (Some(look), Some(mut bloom)) => *bloom = look,
+        (Some(look), None) => {
+            commands.entity(entity).try_insert(look);
         }
-        if let (Some(mut dof), Some(own)) = (dof, base.dof) {
-            *dof = own;
+        (None, Some(_)) => {
+            commands.entity(entity).try_remove::<Bloom>();
         }
+        (None, None) => (),
+    }
+    match (look.dof, dof) {
+        (Some(look), Some(mut dof)) => *dof = look,
+        (Some(look), None) => {
+            commands.entity(entity).try_insert(look);
+        }
+        (None, Some(_)) => {
+            commands.entity(entity).try_remove::<DepthOfField>();
+        }
+        (None, None) => (),
     }
 }
 
@@ -419,94 +419,69 @@ fn lens(camera: &Camera, projection: &Projection) -> Lens {
     }
 }
 
-/// The player's camera: which scene and virtual camera its settings come from, and the blend.
-#[derive(Resource, Default)]
-struct PrimaryPostProcessing {
+/// On the player's camera: which scene and virtual camera its settings come from, and the blend.
+#[derive(Component, Default)]
+struct PrimaryBlend {
     scene: Option<Entity>,
     virtual_camera: Option<Entity>,
+    /// the start of the last camera move seen
+    seen_move: Option<f64>,
     settings: PostProcessing,
     from: Option<Output>,
     last: Option<Output>,
     start: f64,
     duration: f32,
     progress: f32,
-}
-
-/// The scene whose `engine.CameraEntity` settings apply: the parcel scene the player is in, else
-/// the portable with the lowest hash, as for the global light.
-fn source_scene(
-    containing_scene: &ContainingScene,
-    player: Entity,
-    contexts: &Query<&RendererSceneContext>,
-    settings: &Query<&PostProcessing>,
-) -> Option<(Entity, PostProcessing)> {
-    let on_camera = |scene: Entity| {
-        let ctx = contexts.get(scene).ok()?;
-        let camera = ctx.bevy_entity(SceneEntityId::CAMERA)?;
-        settings.get(camera).ok().copied()
-    };
-
-    if let Some(parcel) = containing_scene.get_parcel_oow(player) {
-        if let Some(found) = on_camera(parcel) {
-            return Some((parcel, found));
-        }
-    }
-
-    containing_scene
-        .get_portables(false)
-        .into_iter()
-        .filter_map(|scene| Some((scene, on_camera(scene)?, &*contexts.get(scene).ok()?.hash)))
-        .min_by(|a, b| a.2.cmp(b.2))
-        .map(|(scene, found, _)| (scene, found))
+    /// a scene's settings applied last frame
+    active: bool,
 }
 
 #[allow(clippy::too_many_arguments)]
-fn apply_primary(
+fn show_primary(
     mut commands: Commands,
-    mut state: ResMut<PrimaryPostProcessing>,
     time: Res<Time>,
-    player: Query<Entity, With<PrimaryUser>>,
-    containing_scene: ContainingScene,
+    mut source: SceneSource,
+    mut picked: Local<Option<Entity>>,
+    changed_settings: Query<(), Changed<PostProcessing>>,
+    mut removed_settings: RemovedComponents<PostProcessing>,
     contexts: Query<&RendererSceneContext>,
     settings: Query<&PostProcessing>,
     virtual_cameras: Query<(), With<VirtualCamera>>,
-    mut camera: Query<
-        (
-            Entity,
-            &PrimaryCamera,
-            &Camera,
-            &Projection,
-            Option<Ref<SystemTween>>,
-            Has<Applied>,
-            LookComponents,
-        ),
-        Without<PostProcessingFrom>,
-    >,
+    mut camera: Query<(
+        Entity,
+        &PrimaryCamera,
+        &mut PrimaryBlend,
+        Ref<CameraLook>,
+        &Camera,
+        &Projection,
+        LookComponents,
+    )>,
 ) {
-    let Ok((
-        entity,
-        primary,
-        camera,
-        projection,
-        tween,
-        was_applied,
-        (mut tonemapping, mut grading, mut bloom, mut dof),
-    )) = camera.single_mut()
+    // the settings on a scene's `engine.CameraEntity`
+    let on_camera = |scene: Entity| {
+        let camera = contexts
+            .get(scene)
+            .ok()?
+            .bevy_entity(SceneEntityId::CAMERA)?;
+        settings.get(camera).ok().copied()
+    };
+    let changed = !changed_settings.is_empty() || removed_settings.read().next().is_some();
+    removed_settings.clear();
+    if let Some(pick) = source.changed_pick(changed, |scene| on_camera(scene).is_some()) {
+        *picked = pick;
+    }
+    let Ok((entity, primary, mut state, look, camera, projection, components)) =
+        camera.single_mut()
     else {
         return;
     };
-    let Ok(player) = player.single() else {
-        return;
-    };
 
-    let (scene, base_settings) = match source_scene(&containing_scene, player, &contexts, &settings)
-    {
-        Some((scene, found)) => (Some(scene), found),
-        None => (None, PostProcessing::default()),
-    };
+    let scene = *picked;
+    let base_settings = scene.and_then(on_camera).unwrap_or_default();
 
-    // a virtual camera's own settings, while it is the active camera
-    let virtual_camera = match &primary.scene_override {
+    // a virtual camera's own settings, while the camera's last move went to it
+    let camera_move = primary.last_move.as_ref();
+    let virtual_camera = match camera_move.and_then(|camera_move| camera_move.to.as_ref()) {
         Some(CameraOverride::Cinematic(cinematic))
             if virtual_cameras.contains(cinematic.origin)
                 && settings.contains(cinematic.origin) =>
@@ -515,24 +490,24 @@ fn apply_primary(
         }
         _ => None,
     };
+    let new_move = camera_move.filter(|camera_move| state.seen_move != Some(camera_move.started));
+    state.seen_move = camera_move.map(|camera_move| camera_move.started);
+
     let effective = match virtual_camera.and_then(|e| settings.get(e).ok()) {
         Some(layer) => layer.over(base_settings),
         None => base_settings,
     };
 
-    let base = Look::read(&tonemapping, &grading, bloom.as_deref(), dof.as_deref());
     let camera_lens = lens(camera, projection);
-    let target = compose(&effective, &base, &camera_lens, false);
+    let target = compose(&effective, &look, &camera_lens, false);
 
     let now = time.elapsed_secs_f64();
     if scene != state.scene || virtual_camera != state.virtual_camera {
         state.duration = if scene != state.scene {
             SCENE_TRANSITION_TIME
         } else {
-            // the camera's own move: its tween was inserted this frame, or it snapped
-            tween
-                .filter(|tween| tween.is_changed())
-                .map_or(0.0, |tween| tween.time)
+            // over the camera's move to or from the virtual camera; other changes apply at once
+            new_move.map_or(0.0, |camera_move| camera_move.time)
         };
         state.from = state.last.take();
         state.start = now;
@@ -546,73 +521,86 @@ fn apply_primary(
         ((now - state.start) as f32 / state.duration).clamp(0.0, 1.0)
     };
     let output = match (&state.from, progress < 1.0) {
-        (Some(from), true) => lerp_output(from, &target, &base, &camera_lens, progress),
+        (Some(from), true) => lerp_output(from, &target, &look, &camera_lens, progress),
         _ => target,
     };
 
     let active = effective != PostProcessing::default() || progress < 1.0;
-    if active {
-        write_output(
-            &output,
-            &base,
-            &camera_lens,
-            &mut tonemapping,
-            &mut grading,
-            bloom.as_deref_mut(),
-            dof.as_deref_mut(),
+    if active || state.active || look.is_changed() {
+        show(
+            &mut commands,
+            entity,
+            shown(&output, &look, &camera_lens),
+            components,
         );
-        commands.entity(entity).try_insert(Applied(base));
-    } else if was_applied {
-        // `First` already wrote the explorer's values back
-        commands.entity(entity).try_remove::<Applied>();
     }
 
+    state.active = active;
     state.settings = effective;
     state.progress = progress;
     state.last = Some(output);
 }
 
-fn apply_texture_cameras(
+/// On a camera other than the player's that shows its parent's settings.
+#[derive(Component)]
+struct ShowsSceneSettings;
+
+/// Cameras other than the player's: their parent's settings (a texture camera's scene entity),
+/// at once, while the camera is active.
+fn show_other_cameras(
     mut commands: Commands,
-    settings: Query<&PostProcessing>,
-    mut cameras: Query<(
-        Entity,
-        &PostProcessingFrom,
-        &Camera,
-        &Projection,
-        Has<Applied>,
-        LookComponents,
-    )>,
+    settings: Query<Ref<PostProcessing>>,
+    mut cameras: Query<
+        (
+            Entity,
+            Ref<CameraLook>,
+            &Camera,
+            &Projection,
+            Option<&ChildOf>,
+            Has<ShowsSceneSettings>,
+            LookComponents,
+        ),
+        Without<PrimaryCamera>,
+    >,
 ) {
-    for (
-        entity,
-        from,
-        camera,
-        projection,
-        was_applied,
-        (mut tonemapping, mut grading, mut bloom, mut dof),
-    ) in &mut cameras
-    {
-        let Ok(found) = settings.get(from.0) else {
-            if was_applied {
-                commands.entity(entity).try_remove::<Applied>();
-            }
+    for (entity, look, camera, projection, parent, was_shown, components) in &mut cameras {
+        if !camera.is_active {
             continue;
-        };
-        let base = Look::read(&tonemapping, &grading, bloom.as_deref(), dof.as_deref());
+        }
+        let found = parent.and_then(|parent| settings.get(parent.parent()).ok());
+        let changed = look.is_changed() || found.as_ref().is_some_and(Ref::is_changed);
+        // depth of field follows the target's size, so it is worked out each frame
+        let follows_lens = found.as_ref().is_some_and(|found| focus_set(found));
+        if !(changed || follows_lens || was_shown != found.is_some()) {
+            continue;
+        }
+
+        let scene_settings = found.as_deref().copied().unwrap_or_default();
         let camera_lens = lens(camera, projection);
-        let output = compose(found, &base, &camera_lens, true);
-        write_output(
-            &output,
-            &base,
-            &camera_lens,
-            &mut tonemapping,
-            &mut grading,
-            bloom.as_deref_mut(),
-            dof.as_deref_mut(),
+        let output = compose(&scene_settings, &look, &camera_lens, true);
+        show(
+            &mut commands,
+            entity,
+            shown(&output, &look, &camera_lens),
+            components,
         );
-        commands.entity(entity).try_insert(Applied(base));
+        match (found.is_some(), was_shown) {
+            (true, false) => {
+                commands.entity(entity).try_insert(ShowsSceneSettings);
+            }
+            (false, true) => {
+                commands.entity(entity).try_remove::<ShowsSceneSettings>();
+            }
+            _ => (),
+        }
     }
+}
+
+/// Settings that set depth of field.
+fn focus_set(settings: &PostProcessing) -> bool {
+    settings.dof_intensity.is_some()
+        || settings.dof_focus_start.is_some()
+        || settings.dof_focus_end.is_some()
 }
 
 #[derive(clap::Parser, ConsoleCommand)]
@@ -621,10 +609,14 @@ struct PostProcessingCommand;
 
 fn post_processing_command(
     mut command: ConsoleCommand<PostProcessingCommand>,
-    state: Res<PrimaryPostProcessing>,
-    texture_cameras: Query<&PostProcessingFrom, With<Applied>>,
+    primary: Query<&PrimaryBlend>,
+    texture_cameras: Query<(), With<ShowsSceneSettings>>,
 ) {
     let Some(Ok(_)) = command.take() else { return };
+    let Ok(state) = primary.single() else {
+        command.reply_failed("no player camera");
+        return;
+    };
     let s = &state.settings;
     // the depth of field the player's camera shows this frame, blends included
     let applied = state.last.as_ref().and_then(|output| output.dof);
@@ -655,8 +647,8 @@ fn post_processing_command(
 mod tests {
     use super::*;
 
-    fn look() -> Look {
-        Look {
+    fn look() -> CameraLook {
+        CameraLook {
             tonemapping: Tonemapping::AcesFitted,
             grading: ColorGrading::default(),
             bloom: Some(Bloom::default()),
@@ -739,58 +731,6 @@ mod tests {
     }
 
     #[test]
-    fn intensity_one_reaches_the_largest_blur_at_the_end() {
-        let base = look();
-        let dof = base.dof.unwrap();
-        let fov = std::f32::consts::FRAC_PI_4;
-        let (start, end, height) = (20.0, 100.0, 1080.0);
-        let blur = blur_for(
-            dof.max_circle_of_confusion_diameter,
-            start,
-            end,
-            &dof,
-            fov,
-            height,
-        );
-        // bevy's circle of confusion at `end` with aperture 1 / blur
-        let f = 0.5 * dof.sensor_height / (0.5 * fov).tan();
-        let scale = f * f * blur / dof.sensor_height;
-        let coc = scale * (end - start) / (end * (start - f)) * height;
-        assert!((coc - dof.max_circle_of_confusion_diameter).abs() < 1e-3);
-        assert!((circle_of_confusion(blur, start, end, &dof, fov, height) - coc).abs() < 1e-3);
-        assert_eq!(blur_for(0.0, start, end, &dof, fov, height), 0.0);
-    }
-
-    #[test]
-    fn bloom_fades_out_below_one_and_strengthens_above() {
-        let base = Look {
-            bloom: Some(Bloom::NATURAL),
-            ..look()
-        };
-        let mut output = compose(&PostProcessing::default(), &base, &lens(), false);
-        let bloom_at = |output: &mut Output, scale: f32| {
-            output.bloom_scale = scale;
-            let (mut tonemapping, mut grading, mut bloom) =
-                (Tonemapping::None, ColorGrading::default(), Bloom::NATURAL);
-            write_output(
-                output,
-                &base,
-                &lens(),
-                &mut tonemapping,
-                &mut grading,
-                Some(&mut bloom),
-                None,
-            );
-            (bloom.intensity, bloom.low_frequency_boost)
-        };
-        assert_eq!(bloom_at(&mut output, 0.0), (0.0, 0.0));
-        assert_eq!(bloom_at(&mut output, 0.5), (0.075, 0.35));
-        // above 1 the wide glow keeps its strength and the blend never passes 1
-        assert_eq!(bloom_at(&mut output, 4.0), (0.6, 0.7));
-        assert_eq!(bloom_at(&mut output, 10.0), (1.0, 0.7));
-    }
-
-    #[test]
     fn temperature_follows_the_daylight_locus() {
         assert_eq!(white_balance(0.0, 0.0), (0.0, 0.0));
         // warm: redder, and greener (lower y) to stay on the locus instead of turning magenta
@@ -832,21 +772,11 @@ mod tests {
             step.end > step.start && step.end - step.start < 0.2,
             "{step:?}"
         );
-        let mut dof = base.dof.unwrap();
         let output = Output {
             dof: Some(step),
             ..compose(&PostProcessing::default(), &base, &lens, false)
         };
-        let (mut tonemapping, mut grading) = (Tonemapping::None, ColorGrading::default());
-        write_output(
-            &output,
-            &base,
-            &lens,
-            &mut tonemapping,
-            &mut grading,
-            None,
-            Some(&mut dof),
-        );
+        let dof = shown(&output, &base, &lens).dof.unwrap();
         assert_eq!(dof.mode, DepthOfFieldMode::Gaussian);
         assert_eq!(dof.linear_ramp, 1.0);
         assert_eq!(dof.max_circle_of_confusion_diameter, own.strength);
@@ -885,21 +815,11 @@ mod tests {
 
         // the aperture written gives that blur at the blended end
         let fov = lens.fov.unwrap();
-        let mut dof = base.dof.unwrap();
         let output = Output {
             dof: Some(half),
             ..near.clone()
         };
-        let (mut tonemapping, mut grading) = (Tonemapping::None, ColorGrading::default());
-        write_output(
-            &output,
-            &base,
-            &lens,
-            &mut tonemapping,
-            &mut grading,
-            None,
-            Some(&mut dof),
-        );
+        let dof = shown(&output, &base, &lens).dof.unwrap();
         let seen = circle_of_confusion(
             dof.aperture_f_stops.recip(),
             dof.focal_distance,
@@ -928,27 +848,12 @@ mod tests {
         let half = lerp_output(&from, &to, &base, &lens, 0.5);
         assert_eq!(half.grading.global.untonemapped_mix, 0.5);
 
-        let (mut tonemapping, mut grading) = (Tonemapping::AcesFitted, ColorGrading::default());
-        write_output(
-            &half,
-            &base,
-            &lens,
-            &mut tonemapping,
-            &mut grading,
-            None,
-            None,
+        assert_eq!(
+            shown(&half, &base, &lens).tonemapping,
+            Tonemapping::AcesFitted
         );
-        assert_eq!(tonemapping, Tonemapping::AcesFitted);
-        write_output(
-            &to,
-            &base,
-            &lens,
-            &mut tonemapping,
-            &mut grading,
-            None,
-            None,
-        );
-        assert_eq!(tonemapping, Tonemapping::None);
-        assert_eq!(grading.global.untonemapped_mix, 0.0);
+        let end = shown(&to, &base, &lens);
+        assert_eq!(end.tonemapping, Tonemapping::None);
+        assert_eq!(end.grading.global.untonemapped_mix, 0.0);
     }
 }

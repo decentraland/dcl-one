@@ -74,7 +74,7 @@ impl PostProcessing {
 }
 
 /// furthest focus distance a scene can set, in meters
-pub const MAX_FOCUS_DISTANCE: f32 = 10_000.0;
+const MAX_FOCUS_DISTANCE: f32 = 10_000.0;
 
 fn clamped(value: Option<f32>, min: f32, max: f32) -> Option<f32> {
     value.filter(|v| v.is_finite()).map(|v| v.clamp(min, max))
@@ -98,17 +98,13 @@ impl From<PbPostProcessing> for PostProcessing {
             hue_shift: clamped(grading.hue_shift, -PI, PI),
             temperature: clamped(grading.temperature, -1.0, 1.0),
             tint: clamped(grading.tint, -1.0, 1.0),
-            bloom_intensity: clamped(value.bloom_intensity, 0.0, 4.0),
+            bloom_intensity: clamped(value.bloom_intensity, 0.0, 2.0),
             dof_intensity: clamped(dof.intensity, 0.0, 1.0),
             dof_focus_start: clamped(dof.focus_start, 0.0, MAX_FOCUS_DISTANCE),
             dof_focus_end: clamped(dof.focus_end, 0.0, MAX_FOCUS_DISTANCE),
         }
     }
 }
-
-/// On a texture camera's camera entity: the scene entity whose `PostProcessing` it applies.
-#[derive(Component, Clone, Copy, Debug)]
-pub struct PostProcessingFrom(pub Entity);
 
 #[cfg(test)]
 mod tests {
@@ -142,7 +138,7 @@ mod tests {
         assert_eq!(pp.hue_shift, Some(PI));
         assert_eq!(pp.temperature, None);
         assert_eq!(pp.tint, None);
-        assert_eq!(pp.bloom_intensity, Some(4.0));
+        assert_eq!(pp.bloom_intensity, Some(2.0));
         assert_eq!(pp.dof_intensity, Some(0.5));
         assert_eq!(pp.dof_focus_start, Some(0.0));
         assert_eq!(pp.dof_focus_end, None);

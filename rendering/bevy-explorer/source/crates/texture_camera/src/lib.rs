@@ -37,7 +37,7 @@ use scene_runner::{
     update_world::{
         lights::update_directional_light,
         material::VideoTextureOutput,
-        post_processing::{PostProcessing, PostProcessingFrom, TonemapCurve},
+        post_processing::{PostProcessing, TonemapCurve},
         AddCrdtInterfaceExt,
     },
     ContainerEntity, ContainingScene,
@@ -348,7 +348,6 @@ fn update_texture_cameras(
                     ..Default::default()
                 },
                 default_camera_components(),
-                PostProcessingFrom(ent),
                 projection.clone(),
                 render_layers.clone(),
                 PropagateStop::<RenderLayers>::default(),

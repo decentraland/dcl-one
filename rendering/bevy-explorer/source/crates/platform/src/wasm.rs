@@ -3,13 +3,11 @@ use std::{
     time::Duration,
 };
 
-use crate::{default_color_grading, scatter_bloom, BLOOM_SCATTER};
+use crate::CameraLook;
 use anyhow::anyhow;
 use bevy::log::{error, warn};
 use bevy::{
-    core_pipeline::tonemapping::{DebandDither, Tonemapping},
-    ecs::bundle::Bundle,
-    pbr::ShadowFilteringMethod,
+    core_pipeline::tonemapping::DebandDither, ecs::bundle::Bundle, pbr::ShadowFilteringMethod,
 };
 
 use futures_util::{
@@ -250,13 +248,17 @@ pub fn system_language() -> Option<String> {
         .and_then(|scope| scope.navigator().language())
 }
 
+/// A camera's components for the explorer's look: [`CameraLook`], and the components it sets
+/// with its values, for cameras that nothing composes.
 pub fn default_camera_components() -> impl Bundle {
+    let look = CameraLook::default();
     (
-        Tonemapping::AcesFitted,
+        look.tonemapping,
         DebandDither::Enabled,
-        default_color_grading(),
-        scatter_bloom(BLOOM_SCATTER),
+        look.grading.clone(),
+        look.bloom.clone().unwrap_or_default(),
         ShadowFilteringMethod::Gaussian,
+        look,
     )
 }
 

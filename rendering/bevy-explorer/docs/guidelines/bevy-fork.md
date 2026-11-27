@@ -134,10 +134,10 @@ across workers:
   `Tonemapping::None`. With `Tonemapping::None` the tonemapping pass still runs while the color
   grading is not the identity (`ColorGrading::is_identity`); stock bevy skips the pass, and with
   it exposure and grading. The explorer uses both for scenes' `PBPostProcessing`.
-- A view keeps drawing with its last ready tonemapping pipeline while the variant for a new key
-  (curve, dither, or a grading flag such as `HUE_ROTATE`) compiles. Stock bevy skips the pass
-  until then, so the first hue shift or white balance showed a few frames with no curve and
-  no grading.
+- A view keeps drawing with its last ready tonemapping pipeline, and that pipeline's curve's
+  lookup table, while the variant for a new key (curve, dither, or a grading flag such as
+  `HUE_ROTATE`) compiles. Stock bevy skips the pass until then, so the first hue shift or white
+  balance showed a few frames with no curve and no grading.
 - `rgb_to_hsv` gives a grey hue 0. Stock bevy divides by a chroma of 0, and the NaN reaches the
   image wherever a GPU's `min`/`max` keep it.
 
