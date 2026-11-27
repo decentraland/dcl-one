@@ -8,17 +8,31 @@ type HelpChatBannerProps = {
   title: string
   subtitle: ReactNode
   actionLabel: string
-  onAction: () => void
+} & (
+  | { onAction: () => void; emailAction?: never }
+  | { onAction?: () => void; emailAction: { address: string; label: string } }
+)
+
+function focusEmail(link: HTMLAnchorElement | null) {
+  link?.focus()
 }
 
 /** The banner that stays at the bottom of the help center and opens the support chat. */
-function HelpChatBanner({ title, subtitle, actionLabel, onAction }: HelpChatBannerProps) {
+function HelpChatBanner({
+  title,
+  subtitle,
+  actionLabel,
+  onAction,
+  emailAction
+}: HelpChatBannerProps) {
   const titleId = useId()
   return (
     <aside className={styles.root} aria-labelledby={titleId}>
-      <div className={styles.backdrop}>
-        <AnimatedBackground />
-      </div>
+      {!emailAction && (
+        <div className={styles.backdrop}>
+          <AnimatedBackground />
+        </div>
+      )}
       <div className={styles.texts}>
         <h2 id={titleId} className={styles.title}>
           {title}
@@ -26,11 +40,24 @@ function HelpChatBanner({ title, subtitle, actionLabel, onAction }: HelpChatBann
         <p className={styles.subtitle} aria-live="polite">
           {subtitle}
         </p>
-        <Button size="lg" className={styles.action} onClick={onAction}>
-          {actionLabel}
-        </Button>
+        {emailAction && (
+          <Button
+            ref={focusEmail}
+            size="lg"
+            variant="secondary"
+            className={styles.action}
+            href={`mailto:${emailAction.address}`}
+          >
+            {emailAction.label}
+          </Button>
+        )}
+        {onAction && (
+          <Button size="lg" className={styles.action} onClick={onAction}>
+            {actionLabel}
+          </Button>
+        )}
       </div>
-      <img className={styles.image} src={helpGirl} alt="" aria-hidden="true" />
+      {!emailAction && <img className={styles.image} src={helpGirl} alt="" aria-hidden="true" />}
     </aside>
   )
 }

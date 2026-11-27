@@ -80,6 +80,7 @@ export function HelpView({
   const { address } = useAuth();
   const [showContact, setShowContact] = useState(false);
   const chatAvailable = useIntercom(intercomAppId, INTERCOM_SETTINGS, address);
+  const openChat = () => setShowContact(!(chatAvailable && showIntercom()));
 
   return (
     <HelpPage
@@ -106,15 +107,15 @@ export function HelpView({
         <HelpChatBanner
           title={HELP_COPY.chat.title}
           subtitle={
-            showContact ? (
-              <>
-                {HELP_COPY.chat.contactPrompt}{" "}
-                <a href={`mailto:${HELP_COPY.chat.supportEmail}`}>{HELP_COPY.chat.supportEmail}</a>.
-              </>
-            ) : HELP_COPY.chat.subtitle
+            showContact ? `${HELP_COPY.chat.contactPrompt} ${HELP_COPY.chat.supportEmail}.` : HELP_COPY.chat.subtitle
           }
           actionLabel={HELP_COPY.chat.button}
-          onAction={() => setShowContact(!(chatAvailable && showIntercom()))}
+          {...(showContact
+            ? {
+                emailAction: { address: HELP_COPY.chat.supportEmail, label: HELP_COPY.chat.emailButton },
+                onAction: chatAvailable ? openChat : undefined,
+              }
+            : { onAction: openChat })}
         />
       }
     >

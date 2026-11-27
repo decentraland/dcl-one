@@ -16306,11 +16306,11 @@
     },
     {
       "path": "library/ui/apps/sites/help/HelpChatBanner.module.css",
-      "sha256": "b19a7c1ec64654874a9bc1fee66b110c92079c74023fe2860c4b39c98461ea24"
+      "sha256": "3dfdc339bb973d1c0d5016b614371d6dcb9d746df3e45742468a13974789c644"
     },
     {
       "path": "library/ui/apps/sites/help/HelpChatBanner.tsx",
-      "sha256": "f8d9e150af76d5e62e399d9178587107825d98ccc4fd72b0e9c7b0bf530f0cf1"
+      "sha256": "178b3921f0f62ab439a1507b259776771be548df7e85534231e13564adce8981"
     },
     {
       "path": "library/ui/apps/sites/help/HelpPage.module.css",

@@ -43,11 +43,7 @@
   max-width: 340px;
   margin: 0;
   color: var(--dcl-text-secondary-on-brand);
-}
-
-.subtitle a {
-  color: inherit;
-  text-decoration: underline;
+  overflow-wrap: anywhere;
 }
 
 .action {
