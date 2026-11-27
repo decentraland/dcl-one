@@ -208,7 +208,7 @@
   width: 22px;
   height: 22px;
   border-radius: var(--dcl-radius-sm);
-  font-size: 9px;
+  font-size: var(--dcl-font-size-caption);
 }
 .thumbList {
   width: 46px;
@@ -220,7 +220,7 @@
   width: 100%;
   height: 200px;
   border-radius: var(--dcl-radius-lg);
-  font-size: 44px;
+  font-size: var(--dcl-font-size-heading-1);
 }
 
 .navText {
@@ -280,27 +280,8 @@
   gap: var(--dcl-space-12);
 }
 .field {
-  display: grid;
-  gap: var(--dcl-space-8);
   flex: 1 1 280px;
   min-width: 200px;
-  color: var(--dcl-text-secondary);
-  font-size: var(--dcl-font-size-body-sm);
-}
-.input {
-  box-sizing: border-box;
-  width: 100%;
-  min-height: 40px;
-  padding: 0 var(--dcl-space-12);
-  border: 1px solid var(--dcl-border-strong);
-  border-radius: var(--dcl-radius-md);
-  background: var(--dcl-bg-surface-raised);
-  color: var(--dcl-text-primary);
-  font: inherit;
-}
-.input:focus-visible {
-  outline: 2px solid var(--dcl-primary-primary);
-  outline-offset: 2px;
 }
 .request {
   display: flex;

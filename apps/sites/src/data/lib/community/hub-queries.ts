@@ -13,7 +13,7 @@ import {
   type HubPost,
 } from "../catalyst/social/community-hub";
 
-import { COMMUNITY_STALE_MS } from "./queries";
+import { COMMUNITY_STALE_MS, communityKeys } from "./queries";
 
 /**
  * Every hub read depends on who reads it (each row carries the reader's role), so a member's reads
@@ -99,11 +99,17 @@ export function invalidateHub(client: QueryClient, viewer: string | null): Promi
   return client.invalidateQueries({ queryKey: hubKeys.all(viewer) });
 }
 
-/** After a member's role changes or they are removed: the lists' counts and that community. */
+/**
+ * After a member's role changes or they are removed: the lists' counts and that community, here and
+ * on its own page (`/social/communities/:id`), which reads its members and count under `communityKeys`.
+ */
 export function invalidateHubMembers(client: QueryClient, viewer: string | null, id: string): Promise<unknown> {
+  const page = [communityKeys.detail(id), communityKeys.members(id)];
+  const own = viewer ? [communityKeys.viewer(viewer, id), communityKeys.viewerMembers(viewer, id)] : [];
   return Promise.all([
     client.invalidateQueries({ queryKey: hubKeys.communities(viewer) }),
     client.invalidateQueries({ queryKey: hubKeys.detail(viewer, id), exact: true }),
+    ...[...page, ...own].map((queryKey) => client.invalidateQueries({ queryKey })),
   ]);
 }
 

@@ -55,6 +55,14 @@ describe("fetchHubCommunities", () => {
     expect(calls()[0]?.url).toContain("/v1/communities?limit=100&offset=100&search=r%C3%ADo%20club");
   });
 
+  it("should drop a row that comes without its member count instead of showing 0", async () => {
+    const { membersCount: _missing, ...uncounted } = community;
+    replies.set("/v1/communities?", { body: { data: { results: [uncounted, { ...community, id: "other" }], total: 2 } } });
+    const page = await fetchHubCommunities({ identity: null, offset: 0 });
+    expect(page.rows.map((row) => row.id)).toEqual(["other"]);
+    expect(page.received).toBe(2);
+  });
+
   it("should read a visitor without a role", async () => {
     replies.set("/v1/communities?", { body: { data: { results: [{ ...community, role: "none" }], total: 1 } } });
     const page = await fetchHubCommunities({ identity: null, offset: 0 });
@@ -117,7 +125,10 @@ describe("fetchCommunityRequests", () => {
     let served = 0;
     vi.mocked(fetch).mockImplementation(async () => {
       served += 1;
-      const results = served === 1 ? Array.from({ length: 100 }, (_, i) => ({ id: `r${i}`, communityId: "club", type: "invite", status: "pending" })) : [{ id: "last", communityId: "club", type: "request_to_join", status: "pending" }];
+      const results =
+        served === 1
+          ? Array.from({ length: 100 }, (_, i) => ({ id: `r${i}`, communityId: "club", memberAddress: "0x1", type: "invite", status: "pending" }))
+          : [{ id: "last", communityId: "club", memberAddress: "0x1", type: "request_to_join", status: "pending" }];
       return new Response(JSON.stringify({ data: { results, total: 101 } }));
     });
     const rows = await fetchCommunityRequests(identity, "club");

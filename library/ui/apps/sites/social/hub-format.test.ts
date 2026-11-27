@@ -39,6 +39,7 @@ describe('when an image address is checked', () => {
     expect(isImageUrl('https://example.org/a.png')).toBe(true)
     expect(isImageUrl('/assets-cdn/social/communities/c/raw-thumbnail.png')).toBe(true)
     expect(isImageUrl('bafkreibzxeehnngvit3suddejpmbe746vn7xabida6tqptltbcoao32j3u')).toBe(false)
+    expect(isImageUrl('//other.example/a.png')).toBe(false)
     expect(isImageUrl(null)).toBe(false)
     expect(isImageUrl('')).toBe(false)
   })

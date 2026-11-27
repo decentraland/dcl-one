@@ -13,7 +13,6 @@ const text = z
   .string()
   .nullish()
   .transform((value) => value ?? null);
-const count = z.number().catch(0);
 
 export const HubCommunitySchema = z.object({
   id: z.string(),
@@ -25,11 +24,7 @@ export const HubCommunitySchema = z.object({
     .string()
     .nullish()
     .transform((value): "public" | "private" => (value === "private" ? "private" : "public")),
-  isLive: z
-    .boolean()
-    .nullish()
-    .transform((value) => value === true),
-  membersCount: count,
+  membersCount: z.number(),
   /** The signed-in member's role, lower case; null for a visitor or a community they are not in. */
   role: z
     .string()
@@ -45,10 +40,7 @@ export type HubCommunity = z.infer<typeof HubCommunitySchema>;
 const HubMemberSchema = z.object({
   memberAddress: z.string(),
   name: text,
-  role: z
-    .string()
-    .nullish()
-    .transform((value) => value?.toLowerCase() || "member"),
+  role: z.string().transform((value) => value.toLowerCase()),
   profilePictureUrl: text,
   hasClaimedName: z
     .boolean()
@@ -85,9 +77,9 @@ const HubPostSchema = z.object({
     .boolean()
     .nullish()
     .transform((value) => value === true),
-  content: z.string().catch(""),
+  content: z.string(),
   createdAt: text,
-  likesCount: count,
+  likesCount: z.number(),
   isLikedByUser: z
     .boolean()
     .nullish()
@@ -98,7 +90,7 @@ export type HubPost = z.infer<typeof HubPostSchema>;
 const HubRequestSchema = z.object({
   id: z.string(),
   communityId: z.string(),
-  memberAddress: z.string().catch(""),
+  memberAddress: z.string(),
   type: z.enum(["invite", "request_to_join"]),
   status: z.string(),
   name: text,

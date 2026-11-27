@@ -88,6 +88,7 @@ export function useHubCommunity(identity: AuthIdentity | null, id: string | null
     community,
     pending: id !== null && detail.isPending,
     failed: detail.isError,
+    retry: () => void detail.refetch(),
     managing: manages(community?.role),
     readable,
     latestPost: readable && !latest.isError ? (latest.data ?? null) : null,
@@ -119,30 +120,43 @@ export function useHubMembership(identity: AuthIdentity | null) {
   return {
     pending: mutation.isPending ? mutation.variables.kind : null,
     error: mutation.error ? failureText(mutation.error, "Your membership could not be changed. Try again.") : undefined,
+    /** The community the last change was for, so its failure shows on that community only. */
+    communityId: mutation.variables?.community.id ?? null,
     reset: mutation.reset,
     change: (write: MembershipWrite) => mutation.mutateAsync(write),
   };
 }
 
+type Answer = { row: HubRequest; intention: HubRequestDecision };
+
+const LOAD_FAILED = "Membership requests could not be loaded.";
+const ANSWER_FAILED = "The request could not be answered. Try again.";
+const INVITE_FAILED = "The invitation could not be sent. Try again.";
+
 /**
  * The member's own invitations and requests and, for a community they manage, the requests to
- * decide on, with the answers and the invitations they send.
+ * decide on, with the answers and the invitations they send. Each panel answers through its own
+ * write, so a failure shows only where it happened.
  */
 export function useHubRequests(identity: AuthIdentity | null, communityId: string | null, managing: boolean) {
   const client = useQueryClient();
   const viewer = viewerOf(identity);
   const own = useQuery(ownRequestsQuery(identity));
   const managed = useQuery(communityRequestsQuery(identity, communityId ?? "", managing && communityId !== null));
-  const decide = useMutation({
-    mutationFn: async ({ row, intention }: { row: HubRequest; intention: HubRequestDecision }) => {
+  // An answer changes the member's standing and the community's members, here and on its own page.
+  const answer = {
+    mutationFn: async ({ row, intention }: Answer) => {
       if (!identity) throw new Error("Sign in to answer this request.");
       await decideRequest(identity, row, intention);
       await Promise.all([
         invalidateHub(client, viewer),
         invalidateAfterMembershipChange(client, identity.signer, row.communityId, "join"),
+        invalidateAfterMembershipChange(client, identity.signer, row.communityId, "cancel"),
       ]);
     },
-  });
+  };
+  const answerOwn = useMutation(answer);
+  const answerManaged = useMutation(answer);
   const invite = useMutation({
     mutationFn: async (address: string) => {
       if (!identity || !communityId) throw new Error("Sign in to invite members.");
@@ -151,36 +165,38 @@ export function useHubRequests(identity: AuthIdentity | null, communityId: strin
     },
   });
   const pendingOwn = useMemo(() => (own.data ?? []).filter((row) => row.status === "pending"), [own.data]);
-  const state = (query: typeof own, management: boolean) => {
-    const failure = query.error ?? decide.error ?? (management ? invite.error : null);
-    return {
+  const panel = (query: typeof own, write: typeof answerOwn, writes: { reset: () => void; isPending: boolean }[]) => ({
     rows: query.data ?? [],
     pending: query.isPending && query.fetchStatus !== "idle",
-    error: failure
-      ? failureText(failure, query.error ? "Membership requests could not be loaded." : "The request could not be sent. Try again.")
-      : undefined,
-    busy: decide.isPending || invite.isPending,
+    /** The requests could not be read. */
+    failed: query.isError,
+    error: query.error
+      ? failureText(query.error, LOAD_FAILED)
+      : write.error
+        ? failureText(write.error, ANSWER_FAILED)
+        : undefined,
+    /** Why the last answer failed, and for which community. */
+    answerError: write.error ? { communityId: write.variables?.row.communityId, text: failureText(write.error, ANSWER_FAILED) } : null,
+    busy: writes.some((other) => other.isPending),
     retry: () => {
-      decide.reset();
-      invite.reset();
+      writes.forEach((other) => other.reset());
       void query.refetch();
     },
     decide: (row: HubRequest, intention: HubRequestDecision) => {
-      if (!decide.isPending) decide.mutate({ row, intention });
+      if (!write.isPending) write.mutate({ row, intention });
     },
-    };
-  };
+  });
+  const managedPanel = panel(managed, answerManaged, [answerManaged, invite]);
   return {
     pendingOwn,
-    own: state(own, false),
+    own: panel(own, answerOwn, [answerOwn]),
     managed: {
-      ...state(managed, true),
+      ...managedPanel,
+      error: managedPanel.error ?? (invite.error ? failureText(invite.error, INVITE_FAILED) : undefined),
       invite: (address: string) => {
         if (!invite.isPending) invite.mutate(address);
       },
     },
-    /** The member asked to join this community and has not been answered. */
-    requested: (id: string) => pendingOwn.some((row) => row.communityId === id && row.type === "request_to_join"),
   };
 }
 

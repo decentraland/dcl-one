@@ -6,7 +6,15 @@ import {
   type ReactNode
 } from 'react'
 
-import { Button, CommunityCard, Modal, SearchBar, Spinner } from '../../../index'
+import {
+  Button,
+  CommunityCard,
+  EmptyState,
+  InputWebCreatorTools,
+  Modal,
+  SearchBar,
+  Spinner
+} from '../../../index'
 import { MenusAdd } from '../../../foundations/icons'
 
 import { useBrokenImage } from '../useBrokenImage'
@@ -125,16 +133,18 @@ export function SocialPanel({
   )
 }
 
-/** A failed list with its retry. */
+/** A failed read with its retry, announced as it appears. */
 export function HubRetry({ message, onRetry }: { message: string; onRetry?: () => void }) {
   return (
-    <div className={styles.retry} role="alert">
-      <p>{message}</p>
-      {onRetry ? (
-        <Button variant="outline" size="sm" onClick={onRetry}>
-          Try again
-        </Button>
-      ) : null}
+    <div role="alert">
+      <EmptyState
+        variant="inline"
+        tone="error"
+        subtitle={message}
+        actions={
+          onRetry ? [{ label: 'Try again', onClick: onRetry, variant: 'outline' }] : undefined
+        }
+      />
     </div>
   )
 }
@@ -412,7 +422,6 @@ export function SocialRequests({
   onOpen
 }: SocialRequestsProps) {
   const [address, setAddress] = useState('')
-  const inputId = useId()
   const valid = WALLET.test(address.trim())
   return (
     <div className={styles.page}>
@@ -430,22 +439,21 @@ export function SocialRequests({
             if (!busy && valid) onInvite(address.trim())
           }}
         >
-          <label className={styles.field} htmlFor={inputId}>
-            Member wallet address
-            <input
-              id={inputId}
-              className={styles.input}
-              value={address}
-              onChange={(event) => setAddress(event.target.value)}
-              placeholder="0x…"
-              required
-              autoComplete="off"
-              spellCheck={false}
-            />
-          </label>
-          <Button type="submit" variant="primary" size="md" disabled={busy || !valid}>
-            Send invitation
-          </Button>
+          <InputWebCreatorTools
+            className={styles.field}
+            label="Member wallet address"
+            value={address}
+            onChange={(event) => setAddress(event.target.value)}
+            placeholder="0x…"
+            required
+            autoComplete="off"
+            spellCheck={false}
+            action={
+              <Button type="submit" variant="primary" size="md" disabled={busy || !valid}>
+                Send invitation
+              </Button>
+            }
+          />
         </form>
       ) : null}
       {pending ? (

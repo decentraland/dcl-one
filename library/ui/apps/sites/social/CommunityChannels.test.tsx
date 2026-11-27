@@ -7,7 +7,6 @@ import {
   CommunityHangouts,
   CommunityLockedChannel,
   CommunityOverview,
-  CommunityUnavailable,
   type CommunityOverviewProps
 } from './CommunityChannels'
 
@@ -152,13 +151,6 @@ describe('when a channel is closed to the reader or the community cannot open', 
   it('should ask the reader to join to see a private channel', () => {
     render(<CommunityLockedChannel channel="Members" />)
     expect(screen.getByText('Join this community to view its members.')).toBeTruthy()
-  })
-
-  it('should say the community is opening, then that it could not be loaded', () => {
-    const { rerender } = render(<CommunityUnavailable pending />)
-    expect(screen.getByText('Opening community')).toBeTruthy()
-    rerender(<CommunityUnavailable pending={false} />)
-    expect(screen.getByText("Couldn't load this community.")).toBeTruthy()
   })
 })
 

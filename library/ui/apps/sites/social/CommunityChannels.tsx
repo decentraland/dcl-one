@@ -1,6 +1,6 @@
 import { useId, useState, type ReactNode } from 'react'
 
-import { Button, CopyFeedback, ProfilePic, SearchBar } from '../../../index'
+import { Button, CopyFeedback, ProfilePic, SearchBar, Tag } from '../../../index'
 import { GeneralVerified, MenusLink } from '../../../foundations/icons'
 
 import { useBrokenImage } from '../useBrokenImage'
@@ -342,7 +342,7 @@ export function CommunityDirectory({
                       <GeneralVerified size={14} aria-label="verified" />
                     ) : null}
                   </strong>
-                  <small>{capitalized(member.role)}</small>
+                  <Tag variant="role">{capitalized(member.role)}</Tag>
                 </span>
                 {self ? <span className={styles.you}>You</span> : actions?.(member)}
               </li>
@@ -362,19 +362,6 @@ export function CommunityLockedChannel({ channel }: { channel: string }) {
         <h1>{channel}</h1>
       </header>
       <p className={styles.muted}>Join this community to view its {channel.toLowerCase()}.</p>
-    </div>
-  )
-}
-
-/** The community could not be opened, or is still opening. */
-export function CommunityUnavailable({ pending }: { pending: boolean }) {
-  return (
-    <div className={styles.page}>
-      {pending ? (
-        <HubLoading label="Opening community" />
-      ) : (
-        <p className={styles.muted}>Couldn&apos;t load this community.</p>
-      )}
     </div>
   )
 }

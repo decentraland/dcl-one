@@ -20,7 +20,6 @@ const community = (privacy: "public" | "private", role: string | null): HubCommu
   thumbnailUrl: null,
   visibility: null,
   privacy,
-  isLive: false,
   membersCount: 1,
   role,
   ownerName: null,

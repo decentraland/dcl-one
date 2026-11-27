@@ -54,6 +54,9 @@ export const capitalized = (text: string): string => text.charAt(0).toUpperCase(
 export const membersCount = (count: number): string =>
   `${count.toLocaleString('en-US')} ${count === 1 ? 'member' : 'members'}`
 
-/** An address an <img> can load: absolute http(s), or a path of this site. A bare content hash is not one. */
+/**
+ * An address an <img> can load: absolute http(s), or a path of this site (not a protocol-relative
+ * `//host`). A bare content hash is not one.
+ */
 export const isImageUrl = (value: string | null | undefined): value is string =>
-  !!value && (/^https?:\/\//i.test(value) || value.startsWith('/'))
+  !!value && (/^https?:\/\//i.test(value) || (value.startsWith('/') && !value.startsWith('//')))

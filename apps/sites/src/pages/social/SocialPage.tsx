@@ -11,11 +11,12 @@ import {
   CommunityMembershipAction,
   CommunityOverview,
   CommunityThumb,
-  CommunityUnavailable,
+  CommunityError,
   GeneralHome,
   GeneralPlayers,
   GeneralSearch,
   HubConfirm,
+  HubLoading,
   MenusChannel,
   MenusPending,
   NavbarCommunities,
@@ -117,6 +118,7 @@ export function SocialPage({
   if (shown !== communityId) {
     setShown(communityId);
     setChannel(postId ? "announcements" : "summary");
+    setConfirm(null);
   }
 
   const communities = useMemo(() => directory.communities.map(withThumbnail), [directory.communities]);
@@ -192,12 +194,34 @@ export function SocialPage({
   const requestRow = communityId
     ? requests.pendingOwn.find((row) => row.communityId === communityId && row.type === "request_to_join")
     : undefined;
+  // Until the member's own requests are known, a private community cannot tell Request from Cancel.
+  const membershipState = (target: HubCommunity) =>
+    !identity
+      ? "signed-out"
+      : isMember(target)
+        ? "joined"
+        : requestRow
+          ? "cancel"
+          : target.privacy === "public"
+            ? "join"
+            : requests.own.pending
+              ? "loading"
+              : requests.own.failed
+                ? "error"
+                : "request";
+  // A failed change shows on the community it was for, not on the next one opened.
+  const membershipError =
+    community && membership.communityId === community.id
+      ? membership.error
+      : community && requests.own.answerError?.communityId === community.id
+        ? requests.own.answerError.text
+        : undefined;
   const membershipAction = community ? (
     <CommunityMembershipAction
-      state={!identity ? "signed-out" : joined ? "joined" : requestRow ? "cancel" : community.privacy === "private" ? "request" : "join"}
+      state={membershipState(community)}
       pending={membership.pending !== null || requests.own.busy}
       onSignIn={signIn}
-      onRetry={() => membership.reset()}
+      onRetry={requests.own.retry}
       onJoin={() => void membership.change({ community, kind: "join" }).catch(() => {})}
       onRequest={() => {
         membership.reset();
@@ -220,7 +244,11 @@ export function SocialPage({
     subheading = community?.name ?? null;
     icon = CHANNELS[channel].icon;
     body = !community ? (
-      <CommunityUnavailable pending={opened.pending && !opened.failed} />
+      opened.pending && !opened.failed ? (
+        <HubLoading label="Opening community" />
+      ) : (
+        <CommunityError reason={opened.failed ? "unavailable" : "not-found"} onRetry={opened.retry} />
+      )
     ) : channel === "requests" && opened.managing ? (
       <SocialRequests
         managing
@@ -246,7 +274,7 @@ export function SocialPage({
         community={community}
         joined={joined}
         membershipAction={membershipAction}
-        membershipError={confirm ? undefined : membership.error}
+        membershipError={confirm ? undefined : membershipError}
         link={`${typeof window === "undefined" ? "" : window.location.origin}${communityHubHref(community.id)}`}
         postsLocked={community.privacy === "private" && !joined}
         latestPost={opened.latestPost}

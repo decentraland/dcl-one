@@ -218,8 +218,7 @@ export {
 } from './social/CommunityLists'
 export {
   CommunityAnnouncements,
-  type CommunityAnnouncementsProps,
-  PostMessage
+  type CommunityAnnouncementsProps
 } from './social/CommunityAnnouncements'
 export {
   CommunityDirectory,
@@ -227,7 +226,6 @@ export {
   CommunityLockedChannel,
   CommunityOverview,
   type CommunityOverviewProps,
-  CommunityUnavailable,
   type HubMemberView,
   type HubPlaceView
 } from './social/CommunityChannels'
@@ -236,6 +234,7 @@ export type { HubPostView } from './social/hub-format'
 export {
   CommunityThumb,
   HubConfirm,
+  HubLoading,
   type HubCommunityView,
   type HubDecision,
   type HubLinkComponent,

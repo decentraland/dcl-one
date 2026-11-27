@@ -15,6 +15,7 @@ vi.hoisted(() => {
 });
 
 const net = vi.hoisted(() => ({
+  decideRequest: vi.fn(),
   fetchHubCommunities: vi.fn(),
   fetchHubDetail: vi.fn(),
   fetchHubPosts: vi.fn(),
@@ -66,6 +67,7 @@ vi.mock("@/features/components/chrome/SitesLayout", () => ({
   ),
 }));
 
+import { CatalystError } from "@/data/lib/catalyst/client";
 import type { HubCommunity, HubDetail } from "@/data/lib/catalyst/social/community-hub";
 
 import { SocialPage } from "./SocialPage";
@@ -78,7 +80,6 @@ const club: HubCommunity = {
   thumbnailUrl: null,
   visibility: null,
   privacy: "public",
-  isLive: false,
   membersCount: 4,
   role: "member",
   ownerName: "Nyx",
@@ -93,16 +94,17 @@ const opened = (community: HubCommunity | null, extra: Partial<HubDetail> = {}):
 });
 
 let client: QueryClient;
+const page = (props: { communityId?: string | null; postId?: string | null }, onSelect: (id: string | null) => void) => (
+  <MemoryRouter>
+    <QueryClientProvider client={client}>
+      <SocialPage communityId={props.communityId ?? null} postId={props.postId ?? null} onSelect={onSelect} />
+    </QueryClientProvider>
+  </MemoryRouter>
+);
 function mount(props: { communityId?: string | null; postId?: string | null } = {}) {
   const onSelect = vi.fn();
-  const view = render(
-    <MemoryRouter>
-      <QueryClientProvider client={client}>
-        <SocialPage communityId={props.communityId ?? null} postId={props.postId ?? null} onSelect={onSelect} />
-      </QueryClientProvider>
-    </MemoryRouter>,
-  );
-  return { onSelect, ...view };
+  const view = render(page(props, onSelect));
+  return { onSelect, ...view, show: (next: { communityId?: string | null }) => view.rerender(page(next, onSelect)) };
 }
 
 beforeEach(() => {
@@ -197,11 +199,20 @@ describe("when a community opens in the hub", () => {
     expect(screen.getByText("Join this community to view its members.")).toBeTruthy();
   });
 
-  it("should say so when the community cannot be loaded, without showing what it showed before", async () => {
-    net.fetchHubDetail.mockRejectedValue(new Error("down"));
+  it("should say so when the community cannot be loaded, without showing what it showed before, and read it again on retry", async () => {
+    const user = userEvent.setup();
+    net.fetchHubDetail.mockRejectedValueOnce(new Error("down"));
     mount({ communityId: "club" });
-    expect(await screen.findByText("Couldn't load this community.")).toBeTruthy();
+    expect(await screen.findByRole("heading", { name: "Community unavailable" })).toBeTruthy();
     expect(screen.queryByText("Live sets every Friday.")).toBeNull();
+    await user.click(screen.getByRole("button", { name: "Try again" }));
+    expect(await screen.findByRole("heading", { level: 1, name: "Music Club" })).toBeTruthy();
+  });
+
+  it("should say a community that does not exist is not found", async () => {
+    net.fetchHubDetail.mockResolvedValue(opened(null, { id: "gone" }));
+    mount({ communityId: "gone" });
+    expect(await screen.findByRole("heading", { name: "Community not found" })).toBeTruthy();
   });
 
   it("should go back to the sections from the sidebar", async () => {
@@ -246,5 +257,50 @@ describe("when the reader changes their membership", () => {
     expect((await within(dialog).findByRole("alert")).textContent).toContain("Owners cannot leave");
     await user.click(within(dialog).getByRole("button", { name: "Stay" }));
     expect(screen.queryByRole("dialog")).toBeNull();
+  });
+});
+
+describe("when the member's own requests decide the call to action", () => {
+  it("should wait for them before offering Request to join on a private community", async () => {
+    net.fetchOwnRequests.mockReturnValue(new Promise(() => {}));
+    net.fetchHubDetail.mockResolvedValue(opened(river, { members: [] }));
+    mount({ communityId: "river" });
+    expect(await screen.findByRole("button", { name: /Loading/ })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Request to join" })).toBeNull();
+  });
+
+  it("should offer a retry when they could not be read", async () => {
+    const user = userEvent.setup();
+    net.fetchOwnRequests.mockRejectedValueOnce(new Error("down"));
+    net.fetchHubDetail.mockResolvedValue(opened(river, { members: [] }));
+    mount({ communityId: "river" });
+    await user.click(await screen.findByRole("button", { name: "Try again" }));
+    expect(await screen.findByRole("button", { name: "Request to join" })).toBeTruthy();
+  });
+
+  it("should withdraw a pending request from the overview and say why it failed", async () => {
+    const user = userEvent.setup();
+    net.fetchOwnRequests.mockResolvedValue([
+      { id: "r1", communityId: "river", memberAddress: ME, type: "request_to_join", status: "pending", name: "River explorers" },
+    ]);
+    net.decideRequest.mockRejectedValue(new CatalystError("Request already answered", "/requests", 409, true));
+    net.fetchHubDetail.mockResolvedValue(opened(river, { members: [] }));
+    mount({ communityId: "river" });
+    await user.click(await screen.findByRole("button", { name: "Cancel request" }));
+    expect((await screen.findByRole("alert")).textContent).toContain("Request already answered");
+  });
+});
+
+describe("when the reader moves to another community", () => {
+  it("should leave a failed join behind", async () => {
+    const user = userEvent.setup();
+    detail.joinCommunity.mockRejectedValue(new CatalystError("Community is full", "/members", 400, true));
+    net.fetchHubDetail.mockImplementation(async (id: string) => opened({ ...club, id, name: id === "club" ? "Music Club" : "Jazz Club", role: null }));
+    const { show } = mount({ communityId: "club" });
+    await user.click(await screen.findByRole("button", { name: "Join" }));
+    expect((await screen.findByRole("alert")).textContent).toContain("Community is full");
+    show({ communityId: "jazz" });
+    expect(await screen.findByRole("heading", { level: 1, name: "Jazz Club" })).toBeTruthy();
+    expect(screen.queryByRole("alert")).toBeNull();
   });
 });
