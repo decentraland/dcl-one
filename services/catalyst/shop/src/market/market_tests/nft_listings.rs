@@ -443,6 +443,22 @@ async fn shallow_nft_sale_filters_use_published_land_and_names_before_paging() {
     );
     gated_pool.close().await;
 
+    sqlx::query(
+        "ALTER TABLE land_authz.index_cursor RENAME COLUMN updated_at TO hidden_updated_at",
+    )
+    .execute(pool)
+    .await
+    .unwrap();
+    let (code, page) = get(app(false), endpoint).await;
+    assert_eq!(code, StatusCode::OK, "{page}");
+    assert_eq!(name_price(page), (2, "26".into()));
+    sqlx::query(
+        "ALTER TABLE land_authz.index_cursor RENAME COLUMN hidden_updated_at TO updated_at",
+    )
+    .execute(pool)
+    .await
+    .unwrap();
+
     // The configured trades mirror's SQL failure keeps its diagnostics in
     // the server log and returns the generic database error to the caller.
     let mut settings = state.settings.clone();

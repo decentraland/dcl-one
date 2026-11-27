@@ -278,6 +278,12 @@ pub async fn open_trade_orders(
         .map_err(super::nft_reads::read_error)
 }
 
+/// Newest listing and a stable choice when timestamps tie. The caller
+/// supplies the same millisecond and numeric projections used on the wire.
+pub(super) fn latest_trade_order_sql(time: &str, id: &str, price: &str, payee: &str) -> String {
+    format!("{time} DESC, {id} ASC, {price}, {payee}")
+}
+
 pub(super) async fn open_trade_orders_on<'e>(
     state: &MarketplaceState,
     conn: impl sqlx::PgExecutor<'e>,
@@ -292,9 +298,10 @@ pub(super) async fn open_trade_orders_on<'e>(
         "WITH {} SELECT DISTINCT ON (x.network, x.nft_address, x.token_id) x.* FROM (SELECT {} {TRADE_ORDER_FROM} \
            AND (lower(u.network), u.contract_address_sent, u.token_id, u.signer) IN \
                (SELECT * FROM unnest($3::text[], $4::text[], $5::text[], $6::text[]))) x \
-         ORDER BY x.network, x.nft_address, x.token_id, x.created_at DESC, x.id ASC, x.price::numeric, x.payee",
+         ORDER BY x.network, x.nft_address, x.token_id, {}",
         unified_trades_cte("$1", "$2"),
-        TRADE_ORDER_COLUMNS.replace("SHIFT", ITEM_ID_SHIFT)
+        TRADE_ORDER_COLUMNS.replace("SHIFT", ITEM_ID_SHIFT),
+        latest_trade_order_sql("x.created_at", "x.id", "x.price::numeric", "x.payee")
     );
     let column = |i: usize| {
         wanted

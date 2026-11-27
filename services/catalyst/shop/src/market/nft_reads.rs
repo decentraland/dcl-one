@@ -1101,18 +1101,24 @@ fn candidate_legs(
             "v3.amount_received AS v3_price, v3.created_at AS v3_created_at, \
              COALESCE(lo.price, v3.amount_received) AS order_price, \
              COALESCE(lo.created_at * 1000, (EXTRACT(EPOCH FROM v3.created_at) * 1000)::bigint) AS order_created_at",
-            " LEFT JOIN LATERAL (SELECT u.amount_received, u.created_at FROM unified_trades u WHERE u.type = 'public_nft_order' \
+            format!(
+                " LEFT JOIN LATERAL (SELECT u.amount_received, u.created_at FROM unified_trades u WHERE u.type = 'public_nft_order' \
                 AND lower(u.network) = b.network AND u.contract_address_sent = b.contract_address AND u.token_id = b.token_id::text \
-                AND u.signer = b.owner
-                ORDER BY (EXTRACT(EPOCH FROM u.created_at) * 1000)::bigint DESC, u.id::text ASC, u.amount_received, u.beneficiary
-                LIMIT 1) v3 ON true",
+                AND u.signer = b.owner ORDER BY {} LIMIT 1) v3 ON true",
+                super::orders::latest_trade_order_sql(
+                    "(EXTRACT(EPOCH FROM u.created_at) * 1000)::bigint",
+                    "u.id::text",
+                    "u.amount_received",
+                    "u.beneficiary",
+                ),
+            ),
             restrict,
         )
     } else {
         (
             String::new(),
             "NULL::numeric AS v3_price, NULL::timestamp AS v3_created_at, NULL::numeric AS order_price, NULL::bigint AS order_created_at",
-            "",
+            String::new(),
             "",
         )
     };
@@ -1575,6 +1581,37 @@ pub(super) async fn land_page_snapshot(
     Ok(conn)
 }
 
+/// A mixed reader keeps its original snapshot when an optional LAND check
+/// fails, including when PostgreSQL has aborted the statement.
+async fn optional_land_on(conn: &mut PgConnection, land: LandNetwork) -> Result<bool, Response> {
+    let mut optional = sqlx::Connection::begin(conn)
+        .await
+        .map_err(super::readers::index_read_error)?;
+    match crate::land_authz::indexer::cursor_observed(&mut *optional, land.network).await {
+        Ok(observation) => {
+            optional
+                .commit()
+                .await
+                .map_err(super::readers::index_read_error)?;
+            Ok(observation.is_some_and(|publication| {
+                crate::land_authz::indexer::observation_ready(
+                    &publication,
+                    land.land_registry,
+                    land.estate_registry,
+                )
+            }))
+        }
+        Err(error) => {
+            optional
+                .rollback()
+                .await
+                .map_err(super::readers::index_read_error)?;
+            tracing::warn!(%error, "cannot read the optional LAND publication for the NFT page");
+            Ok(false)
+        }
+    }
+}
+
 /// `/v1/nfts` from the indexes: the page over the `first + skip` window and
 /// its total (exact up to [`MAX_WINDOW`]).
 pub(super) async fn indexed_page(
@@ -1620,28 +1657,11 @@ pub(super) async fn indexed_page(
         }
     };
     if super::nfts::merges_land(f) {
-        // A compatibility page also includes NAME and LAND when they can
-        // answer in this snapshot. Walkers admit these sources up front.
-        let names = Sources {
-            names: true,
-            ..Default::default()
-        };
-        sources.names = match check_nft(&mut conn, state.settings.catalogue(), f, names).await {
-            Ok(()) => true,
-            Err(owned_items::ReadError::NotReady(..)) => false,
-            Err(error) => return Err(super::readers::index_source_error(error)),
-        };
+        // This mixed shape already admitted the Ethereum NFT publication
+        // for collections, which also supplies the NAME ownership rows.
+        sources.names = true;
         if let Some(land) = land {
-            let observation = crate::land_authz::indexer::cursor_observed(&mut *conn, land.network)
-                .await
-                .map_err(super::readers::index_read_error)?;
-            sources.land = observation.is_some_and(|publication| {
-                crate::land_authz::indexer::observation_ready(
-                    &publication,
-                    land.land_registry,
-                    land.estate_registry,
-                )
-            });
+            sources.land = optional_land_on(&mut conn, land).await?;
         }
     }
     if needs_orders(f) {

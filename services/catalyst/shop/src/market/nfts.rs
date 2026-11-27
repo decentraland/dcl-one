@@ -850,7 +850,7 @@ pub async fn list_nfts(
                     }
                     super::orders::open_trade_orders_on(state, conn, &unlisted, now.naive_utc())
                         .await
-                        .map_err(super::nft_reads::read_error)
+                        .map_err(super::readers::index_read_error)
                 };
                 if strict_orders || rental_assets.is_empty() {
                     return load(conn).await;
@@ -859,14 +859,14 @@ pub async fn list_nfts(
                 // for the rentals query, including after a PostgreSQL timeout.
                 let mut savepoint = sqlx::Connection::begin(&mut **conn)
                     .await
-                    .map_err(super::nft_reads::read_error)?;
+                    .map_err(super::readers::index_read_error)?;
                 let result = load(&mut savepoint).await;
                 let finish = if result.is_ok() {
                     savepoint.commit().await
                 } else {
                     savepoint.rollback().await
                 };
-                finish.map_err(super::nft_reads::read_error)?;
+                finish.map_err(super::readers::index_read_error)?;
                 return result;
             }
             super::orders::open_trade_orders(state, &unlisted).await

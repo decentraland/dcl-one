@@ -5648,8 +5648,9 @@ bid projections pending until the next publication. The `nft_order` proof
 starts at the first NFT publication after the object pass adds its triggers.
 Each cursor and projection use one row, rewritten by each fold statement that writes and each
 publication; the triggers add one transition table per write statement,
-sized by the rows it changed. A reader calls
-`chain_walk::rows_published_on` on its snapshot.
+sized by the rows it changed. A reader checks the writes on its response
+snapshot. The order-dependent NFT page additionally requires an explicit
+`nft_order` row acknowledged by a publication.
 
 The NFT and sales folds, rewinds and rebuild clears lock the chain cursor
 before writing these projections. Rewind and clear take any notification
