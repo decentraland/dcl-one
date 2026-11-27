@@ -23,6 +23,7 @@ import importlib.util
 import os
 from pathlib import Path
 import platform
+import re
 import shutil
 import subprocess
 import sys
@@ -136,7 +137,7 @@ TOOLING_TESTS = Step('tooling tests', 'python3 -m unittest discover -s tooling/t
 # The Changes job runs these on every pull request.
 WORKFLOW_TESTS = Step('workflow tests', 'python3 -m unittest tooling.tests.test_dev_workflow tooling.tests.test_ci_local '
                       'tooling.tests.test_ui_gallery_receipt.WorkflowTest tooling.tests.test_image_cache.CompileWorkflowTest',
-                      tools=('python3',))
+                      tools=('nix',))
 
 
 # What ui3 builds from. Its `@dcl/one-ui` root import reaches every shared component and foundation, and
@@ -431,11 +432,14 @@ HOOKS = {'pre-commit': '#!/bin/sh\n[ -f tooling/ci-local.py ] || exit 0\nexec py
                      'exec python3 tooling/ci-local.py pre-push "$@"\n'}
 
 
-def is_stock_lfs_hook(name, text):
-    """git-lfs's own hook called name."""
-    lines = [line for line in text.splitlines() if line.strip()]
-    return (len(lines) == 3 and lines[0] == '#!/bin/sh' and lines[2] == f'git lfs {name} "$@"'
-            and lines[1].startswith('command -v git-lfs >/dev/null 2>&1 || { ') and lines[1].endswith('exit 2; }'))
+def is_stock_lfs_hook(path):
+    """git-lfs's own hook: whatever its message, line 2 only prints it and exits."""
+    if not path.is_file():
+        return False
+    lines = [line for line in path.read_bytes().decode(errors='replace').splitlines() if line.strip()]
+    return (len(lines) == 3 and lines[0] == '#!/bin/sh' and lines[2] == f'git lfs {path.name} "$@"' and re.fullmatch(
+        r'command -v git-lfs >/dev/null 2>&1 \|\| \{ (echo >&2 "\\n[^"$`\\]*\\n"|printf >&2 "\\n%s\\n\\n" "[^"$`\\]*"); '
+        r'exit 2; \}', lines[1]) is not None)
 
 
 def install():
@@ -459,21 +463,23 @@ def install():
         path = hooks / name
         current = None if path.is_symlink() or not path.exists() else path.read_bytes()
         if path.is_symlink() or current not in (None, text.encode()) and not (
-                name == 'pre-push' and is_stock_lfs_hook(name, current.decode(errors='replace'))):
+                name == 'pre-push' and is_stock_lfs_hook(path)):
             print(f'ci-local: {path} is another hook, so install changed nothing; remove it and run install again',
                   file=sys.stderr)
             return False
+    started = []
     if local:
-        # Each worktree runs its own untracked .githooks, where only git-lfs writes hooks.
+        # Unsetting it swaps each worktree's untracked .githooks, where only git-lfs writes hooks, for the shared folder.
         trees = [Path(line[9:]) for line in git('worktree', 'list', '--porcelain').splitlines()
                  if line.startswith('worktree ')]
-        kept = [path for tree in trees for path in sorted((tree / '.githooks').glob('*'))
-                if not path.is_file() or not is_stock_lfs_hook(path.name, path.read_bytes().decode(errors='replace'))]
-        if kept:
-            print(f'ci-local: core.hooksPath is .githooks, and git would stop running {", ".join(map(str, kept))}; '
-                  f'install changed nothing. Move them into {hooks} or remove them, then run install again',
-                  file=sys.stderr)
+        stopped = [path for tree in trees for path in sorted((tree / '.githooks').glob('*')) if not is_stock_lfs_hook(path)]
+        if stopped:
+            print(f'ci-local: core.hooksPath is .githooks, and unsetting it would stop git running '
+                  f'{", ".join(map(str, stopped))}; install changed nothing. Move them into {hooks} or remove them, '
+                  'then run install again', file=sys.stderr)
             return False
+        started = [path for path in sorted(hooks.glob('*'))
+                   if path.suffix != '.sample' and path.name not in HOOKS and not is_stock_lfs_hook(path)]
         git('config', '--local', '--unset-all', 'core.hooksPath')
     hooks.mkdir(exist_ok=True)
     for name, text in HOOKS.items():
@@ -481,6 +487,8 @@ def install():
         (hooks / name).chmod(0o755)
     print(f'ci-local: pre-commit and pre-push installed in {hooks}. `git lfs install` now stops at this pre-push '
           '(exit 2), so run `git lfs pull` on its own.')
+    if started:
+        print(f'ci-local: with core.hooksPath unset, git runs these hooks again: {", ".join(map(str, started))}')
     return True
 
 

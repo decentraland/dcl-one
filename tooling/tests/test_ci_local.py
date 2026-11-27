@@ -270,6 +270,14 @@ def stock_lfs_hook(name):
             f"'.git/hooks').\"; exit 2; }}\ngit lfs {name} \"$@\"\n")
 
 
+def old_lfs_hook(name):
+    """What git-lfs 2.x writes."""
+    return ('#!/bin/sh\ncommand -v git-lfs >/dev/null 2>&1 || { echo >&2 "\\nThis repository is configured for Git LFS '
+            "but 'git-lfs' was not found on your path. If you no longer wish to use Git LFS, remove this hook by "
+            f'deleting .git/hooks/{name}.\\n"; exit 2; }}\ngit lfs {name} "$@"\n')
+
+
+@unittest.skipIf(os.name == 'nt', 'the hooks are POSIX shell scripts, and symlinks need extra rights on Windows')
 class HookTest(unittest.TestCase):
     """install and the hook entry points, each in its own scratch repository."""
 
@@ -306,18 +314,22 @@ class HookTest(unittest.TestCase):
         return ci.git('config', '--get', 'core.hooksPath', cwd=root, check=False)
 
     def install(self):
-        with patch('builtins.print'):
-            return ci.install()
+        with patch('builtins.print') as printed:
+            ok = ci.install()
+        self.output = ' '.join(str(arg) for call in printed.call_args_list for arg in call.args)
+        return ok
 
     def test_install_replaces_the_stock_lfs_pre_push_and_undoes_the_old_hooks_path(self):
         root = self.repo()
         hooks = root / '.git/hooks'
-        ci.git('config', 'core.hooksPath', '.githooks', cwd=root)
         for name in ('pre-push', 'post-checkout'):
             (hooks / name).write_text(stock_lfs_hook(name))
-        for attempt in ('first', 'again'):
+        for attempt in ('first', 'again', 'after the old install set .githooks again'):
             with self.subTest(attempt=attempt):
+                if attempt != 'again':
+                    ci.git('config', 'core.hooksPath', '.githooks', cwd=root)
                 self.assertTrue(self.install())
+                self.assertNotIn('runs these hooks again', self.output)
                 self.assertEqual(self.hooks_path(root), '')
                 for name, text in ci.HOOKS.items():
                     self.assertEqual((hooks / name).read_bytes(), text.encode())
@@ -344,6 +356,12 @@ class HookTest(unittest.TestCase):
                            ('pre-push', stock_lfs_hook('pre-push').replace('#!/bin/sh', '#!/usr/bin/env bash')),
                            ('pre-push', stock_lfs_hook('pre-push') + './extra.sh\n'),
                            ('pre-push', stock_lfs_hook('pre-push').replace('git lfs pre-push', './other.sh')),
+                           ('pre-push', '#!/bin/sh\ncommand -v git-lfs >/dev/null 2>&1 || { :; }; ./check.sh; { exit 2; }\n'
+                                        'git lfs pre-push "$@"\n'),
+                           *(('pre-push', hook('pre-push').replace('This repository', injected))
+                             for hook in (stock_lfs_hook, old_lfs_hook)
+                             for injected in ('$(./check.sh)', '`./check.sh`', '"; ./check.sh; echo "')),
+                           ('pre-push', stock_lfs_hook('pre-push').replace('exit 2; }', 'exit 2; }; ./check.sh')),
                            ('pre-commit', None)):
             with self.subTest(hook=name, text=text):
                 root = self.repo()
@@ -393,7 +411,7 @@ class HookTest(unittest.TestCase):
                     self.assertFalse(self.install())
                 self.assertFalse((root / '.git/hooks/pre-commit').exists())
 
-    def test_install_refuses_while_an_old_githooks_folder_holds_more_than_git_lfs_hooks(self):
+    def test_install_keeps_githooks_hooks_running_and_names_the_shared_ones_it_turns_back_on(self):
         for tree, entry in (('main', 'commit-msg'), ('linked', 'post-commit'), ('main', 'lib')):
             with self.subTest(tree=tree, entry=entry):
                 root = self.repo()
@@ -401,22 +419,30 @@ class HookTest(unittest.TestCase):
                 linked = Path(tempfile.mkdtemp(dir=self.folder)) / 'linked'
                 ci.git('worktree', 'add', '-q', str(linked), cwd=root)
                 ci.git('config', 'core.hooksPath', '.githooks', cwd=root)
-                for folder in (root / '.githooks', linked / '.githooks'):
-                    folder.mkdir()
-                    for name in ('pre-push', 'post-commit'):
-                        (folder / name).write_text(stock_lfs_hook(name))
+                shared = root / '.git/hooks'
+                for folder in (root / '.githooks', linked / '.githooks', shared):
+                    folder.mkdir(exist_ok=True)
+                    (folder / 'post-commit').write_text(stock_lfs_hook('post-commit'))
+                    (folder / 'post-merge').write_text(old_lfs_hook('post-merge'))
+                (shared / 'commit-msg.sample').write_text('#!/bin/sh\nexit 1\n')
+                (shared / 'commit-msg').write_text('#!/bin/sh\n./check.sh "$1"\n')
                 custom = (root if tree == 'main' else linked) / '.githooks' / entry
                 if entry == 'lib':
                     custom.mkdir()
                 else:
                     custom.write_text('#!/bin/sh\n./check.sh "$1"\n')
                 self.assertFalse(self.install())
+                self.assertIn(str(custom), self.output)
+                self.assertNotIn(str(shared / 'commit-msg'), self.output)
                 self.assertTrue(custom.exists())
-                self.assertFalse((root / '.git/hooks/pre-commit').exists())
+                self.assertFalse((shared / 'pre-commit').exists())
                 self.assertEqual(self.hooks_path(root), '.githooks')
                 custom.rmdir() if entry == 'lib' else custom.unlink()
                 self.assertTrue(self.install())
                 self.assertEqual(self.hooks_path(root), '')
+                self.assertIn(f'runs these hooks again: {shared / "commit-msg"}', self.output)
+                for name in ('post-commit', 'post-merge', 'commit-msg.sample'):
+                    self.assertNotIn(str(shared / name), self.output)
 
     def test_the_installed_hooks_run_ci_local_or_git_lfs_and_need_git_lfs(self):
         root = self.repo()
