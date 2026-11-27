@@ -1671,14 +1671,22 @@ async fn catalog_scope(
                 }
                 // A missing legacy book does not withdraw the NFT fold.
                 let published = scope.reads_book
-                    || super::chain_walk::rows_published_on(
+                    || super::chain_walk::cursor_with_rows_publication(
                         &mut read.tx,
                         super::chain_walk::INDEXER_NFT,
                         net,
                         &["nft"],
                     )
                     .await
-                    .map_err(super::readers::index_read_error)?;
+                    .map_err(super::readers::index_read_error)?
+                    .is_some_and(|(cursor, rows)| {
+                        rows && super::chain_walk::fresh_fold_on(
+                            &cursor,
+                            scope.catalogue.chain_id(net),
+                            read.now,
+                        )
+                        .is_some()
+                    });
                 if published {
                     scope.v3_resales.push(net);
                 }
@@ -1688,15 +1696,15 @@ async fn catalog_scope(
     Ok(scope)
 }
 
-/// The admitted NFT folds and the next raw expiry on each of their
-/// networks. Within the same deadline interval the set of unexpired book
+/// The admitted NFT folds and, for the v1 memo, the next raw order
+/// expiry on each network. Within the same deadline interval the set of unexpired book
 /// rows is constant. The check may include expiries the page cannot return.
 async fn read_book_copy(
     read: &mut CatalogueRead,
-    scope: &CatalogScope,
+    nets: &[ChainNet],
     with_expiry: bool,
 ) -> Result<BookCopy, sqlx::Error> {
-    let networks: Vec<&str> = scope.nets.iter().map(|net| net.db_name()).collect();
+    let networks: Vec<&str> = nets.iter().map(|net| net.db_name()).collect();
     sqlx::query_as(
         "SELECT c.network, c.folded_block, c.folded_at, CASE WHEN $3 THEN (
              SELECT o.expires_at FROM shop.legacy_order o
@@ -1772,8 +1780,19 @@ async fn catalog_inner(
                 }
             }
         }
-        let orders = if scope.reads_book {
-            match read_book_copy(&mut read, &scope, !is_v2 && state.catalog_cache.enabled()).await {
+        let listing_nft_networks = if scope.reads_book {
+            &scope.nets
+        } else {
+            &scope.v3_resales
+        };
+        let orders = if !listing_nft_networks.is_empty() {
+            match read_book_copy(
+                &mut read,
+                listing_nft_networks,
+                scope.reads_book && !is_v2 && state.catalog_cache.enabled(),
+            )
+            .await
+            {
                 Ok(book) => Some(book),
                 Err(error) => return super::readers::index_read_error(error),
             }
@@ -1890,10 +1909,10 @@ mod tests {
         let scope = CatalogScope::new(Catalogue::Mainnet, vec![ChainNet::Matic]);
         let mut read = catalogue::begin_unchecked(&state).await;
         read.now = chrono::DateTime::from_timestamp_millis(2000).unwrap();
-        let first = read_book_copy(&mut read, &scope, true).await.unwrap();
+        let first = read_book_copy(&mut read, &scope.nets, true).await.unwrap();
         assert_eq!(first[0].3, Some(2001));
         read.now = chrono::DateTime::from_timestamp_millis(2001).unwrap();
-        let next = read_book_copy(&mut read, &scope, true).await.unwrap();
+        let next = read_book_copy(&mut read, &scope.nets, true).await.unwrap();
         assert_eq!(next[0].3, None);
         assert_eq!(first[0].1, next[0].1);
         assert_eq!(first[0].2, next[0].2);

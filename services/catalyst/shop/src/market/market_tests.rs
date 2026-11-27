@@ -11171,7 +11171,11 @@ async fn catalog_resales_read_the_published_legacy_book_and_v3_listings() {
         let (code, page) = get(reader, &uri).await;
         assert_eq!(code, StatusCode::OK, "{page}");
         let at = chrono::DateTime::parse_from_rfc3339(page["as_of"].as_str().unwrap()).unwrap();
-        assert_eq!(at.timestamp(), fold.and_utc().timestamp(), "{page}");
+        assert_eq!(
+            at.timestamp_millis(),
+            fold.and_utc().timestamp_millis(),
+            "{page}"
+        );
     }
     let mint_path = format!("{}&onlyMinting=true&maxPrice=1", v2_exact("2"));
     sqlx::query("UPDATE shop.mirror_state SET last_complete_pass_at=NULL WHERE mirror='collections' AND network='matic'")
@@ -11187,6 +11191,12 @@ async fn catalog_resales_read_the_published_legacy_book_and_v3_listings() {
     );
     assert_eq!(page["data"][0]["listings"], 1, "{page}");
     assert_eq!(page["data"][0]["minListingPrice"], "10000000000000000000");
+    let at = chrono::DateTime::parse_from_rfc3339(page["as_of"].as_str().unwrap()).unwrap();
+    assert_eq!(
+        at.timestamp_millis(),
+        fold.and_utc().timestamp_millis(),
+        "{page}"
+    );
     sqlx::query("UPDATE shop.mirror_state SET last_complete_pass_at=timezone('UTC',now()) WHERE mirror='collections' AND network='matic'")
         .execute(pool).await.unwrap();
     let (code, page) = get(app(), &mint_path).await;
