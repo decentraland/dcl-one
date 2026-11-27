@@ -374,7 +374,11 @@ pub(crate) fn update_avatar_modifier_area(
                     modifiers.block_all |= modifier.disable_all();
                     modifiers.block_run |= modifier.disable_all() || modifier.disable_run();
                     modifiers.block_walk |= modifier.disable_all() || modifier.disable_walk();
+                    modifiers.block_jog |= modifier.disable_all() || modifier.disable_jog();
                     modifiers.block_jump |= modifier.disable_all() || modifier.disable_jump();
+                    modifiers.block_double_jump |=
+                        modifier.disable_all() || modifier.disable_double_jump();
+                    modifiers.block_gliding |= modifier.disable_all() || modifier.disable_gliding();
                     modifiers.block_emote |= modifier.disable_all() || modifier.disable_emote();
                 }
             }
@@ -720,6 +724,96 @@ mod tests {
             app.world().resource::<PermissionsInForce>().0.clone(),
             app.world().entity(player).contains::<HiddenNametag>(),
         )
+    }
+
+    #[test]
+    fn a_scenes_input_modifier_blocks_jogging_air_jumps_and_gliding() {
+        use crate::{
+            initialize_scene::{LiveScenes, PointerResult, PortableScenes, ScenePointers},
+            permissions::PermissionManager,
+        };
+        use common::structs::{AppConfig, PermissionUsed};
+        use dcl_component::proto_components::sdk::components::pb_input_modifier::StandardInput;
+        use dcl_types::SceneId;
+
+        let mut app = App::new();
+        app.init_resource::<ScenePointers>()
+            .init_resource::<LiveScenes>()
+            .init_resource::<PortableScenes>()
+            .init_resource::<AppConfig>()
+            .init_resource::<CurrentRealm>()
+            .init_resource::<PermissionManager>()
+            .add_event::<PermissionUsed>()
+            .add_systems(Update, update_avatar_modifier_area);
+        let player = app
+            .world_mut()
+            .spawn((
+                PrimaryUser::default(),
+                GlobalTransform::from_xyz(8.0, 0.0, -8.0),
+            ))
+            .id();
+        app.insert_resource(PrimaryPlayerRes(player));
+
+        // the scene the player stands in, with an input modifier on its player entity
+        let scene = app.world_mut().spawn_empty().id();
+        let scene_player = app
+            .world_mut()
+            .spawn((
+                SceneEntity {
+                    root: scene,
+                    scene_id: SceneId::DUMMY,
+                    id: SceneEntityId::PLAYER,
+                },
+                InputModifier(Some(PbInputModifier {
+                    mode: Some(pb_input_modifier::Mode::Standard(StandardInput {
+                        disable_jog: Some(true),
+                        disable_double_jump: Some(true),
+                        disable_gliding: Some(true),
+                        ..Default::default()
+                    })),
+                })),
+                GlobalTransform::default(),
+            ))
+            .id();
+        let mut context = RendererSceneContext::new(
+            SceneId::DUMMY,
+            "parcel".to_owned(),
+            "storage_root".to_owned(),
+            false,
+            0,
+            "title".to_owned(),
+            IVec2::ZERO,
+            HashSet::from_iter([IVec2::ZERO]),
+            vec![],
+            Default::default(),
+            vec![],
+            scene,
+            0.0,
+            false,
+            "sdk_version",
+            false,
+            false,
+        );
+        context.associate_bevy_entity(SceneEntityId::PLAYER, scene_player);
+        app.world_mut().entity_mut(scene).insert(context);
+        app.world_mut()
+            .resource_mut::<LiveScenes>()
+            .scenes
+            .insert("parcel".to_owned(), scene);
+        app.world_mut().resource_mut::<ScenePointers>().insert(
+            IVec2::ZERO,
+            PointerResult::Exists {
+                hash: "parcel".to_owned(),
+                urn: None,
+            },
+        );
+
+        for _ in 0..4 {
+            app.update();
+        }
+        let modifiers = app.world().get::<PlayerModifiers>(player).unwrap();
+        assert!(modifiers.block_jog && modifiers.block_double_jump && modifiers.block_gliding);
+        assert!(!(modifiers.block_walk || modifiers.block_run || modifiers.block_jump));
     }
 
     #[test]

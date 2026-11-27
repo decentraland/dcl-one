@@ -188,7 +188,7 @@ impl Plugin for AvatarAnimationPlugin {
             app.add_systems(
                 Update,
                 (
-                    (handle_trigger_emotes, drop_scene_emote_on_input).chain(),
+                    (handle_trigger_emotes, track_scene_emote_request).chain(),
                     broadcast_emote,
                 )
                     .before(animate)
@@ -268,16 +268,23 @@ pub(crate) fn emote_download_hashes<'a>(
 #[derive(Component, Default)]
 pub struct LastEmoteCommand(EmoteCommand);
 
-/// The player's full-body emote command from a scene (`triggerEmote`, `triggerSceneEmote`; the
-/// HUD's own emotes come through a system scene and are the player's). While it waits to start,
-/// movement or jump input drops it (`drop_scene_emote_on_input`), as Unity drops a waiting scene
-/// emote; the player's own emote waits until the avatar stands still.
+/// On the player while a full-body emote a scene asked for (`triggerEmote`, `triggerSceneEmote`)
+/// has not started: while `animate` holds it for the avatar to stand still, and while its clip
+/// loads. The emotes of system scenes, the HUD's among them, are the player's own and get none.
+/// Movement or jump input meanwhile drops it (`track_scene_emote_request`): the player has moved
+/// on from the moment the scene chose, while their own emote waits for them to stand still.
+///
+/// `command` is the `EmoteCommand` the request was made for. Other systems replace the player's
+/// command (the console's `/emote`), and a request applies only while its command is current.
 #[derive(Component, Clone, Debug, PartialEq)]
-pub struct SceneEmoteRequest {
-    command: EmoteCommand,
-    /// Movement or jump input came while the command waited: `animate` ends it unplayed.
-    dropped: bool,
+pub(crate) struct SceneEmoteRequest {
+    pub(crate) command: EmoteCommand,
 }
+
+/// On the player beside a `SceneEmoteRequest` that input dropped: `animate` never plays it. Kept
+/// until the next emote command, so the debug panel shows the drop.
+#[derive(Component)]
+pub(crate) struct SceneEmoteDropped;
 
 /// The body shape and equipped emote urns whose clips have all loaded, on the player. Present
 /// only while it matches what they have equipped; `preload_equipped_emotes` stops asking while it
@@ -423,6 +430,7 @@ fn handle_trigger_emotes(
     }
 
     for (emote, source) in perms.drain_success(common::structs::PermissionType::PlayEmote) {
+        // the request is what counts as using an emote: one that input drops before it starts too
         if !emote.urn.is_empty() {
             triggered.write(PlayerEmoteTriggered {
                 urn: emote.urn.clone(),
@@ -430,10 +438,10 @@ fn handle_trigger_emotes(
             });
         }
         let mut entity = commands.entity(player);
+        entity.try_remove::<SceneEmoteDropped>();
         if source == "scene" && emote.mask == EmoteMask::FullBody && !emote.urn.is_empty() {
             entity.try_insert(SceneEmoteRequest {
                 command: emote.clone(),
-                dropped: false,
             });
         } else {
             entity.try_remove::<SceneEmoteRequest>();
@@ -444,45 +452,83 @@ fn handle_trigger_emotes(
     for _ in perms.drain_fail(common::structs::PermissionType::PlayEmote) {}
 }
 
-/// Length of the movement input axis above which a scene's waiting emote is dropped (Unity's).
+/// Length of the movement axis above which input drops a scene's waiting emote: a stick at rest
+/// can read a little drift, which moves nothing.
 #[cfg(feature = "explorer")]
 const DROP_SCENE_EMOTE_INPUT: f32 = 0.1;
 
-/// Unity's movement input for dropping a scene's waiting emote: the movement axis past
-/// `DROP_SCENE_EMOTE_INPUT` unless every gait is blocked, or the jump held unless jumping is.
+/// Whether input would move the player, and so drops a scene's waiting emote: the movement axis
+/// past `DROP_SCENE_EMOTE_INPUT` while any gait (walk, jog, run) is free, or the jump held while
+/// the jump it makes is free. On the ground that is a jump; in the air an air jump or a glide, so
+/// blocking ground jumps alone leaves a press in the air free.
 #[cfg(feature = "explorer")]
-fn wants_to_move(user: &PrimaryUser, movement: Vec2, jump: bool) -> bool {
-    let moves = !(user.block_all || user.block_walk && user.block_run)
-        && movement.length_squared() > DROP_SCENE_EMOTE_INPUT * DROP_SCENE_EMOTE_INPUT;
-    moves || jump && !(user.block_all || user.block_jump)
+fn wants_to_move(user: &PrimaryUser, movement: Vec2, jump: bool, grounded: bool) -> bool {
+    let gait_free = !(user.block_all || user.block_walk && user.block_jog && user.block_run);
+    let moves = gait_free && movement.length_squared() > DROP_SCENE_EMOTE_INPUT.powi(2);
+    let jump_free = !user.block_all
+        && if grounded {
+            !user.block_jump
+        } else {
+            !(user.block_double_jump && user.block_gliding)
+        };
+    moves || jump && jump_free
 }
 
-/// Marks the player's waiting scene emote dropped on movement or jump input, held or new, before
-/// `animate` can start it. Once an emote plays, ending it on input is the movement scene's (its
-/// animation stops being idle).
+/// Follows the player's `SceneEmoteRequest` until its emote starts. Movement or jump input, held
+/// or new, drops it while it waits, before `animate` takes it or while its clip loads; `animate`
+/// then ends it unplayed. The request ends once its clip starts, when `animate` ends the emote
+/// before it starts, or when another command replaces it. A started emote is not dropped here: the
+/// movement scene ends it on input, its animation no longer idle.
 #[cfg(feature = "explorer")]
-fn drop_scene_emote_on_input(
-    mut player: Query<(
+fn track_scene_emote_request(
+    mut commands: Commands,
+    player: Query<(
+        Entity,
         &PrimaryUser,
         Option<&PlayerModifiers>,
-        &EmoteCommand,
-        Option<&LastEmoteCommand>,
-        &mut SceneEmoteRequest,
+        &AvatarDynamicState,
+        (
+            &EmoteCommand,
+            Option<&LastEmoteCommand>,
+            Option<&ActiveEmote>,
+        ),
+        &SceneEmoteRequest,
+        Has<SceneEmoteDropped>,
     )>,
     input: InputManager,
 ) {
-    let Ok((user, modifiers, command, last, mut request)) = player.single_mut() else {
+    let Ok((entity, user, modifiers, dynamics, (command, last, active), request, dropped)) =
+        player.single()
+    else {
         return;
     };
-    let waiting = request.command == *command && last.is_none_or(|last| last.0 != *command);
-    if !waiting || request.dropped {
+    if request.command != *command {
+        commands
+            .entity(entity)
+            .try_remove::<(SceneEmoteRequest, SceneEmoteDropped)>();
         return;
     }
-    let user = modifiers.map_or_else(|| user.clone(), |m| m.combine(user));
+    if dropped {
+        return;
+    }
+    // `animate` took the command: it loads its clip, or it started or ended the emote
+    if last.is_some_and(|last| last.0 == *command) {
+        // the play system stamps the duration once the clip has started
+        let loading = active.is_some_and(|active| {
+            active.source == ActiveEmoteSource::TriggeredEmote
+                && active.generation == command.timestamp
+                && active.duration_ms.is_none()
+        });
+        if !loading {
+            commands.entity(entity).try_remove::<SceneEmoteRequest>();
+            return;
+        }
+    }
     let movement = input.get_analog(MOVE_SET, InputPriority::Scene);
     let jump = input.is_down(CommonInputAction::IaJump, InputPriority::Scene);
-    if wants_to_move(&user, movement, jump) {
-        request.dropped = true;
+    let user = user.with_modifiers(modifiers);
+    if wants_to_move(&user, movement, jump, landed(dynamics.ground_height)) {
+        commands.entity(entity).try_insert(SceneEmoteDropped);
     }
 }
 
@@ -769,7 +815,7 @@ fn animate(
         Option<&ForeignAvatar>,
         Option<&mut LastEmoteCommand>,
         Option<Ref<SceneDrivenAnim>>,
-        Option<&SceneEmoteRequest>,
+        Option<(&SceneEmoteRequest, Has<SceneEmoteDropped>)>,
     )>,
     time: Res<Time>,
     player: Query<(&PrimaryUser, Option<&PlayerModifiers>)>,
@@ -777,7 +823,7 @@ fn animate(
 ) {
     let (gravity, jump_height) = player
         .single()
-        .map(|(p, m)| m.map(|m| m.combine(p)).unwrap_or(p.clone()))
+        .map(|(user, modifiers)| user.with_modifiers(modifiers))
         .map(|p| (-10.0f32, p.jump_height))
         .unwrap_or((-20.0, 1.25));
     let gravity = gravity.min(-0.1);
@@ -908,17 +954,20 @@ fn animate(
             requested_emote = None;
         }
 
-        // A scene's emote that movement or jump input dropped while it waited ends unplayed, as
-        // does the emote it would have replaced.
+        // A scene's emote that input dropped before it started never plays, whether it waited
+        // for the avatar to stand still or for its clip. The emote it was to replace stays ended:
+        // the request had already superseded it, so the avatar returns to locomotion rather than
+        // to an emote nobody asks for any more.
         if let Some(command) = emote.filter(|command| {
-            emote_changed && scene_request.is_some_and(|r| r.dropped && r.command == **command)
+            scene_request.is_some_and(|(request, dropped)| dropped && request.command == **command)
         }) {
-            debug!("drop scene emote on input {:?}", command.urn);
             requested_emote = None;
-            commands
-                .entity(avatar_ent)
-                .try_insert(LastEmoteCommand(command.clone()))
-                .try_remove::<SceneEmoteRequest>();
+            if emote_changed {
+                debug!("drop scene emote on input {:?}", command.urn);
+                commands
+                    .entity(avatar_ent)
+                    .try_insert(LastEmoteCommand(command.clone()));
+            }
         }
 
         // check / cancel requested emote
@@ -2681,18 +2730,242 @@ mod stop_tests {
     }
 }
 
-#[cfg(test)]
-mod scene_emote_drop_tests {
-    use super::*;
-    use common::structs::SceneDrivenAnimationRequest;
+/// Movement and jump input against a scene's emote that waits to start, through the systems the
+/// plugin runs, in its order: the trigger, the input check and `animate`, then a stand-in for the
+/// play system that starts every clip at once unless a test holds it loading. The player stands
+/// on a scene's parcel; the HUD's emotes come from a system scene.
+#[cfg(all(test, feature = "explorer"))]
+mod scene_emote_input_tests {
+    use common::{
+        inputs::InputMap,
+        structs::{
+            AppConfig, CurrentRealm, PermissionUsed, PrimaryPlayerRes, SceneDrivenAnimationRequest,
+            StartupScene, StartupScenes,
+        },
+    };
+    use dcl_types::SceneId;
+    use input_manager::{CumulativeAxisData, InputPriorities};
+    use scene_runner::{
+        initialize_scene::{LiveScenes, PointerResult, PortableScenes, ScenePointers},
+        permissions::PermissionManager,
+        renderer_context::RendererSceneContext,
+    };
 
-    fn wave(timestamp: i64) -> EmoteCommand {
-        EmoteCommand {
-            urn: "wave".to_owned(),
-            timestamp,
-            r#loop: true,
-            mask: EmoteMask::FullBody,
+    use super::*;
+
+    const SCENE: &str = "scene";
+    const HUD: &str = "hud";
+    const WAVE: &str = "wave";
+    const CLAP: &str = "clap";
+    const FORWARD: KeyCode = KeyCode::KeyW;
+    const JUMP: KeyCode = KeyCode::Space;
+
+    /// Urns whose clips are still loading: the play stand-in leaves them unstarted.
+    #[derive(Resource, Default)]
+    struct LoadingClips(Vec<&'static str>);
+
+    /// The emotes reported as used, with their source, as the analytics reader takes them.
+    #[derive(Resource, Default)]
+    struct Used(Vec<(String, &'static str)>);
+
+    fn collect_used(mut events: EventReader<PlayerEmoteTriggered>, mut used: ResMut<Used>) {
+        used.0
+            .extend(events.read().map(|event| (event.urn.clone(), event.source)));
+    }
+
+    /// The play system's report on a full-body clip it starts: its duration.
+    fn play_loaded_clips(mut avatars: Query<&mut ActiveEmote>, loading: Res<LoadingClips>) {
+        for mut active in &mut avatars {
+            let held = loading
+                .0
+                .iter()
+                .any(|urn| EmoteUrn::new(urn).is_ok_and(|urn| urn == active.urn));
+            if !held {
+                active.duration_ms = Some(1000);
+            }
         }
+    }
+
+    struct Harness {
+        app: App,
+        player: Entity,
+        scene: Entity,
+        hud: Entity,
+    }
+
+    impl Harness {
+        /// The player on the ground on the scene's parcel, running under the movement scene's
+        /// animation, so a full-body emote waits.
+        fn new() -> Self {
+            let mut app = App::new();
+            app.init_resource::<Time>()
+                .init_resource::<AppConfig>()
+                .init_resource::<CurrentRealm>()
+                .init_resource::<ScenePointers>()
+                .init_resource::<LiveScenes>()
+                .init_resource::<PortableScenes>()
+                .init_resource::<PermissionManager>()
+                .init_resource::<InputMap>()
+                .init_resource::<ButtonInput<KeyCode>>()
+                .init_resource::<ButtonInput<MouseButton>>()
+                .init_resource::<CumulativeAxisData>()
+                .init_resource::<InputPriorities>()
+                .init_resource::<LoadingClips>()
+                .init_resource::<Used>()
+                .add_event::<RpcCallEvent>()
+                .add_event::<PermissionUsed>()
+                .add_event::<PlayerEmoteTriggered>()
+                .add_event::<EmoteLifecycleEvent>()
+                .add_systems(
+                    Update,
+                    (
+                        (handle_trigger_emotes, track_scene_emote_request).chain(),
+                        animate,
+                        play_loaded_clips,
+                        collect_used,
+                    )
+                        .chain(),
+                );
+            let player = app
+                .world_mut()
+                .spawn((
+                    PrimaryUser::default(),
+                    GlobalTransform::from_xyz(8.0, 0.0, -8.0),
+                    AvatarDynamicState::default(),
+                    running(false),
+                ))
+                .id();
+            app.insert_resource(PrimaryPlayerRes(player));
+            let scene = spawn_scene(&mut app, SCENE);
+            app.world_mut().resource_mut::<ScenePointers>().insert(
+                IVec2::ZERO,
+                PointerResult::Exists {
+                    hash: SCENE.to_owned(),
+                    urn: None,
+                },
+            );
+            let hud = spawn_scene(&mut app, HUD);
+            app.insert_resource(StartupScenes {
+                scenes: vec![StartupScene {
+                    source: String::new(),
+                    super_user: true,
+                    preview: false,
+                    hot_reload: None,
+                    hash: Some(HUD.to_owned()),
+                    failed: false,
+                }],
+            });
+            let mut harness = Self {
+                app,
+                player,
+                scene,
+                hud,
+            };
+            harness.update();
+            harness.update();
+            assert_eq!(harness.playing(), None);
+            harness
+        }
+
+        fn update(&mut self) {
+            self.app.update();
+        }
+
+        fn trigger(&mut self, from: Entity, hash: &str, urn: &str, mask: EmoteMask) {
+            self.app.world_mut().send_event(RpcCallEvent {
+                origin: RpcOrigin::Scene {
+                    entity: from,
+                    hash: hash.into(),
+                },
+                call: RpcCall::TriggerEmote {
+                    urn: urn.to_owned(),
+                    r#loop: true,
+                    mask,
+                },
+            });
+        }
+
+        /// A scene's full-body emote for the player (`triggerEmote`, `triggerSceneEmote`).
+        fn scene_emote(&mut self, urn: &str) {
+            self.trigger(self.scene, SCENE, urn, EmoteMask::FullBody);
+        }
+
+        /// The player's own emote, from the HUD.
+        fn own_emote(&mut self, urn: &str) {
+            self.trigger(self.hud, HUD, urn, EmoteMask::FullBody);
+        }
+
+        fn press(&mut self, key: KeyCode) {
+            self.app
+                .world_mut()
+                .resource_mut::<ButtonInput<KeyCode>>()
+                .press(key);
+        }
+
+        fn release(&mut self, key: KeyCode) {
+            self.app
+                .world_mut()
+                .resource_mut::<ButtonInput<KeyCode>>()
+                .release(key);
+        }
+
+        /// The movement scene's animation: a non-idle one holds a full-body emote off.
+        fn moving(&mut self, moving: bool) {
+            self.app
+                .world_mut()
+                .entity_mut(self.player)
+                .insert(running(!moving));
+        }
+
+        fn airborne(&mut self, airborne: bool) {
+            self.app
+                .world_mut()
+                .get_mut::<AvatarDynamicState>(self.player)
+                .unwrap()
+                .ground_height = if airborne { 2.0 } else { 0.0 };
+        }
+
+        fn modifiers(&mut self, modifiers: PlayerModifiers) {
+            self.app
+                .world_mut()
+                .entity_mut(self.player)
+                .insert(modifiers);
+        }
+
+        fn loading(&mut self, urns: &[&'static str]) {
+            self.app.world_mut().resource_mut::<LoadingClips>().0 = urns.to_vec();
+        }
+
+        /// Stops moving and lets a waiting emote start.
+        fn stand_still(&mut self) {
+            for key in [FORWARD, JUMP] {
+                self.release(key);
+            }
+            self.airborne(false);
+            self.moving(false);
+            self.update();
+            self.update();
+        }
+
+        /// The full-body emote the player plays.
+        fn playing(&self) -> Option<EmoteUrn> {
+            let active = self.app.world().get::<ActiveEmote>(self.player)?;
+            (active.source() == ActiveEmoteSource::TriggeredEmote).then(|| active.urn.clone())
+        }
+
+        fn upper_body(&self) -> Option<EmoteUrn> {
+            let masked = self.app.world().get::<MaskedEmote>(self.player)?;
+            masked.active_request().map(|playback| playback.urn.clone())
+        }
+
+        /// The emotes reported as used since the last call, with their source.
+        fn used(&mut self) -> Vec<(String, &'static str)> {
+            std::mem::take(&mut self.app.world_mut().resource_mut::<Used>().0)
+        }
+    }
+
+    fn urn(urn: &str) -> Option<EmoteUrn> {
+        EmoteUrn::new(urn).ok()
     }
 
     fn running(idle: bool) -> SceneDrivenAnim {
@@ -2707,150 +2980,303 @@ mod scene_emote_drop_tests {
         }
     }
 
-    /// The player standing on the ground, held by the movement scene's running animation until
-    /// `animate` has set it up.
-    fn app() -> (App, Entity) {
-        let mut app = App::new();
-        app.init_resource::<Time>()
-            .add_event::<EmoteLifecycleEvent>()
-            .add_systems(Update, animate);
-        let player = app
-            .world_mut()
-            .spawn((
-                AvatarDynamicState::default(),
-                GlobalTransform::default(),
-                running(false),
-            ))
-            .id();
-        app.update();
-        app.update();
-        assert_eq!(source(&app, player), ActiveEmoteSource::SceneMovementAnim);
-        (app, player)
-    }
-
-    fn source(app: &App, player: Entity) -> ActiveEmoteSource {
-        app.world().get::<ActiveEmote>(player).unwrap().source()
-    }
-
-    fn request(app: &mut App, player: Entity, from_scene: bool) {
-        let command = wave(1);
-        let mut entity = app.world_mut().entity_mut(player);
-        if from_scene {
-            entity.insert(SceneEmoteRequest {
-                command: command.clone(),
-                dropped: false,
-            });
-        }
-        entity.insert(command);
-    }
-
-    fn drop_on_input(app: &mut App, player: Entity) {
-        app.world_mut()
-            .get_mut::<SceneEmoteRequest>(player)
-            .unwrap()
-            .dropped = true;
-    }
-
-    /// The movement scene's animation turns idle; `animate` lets an emote over it the frame after.
-    fn stand_still(app: &mut App, player: Entity) {
-        app.world_mut().entity_mut(player).insert(running(true));
-        app.update();
-    }
-
-    #[test]
-    fn a_waiting_scene_emote_dropped_on_input_never_plays() {
-        let (mut app, player) = app();
-        request(&mut app, player, true);
-        app.update();
-        // held while the movement scene's animation is not idle
-        assert_eq!(source(&app, player), ActiveEmoteSource::SceneMovementAnim);
-
-        drop_on_input(&mut app, player);
-        app.update();
-        stand_still(&mut app, player);
-        app.update();
-
-        assert_eq!(source(&app, player), ActiveEmoteSource::SceneMovementAnim);
-        assert!(app.world().get::<SceneEmoteRequest>(player).is_none());
-        assert_eq!(
-            app.world().get::<LastEmoteCommand>(player).unwrap().0,
-            wave(1)
+    fn spawn_scene(app: &mut App, hash: &str) -> Entity {
+        let scene = app.world_mut().spawn_empty().id();
+        let context = RendererSceneContext::new(
+            SceneId::DUMMY,
+            hash.to_owned(),
+            "storage_root".to_owned(),
+            false,
+            0,
+            "title".to_owned(),
+            IVec2::ZERO,
+            HashSet::from_iter([IVec2::ZERO]),
+            vec![],
+            Default::default(),
+            vec![],
+            scene,
+            0.0,
+            false,
+            "sdk_version",
+            false,
+            false,
         );
+        app.world_mut().entity_mut(scene).insert(context);
+        app.world_mut()
+            .resource_mut::<LiveScenes>()
+            .scenes
+            .insert(hash.to_owned(), scene);
+        scene
     }
 
     #[test]
-    fn a_waiting_scene_emote_without_input_plays_once_the_player_stands_still() {
-        let (mut app, player) = app();
-        request(&mut app, player, true);
-        app.update();
-        stand_still(&mut app, player);
-        app.update();
+    fn movement_input_drops_a_waiting_scene_emote() {
+        let mut harness = Harness::new();
+        harness.scene_emote(WAVE);
+        harness.update();
+        assert_eq!(harness.playing(), None);
 
-        assert_eq!(source(&app, player), ActiveEmoteSource::TriggeredEmote);
+        harness.press(FORWARD);
+        harness.update();
+        harness.stand_still();
+
+        assert_eq!(harness.playing(), None);
     }
 
     #[test]
-    fn the_players_own_waiting_emote_plays_once_the_player_stands_still() {
-        let (mut app, player) = app();
-        request(&mut app, player, false);
-        app.update();
-        assert_eq!(source(&app, player), ActiveEmoteSource::SceneMovementAnim);
-        stand_still(&mut app, player);
-        app.update();
+    fn a_scene_emote_without_input_plays_once_the_player_stands_still() {
+        let mut harness = Harness::new();
+        harness.scene_emote(WAVE);
+        harness.update();
+        harness.update();
+        harness.stand_still();
 
-        assert_eq!(source(&app, player), ActiveEmoteSource::TriggeredEmote);
+        assert_eq!(harness.playing(), urn(WAVE));
+    }
+
+    #[test]
+    fn the_players_own_emote_waits_through_movement_input() {
+        let mut harness = Harness::new();
+        harness.own_emote(WAVE);
+        harness.press(FORWARD);
+        harness.update();
+        harness.press(JUMP);
+        harness.update();
+        harness.stand_still();
+
+        assert_eq!(harness.playing(), urn(WAVE));
+        assert_eq!(harness.used(), [(WAVE.to_owned(), "self")]);
+    }
+
+    #[test]
+    fn an_upper_body_scene_emote_plays_over_movement_input() {
+        let mut harness = Harness::new();
+        harness.press(FORWARD);
+        harness.trigger(harness.scene, SCENE, WAVE, EmoteMask::UpperBody);
+        harness.update();
+        harness.update();
+
+        assert_eq!(harness.upper_body(), urn(WAVE));
+        assert_eq!(harness.used(), [(WAVE.to_owned(), "scene")]);
+    }
+
+    #[test]
+    fn a_key_held_through_the_landing_drops_a_scene_emote() {
+        let mut harness = Harness::new();
+        harness.airborne(true);
+        harness.press(FORWARD);
+        harness.update();
+        harness.scene_emote(WAVE);
+        harness.update();
+        harness.airborne(false);
+        harness.update();
+        harness.stand_still();
+
+        assert_eq!(harness.playing(), None);
+    }
+
+    #[test]
+    fn of_two_scene_emotes_in_a_frame_the_last_plays() {
+        let mut harness = Harness::new();
+        harness.scene_emote(WAVE);
+        harness.scene_emote(CLAP);
+        harness.update();
+        harness.stand_still();
+
+        assert_eq!(harness.playing(), urn(CLAP));
     }
 
     #[test]
     fn a_scene_emote_dropped_as_it_arrives_ends_the_playing_one() {
-        let (mut app, player) = app();
-        stand_still(&mut app, player);
-        request(&mut app, player, false);
-        app.update();
-        assert_eq!(source(&app, player), ActiveEmoteSource::TriggeredEmote);
+        let mut harness = Harness::new();
+        harness.stand_still();
+        harness.own_emote(WAVE);
+        harness.update();
+        assert_eq!(harness.playing(), urn(WAVE));
 
-        // the scene asks again; input is held in the frame it arrives
-        let command = wave(2);
-        app.world_mut().entity_mut(player).insert((
-            SceneEmoteRequest {
-                command: command.clone(),
-                dropped: true,
-            },
-            command,
-        ));
-        app.update();
+        harness.scene_emote(CLAP);
+        harness.press(FORWARD);
+        harness.update();
 
-        assert_ne!(source(&app, player), ActiveEmoteSource::TriggeredEmote);
+        assert_eq!(harness.playing(), None);
     }
 
-    #[cfg(feature = "explorer")]
     #[test]
-    fn movement_or_jump_input_drops_unless_blocked() {
-        let user = PrimaryUser::default();
-        assert!(wants_to_move(&user, Vec2::Y, false));
-        assert!(wants_to_move(&user, Vec2::ZERO, true));
-        assert!(!wants_to_move(&user, Vec2::splat(0.05), false));
-        assert!(!wants_to_move(&user, Vec2::ZERO, false));
+    fn movement_drops_a_scene_emote_while_jogging_is_free() {
+        let mut harness = Harness::new();
+        harness.modifiers(PlayerModifiers {
+            block_walk: true,
+            block_run: true,
+            ..Default::default()
+        });
+        harness.scene_emote(WAVE);
+        harness.press(FORWARD);
+        harness.update();
+        harness.stand_still();
 
-        let no_gait = PrimaryUser {
+        assert_eq!(harness.playing(), None);
+    }
+
+    #[test]
+    fn a_jump_press_in_the_air_drops_a_scene_emote_though_ground_jumps_are_blocked() {
+        let mut harness = Harness::new();
+        harness.modifiers(PlayerModifiers {
+            block_jump: true,
+            ..Default::default()
+        });
+        harness.airborne(true);
+        harness.scene_emote(WAVE);
+        harness.press(JUMP);
+        harness.update();
+        harness.stand_still();
+
+        assert_eq!(harness.playing(), None);
+    }
+
+    #[test]
+    fn movement_input_drops_a_scene_emote_whose_clip_is_loading() {
+        let mut harness = Harness::new();
+        harness.stand_still();
+        harness.loading(&[WAVE]);
+        harness.scene_emote(WAVE);
+        harness.update();
+        assert_eq!(harness.playing(), urn(WAVE));
+
+        harness.press(FORWARD);
+        harness.update();
+        harness.loading(&[]);
+        harness.stand_still();
+
+        assert_eq!(harness.playing(), None);
+    }
+
+    #[test]
+    fn a_dropped_scene_emote_is_reported_as_used_once_at_its_request() {
+        let mut harness = Harness::new();
+        harness.scene_emote(WAVE);
+        harness.update();
+        assert_eq!(harness.used(), [(WAVE.to_owned(), "scene")]);
+
+        harness.press(FORWARD);
+        harness.update();
+        harness.stand_still();
+
+        assert_eq!(harness.playing(), None);
+        assert_eq!(harness.used(), []);
+    }
+
+    #[test]
+    fn movement_keeps_a_scene_emote_while_every_gait_is_blocked() {
+        let mut harness = Harness::new();
+        harness.modifiers(PlayerModifiers {
+            block_walk: true,
+            block_jog: true,
+            block_run: true,
+            ..Default::default()
+        });
+        harness.scene_emote(WAVE);
+        harness.press(FORWARD);
+        harness.update();
+        harness.stand_still();
+
+        assert_eq!(harness.playing(), urn(WAVE));
+    }
+
+    #[test]
+    fn a_blocked_jump_keeps_a_scene_emote() {
+        // on the ground with jumps blocked
+        let mut harness = Harness::new();
+        harness.modifiers(PlayerModifiers {
+            block_jump: true,
+            ..Default::default()
+        });
+        harness.scene_emote(WAVE);
+        harness.press(JUMP);
+        harness.update();
+        harness.stand_still();
+        assert_eq!(harness.playing(), urn(WAVE));
+
+        // in the air with air jumps and the glide blocked
+        let mut harness = Harness::new();
+        harness.modifiers(PlayerModifiers {
+            block_double_jump: true,
+            block_gliding: true,
+            ..Default::default()
+        });
+        harness.airborne(true);
+        harness.scene_emote(WAVE);
+        harness.press(JUMP);
+        harness.update();
+        harness.stand_still();
+        assert_eq!(harness.playing(), urn(WAVE));
+    }
+
+    #[test]
+    fn a_new_command_clears_a_dropped_scene_emote() {
+        let mut harness = Harness::new();
+        harness.scene_emote(WAVE);
+        harness.press(FORWARD);
+        harness.update();
+        let player = harness.player;
+        assert!(harness
+            .app
+            .world()
+            .entity(player)
+            .contains::<SceneEmoteDropped>());
+
+        harness.own_emote(CLAP);
+        harness.update();
+        let player = harness.app.world().entity(player);
+        assert!(!player.contains::<SceneEmoteRequest>());
+        assert!(!player.contains::<SceneEmoteDropped>());
+    }
+
+    #[test]
+    fn input_that_moves_the_player_drops_unless_blocked() {
+        let free = PrimaryUser::default();
+        assert!(wants_to_move(&free, Vec2::Y, false, true));
+        assert!(wants_to_move(&free, Vec2::ZERO, true, true));
+        assert!(!wants_to_move(&free, Vec2::splat(0.05), false, true));
+        assert!(!wants_to_move(&free, Vec2::ZERO, false, true));
+
+        // any free gait moves the player
+        let jog_only = PrimaryUser {
             block_walk: true,
             block_run: true,
             ..Default::default()
         };
-        assert!(!wants_to_move(&no_gait, Vec2::Y, false));
-        assert!(wants_to_move(&no_gait, Vec2::ZERO, true));
+        assert!(wants_to_move(&jog_only, Vec2::Y, false, true));
+        let no_gait = PrimaryUser {
+            block_jog: true,
+            ..jog_only
+        };
+        assert!(!wants_to_move(&no_gait, Vec2::Y, false, true));
+        assert!(wants_to_move(&no_gait, Vec2::ZERO, true, true));
 
+        // a ground jump block leaves the air jump and the glide
         let no_jump = PrimaryUser {
             block_jump: true,
             ..Default::default()
         };
-        assert!(!wants_to_move(&no_jump, Vec2::ZERO, true));
-        assert!(wants_to_move(&no_jump, Vec2::X, false));
+        assert!(!wants_to_move(&no_jump, Vec2::ZERO, true, true));
+        assert!(wants_to_move(&no_jump, Vec2::ZERO, true, false));
+        let glide_only = PrimaryUser {
+            block_double_jump: true,
+            ..Default::default()
+        };
+        assert!(wants_to_move(&glide_only, Vec2::ZERO, true, false));
+        let no_air_jump = PrimaryUser {
+            block_gliding: true,
+            ..glide_only
+        };
+        assert!(!wants_to_move(&no_air_jump, Vec2::ZERO, true, false));
+        assert!(wants_to_move(&no_air_jump, Vec2::ZERO, true, true));
 
         let blocked = PrimaryUser {
             block_all: true,
             ..Default::default()
         };
-        assert!(!wants_to_move(&blocked, Vec2::Y, true));
+        assert!(!wants_to_move(&blocked, Vec2::Y, true, true));
+        assert!(!wants_to_move(&blocked, Vec2::Y, true, false));
     }
 }

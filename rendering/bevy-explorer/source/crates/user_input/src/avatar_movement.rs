@@ -139,7 +139,7 @@ fn update_locomotion_speeds(
     )>,
 ) {
     for (user, modifiers, active, mut speeds) in player.iter_mut() {
-        let base = modifiers.map_or_else(|| user.clone(), |m| m.combine(user));
+        let base = user.with_modifiers(modifiers);
         let settings = active.map(|a| &a.component.0);
         speeds.set_if_neq(locomotion_speeds(&base, settings));
     }
