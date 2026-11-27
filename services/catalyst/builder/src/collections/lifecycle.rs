@@ -166,11 +166,14 @@ pub async fn delete(state: &State, manage: &CollectionManage) -> Result<(), ApiE
     Ok(())
 }
 
-/// What a standard publish answers: the collection's body and its items.
+/// What a standard publish answers: the collection's body and its items;
+/// `completed` when this call gave the items their on-chain ids.
 #[derive(Debug, Serialize)]
 pub struct Published {
     pub collection: Value,
     pub items: ItemsOut,
+    #[serde(skip)]
+    pub completed: bool,
 }
 
 fn not_published(id: Uuid) -> ApiError {
@@ -330,5 +333,9 @@ pub async fn publish(
         .items
         .collection_items(&read, &ListQuery::parse(None), Some(listing))
         .await?;
-    Ok(Published { collection, items })
+    Ok(Published {
+        collection,
+        items,
+        completed: missing,
+    })
 }

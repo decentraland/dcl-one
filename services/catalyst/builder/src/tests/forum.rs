@@ -313,14 +313,11 @@ async fn a_published_collection_gets_one_topic_in_the_nodes_words() {
         json!({}),
     )
     .await;
-    assert_eq!(status, StatusCode::CONFLICT);
-    assert_eq!(
-        body,
-        json!({ "ok": false, "error": "Forum post already exists", "data": { "id": id, "forum_link": link } })
-    );
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body, json!({ "ok": true, "data": link }));
     assert!(
         e.forum.calls().is_empty(),
-        "a collection with a topic never calls out"
+        "a collection with a topic never calls out, so its post is never changed"
     );
 }
 
@@ -392,6 +389,7 @@ async fn a_title_names_the_creators_claimed_name_and_a_taken_title_gets_the_cont
         .forum
         .calls()
         .iter()
+        .filter(|c| c["method"] == "POST")
         .map(|c| c["body"]["title"].clone())
         .collect();
     let contract = contract.unwrap();
@@ -408,36 +406,44 @@ async fn a_title_names_the_creators_claimed_name_and_a_taken_title_gets_the_cont
 }
 
 #[tokio::test]
-async fn a_third_party_collection_is_posted_under_its_provider_before_any_item_is_submitted() {
+async fn a_third_party_collection_gets_its_topic_only_once_its_items_are_published() {
     let Some(e) = env().await else {
         return;
     };
-    for submitted in [false, true] {
-        let id = third_party(&e.pool, submitted).await;
-        sqlx::query("UPDATE builder.collections SET name = $2 WHERE id = $1")
-            .bind(id)
-            .bind(format!("Linked hats {submitted}"))
-            .execute(&e.pool)
-            .await
-            .unwrap();
-        let (status, body) = send(
-            &e.app,
-            Some(OWNER_KEY),
-            &format!("/v1/collections/{id}/post"),
-            json!({}),
-        )
-        .await;
-        assert_eq!(status, StatusCode::OK, "submitted {submitted}: {body}");
-        let calls = e.forum.take();
-        assert_eq!(calls.len(), 1, "{calls:#?}");
-        assert_eq!(
-            calls[0]["body"]["title"],
-            format!("Third Party collection Linked hats {submitted} with URN: {PROVIDER}")
-        );
-        let (link, post, claimed) = stored(&e.pool, id).await;
-        assert_eq!(link.as_deref(), body["data"].as_str());
-        assert!(post.is_some() && !claimed);
-    }
+    let draft = third_party(&e.pool, false).await;
+    let (status, body) = send(
+        &e.app,
+        Some(OWNER_KEY),
+        &format!("/v1/collections/{draft}/post"),
+        json!({}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT, "{body}");
+    assert_eq!(body["error"], "The collection is not published");
+    assert!(
+        e.forum.calls().is_empty(),
+        "an unpublished collection calls out nothing"
+    );
+    assert_eq!(stored(&e.pool, draft).await, (None, None, false));
+
+    let id = third_party(&e.pool, true).await;
+    let (status, body) = send(
+        &e.app,
+        Some(OWNER_KEY),
+        &format!("/v1/collections/{id}/post"),
+        json!({}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let calls = e.forum.take();
+    assert_eq!(calls.len(), 1, "{calls:#?}");
+    assert_eq!(
+        calls[0]["body"]["title"],
+        format!("Third Party collection Linked hats with URN: {PROVIDER}")
+    );
+    let (link, post, claimed) = stored(&e.pool, id).await;
+    assert_eq!(link.as_deref(), body["data"].as_str());
+    assert!(post.is_some() && !claimed);
     let draft = third_party(&e.pool, false).await;
     let (status, body) = send(
         &e.app,
@@ -523,8 +529,8 @@ async fn two_requests_at_once_make_one_topic() {
     let (status, body) = first.await.unwrap();
     assert_eq!(status, StatusCode::OK, "{body}");
     let (status, again) = send(&e.app, Some(OWNER_KEY), &path, json!({})).await;
-    assert_eq!(status, StatusCode::CONFLICT);
-    assert_eq!(again["data"]["forum_link"], body["data"]);
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(again["data"], body["data"]);
     assert_eq!((e.forum.topics(), creates(&e.forum)), (1, 1));
 }
 
@@ -587,12 +593,11 @@ async fn a_forum_claim_rechecks_the_managers_current_access() {
 }
 
 #[tokio::test]
-async fn a_post_the_forum_accepted_but_the_node_never_stored_is_made_again_once_its_claim_expires()
-{
+async fn a_topic_the_forum_made_but_the_node_never_stored_is_found_by_its_title_and_kept() {
     let Some(e) = env().await else {
         return;
     };
-    let (id, contract) = standard(&e.pool, "Lost", true).await;
+    let (id, _) = standard(&e.pool, "Lost", true).await;
     let path = format!("/v1/collections/{id}/post");
     e.forum.lose(1);
     let (status, body) = send(&e.app, Some(OWNER_KEY), &path, json!({})).await;
@@ -610,39 +615,61 @@ async fn a_post_the_forum_accepted_but_the_node_never_stored_is_made_again_once_
     let (status, body) = send(&e.app, Some(OWNER_KEY), &path, json!({})).await;
     assert_eq!(status, StatusCode::OK, "{body}");
     let link = body["data"].as_str().unwrap().to_string();
-    assert!(link.ends_with("/1002"), "{link}");
-    assert_eq!(stored(&e.pool, id).await, (Some(link), Some(5002), false));
-    let calls = e.forum.calls();
-    let paths: Vec<&Value> = calls.iter().map(|c| &c["path"]).collect();
-    assert_eq!(paths, vec!["/posts.json"; 3], "{calls:#?}");
-    let shortened = crate::curation::slack::shorten(&contract.unwrap());
-    assert!(
-        calls[2]["body"]["title"]
-            .as_str()
-            .unwrap()
-            .ends_with(&format!(" {shortened}")),
-        "the second topic takes the contract in its title: {calls:#?}"
+    assert!(link.ends_with("/1001"), "the first topic is kept: {link}");
+    assert_eq!(stored(&e.pool, id).await, (Some(link), Some(5001), false));
+    assert_eq!(
+        (e.forum.topics(), creates(&e.forum)),
+        (1, 2),
+        "the second create met the taken title and made nothing"
     );
-    assert!(calls.iter().all(|c| c["body"].get("external_id").is_none()));
-    assert_eq!(e.forum.topics(), 2, "the forum holds two topics");
 }
 
 #[tokio::test]
-async fn a_third_party_post_the_node_never_stored_is_refused_again_by_its_taken_title() {
+async fn a_third_party_topic_the_node_never_stored_is_found_by_its_title_and_kept() {
     let Some(e) = env().await else {
         return;
     };
-    let id = third_party(&e.pool, false).await;
+    let id = third_party(&e.pool, true).await;
     let path = format!("/v1/collections/{id}/post");
     e.forum.lose(1);
     let (status, _) = send(&e.app, Some(OWNER_KEY), &path, json!({})).await;
     assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
     age_claim(&e.pool, id).await;
     let (status, body) = send(&e.app, Some(OWNER_KEY), &path, json!({})).await;
-    assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR, "{body}");
-    assert_eq!(body["error"], "Error creating forum post");
+    assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!((e.forum.topics(), creates(&e.forum)), (1, 2));
-    assert_eq!(stored(&e.pool, id).await, (None, None, true));
+    let (link, post, claimed) = stored(&e.pool, id).await;
+    assert_eq!(link.as_deref(), body["data"].as_str());
+    assert_eq!((post, claimed), (Some(5001), false));
+}
+
+#[tokio::test]
+async fn another_collections_topic_with_the_same_title_is_never_taken() {
+    let Some(e) = env().await else {
+        return;
+    };
+    let first = third_party(&e.pool, true).await;
+    let second = third_party(&e.pool, true).await;
+    for id in [first, second] {
+        let (status, body) = send(
+            &e.app,
+            Some(OWNER_KEY),
+            &format!("/v1/collections/{id}/post"),
+            json!({}),
+        )
+        .await;
+        if id == first {
+            assert_eq!(status, StatusCode::OK, "{body}");
+        } else {
+            assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR, "{body}");
+        }
+    }
+    assert_eq!(e.forum.topics(), 1);
+    assert_eq!(
+        stored(&e.pool, second).await.0,
+        None,
+        "the first collection's topic stays its own"
+    );
 }
 
 #[tokio::test]
@@ -691,7 +718,11 @@ async fn an_attempt_overtaken_after_its_claim_lapsed_keeps_the_first_stored_link
         .filter(|(status, _)| *status == StatusCode::OK)
         .map(|(_, body)| &body["data"])
         .collect();
-    assert_eq!(e.forum.topics(), 2, "{answers:?}");
+    assert_eq!(
+        e.forum.topics(),
+        1,
+        "the overtaking attempt keeps the topic the first made: {answers:?}"
+    );
     let (link, _, claimed) = stored(&e.pool, id).await;
     assert!(!claimed);
     assert!(

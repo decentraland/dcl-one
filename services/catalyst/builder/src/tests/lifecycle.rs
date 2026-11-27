@@ -65,6 +65,7 @@ struct Options {
     warehouse: Option<String>,
     writes: bool,
     network: crate::network::Network,
+    forum: Option<crate::curation::forum::Forum>,
     tune: fn(&mut crate::State),
 }
 
@@ -77,6 +78,7 @@ impl Default for Options {
             warehouse: None,
             writes: true,
             network: crate::network::POLYGON,
+            forum: None,
             tune: |_| {},
         }
     }
@@ -107,6 +109,7 @@ async fn node_over(pool: PgPool, options: Options) -> Node {
             network: options.network,
             writes_enabled: options.writes,
             polygon_rpc_url: options.rpc,
+            forum: options.forum,
             warehouse: options.warehouse.map(|url| crate::WarehouseForward {
                 url,
                 token: "example-warehouse-token".into(),
@@ -1514,6 +1517,51 @@ async fn publish_reads_the_copy_when_it_holds_the_collection() {
         chain_ids(&node.pool, id).await,
         vec![Some("0".into()), Some("1".into())]
     );
+}
+
+#[tokio::test]
+async fn a_standard_publish_opens_the_collections_forum_topic_once() {
+    let forum = super::forum_fake::FakeForum::default();
+    let origin = forum.start().await;
+    let committee = FakeCommittee::with(&[&address(COMMITTEE_KEY)]);
+    let Some(node) = node(Options {
+        committee: Some(committee),
+        forum: Some(super::forum_fake::FakeForum::forum(&origin)),
+        ..Options::default()
+    })
+    .await
+    else {
+        return;
+    };
+    let (id, _, _) = draft(&node, 2).await;
+    let contract = contract_of(&node.pool, id).await;
+    copy_holds(&node.pool, &contract, &address(OWNER_KEY), &[], &[1, 0]).await;
+    let publish = format!("/v1/collections/{id}/publish");
+    for _ in 0..2 {
+        let (status, body) = call(&node.app, Some(COMMITTEE_KEY), "POST", &publish, None).await;
+        assert_eq!(status, 200, "{body}");
+        node.state.topics.settled().await;
+    }
+    let creates: Vec<Value> = forum
+        .calls()
+        .into_iter()
+        .filter(|c| c["method"] == "POST")
+        .collect();
+    assert_eq!(creates.len(), 1, "{creates:#?}");
+    assert!(
+        creates[0]["body"]["title"]
+            .as_str()
+            .unwrap()
+            .ends_with("is ready for review!"),
+        "{creates:#?}"
+    );
+    let link: Option<String> =
+        sqlx::query_scalar("SELECT forum_link FROM builder.collections WHERE id = $1")
+            .bind(id)
+            .fetch_one(&node.pool)
+            .await
+            .unwrap();
+    assert!(link.unwrap().starts_with(&format!("{origin}/t/")));
 }
 
 /// The standard publish answers the collection's items the way its items

@@ -84,6 +84,8 @@ impl FakeForum {
         let app = Router::new()
             .route("/posts.json", post(Self::create))
             .route("/posts/{file}", get(Self::read_post).put(Self::update_post))
+            .route("/topics/created-by/{file}", get(Self::created_by))
+            .route("/t/{file}", get(Self::read_topic))
             .with_state(self.clone());
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let origin = format!("http://{}", listener.local_addr().unwrap());
@@ -236,6 +238,59 @@ impl FakeForum {
                 "raw": inner.raws.get(post).cloned().unwrap_or_default(),
             }))
             .into_response(),
+            None => not_found(),
+        }
+    }
+
+    async fn created_by(
+        State(fake): State<Self>,
+        headers: HeaderMap,
+        Path(file): Path<String>,
+    ) -> Response {
+        if !fake.record(
+            "GET",
+            &format!("/topics/created-by/{file}"),
+            &headers,
+            Value::Null,
+        ) {
+            return refused(
+                StatusCode::FORBIDDEN,
+                "You are not permitted to view the requested resource.",
+            );
+        }
+        if file.strip_suffix(".json") != Some(API_USERNAME) {
+            return not_found();
+        }
+        let inner = fake.0.lock().unwrap();
+        let category: i64 = CATEGORY.parse().unwrap();
+        let topics: Vec<Value> = inner
+            .topics
+            .iter()
+            .rev()
+            .map(|t| json!({ "id": t.id, "title": t.title, "slug": t.slug, "category_id": category }))
+            .collect();
+        Json(json!({ "topic_list": { "topics": topics } })).into_response()
+    }
+
+    async fn read_topic(
+        State(fake): State<Self>,
+        headers: HeaderMap,
+        Path(file): Path<String>,
+    ) -> Response {
+        if !fake.record("GET", &format!("/t/{file}"), &headers, Value::Null) {
+            return refused(
+                StatusCode::FORBIDDEN,
+                "You are not permitted to view the requested resource.",
+            );
+        }
+        let inner = fake.0.lock().unwrap();
+        let id: Option<i64> = file.strip_suffix(".json").and_then(|id| id.parse().ok());
+        match inner.topics.iter().find(|t| Some(t.id) == id) {
+            Some(t) => {
+                let posts: Vec<Value> = t.posts.iter().map(|p| json!({ "id": p })).collect();
+                Json(json!({ "id": t.id, "title": t.title, "slug": t.slug, "post_stream": { "posts": posts } }))
+                    .into_response()
+            }
             None => not_found(),
         }
     }

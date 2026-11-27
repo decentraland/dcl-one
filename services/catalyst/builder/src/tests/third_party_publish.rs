@@ -889,6 +889,7 @@ async fn the_curators_hear_of_each_publish_on_slack_and_in_one_forum_topic() {
     .await;
     assert_eq!(status, 200, "{body}");
     w.state.notices.settled().await;
+    w.state.topics.settled().await;
     let short = format!("{}...{}", &manager[..6], &manager[manager.len() - 4..]);
     assert_eq!(
         slack.take(),
@@ -935,6 +936,7 @@ async fn the_curators_hear_of_each_publish_on_slack_and_in_one_forum_topic() {
     .await;
     assert_eq!(status, 200);
     w.state.notices.settled().await;
+    w.state.topics.settled().await;
     assert_eq!(slack.take().len(), 1);
     let calls = forum.take();
     assert_eq!(

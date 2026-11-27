@@ -1,21 +1,26 @@
 //! A collection's one forum topic and the committee's replies in it.
 //!
-//! A collection has a topic once it stores its link. A request first claims
-//! the topic: in one transaction that locks the collection row and decides
-//! access again, a standard collection must be published (a third-party one
-//! need not be), the collection must hold no link, and no other claim may be
+//! A collection gets its topic once it is published: the publish that makes
+//! it so opens the topic after it commits ([`open`]), and a manager whose
+//! client finds no topic asks for it again (`POST /v1/collections/:id/post`).
+//! Nothing a request sends reaches the topic, and a collection that stores
+//! its link is never posted again: asking again answers the stored link.
+//!
+//! An attempt first claims the topic: in one transaction that locks the
+//! collection row (and, for a manager's request, decides access again) the
+//! collection must be published, hold no link, and no other claim may be
 //! younger than [`CLAIM_HOLDS`]; it records `forum_claimed_at` and commits.
 //! Then, holding no connection, it asks the forum, within [`ATTEMPT`], to
 //! create the topic, and stores the link and the first post's id in a second
 //! transaction, which clears the claim. A request that finds a claim within
 //! [`CLAIM_HOLDS`] is told to retry; one that finds an older claim takes it
-//! over. A failed attempt keeps its claim, so the forum is asked at most once
-//! per collection per [`CLAIM_HOLDS`]. When the forum made a topic but its
-//! link was not stored, the next attempt after the claim asks the forum
-//! again: a standard collection's topic is made again under a title that
-//! names its contract, and a third-party collection's is refused by its taken
-//! title.
+//! over. When the forum made a topic whose link was never stored, its title
+//! is taken: the next attempt finds the topic the node's account made under
+//! that title in the category and keeps it when its first post names the
+//! collection. A standard collection whose title another collection's topic
+//! holds takes a title that names its contract; a third-party one is refused.
 
+use std::sync::atomic::Ordering;
 use std::time::Duration;
 
 use chrono::TimeDelta;
@@ -25,10 +30,10 @@ use uuid::Uuid;
 use super::forum::{Created, Failure, Forum, Topic};
 use super::forum_text::{self, PostCollection, PostItem};
 use super::slack::shorten;
-use crate::State;
-use crate::access::{self, CollectionManage, ForumReply, ThirdPartyPublish};
+use crate::access::{self, CollectionManage, ForumReply};
 use crate::chain_state;
 use crate::http::ApiError;
+use crate::{SharedState, State};
 
 /// How long a claim keeps other requests from asking the forum.
 pub const CLAIM_HOLDS: TimeDelta = TimeDelta::seconds(60);
@@ -36,6 +41,21 @@ pub const CLAIM_HOLDS: TimeDelta = TimeDelta::seconds(60);
 pub const ATTEMPT: Duration = Duration::from_secs(45);
 /// The longest reply, in UTF-16 code units as builder-server counts.
 pub const MAX_REPLY: usize = 10_000;
+
+/// The topics being opened after a publish committed.
+#[derive(Clone, Debug, Default)]
+pub struct Topics {
+    in_flight: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+}
+
+impl Topics {
+    /// Waits until every topic started so far has finished.
+    pub async fn settled(&self) {
+        while self.in_flight.load(std::sync::atomic::Ordering::SeqCst) > 0 {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    }
+}
 
 fn unavailable() -> ApiError {
     ApiError::service_unavailable("The forum is not available. Try again later.")
@@ -55,11 +75,18 @@ struct ClaimRow {
     fresh: Option<bool>,
 }
 
-/// Who claims a topic: a manager of the collection asking for it, or the
-/// third-party publish of `items` that just committed.
-enum Recheck<'a> {
-    Manage(&'a CollectionManage),
-    Publish(&'a ThirdPartyPublish, &'a [Uuid]),
+/// Who asks for a topic: a manager of the collection whose client found
+/// none, or the publish of the collection `id` that just committed, listing
+/// `items` when given.
+enum Asker<'a> {
+    Manager(&'a CollectionManage),
+    Publish(Uuid, Option<&'a [Uuid]>),
+}
+
+/// What a claim found: the topic to make, or the link already stored.
+enum Claimed {
+    Topic(Claim),
+    Stored(String),
 }
 
 /// The first [`forum_text::MAX_ITEMS`] items of the collection `id` a post
@@ -82,10 +109,10 @@ async fn post_items(
     .await?)
 }
 
-async fn claim(state: &State, recheck: Recheck<'_>) -> Result<Claim, ApiError> {
-    let id = match recheck {
-        Recheck::Manage(manage) => manage.id(),
-        Recheck::Publish(grant, _) => grant.id(),
+async fn claim(state: &State, asker: Asker<'_>) -> Result<Claimed, ApiError> {
+    let id = match asker {
+        Asker::Manager(manage) => manage.id(),
+        Asker::Publish(id, _) => id,
     };
     let mut tx = state.items.pool().begin().await?;
     let view = chain_state::for_decision(&mut tx).await?;
@@ -97,15 +124,15 @@ async fn claim(state: &State, recheck: Recheck<'_>) -> Result<Claim, ApiError> {
     .bind(CLAIM_HOLDS)
     .fetch_optional(&mut *tx)
     .await?;
-    let (published, contract, owner, only) = match recheck {
-        Recheck::Manage(manage) => {
+    let (published, contract, owner, only) = match asker {
+        Asker::Manager(manage) => {
             let managed = access::confirm_collection_manage(&mut tx, &view, manage).await?;
             (managed.published, managed.contract, managed.owner, None)
         }
-        Recheck::Publish(grant, items) => {
-            access::confirm_third_party_publish(&mut tx, &view, grant).await?;
-            (true, None, None, Some(items))
-        }
+        Asker::Publish(_, items) => match access::topic_state(&mut tx, &view, id).await? {
+            Some((published, contract, owner)) => (published, contract, owner, items),
+            None => (false, None, None, items),
+        },
     };
     let Some(ClaimRow {
         name,
@@ -114,18 +141,15 @@ async fn claim(state: &State, recheck: Recheck<'_>) -> Result<Claim, ApiError> {
         fresh,
     }) = row
     else {
-        return Err(ApiError::internal(format!(
-            "collection {id} vanished under its lock"
-        )));
+        return Err(ApiError::not_found("Collection not found").with_data(json!({ "id": id })));
     };
-    if third_party.is_none() && !published {
+    if !published {
         return Err(
             ApiError::conflict("The collection is not published").with_data(json!({ "id": id }))
         );
     }
     if let Some(link) = link {
-        return Err(ApiError::conflict("Forum post already exists")
-            .with_data(json!({ "id": id, "forum_link": link })));
+        return Ok(Claimed::Stored(link));
     }
     if state.settings.forum.is_none() {
         return Err(unavailable());
@@ -144,7 +168,7 @@ async fn claim(state: &State, recheck: Recheck<'_>) -> Result<Claim, ApiError> {
     .execute(&mut *tx)
     .await?;
     tx.commit().await?;
-    Ok(Claim {
+    Ok(Claimed::Topic(Claim {
         collection: PostCollection {
             id,
             name,
@@ -153,7 +177,7 @@ async fn claim(state: &State, recheck: Recheck<'_>) -> Result<Claim, ApiError> {
         },
         third_party,
         owner,
-    })
+    }))
 }
 
 async fn claimed_name(state: &State, address: &str) -> Result<Option<String>, ApiError> {
@@ -174,6 +198,24 @@ async fn claimed_name(state: &State, address: &str) -> Result<Option<String>, Ap
     }))
 }
 
+/// The topic the node's account made under `title` for the claimed
+/// collection: one whose first post names the collection.
+async fn kept(
+    state: &State,
+    forum: &Forum,
+    claim: &Claim,
+    title: &str,
+) -> Result<Option<Topic>, Failure> {
+    let Some((id, slug)) = forum.own_topic(&state.guarded, title).await? else {
+        return Ok(None);
+    };
+    let post = forum.first_post(&state.guarded, id).await?;
+    let raw = forum.raw_of(&state.guarded, post).await?;
+    Ok(raw
+        .contains(&claim.collection.id.to_string())
+        .then_some(Topic { post, id, slug }))
+}
+
 async fn make(
     state: &State,
     forum: &Forum,
@@ -186,22 +228,22 @@ async fn make(
         &state.settings.builder_server_url,
     );
     let first = forum_text::remove_emojis(&title);
-    match forum.create(&state.guarded, &first, &raw).await? {
-        Created::Topic(topic) => Ok(topic),
-        Created::DuplicateTitle => match (&claim.third_party, &claim.collection.contract) {
-            (None, Some(contract)) => {
-                let retried =
-                    forum_text::remove_emojis(&forum_text::retried_title(&title, contract));
-                match forum.create(&state.guarded, &retried, &raw).await? {
-                    Created::Topic(topic) => Ok(topic),
-                    Created::DuplicateTitle => {
-                        Err(Failure::Refused(reqwest::StatusCode::UNPROCESSABLE_ENTITY))
-                    }
-                }
-            }
-            _ => Err(Failure::Refused(reqwest::StatusCode::UNPROCESSABLE_ENTITY)),
-        },
+    if let Created::Topic(topic) = forum.create(&state.guarded, &first, &raw).await? {
+        return Ok(topic);
     }
+    if let Some(topic) = kept(state, forum, claim, &first).await? {
+        return Ok(topic);
+    }
+    let (None, Some(contract)) = (&claim.third_party, &claim.collection.contract) else {
+        return Err(Failure::Refused(reqwest::StatusCode::UNPROCESSABLE_ENTITY));
+    };
+    let retried = forum_text::remove_emojis(&forum_text::retried_title(&title, contract));
+    if let Created::Topic(topic) = forum.create(&state.guarded, &retried, &raw).await? {
+        return Ok(topic);
+    }
+    kept(state, forum, claim, &retried)
+        .await?
+        .ok_or(Failure::Refused(reqwest::StatusCode::UNPROCESSABLE_ENTITY))
 }
 
 async fn title(state: &State, claim: &Claim) -> Result<String, ApiError> {
@@ -221,13 +263,19 @@ async fn title(state: &State, claim: &Claim) -> Result<String, ApiError> {
     })
 }
 
-/// `POST /v1/collections/:id/post`: makes the collection's forum topic and
-/// answers its link. The whole attempt, the creator's name included, ends
-/// within [`ATTEMPT`], before its claim lapses.
+/// `POST /v1/collections/:id/post`: a manager's client found no topic for
+/// the published collection; the topic is made and its link answered, or
+/// the stored link answered without asking the forum. The whole attempt,
+/// the creator's name included, ends within [`ATTEMPT`], before its claim
+/// lapses.
 pub async fn post(state: &State, manage: &CollectionManage) -> Result<String, ApiError> {
-    let claim = claim(state, Recheck::Manage(manage)).await?;
-    let forum = state.settings.forum.as_ref().ok_or_else(unavailable)?;
-    make_topic(state, forum, &claim).await
+    match claim(state, Asker::Manager(manage)).await? {
+        Claimed::Stored(link) => Ok(link),
+        Claimed::Topic(claim) => {
+            let forum = state.settings.forum.as_ref().ok_or_else(unavailable)?;
+            make_topic(state, forum, &claim).await
+        }
+    }
 }
 
 /// Makes the claimed topic and stores its link and first post unless a
@@ -265,15 +313,29 @@ async fn make_topic(state: &State, forum: &Forum, claim: &Claim) -> Result<Strin
     Ok(stored.flatten().unwrap_or(link))
 }
 
-/// After a third-party publish of `items` commits: the collection's topic
-/// made, as [`post`] makes it, listing them, or, once the collection stores
-/// its topic's first post, that post's text with them appended. Within
-/// [`ATTEMPT`]; a failure is logged, the publish stands.
-pub async fn publish_topic(state: &State, grant: &ThirdPartyPublish, items: &[Uuid]) {
+/// After the publish of the collection `id` commits, in the background: its
+/// topic made, as [`post`] makes it, listing `items` when given; or, after
+/// a third-party publish of `items`, once the collection stores its topic's
+/// first post, that post's text with them appended. Within [`ATTEMPT`]; a
+/// failure is logged, the publish stands, and the manager's client may ask
+/// again.
+pub fn open(state: &SharedState, id: Uuid, items: Option<Vec<Uuid>>) {
+    if state.settings.forum.is_none() {
+        return;
+    }
+    let state = state.clone();
+    let in_flight = state.topics.in_flight.clone();
+    in_flight.fetch_add(1, Ordering::SeqCst);
+    tokio::spawn(async move {
+        publish_topic(&state, id, items.as_deref()).await;
+        in_flight.fetch_sub(1, Ordering::SeqCst);
+    });
+}
+
+async fn publish_topic(state: &State, id: Uuid, items: Option<&[Uuid]>) {
     let Some(forum) = state.settings.forum.as_ref() else {
         return;
     };
-    let id = grant.id();
     let attempt = async {
         let stored: Option<(String, Option<String>, Option<i32>)> = sqlx::query_as(
             "SELECT name, forum_link, forum_id FROM builder.collections WHERE id = $1",
@@ -281,8 +343,8 @@ pub async fn publish_topic(state: &State, grant: &ThirdPartyPublish, items: &[Uu
         .bind(id)
         .fetch_optional(state.items.pool())
         .await?;
-        match stored {
-            Some((name, Some(_), Some(post))) => {
+        match (stored, items) {
+            (Some((name, Some(_), Some(post))), Some(items)) => {
                 let mut conn = state.items.pool().acquire().await?;
                 let collection = PostCollection {
                     id,
@@ -307,20 +369,24 @@ pub async fn publish_topic(state: &State, grant: &ThirdPartyPublish, items: &[Uu
                     .await
                     .map_err(|failure| failure.api_error(id))
             }
-            Some((_, None, _)) => {
-                let claim = claim(state, Recheck::Publish(grant, items)).await?;
-                make_topic(state, forum, &claim).await.map(|_| ())
+            (Some((_, Some(_), None)), Some(_)) => {
+                tracing::warn!(collection = %id, "a published collection's topic has no first post stored, so its new items are not added to it");
+                Ok(())
             }
+            (Some((_, None, _)), items) => match claim(state, Asker::Publish(id, items)).await? {
+                Claimed::Topic(claim) => make_topic(state, forum, &claim).await.map(|_| ()),
+                Claimed::Stored(_) => Ok(()),
+            },
             _ => Ok(()),
         }
     };
     match tokio::time::timeout(ATTEMPT, attempt).await {
         Ok(Ok(())) => {}
         Ok(Err(error)) => {
-            tracing::warn!(collection = %id, status = error.status(), "the forum topic of a third-party publish was not written")
+            tracing::warn!(collection = %id, status = error.status(), "the forum topic of a publish was not written")
         }
         Err(_) => {
-            tracing::warn!(collection = %id, "the forum topic of a third-party publish timed out")
+            tracing::warn!(collection = %id, "the forum topic of a publish timed out")
         }
     }
 }

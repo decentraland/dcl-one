@@ -1999,12 +1999,18 @@ copies upstream's rows (`tooling/migration/sources/builder-server/MAPPING.md`).
 
 ## Builder forum workload
 
-Each collection can create one forum topic, whose body describes at most
-20 items in creation order. Claims and link writes use the collection's
-primary key; item descriptions use `items_collection_created_idx`. No
-additional index or table is needed. A committee reply reads only its
-collection's forum post id and resolves the topic through the configured
-forum API. Calls hold no database connection.
+Each published collection has at most one forum topic, whose body
+describes at most 20 items in creation order. The publish opens it after
+its transaction commits, in a background task; a manager's
+`POST /v1/collections/{id}/post` asks for it again, answers a stored link
+without calling the forum, and never changes a topic's post. Claims and
+link writes use the collection's primary key; item descriptions use
+`items_collection_created_idx`. No additional index or table is needed. A
+topic the forum made whose link was never stored is found among the
+forum account's newest topics and kept when its first post names the
+collection. A committee reply reads only its collection's forum post id
+and resolves the topic through the configured forum API. Calls hold no
+database connection.
 
 For a standard collection's creator name, builder reads, never writes,
 `content.active_pointers` (`pointer`, `entity_id`) and `content.deployments`

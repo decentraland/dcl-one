@@ -1674,6 +1674,20 @@ pub(crate) async fn confirm_collection_manage(
     })
 }
 
+/// What a committed publish opens the topic of the collection `id` with:
+/// whether it is published, its contract and its standard owner; `None`
+/// when the collection is gone. No role is asked: the publish decided it.
+pub(crate) async fn topic_state(
+    conn: &mut PgConnection,
+    view: &DecisionView,
+    id: Uuid,
+) -> Result<Option<(bool, Option<String>, Option<String>)>, ApiError> {
+    Ok(collection(conn, view, id, None).await?.map(|c| {
+        let owner = (!c.third_party).then(|| c.creator.clone().unwrap_or(c.stored_owner.clone()));
+        (c.published, c.contract, owner)
+    }))
+}
+
 /// May reply in the forum topic of a collection: a current committee
 /// member.
 #[derive(Debug)]

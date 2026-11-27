@@ -144,8 +144,10 @@ answer as it does upstream.
   publication table until
   `schemas/releases/builder-linked-publications-retired.sql` copies its
   submitted cheques into `builder.slot_usage_cheques` and drops it.
-- A publish whose forum call or Slack notice fails stands; the topic is
-  made by the next publish or by `POST /v1/collections/{id}/post`.
+- A publish whose forum call or Slack notice fails stands: the publish
+  opens its collection's topic after it commits, and a manager's client
+  that finds none asks for it again with `POST /v1/collections/{id}/post`,
+  which never changes a stored topic.
 - A notice lost to a Slack outage isn't sent again; the timeline and the
   audit rows keep the decision.
 - The curation lists answer at most 20,000 rows, above the reference data's

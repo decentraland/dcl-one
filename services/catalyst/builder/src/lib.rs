@@ -463,6 +463,8 @@ pub struct State {
     pub deployments: collections::deployment::Deployments,
     /// The curators' Slack notices.
     pub notices: curation::slack::Notices,
+    /// The forum topics being opened after a publish.
+    pub topics: curation::forum_posts::Topics,
     /// The content sync's state: whether this process is its own content
     /// authority, so an item URN its content lacks is unused.
     pub content_sync: Arc<crate::content::SyncStatus>,
@@ -533,6 +535,7 @@ impl State {
             now: chrono::Utc::now,
             deployments: collections::deployment::Deployments::default(),
             notices,
+            topics: curation::forum_posts::Topics::default(),
             content_sync: Arc::default(),
             videos,
             file_uploads: items::places::Places::new(

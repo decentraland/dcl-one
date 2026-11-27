@@ -276,6 +276,62 @@ impl Forum {
         }))
     }
 
+    /// The topic titled `title`, compared as Discourse compares titles, in
+    /// the forum's category among the newest the node's account created;
+    /// its id and slug.
+    pub async fn own_topic(
+        &self,
+        client: &dcl_http::Outbound,
+        title: &str,
+    ) -> Result<Option<(i64, String)>, Failure> {
+        let request = self.request(
+            client,
+            reqwest::Method::GET,
+            &format!("/topics/created-by/{}.json", self.api_username),
+            true,
+        );
+        let (status, body) = self.send(request, "list own topics").await?;
+        if !status.is_success() {
+            return Err(Failure::Refused(status));
+        }
+        let topics = body
+            .as_ref()
+            .and_then(|b| b["topic_list"]["topics"].as_array())
+            .ok_or(Failure::Invalid)?;
+        let category = self.category.parse::<i64>().ok();
+        Ok(topics.iter().find_map(|topic| {
+            let same = topic["title"]
+                .as_str()
+                .is_some_and(|t| t.trim().to_lowercase() == title.trim().to_lowercase());
+            (same && topic["category_id"].as_i64() == category)
+                .then(|| Some((positive(&topic["id"])?, topic["slug"].as_str()?.to_string())))
+                .flatten()
+        }))
+    }
+
+    /// The first post of the topic `topic`.
+    pub async fn first_post(
+        &self,
+        client: &dcl_http::Outbound,
+        topic: i64,
+    ) -> Result<i32, Failure> {
+        let request = self.request(
+            client,
+            reqwest::Method::GET,
+            &format!("/t/{topic}.json"),
+            true,
+        );
+        let (status, body) = self.send(request, "read topic").await?;
+        if !status.is_success() {
+            return Err(Failure::Refused(status));
+        }
+        body.as_ref()
+            .and_then(|b| b["post_stream"]["posts"].as_array())
+            .and_then(|posts| posts.first())
+            .and_then(|post| post_id(&post["id"]))
+            .ok_or(Failure::Invalid)
+    }
+
     /// The topic of the post `post`; `None` when the forum names none.
     pub async fn topic_of(
         &self,

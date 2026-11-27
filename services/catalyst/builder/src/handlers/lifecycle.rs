@@ -104,7 +104,7 @@ pub async fn publish(
                 .iter()
                 .map(|curation| curation.item_id)
                 .collect();
-            forum_posts::publish_topic(&state, &grant, &items).await;
+            forum_posts::open(&state, grant.id(), Some(items));
             serde_json::to_value(published)
         }
         Err(sync) => {
@@ -113,7 +113,12 @@ pub async fn publish(
                 headers: &headers,
                 signer: signer.as_str(),
             };
-            serde_json::to_value(lifecycle::publish(&state, &sync, &listing).await?)
+            let id = sync.id();
+            let published = lifecycle::publish(&state, &sync, &listing).await?;
+            if published.completed {
+                forum_posts::open(&state, id, None);
+            }
+            serde_json::to_value(published)
         }
     };
     Ok(Json(ApiData::ok(published.map_err(|e| {
