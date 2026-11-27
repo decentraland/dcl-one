@@ -95,11 +95,14 @@ The builder answers items as `github.com/decentraland/builder-server` at
   free. A small video on a slow link finishes while places are free, and
   holding every place costs a sender that pace per place. The video must be an MP4 container (an `ftyp`
   box first, a `moov` box, boxes that end where the file does), whatever
-  its part's name or content type says. Only then, in one transaction with
-  the item locked, the node decides access again, checks that the item
-  still names the hash at `video.mp4`, stores the file and records the
-  upload; that store runs in a task of its own, so a client that leaves
-  can't cut it short. A refused or abandoned upload leaves no spool file,
+  its part's name or content type says. Only then the node syncs the spool
+  file, decides access again, checks that the item still names the hash at
+  `video.mp4` and stores the file, holding no lock; then, in one
+  transaction with the item locked, it decides and checks again and records
+  the upload under the store's shared lock while the file is still stored
+  (a file the blob collector removed in between answers 503, as a file
+  upload does). That store and record run in a task of their own, so a
+  client that leaves can't cut them short. A refused or abandoned upload leaves no spool file,
   and a spool file a crash left is removed by the first video upload after
   it is an hour old.
 - **Naming grants nothing.** An item may name any hash. What proves a wallet

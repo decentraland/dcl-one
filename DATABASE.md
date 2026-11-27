@@ -1540,8 +1540,9 @@ Invariants:
 - One transaction per write. A save, a delete and an upload lock the item's
   collections and the item (`FOR UPDATE`, collections first, as the
   publications do) and decide again inside the transaction. A video upload
-  holds no connection while its body streams to a spool file; its
-  transaction starts once the body has arrived. A third-party
+  holds no connection while its body streams to a spool file; once the
+  body has arrived it stores the file, and its transaction, which only
+  checks that the file is still stored, starts after. A third-party
   save also takes an advisory lock on its URN's item part, so two saves never
   take the same item part in the provider's collections.
 - Upload records follow the names. When a save or a delete leaves a hash no

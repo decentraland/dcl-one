@@ -434,8 +434,11 @@ async fn a_creator_uploads_the_video_their_smart_wearable_names_and_plays_it_bac
     );
 }
 
+/// A video whose stored bytes the collector removes while the upload waits
+/// for the store answers 503 and records nothing, as a file upload does;
+/// sent again, it is stored and recorded.
 #[tokio::test]
-async fn a_forgotten_video_uploaded_again_while_the_collector_unlinks_it_keeps_its_bytes() {
+async fn a_video_the_collector_takes_while_its_upload_waits_answers_503_and_its_retry_keeps_it() {
     let Some(node) = writable_node(|_| {}).await else {
         return;
     };
@@ -484,7 +487,21 @@ async fn a_forgotten_video_uploaded_again_while_the_collector_unlinks_it_keeps_i
     node.storage.delete_strict(&hash(&video)).await.unwrap();
     batch.commit().await.unwrap();
 
-    assert_eq!(again.await.unwrap().0, 200);
+    let (status, answer) = again.await.unwrap();
+    assert_eq!(
+        (status, answer["error"].as_str()),
+        (
+            503,
+            Some("The content store is being collected; retry shortly")
+        )
+    );
+    assert!(records(&node.pool, &hash(&video)).await.is_empty());
+    assert_eq!(
+        upload(&node, Some(OWNER_KEY), item, video_form(&video))
+            .await
+            .0,
+        200
+    );
     assert_eq!(
         records(&node.pool, &hash(&video)).await,
         vec![(video.len() as i64, address(OWNER_KEY))]
@@ -492,6 +509,10 @@ async fn a_forgotten_video_uploaded_again_while_the_collector_unlinks_it_keeps_i
     assert!(stored(&node, &hash(&video)).await);
 }
 
+/// A video behind an unlink batch that outlasts the store lock's wait
+/// answers 503 and records nothing; its bytes went to the store before the
+/// upload asked for the lock, so no transaction writes them, and the
+/// collector may take them.
 #[tokio::test]
 async fn a_video_behind_a_long_unlink_batch_answers_503_and_frees_its_place_and_spool() {
     let Some(node) = writable_node(|_| {}).await else {
@@ -518,7 +539,10 @@ async fn a_video_behind_a_long_unlink_batch_answers_503_and_frees_its_place_and_
         )
     );
     assert!(records(&node.pool, &hash(&video)).await.is_empty());
-    assert!(!stored(&node, &hash(&video)).await);
+    assert!(
+        stored(&node, &hash(&video)).await,
+        "the bytes were not stored before the store's lock"
+    );
     assert_eq!(spool_entries(&node), 0, "the spool keeps nothing");
     assert!(node.state.videos.idle(), "the place was kept");
 
