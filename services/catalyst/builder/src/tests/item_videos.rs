@@ -1373,7 +1373,21 @@ async fn another_upload(
     key: &str,
     ip: &str,
 ) -> (u16, Option<String>, Option<String>, Uuid) {
-    let video = mp4("another");
+    another_upload_of(node, key, ip, &mp4("another")).await
+}
+
+/// Bytes past what the largest video's pace brings in one idle bound
+/// (250 MB over 20 minutes, for 30 seconds: 6,250,000).
+const EARNS_A_CUT: usize = 6_500_000;
+
+/// [`another_upload`] of `video`.
+async fn another_upload_of(
+    node: &Node,
+    key: &str,
+    ip: &str,
+    video: &[u8],
+) -> (u16, Option<String>, Option<String>, Uuid) {
+    let video = video.to_vec();
     let collection = smart_wearable_of(node, key, &video).await;
     let item = item_of(node, collection).await;
     let (status, answer, retry) = send_from(
@@ -2436,9 +2450,49 @@ async fn a_newcomer_that_sends_nothing_cuts_no_running_upload() {
     cleanup(&node.pool, &[collection, other], &[hash(&video)]).await;
 }
 
+/// A fresh wallet that takes a place, sends one byte of its video and
+/// stalls cuts nothing: the creator's upload behind the pace finishes.
+#[tokio::test]
+async fn a_newcomer_that_sends_one_byte_and_stalls_cuts_no_running_upload() {
+    let Some(held) = one_place_held(|_| {}, 0).await else {
+        return;
+    };
+    let node = &held.node;
+    let video = mp4("a newcomer that sends a byte");
+    let other = smart_wearable_of(node, WALLET_KEYS[0], &video).await;
+    let item = item_of(node, other).await;
+    let whole = video_form(&video);
+    let head = whole[..headers_end(&whole) + 1].to_vec();
+    let (body, pulled) = counted(head.clone(), 0, vec![], true);
+    let newcomer = tokio::spawn({
+        let app = node.app.clone();
+        async move {
+            let path = format!("/v1/items/{item}/videos");
+            let request = post(Some(WALLET_KEYS[0]), &path, Some("198.51.100.50"), body).await;
+            answer(app.oneshot(request).await.unwrap()).await
+        }
+    });
+    until("the newcomer's byte", || {
+        pulled.load(Ordering::SeqCst) >= head.len() as u64 || newcomer.is_finished()
+    })
+    .await;
+    settle().await;
+    assert!(
+        !held.uploading.is_finished(),
+        "the creator's upload was cut"
+    );
+    let (node, collection, video, (status, answer, _)) = held.finish().await;
+    assert_eq!(status, 200, "{answer}");
+    newcomer.abort();
+    let _ = newcomer.await;
+    until("every place back", || node.state.videos.idle()).await;
+    cleanup(&node.pool, &[collection, other], &[hash(&video)]).await;
+}
+
 /// An upload behind the pace the largest video needs gives its place to a
-/// newcomer once the newcomer's bytes arrive: the newcomer's video is kept,
-/// the slow one answers 408 with `Retry-After` and leaves no spool file.
+/// newcomer once the newcomer has sent what that pace brings in one idle
+/// bound: the newcomer's video is kept, the slow one answers 408 with
+/// `Retry-After` and leaves no spool file.
 #[tokio::test]
 async fn a_slow_upload_gives_its_place_to_a_newcomer_that_sends() {
     let Some(Held {
@@ -2451,7 +2505,8 @@ async fn a_slow_upload_gives_its_place_to_a_newcomer_that_sends() {
     else {
         return;
     };
-    let (status, error, _, other) = another_upload(&node, WALLET_KEYS[0], "198.51.100.50").await;
+    let (status, error, _, other) =
+        another_upload_of(&node, WALLET_KEYS[0], "198.51.100.50", &mp4_of(EARNS_A_CUT)).await;
     assert_eq!(status, 200, "{error:?}");
     let (status, answer, retry) = tokio::time::timeout(Duration::from_secs(10), uploading)
         .await
@@ -3015,9 +3070,11 @@ async fn a_file_upload_that_stalls_ends_at_the_idle_bound() {
     cleanup(&node.pool, &[collection], &[]).await;
 }
 
-/// A file upload behind its pace gives its place to a creator whose files
-/// arrive: the creator's files are kept and the stalled upload answers 408
-/// with `Retry-After`.
+/// A file upload behind its pace gives its place to a creator who has sent
+/// what that pace brings in one idle bound (21 MiB over 5 minutes, for 30
+/// seconds: about 2.2 MB): the creator's files are kept and the stalled
+/// upload answers 408 with `Retry-After`. A creator whose few small files
+/// arrive first is served without cutting it.
 #[tokio::test]
 async fn a_stalled_file_upload_gives_its_place_to_a_creator_that_sends() {
     let Some(node) = node_with(
@@ -3043,8 +3100,28 @@ async fn a_stalled_file_upload_gives_its_place_to_a_creator_that_sends() {
         node.state.file_uploads.in_flight() == 1
     })
     .await;
-    let (status, body, creator) =
+    let (status, body, small) =
         tiny_files(&node, WALLET_KEYS[1], "198.51.100.81", 2, "creator").await;
+    assert_eq!(status, 200, "{body}");
+    settle().await;
+    assert!(!stalled.is_finished(), "small files cut the stalled upload");
+    let file = vec![9u8; 2_400_000];
+    let (creator, item) = bounded_wearable(&node, WALLET_KEYS[2], &mp4("unused")).await;
+    saved_item(
+        &node.state.items,
+        &address(WALLET_KEYS[2]),
+        &json!({ "id": item, "name": "Large hat", "collection_id": creator, "rarity": "common",
+                 "contents": { "model.glb": hash(&file) } }),
+    )
+    .await;
+    let (status, body, _) = send_from(
+        &node.app,
+        Some(WALLET_KEYS[2]),
+        &format!("/v1/items/{item}/files"),
+        Some("198.51.100.82"),
+        Body::from(form(&[(&hash(&file), Some("blob"), &file)])),
+    )
+    .await;
     assert_eq!(status, 200, "{body}");
     let (status, answer, retry) = tokio::time::timeout(Duration::from_secs(10), stalled)
         .await
@@ -3062,7 +3139,7 @@ async fn a_stalled_file_upload_gives_its_place_to_a_creator_that_sends() {
         node.state.file_uploads.in_flight() == 0
     })
     .await;
-    cleanup(&node.pool, &[collection, creator], &[]).await;
+    cleanup(&node.pool, &[collection, small, creator], &[hash(&file)]).await;
 }
 
 /// An upload declaring a body longer than its route takes is refused at

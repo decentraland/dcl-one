@@ -12,11 +12,13 @@
 //! first read, so the checks between its admission and that read count
 //! against neither.
 //! While every place is held and some upload is behind, a newcomer takes an
-//! extra place and waits for its own first bytes, one newcomer for each
-//! upload behind; when they arrive ([`Admission::arrived`]) the slowest
-//! upload behind ends with 408 and `Retry-After`, or, if none is behind any
-//! more and no place came free, the newcomer does. A newcomer that sends
-//! nothing ends at its idle bound and cuts nobody.
+//! extra place and reads its body, one newcomer for each upload behind. It
+//! earns a place once it has received what the pace brings in one idle bound
+//! ([`Admission::arrived`]): then the slowest upload behind ends with 408
+//! and `Retry-After`, or, if none is behind any more and no place came free,
+//! the newcomer does, with 429. A newcomer whose whole body arrives first
+//! cuts nobody, and one that hasn't earned its place by the idle bound after
+//! its first read gives way itself, with 429.
 
 use std::collections::HashMap;
 use std::future::Future;
@@ -257,22 +259,43 @@ impl Admission {
     /// gave its place to a newcomer.
     pub async fn read<T>(&self, read: impl Future<Output = T>) -> Result<T, ApiError> {
         let started = *self.progress.started.get_or_init(Instant::now);
-        let until = self.deadline.min(self.last.unwrap_or(started) + self.idle);
+        let newcomer = self.progress.waiting.load(Ordering::SeqCst);
+        let since = if newcomer {
+            started
+        } else {
+            self.last.unwrap_or(started)
+        };
+        let until = self.deadline.min(since + self.idle);
         tokio::select! {
-            read = timeout_at(until, read) => read.map_err(|_| timed_out()),
+            read = timeout_at(until, read) => read.map_err(|_| self.timed_out()),
             () = self.progress.cut_now.notified() => Err(yielded()),
         }
     }
 
-    /// `bytes` of the body arrived. A newcomer's first bytes take the place
-    /// of the slowest upload behind; with none behind and no place come
-    /// free, the newcomer gives way itself (429).
+    /// The read ran out of time: a newcomer that hasn't earned its place
+    /// gives way itself (429), any other upload ends with 408.
+    fn timed_out(&self) -> ApiError {
+        if self.progress.waiting.load(Ordering::SeqCst) {
+            self.progress.cut.store(true, Ordering::SeqCst);
+            return ApiError::http(429, full(self.what));
+        }
+        timed_out()
+    }
+
+    /// `bytes` of the body arrived. Once a newcomer has received what the
+    /// pace brings in one idle bound, it takes the place of the slowest
+    /// upload behind; with none behind and no place come free, it gives way
+    /// itself (429).
     pub fn arrived(&mut self, bytes: usize) -> Result<(), ApiError> {
         self.last = Some(Instant::now());
-        self.progress
+        let received = self
+            .progress
             .received
-            .fetch_add(bytes as u64, Ordering::SeqCst);
-        if bytes == 0 || !self.progress.waiting.load(Ordering::SeqCst) {
+            .fetch_add(bytes as u64, Ordering::SeqCst)
+            + bytes as u64;
+        if !self.progress.waiting.load(Ordering::SeqCst)
+            || (received as f64) < self.progress.pace * self.idle.as_secs_f64()
+        {
             return Ok(());
         }
         let in_flight = self.in_flight.lock().unwrap_or_else(|e| e.into_inner());
@@ -329,6 +352,10 @@ mod tests {
         most: 1_000,
     };
 
+    /// What [`TIMING`]'s pace brings in one idle bound: 10 bytes a second
+    /// for 30 seconds.
+    const EARNS_A_CUT: usize = 300;
+
     fn four() -> Places {
         Places::new("uploads", 4, 1, 2)
     }
@@ -365,7 +392,7 @@ mod tests {
                 .admit("0xcreator", None, TIMING)
                 .map_err(|refused| refused.status())
                 .expect("the creator waits for its bytes");
-            assert!(creator.arrived(1).is_ok());
+            assert!(creator.arrived(EARNS_A_CUT).is_ok());
             assert_eq!(held.iter().filter(|h| h.gave_way()).count(), 1);
         }
     }
@@ -395,7 +422,7 @@ mod tests {
             .map_err(|refused| refused.status())
             .expect("the creator waits for its bytes");
         assert!(!held[2].gave_way(), "cut before the creator sent");
-        creator.arrived(1).unwrap();
+        creator.arrived(EARNS_A_CUT).unwrap();
         let cut: Vec<usize> = (0..4).filter(|n| held[*n].gave_way()).collect();
         assert_eq!(cut, [2]);
     }
@@ -431,7 +458,10 @@ mod tests {
             .map_err(|refused| refused.status())
             .expect("the newcomer waits for its bytes");
         holder.arrived(1_000).unwrap();
-        assert_eq!(newcomer.arrived(1).map_err(|e| e.status()), Err(429));
+        assert_eq!(
+            newcomer.arrived(EARNS_A_CUT).map_err(|e| e.status()),
+            Err(429)
+        );
         assert!(newcomer.gave_way() && !holder.gave_way());
         drop(newcomer);
         assert_eq!(places.in_flight(), 1);
@@ -450,8 +480,51 @@ mod tests {
             .map_err(|refused| refused.status())
             .expect("the newcomer waits for its bytes");
         drop(first);
-        newcomer.arrived(1).unwrap();
+        newcomer.arrived(EARNS_A_CUT).unwrap();
         assert!(!second.gave_way() && !newcomer.gave_way());
         assert_eq!(places.in_flight(), 2);
+    }
+
+    /// A newcomer's first bytes cut nobody: only once it has received what
+    /// the pace brings in one idle bound does the slowest upload behind give
+    /// way.
+    #[tokio::test(start_paused = true)]
+    async fn a_newcomer_cuts_only_once_it_has_sent_what_the_pace_brings_in_its_idle_bound() {
+        let places = Places::new("uploads", 1, 1, 2);
+        let holder = hold(&places, 0).await;
+        tokio::time::advance(Duration::from_secs(10)).await;
+        let mut newcomer = places
+            .admit("0xnewcomer", None, TIMING)
+            .map_err(|refused| refused.status())
+            .expect("the newcomer waits for its bytes");
+        newcomer.read(std::future::ready(())).await.unwrap();
+        newcomer.arrived(1).unwrap();
+        newcomer.arrived(EARNS_A_CUT - 2).unwrap();
+        assert!(!holder.gave_way(), "cut before the newcomer earned it");
+        newcomer.arrived(1).unwrap();
+        assert!(holder.gave_way());
+    }
+
+    /// A newcomer that trickles a byte now and then gives way itself, with
+    /// 429, at the idle bound after its first read, and the upload it waited
+    /// on keeps its place.
+    #[tokio::test(start_paused = true)]
+    async fn a_newcomer_that_trickles_without_earning_a_cut_gives_way_itself() {
+        let places = Places::new("uploads", 1, 1, 2);
+        let holder = hold(&places, 0).await;
+        tokio::time::advance(Duration::from_secs(10)).await;
+        let mut newcomer = places
+            .admit("0xnewcomer", None, TIMING)
+            .map_err(|refused| refused.status())
+            .expect("the newcomer waits for its bytes");
+        let first_read = Instant::now();
+        newcomer.read(std::future::ready(())).await.unwrap();
+        newcomer.arrived(1).unwrap();
+        tokio::time::advance(Duration::from_secs(20)).await;
+        newcomer.arrived(1).unwrap();
+        let stalled = newcomer.read(std::future::pending::<()>()).await;
+        assert_eq!(stalled.map_err(|e| e.status()), Err(429));
+        assert_eq!(first_read.elapsed(), IDLE_TIMEOUT);
+        assert!(newcomer.gave_way() && !holder.gave_way());
     }
 }

@@ -88,11 +88,14 @@ The builder answers items as `github.com/decentraland/builder-server` at
   read, than the pace the largest video needs to arrive in 20 minutes
   (about 1.7 Mbit/s). While every
   place is held and an upload is behind, a newcomer takes an extra place,
-  one for each upload behind, and reads its body; once its first bytes
-  arrive, the slowest upload behind ends with 408 and `Retry-After`, or,
-  when none is behind any more and no place came free, the newcomer ends
-  with 429. A newcomer that sends nothing ends at its idle bound having cut
-  nobody, so a place is taken only by an upload that is sending. An
+  one for each upload behind, and reads its body. It earns a place once it
+  has received what that pace brings in 30 seconds (6,250,000 bytes for a
+  video, about 2.2 MB for files): then the slowest upload behind ends with
+  408 and `Retry-After`, or, when none is behind any more and no place came
+  free, the newcomer ends with 429. A newcomer whose whole body arrives
+  first cuts nobody. One that hasn't earned its place 30 seconds after its
+  first read ends with 429 and `Retry-After`, having cut nobody, so a place
+  is taken only by an upload that keeps the pace. An
   upload is behind from its first moment, with no grace: a grace would let
   uploads that send nothing and restart inside it hold every place for
   free. A small video on a slow link finishes while places are free, and
@@ -227,11 +230,11 @@ The builder answers items as `github.com/decentraland/builder-server` at
   each upload, 32 at a time by default (8 GB of spool, and 250 MB for each
   place `BUILDER_VIDEO_UPLOADS_MAX` sets), one for each wallet and two for
   each source address, so filling every place takes 32 wallets on 16
-  addresses. A newcomer waiting on an extra place holds no more than its
-  first read's bytes before an upload gives way, and the spool of the
+  addresses. A newcomer waiting on an extra place holds what the pace
+  brings in 30 seconds before an upload gives way, and the spool of the
   upload that gives way is removed. A stalled sender gives its place back
-  within 30 seconds, and one sending below the pace as soon as a newcomer's
-  bytes arrive. A replaced video's bytes become collectable once no item
+  within 30 seconds, and one sending below the pace as soon as a newcomer
+  earns its place. A replaced video's bytes become collectable once no item
   names them.
 
 ## Alternatives considered

@@ -8,7 +8,7 @@
 //! ([`Mp4`]); every read waits at most until the upload's deadline and the
 //! idle bound after the last bytes, so a sender that stalls is cut and
 //! frees its place, and an upload behind the pace the largest video needs
-//! gives its place to a newcomer whose bytes arrive ([`super::places`]). A
+//! gives its place to a newcomer that earns it ([`super::places`]). A
 //! wallet and an upload source have a day of upload time
 //! ([`WALLET_VIDEO_SECS_A_DAY`], [`SOURCE_VIDEO_SECS_A_DAY`]), spent by
 //! the time each upload holds its place, bytes or none. The spool file is
@@ -190,7 +190,7 @@ impl Videos {
     /// [`SOURCE_VIDEO_SECS_A_DAY`]; 429 with `Retry-After` otherwise). Its
     /// body must arrive within the deadline and the idle bound, and an upload
     /// behind the pace [`Videos::max_bytes`] needs to arrive by the deadline
-    /// gives its place to a newcomer whose bytes arrive.
+    /// gives its place to a newcomer that earns it ([`Places`]).
     pub fn admit(&self, signer: &str, source: Option<&str>) -> Result<VideoAdmission, Response> {
         let now = Instant::now();
         let at = now.into_std();

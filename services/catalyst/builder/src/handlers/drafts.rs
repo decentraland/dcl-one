@@ -137,7 +137,7 @@ pub async fn get_item(
 /// with `Retry-After` at once) and the upload's budgets checked
 /// ([`crate::limits::within_storage`]) before the body is read
 /// (`items::upload`) within its deadline and the idle bound, an upload
-/// behind its pace giving its place to a newcomer whose bytes arrive
+/// behind its pace giving its place to a newcomer that earns it
 /// ([`crate::items::places`]); answers `{ok: true}` without data.
 pub async fn post_item_files(
     State(state): State<SharedState>,
