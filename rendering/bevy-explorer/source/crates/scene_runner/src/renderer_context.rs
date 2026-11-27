@@ -77,11 +77,9 @@ pub struct RendererSceneContext {
     /// updates or peer messages (`GLOBAL_UPDATE_BACKLOG_DUE`, `SCENE_MESSAGE_BACKLOG_DUE`); its
     /// dispatch counts it.
     pub(crate) due_on_backlog: bool,
-    /// `GlobalCrdtState::sent` of the scene's crdt context at its last dispatch: the scene has
-    /// read every global update its host held then, replays included.
+    /// `GlobalCrdtState::sent` of the scene's crdt context at its last dispatch.
     pub(crate) global_updates_read: u64,
-    /// `SceneMessageTraffic::delivered_to` the scene at its last dispatch: the scene has read
-    /// every peer message its inbound queues held then.
+    /// `SceneMessageTraffic::delivered_to` the scene at its last dispatch.
     pub(crate) scene_messages_read: u64,
     /// This scene's `featureToggles.portableExperiences`, applied to portables while the
     /// player stands in it.
@@ -169,8 +167,7 @@ pub const SCENE_JS_SPAWN_TICK: u32 = 1;
 pub const SCENE_FIRST_DISPATCH_TICK: u32 = 2;
 /// The reply to the scene's first `onUpdate`.
 pub const SCENE_FIRST_UPDATE_TICK: u32 = 3;
-/// From this tick the scene counts as loaded: before it, the player's scene defers the others'
-/// loading, and the scene loop ticks it at the full rate.
+/// The tick from which a scene counts as loaded.
 pub(crate) const SCENE_LOADED_TICK: u32 = 7;
 
 pub const SCENE_LOG_BUFFER_SIZE: usize = 100;
@@ -198,8 +195,7 @@ impl RendererSceneContext {
         matches!(self.state, SceneState::Broken)
     }
 
-    /// Whether the scene loop queues the scene when it is due: not broken, and not blocked unless
-    /// it is the system scene.
+    /// Whether the scene is not broken, and not blocked unless it is the system scene.
     pub(crate) fn schedulable(&self, is_super: bool) -> bool {
         !self.broken() && (self.blocked.is_empty() || is_super)
     }

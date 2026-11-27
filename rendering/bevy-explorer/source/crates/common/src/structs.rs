@@ -2532,8 +2532,7 @@ pub struct DebugInfo {
     pub info: HashMap<&'static str, String>,
 }
 
-/// The global updates a scene host's channel is created with for a scene between its ticks
-/// (tokio rounds it up to 1,024); past that, the oldest are dropped.
+/// The capacity of a scene host's global update channel for one scene.
 pub const SCENE_GLOBAL_UPDATE_CAPACITY: usize = 1000;
 
 #[derive(Clone, Serialize, Deserialize)]

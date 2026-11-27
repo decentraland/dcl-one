@@ -388,9 +388,8 @@ pub async fn renderer_ipc_in(mut stream: RecvHalf) {
     }
 }
 
-/// The global updates a scene's spawn replays to every scene of its context: `renderer_ipc_out`
-/// swaps in the new scene's receiver and forwards what it holds, at most its capacity after
-/// tokio's rounding (a lagged receiver's `len` counts the updates it lost too).
+/// The global updates `receiver` holds, at most the channel's allocated capacity (the next power
+/// of two of `SCENE_GLOBAL_UPDATE_CAPACITY`).
 pub fn replayed_global_updates(
     receiver: &tokio::sync::broadcast::Receiver<GlobalCrdtStateUpdate>,
 ) -> u64 {

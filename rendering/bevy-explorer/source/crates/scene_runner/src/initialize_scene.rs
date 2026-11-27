@@ -787,7 +787,6 @@ pub(crate) fn initialize_scene(
             scene_context.platform = Some("mobile".to_owned());
         }
 
-        // an update sent between here and the forwarder's swap is replayed uncounted
         let replayed = replayed_global_updates(&global_updates);
 
         let wake = SceneWake::default();

@@ -63,9 +63,7 @@ pub(crate) const SCENE_TICK_RATE_BANDS: [(f32, f32); 5] = [
     (80.0, 5.0),
 ];
 
-/// The ticks a second of a scene beyond the last band, so it keeps reading the channels it
-/// reads only while ticking. Unread global updates and peer messages make it due sooner
-/// (`GLOBAL_UPDATE_BACKLOG_DUE`, `SCENE_MESSAGE_BACKLOG_DUE`).
+/// The most ticks a second of a scene beyond the last band.
 pub(crate) const FAR_SCENE_TICK_RATE: f32 = 0.5;
 
 /// The most ticks a second of a scene behind the camera.
@@ -86,8 +84,7 @@ pub(crate) const SCENE_TICK_RATE_CAPS: [f32; SCENE_TICK_RATE_BANDS.len() + 2] = 
 };
 
 /// The steepest camera pitch, as the height of the camera's unit forward direction, at which the
-/// behind cap applies. `is_behind` tests parcels against the flat forward direction, so looking
-/// steeply up or down it can call a scene behind while its content is on screen.
+/// behind cap applies.
 pub(crate) const BEHIND_SCENE_MAX_FORWARD_Y: f32 = 0.5;
 
 /// Whether a camera facing `forward` (unit length) applies the behind cap.
@@ -97,8 +94,8 @@ pub(crate) fn behind_cap_applies(forward: Vec3) -> bool {
 
 /// Why every scene ticks at the full rate this frame, or None while the distance bands cap them.
 /// `camera` is the rendering camera and whether it frames a photo; `caps_off` is the
-/// `/scene_tick_rate_caps` switch. The bands are measured from the player, so the photo camera and
-/// a scene's cinematic camera, which can frame scenes far from it, lift every cap.
+/// `/scene_tick_rate_caps` switch. The photo camera and a scene's cinematic camera lift every
+/// cap.
 pub(crate) fn tick_rate_caps_lifted(
     camera: Option<(&PrimaryCamera, bool)>,
     caps_off: bool,
@@ -134,8 +131,7 @@ pub(crate) fn camera_tick_rate_caps(
 
 /// The most ticks a second of a scene at `partition`: its distance band's rate, or
 /// `FAR_SCENE_TICK_RATE` beyond the last band, at most `BEHIND_SCENE_TICK_RATE` behind the
-/// camera from the second band on. In the nearest band the player can back into the scene's
-/// colliders and hears its audio, so there it keeps its band's rate.
+/// camera from the second band on.
 pub(crate) fn scene_tick_rate(partition: &PartitionData) -> f32 {
     let band = SCENE_TICK_RATE_BANDS
         .iter()
@@ -168,15 +164,13 @@ pub(crate) fn tick_rate_allows(rate: f32, age: f64, frame: f64) -> bool {
 }
 
 /// The global updates delivered to a capped scene's host since its last dispatch from which it
-/// is due: a quarter of what the host holds. A spawn replay can hold up to the whole host, since
-/// it starts at the spawning scene's snapshot, but one longer than the scene's unread updates
-/// holds all of them again, so an overflow that drops their originals loses none.
+/// is due: a quarter of `SCENE_GLOBAL_UPDATE_CAPACITY`.
 pub(crate) const GLOBAL_UPDATE_BACKLOG_DUE: u64 =
     common::structs::SCENE_GLOBAL_UPDATE_CAPACITY as u64 / 4;
 
 /// The peer messages handed to a capped scene's inbound queues (string bus, binary bus, topic
 /// inbox) since its last dispatch from which it is due: a quarter of the smallest queue, the
-/// topic inbox (645 messages; each bus holds 1,024). Each queue drops new messages when full.
+/// topic inbox (645 messages; each bus holds 1,024).
 pub(crate) const SCENE_MESSAGE_BACKLOG_DUE: u64 = 160;
 
 /// Where partitions are measured from: distance from the player, facing from the rendering

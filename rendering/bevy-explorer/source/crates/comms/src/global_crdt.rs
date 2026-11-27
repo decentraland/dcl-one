@@ -461,15 +461,12 @@ impl GlobalCrdtState {
 
     /// The updates delivered to each of this context's scene hosts since it was created: every
     /// update sent, plus those replayed to every scene when a scene spawns
-    /// (`count_replayed`). A scene reads what its host holds at its next tick, so the count at a
-    /// scene's dispatch bounds what it has read.
+    /// (`count_replayed`).
     pub fn sent(&self) -> u64 {
         self.sent
     }
 
-    /// Counts `replayed` updates a scene host delivers to every scene of this context a second
-    /// time: the native IPC forwarder replays a spawning scene's receiver (the updates since
-    /// its snapshot) to the whole context.
+    /// Add `replayed` updates delivered a second time to every scene host of this context.
     pub fn count_replayed(&mut self, replayed: u64) {
         self.sent += replayed;
     }

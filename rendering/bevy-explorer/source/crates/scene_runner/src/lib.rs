@@ -735,8 +735,8 @@ fn update_scene_priority(
             context.due_on_backlog = false;
             if let Some(rate) = context.tick_rate_cap {
                 if !tick_rate_allows(rate, age, time.delta_secs_f64()) {
-                    // its scene host drops global updates and peer messages past its queues'
-                    // capacity, so a scene that has many unread is due whatever its band
+                    // many unread global updates or peer messages make the scene due whatever
+                    // its band
                     let unread_updates =
                         global_updates_sent(&crdt_context_ids, &crdt_contexts, &context)
                             .saturating_sub(context.global_updates_read);
@@ -805,8 +805,7 @@ fn player_scenes(
 }
 
 /// The global updates delivered to the scene's host, replays included: the count of its crdt
-/// context (`CrdtContexts::try_for_scene_hash`), 0 while it has none. The scene reads what its
-/// host holds at its next tick.
+/// context (`CrdtContexts::try_for_scene_hash`), 0 while it has none.
 fn global_updates_sent(
     crdt_context_ids: &CrdtContexts,
     crdt_contexts: &Query<&GlobalCrdtState>,

@@ -18,7 +18,7 @@ pub struct SceneMessageTraffic {
     pub(crate) filtered_outbound: u64,
     pub(crate) invalid: u64,
     /// Peer messages handed to each scene's inbound queues (string bus, binary bus, topic inbox),
-    /// by scene hash. A scene drains them only while it ticks.
+    /// by scene hash.
     delivered_to_scene: bevy::platform::collections::HashMap<String, u64>,
 }
 
