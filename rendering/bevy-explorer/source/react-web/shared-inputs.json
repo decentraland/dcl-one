@@ -6786,6 +6786,10 @@
           "kind": "regular"
         },
         {
+          "name": "SitesFooter.test.tsx",
+          "kind": "regular"
+        },
+        {
           "name": "SitesFooter.tsx",
           "kind": "regular"
         },
@@ -15966,19 +15970,19 @@
     },
     {
       "path": "library/ui/apps/sites/chrome/SitesFooter.module.css",
-      "sha256": "7be3156370fcab091cb39f27edf14744ee993b15dd55354a8a568e395e876bb8"
+      "sha256": "d51d86ea3d7c73dfb59d068891ca15b18b46ad7f184fa1874962b0da28948e98"
     },
     {
       "path": "library/ui/apps/sites/chrome/SitesFooter.tsx",
-      "sha256": "7717280ef53824addaa93b13b169a0f539af382a41c7cd1ca1ba7911a6c90b0a"
+      "sha256": "96272fb88771a373565af1f7818d5c8cb9fce918acf31bc5133d39436905e2af"
     },
     {
       "path": "library/ui/apps/sites/chrome/SitesNotificationsDialog.module.css",
-      "sha256": "8afb60fca121159dcda590caf08740167eedc31ab345de3ffab984aefa28b644"
+      "sha256": "c6a09a7a4ac1184efaeaeb6c8ed10f64478c95ac53277f25476d7c6365bc045b"
     },
     {
       "path": "library/ui/apps/sites/chrome/SitesNotificationsDialog.tsx",
-      "sha256": "f3e2f5274a5253824a2a183e944ed9e4cb2c88889bc7174835d4fa8c3244e58b"
+      "sha256": "50a2147c38dfbaffeba8afdfc877b261889c7a52c4fc7e71d5165effa6dfe947"
     },
     {
       "path": "library/ui/apps/sites/chrome/SitesSectionNavigation.module.css",
@@ -54230,6 +54234,36 @@
       "kind": "test:runtime"
     },
     {
+      "from": "library/ui/apps/sites/chrome/SitesFooter.tsx",
+      "to": "library/ui/components/Button/Button.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/sites/chrome/SitesFooter.tsx",
+      "to": "library/ui/components/Button/Button.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/sites/chrome/SitesFooter.tsx",
+      "to": "library/ui/components/Button/Button.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/sites/chrome/SitesFooter.tsx",
+      "to": "library/ui/components/InputWebCreatorTools/InputWebCreatorTools.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/sites/chrome/SitesFooter.tsx",
+      "to": "library/ui/components/InputWebCreatorTools/InputWebCreatorTools.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/sites/chrome/SitesFooter.tsx",
+      "to": "library/ui/components/InputWebCreatorTools/InputWebCreatorTools.tsx",
+      "kind": "test:runtime"
+    },
+    {
       "from": "library/ui/apps/sites/chrome/SitesNotificationsDialog.tsx",
       "to": "library/ui/apps/sites/assets/dcl-logo.svg",
       "kind": "native:runtime"
@@ -54287,6 +54321,21 @@
     {
       "from": "library/ui/apps/sites/chrome/SitesNotificationsDialog.tsx",
       "to": "library/ui/apps/sites/chrome/notification-media.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/sites/chrome/SitesNotificationsDialog.tsx",
+      "to": "library/ui/components/CloseButton/CloseButton.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/sites/chrome/SitesNotificationsDialog.tsx",
+      "to": "library/ui/components/CloseButton/CloseButton.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/sites/chrome/SitesNotificationsDialog.tsx",
+      "to": "library/ui/components/CloseButton/CloseButton.tsx",
       "kind": "test:runtime"
     },
     {

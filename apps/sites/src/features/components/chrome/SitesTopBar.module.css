@@ -80,21 +80,3 @@
     backdrop-filter: none;
   }
 }
-
-.profileNetwork {
-  max-width: 100%;
-  min-height: 32px;
-  padding: var(--dcl-space-4) var(--dcl-space-8);
-  border: 1px solid var(--dcl-border-strong);
-  border-radius: var(--dcl-radius-sm);
-  background: var(--dcl-bg-hover);
-  color: var(--dcl-text-primary);
-  font: inherit;
-  font-weight: 600;
-  color-scheme: dark;
-  text-transform: uppercase;
-}
-.profileNetwork:focus-visible {
-  outline: 2px solid currentColor;
-  outline-offset: 2px;
-}
