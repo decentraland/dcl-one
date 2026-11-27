@@ -1730,7 +1730,7 @@ async fn a_stranger_reads_a_published_third_party_collections_curated_and_served
         .map(|i| i["id"].as_str().unwrap())
         .collect();
     assert_eq!((listed, ids), (200, vec![curated.to_string().as_str()]));
-    for (item, expected) in [(curated, 200), (served, 200), (draft, 401)] {
+    for (item, expected) in [(curated, 200), (served, 200), (draft, 403)] {
         let (status, body) = send(
             &app,
             STRANGER_KEY,
