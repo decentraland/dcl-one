@@ -3151,45 +3151,6 @@
         }
       }
     },
-    "lp_community_created": {
-      "loose": false,
-      "props": {
-        "community_id": {
-          "kind": "string",
-          "optional": false
-        }
-      }
-    },
-    "lp_community_submit_attempted": {
-      "loose": false,
-      "props": {
-        "privacy": {
-          "kind": "enum-string",
-          "values": [
-            "private",
-            "public"
-          ],
-          "optional": false
-        },
-        "visibility": {
-          "kind": "enum-string",
-          "values": [
-            "all",
-            "unlisted"
-          ],
-          "optional": false
-        }
-      }
-    },
-    "lp_community_submit_failed": {
-      "loose": false,
-      "props": {
-        "error": {
-          "kind": "string",
-          "optional": false
-        }
-      }
-    },
     "lp_creatorhub_docs_clicked": {
       "loose": false,
       "props": {}
@@ -3429,19 +3390,6 @@
         },
         "source": {
           "kind": "string",
-          "optional": false
-        }
-      }
-    },
-    "lp_invite_rewards_viewed": {
-      "loose": false,
-      "props": {
-        "accepted": {
-          "kind": "number",
-          "optional": false
-        },
-        "current_tier": {
-          "kind": "number",
           "optional": false
         }
       }

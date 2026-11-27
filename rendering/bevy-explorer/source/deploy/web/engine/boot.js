@@ -332,11 +332,17 @@ window.__setShaderCompiling = (on) => {
 // also drives the HUD hotkeys via the system-action stream) would go dead. Re-dispatch window-level
 // key events to the canvas when focus sits elsewhere. Bubble phase, so a handler that
 // stopPropagation()s (chat input, widgets that own a key locally) still withholds keys from the
-// engine; text inputs are skipped so typing never moves the avatar. Tab is left alone off-canvas —
+// engine; text fields are skipped so typing never moves the avatar. Tab is left alone off-canvas —
 // there it is focus navigation, not a game key. The re-dispatched clone bubbles back here with the
 // canvas as target, which the target check drops (no loop).
 const ACTIVATION_KEYS = new Set(['Space', 'Enter', 'NumpadEnter'])
-const CONTROLS = 'button, a[href], select, summary, [role="button"]'
+const CONTROLS = 'button, a[href], select, summary, [role="button"], input[type="checkbox"], input[type="radio"]'
+// Inputs that take no text: a focused one (the HUD's switches are checkboxes) leaves every other key
+// to the engine, so Escape still closes its panel. The HUD declares text focus to the engine by the
+// same rule (isEditableTarget, library/ui/apps/hud/lib/bindingLabels.ts): change both together.
+const NON_TEXT_INPUTS = new Set(['checkbox', 'radio'])
+const isTextField = (t) =>
+  t instanceof HTMLElement && ((t.tagName === 'INPUT' && !NON_TEXT_INPUTS.has(t.type)) || t.tagName === 'TEXTAREA' || t.isContentEditable)
 // codes whose keydown pressed a control: their keyup stays off the engine too, so Jump is never half-sent
 const pressedControl = new Set()
 const forwardKeyToEngine = (e) => {
@@ -344,7 +350,7 @@ const forwardKeyToEngine = (e) => {
   if (!canvas || e.target === canvas) return
   // the composed path: a field inside a shadow root (the scene editor's UI) is retargeted to its host
   const t = e.composedPath()[0] ?? e.target
-  if (t instanceof HTMLElement && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return
+  if (isTextField(t)) return
   if (e.code === 'Tab') return
   // Space/Enter press a focused control (the HUD's or the scene editor's), not Jump
   if (e.type === 'keydown' && ACTIVATION_KEYS.has(e.code) && t instanceof Element && t.closest(CONTROLS)) {

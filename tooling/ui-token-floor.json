@@ -459,10 +459,6 @@
     "primitives": 14,
     "tokens": 0
   },
-  "apps/ui3/src/landings/pages/ldinvitereferralview.css": {
-    "primitives": 0,
-    "tokens": 9
-  },
   "apps/ui3/src/web/frames/accountmenu.css": {
     "primitives": 8,
     "tokens": 11
@@ -485,14 +481,6 @@
   },
   "apps/ui3/src/web/pages/siteshome.css": {
     "primitives": 22,
-    "tokens": 0
-  },
-  "apps/ui3/src/web/pages/stinvite.css": {
-    "primitives": 0,
-    "tokens": 37
-  },
-  "apps/ui3/src/web/pages/stprofilereferralrewardstab.css": {
-    "primitives": 16,
     "tokens": 0
   },
   "apps/ui3/src/web/pages/stwhatson.css": {
@@ -522,6 +510,10 @@
   "library/ui/apps/sites/cast/stcastwatcher.css": {
     "primitives": 0,
     "tokens": 8
+  },
+  "library/ui/apps/sites/invite/InviteLanding.module.css": {
+    "primitives": 0,
+    "tokens": 41
   },
   "library/ui/apps/sites/profile/EmptyMessage.module.css": {
     "primitives": 0,
@@ -578,10 +570,6 @@
   "library/ui/apps/sites/profile/collectibles.module.css": {
     "primitives": 0,
     "tokens": 40
-  },
-  "library/ui/apps/sites/social/CommunityCreate.module.css": {
-    "primitives": 0,
-    "tokens": 24
   },
   "library/ui/apps/sites/social/CommunityDetail.module.css": {
     "primitives": 0,

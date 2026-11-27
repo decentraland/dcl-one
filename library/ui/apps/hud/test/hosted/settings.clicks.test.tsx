@@ -232,7 +232,7 @@ describe('ask before leaving the page', () => {
   beforeEach(() => resetSettingsTab())
 
   it('is off, only in the Gameplay tab, stored when turned on, and off again after the tab reset', async () => {
-    const settings: SettingsState = { ...fakeSession().settings, open: true, list: [SELECT, base({ name: 'chat_bubbles', category: 'Gameplay' })], set: vi.fn() }
+    const settings: SettingsState = { ...fakeSession().settings, open: true, list: [SELECT, base({ name: 'Constrain Scene Uis', category: 'Gameplay' })], set: vi.fn() }
     render(<SettingsPanel lobbyStage={{ preset: 'halloween-2026', set: vi.fn() }} settings={settings} bindings={fakeSession().bindings} profile={fakeProfileState()} onNavigate={vi.fn()} />)
     const name = 'Ask Before Leaving the Page'
     expect(screen.queryByRole('switch', { name })).toBeNull()

@@ -884,53 +884,76 @@ fn build_legacy_orders_cte(
     page_first: bool,
 ) {
     let now = b.bind_i64(now_ms);
-    let networks: Vec<String> = books
-        .nets
-        .iter()
-        .map(|net| net.db_name().to_owned())
-        .collect();
-    let nets = b.bind_strings(&networks);
-    b.push(&format!(
-        "legacy_orders AS (
-            SELECT o.network, o.contract_address,
-                   CASE WHEN o.network = 'matic' THEN n.item_id ELSE i.item_id END AS item_id,
+    let contracts = listing_contracts(f);
+    let contracts = (!page_first && !contracts.is_empty()).then(|| b.bind_strings(&contracts));
+    let min = f.min_price.as_ref().map(|v| b.bind_string(v.clone()));
+    let max = f.max_price.as_ref().map(|v| b.bind_string(v.clone()));
+    let owner_at_fold = nft_owner_at_fold_sql("n", "nft_fold");
+    b.push("legacy_orders AS (");
+    for (idx, &net) in books.nets.iter().enumerate() {
+        if idx != 0 {
+            b.push(" UNION ALL ");
+        }
+        let network = net.db_name();
+        let chain = books.catalogue.chain_id(net);
+        let collections = catalogue::membership_sql("c", net, chain);
+        let (item, wearable) = match net {
+            ChainNet::Matic => ("n.item_id", String::new()),
+            ChainNet::Ethereum => (
+                "i.item_id",
+                format!(
+                    "JOIN LATERAL (
+                         SELECT i.item_id FROM shop.items i
+                         WHERE i.urn = c.urn || ':' || n.wearable_id AND i.network = o.network
+                           AND i.contract_address = o.contract_address AND {}
+                         OFFSET 0
+                     ) i ON true",
+                    catalogue::membership_sql("i", net, chain)
+                ),
+            ),
+        };
+        // The live order set is small relative to the token catalogue.
+        // Keep the keyed ownership probe attached to each qualifying order
+        // even when a generic plan cannot estimate the expiry parameter.
+        b.push(&format!(
+            "SELECT o.network, o.contract_address, {item} AS item_id,
                    count(*) AS listings_count, min(o.price) AS min_price, max(o.price) AS max_price,
                    max(o.created_at) AS latest
-            FROM shop.legacy_order o
-            JOIN shop.nft n USING (network, contract_address, token_id)
-            JOIN shop.collections c USING (network, contract_address)
-            {nft_fold}
-            {wearable_item}
-            WHERE o.network = ANY({nets}) AND {collection_chain}
-              AND o.status = 'open' AND o.expires_at > {now} AND {status} = 'open'
-              AND CASE WHEN o.network = 'matic' THEN n.item_id ELSE i.item_id END IS NOT NULL",
-        nft_fold = super::orders::BOOK_NFT_FOLD_JOIN,
-        wearable_item = legacy_wearable_item_join(books.catalogue),
-        collection_chain = catalogue_chain_sql("c", books.catalogue),
-        status = super::orders::book_status(false),
-    ));
-    if page_first {
-        b.push(
-            " AND o.contract_address IN (SELECT contract_address FROM catalog_candidates)
-              AND (o.network, o.contract_address, CASE WHEN o.network = 'matic' THEN n.item_id ELSE i.item_id END)
-                  IN (SELECT network, contract_address, item_id FROM catalog_candidates)",
-        );
-    } else {
-        let contracts = listing_contracts(f);
-        if !contracts.is_empty() {
-            let contracts = b.bind_strings(&contracts);
+             FROM shop.legacy_order o
+             JOIN shop.collections c ON c.network = o.network AND c.contract_address = o.contract_address
+             JOIN LATERAL (
+                 SELECT n.network, n.contract_address, n.token_id, n.owner, n.transferred_block,
+                        n.item_id, n.wearable_id
+                 FROM shop.nft n
+                 WHERE n.network = o.network AND n.contract_address = o.contract_address
+                   AND n.token_id = o.token_id AND n.owner = o.seller
+                 OFFSET 0
+             ) n ON true
+             {nft_fold}
+             {wearable}
+             WHERE o.network = '{network}' AND {collections} AND {item} IS NOT NULL
+               AND o.status = 'open' AND o.expires_at > {now} AND {owner_at_fold}",
+            nft_fold = super::orders::BOOK_NFT_FOLD_JOIN,
+        ));
+        if page_first {
+            b.push(&format!(
+                " AND o.contract_address IN (SELECT contract_address FROM catalog_candidates)
+                  AND (o.network, o.contract_address, {item})
+                      IN (SELECT network, contract_address, item_id FROM catalog_candidates)",
+            ));
+        }
+        if let Some(contracts) = &contracts {
             b.push(&format!(" AND o.contract_address = ANY({contracts})"));
         }
+        if let Some(min) = &min {
+            b.push(&format!(" AND o.price >= {min}::numeric"));
+        }
+        if let Some(max) = &max {
+            b.push(&format!(" AND o.price <= {max}::numeric"));
+        }
+        b.push(" GROUP BY o.network, o.contract_address, 3");
     }
-    if let Some(value) = &f.min_price {
-        let price = b.bind_string(value.clone());
-        b.push(&format!(" AND o.price >= {price}::numeric"));
-    }
-    if let Some(value) = &f.max_price {
-        let price = b.bind_string(value.clone());
-        b.push(&format!(" AND o.price <= {price}::numeric"));
-    }
-    b.push(" GROUP BY o.network, o.contract_address, 3) ");
+    b.push(") ");
 }
 
 struct ListingValues {

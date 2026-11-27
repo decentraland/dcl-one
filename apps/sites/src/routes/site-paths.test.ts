@@ -39,6 +39,7 @@ describe("Sites paths", () => {
       "/landings/submit-hangout",
       "/landings/community-detail",
       "/landings/create-community",
+      "/communities/new",
     ])("should serve no route for %s, so it answers 404", (path) => {
       expect(served(path)).toBeNull();
     });
@@ -79,7 +80,6 @@ describe("Sites paths", () => {
       ["/events/ev-1/rsvp", "routes/events_.$id.rsvp.tsx"],
       ["/events/new-event", "routes/events_.new-event.tsx"],
       ["/events/edit-event/ev-1", "routes/events_.edit-event.$id.tsx"],
-      ["/communities/new", "routes/communities.new.tsx"],
     ])("should serve %s from %s", (path, file) => {
       expect(served(path)).toBe(file);
     });
