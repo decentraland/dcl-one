@@ -481,6 +481,15 @@ impl From<super::graph::Network> for Network {
     }
 }
 
+/// `chain` as the wire's `ChainId`. The index settings admit only the
+/// supported chains, so the network's default never stands in for a served one.
+pub(super) fn wire_chain(chain: i64, network: Network) -> ChainId {
+    u64::try_from(chain)
+        .ok()
+        .and_then(|c| ChainId::try_from(c).ok())
+        .unwrap_or_else(|| network.chain_id())
+}
+
 pub const NETWORK_VALUES: &[&str] = &["ETHEREUM", "MATIC"];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]

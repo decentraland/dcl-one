@@ -27,14 +27,6 @@
   line-height: 1.25;
   margin: 0;
 }
-.close {
-  border: 0;
-  background: transparent;
-  color: inherit;
-  font: inherit;
-  font-size: 24px;
-  cursor: pointer;
-}
 .dialog[data-presentation='popover'] .close:not(:focus-visible) {
   position: absolute;
   clip-path: inset(50%);

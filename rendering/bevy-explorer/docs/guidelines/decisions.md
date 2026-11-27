@@ -284,8 +284,13 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
     user. In a stream `MuteSpeakerFromCommunityVoiceChat` is still sent, so every client shows the
     same state (a focus pause is the exception, below).
   - Don't play calls at the nearby-voice volume. Calls and streams follow `Voice Chat Volume` and
-    nearby players `Voice Volume`, both scaled by `Master`. Capture uses the system's default
-    microphone; a device picker is next work.
+    nearby players `Voice Volume`, both scaled by `Master`.
+  - Don't rebuild a microphone route to change its input. On the web, Settings › Sounds ›
+    Microphone (`config.audio.microphone`) moves each live track in place with livekit's
+    `setDeviceId`, under the same publication. An unplugged input is left to livekit, which
+    restarts the track on the system default; once the page lists the chosen input again, the
+    track moves back. The page reports the input each track captures from. Native capture uses the
+    system's default microphone.
   - Don't loop the call tune in the audio layer, which has no loop: the one-shot clip is
     re-triggered every 3.056 s (its length) while ringing.
   - Don't auto-subscribe the voice room. Like every room it joins with `auto_subscribe: false`,
@@ -450,7 +455,14 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   play 0.2 s apart whichever messages they came in; unity-explorer starts the gap afresh for a
   message that finds none of theirs waiting, which lets a sender of one-reaction messages play
   twenty a second. In the HUD, Cancel closes the bar, the full picker takes the bar's place
-  while it is open, and a pick with no index still becomes a recent emoji.
+  while it is open, and a pick with no index still becomes a recent emoji. The
+  reactions on screen scale with the HUD, are solved to where each ends and animated to there,
+  fade in place under reduced motion and are drawn in the system's emoji.
+  `reaction_visualization` is sent for a change of the setting only, never for the value a
+  session starts with. unity-explorer also sends it when its settings controller first applies
+  the saved value and that differs from its settings asset's (`chatReactionsEnabled`, true), so
+  it can send one `state: false` in a session where the player changed nothing: the two clients'
+  counts of the event are not alike.
 - **Community creation and editing.** The form follows unity-explorer's (fields, limits, texts,
   the content check's two refusal screens, every HTTP 400 read as the check's answer), with
   these differences. CANCEL on the refusal screen asks "Discard this community?" first, as the
@@ -705,6 +717,22 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   better than a late answer. A share of the target frame, not a fixed time, keeps the cap the same
   part of the main thread at any frame rate. See [Interaction](interaction.md#scene-raycasts).
 
+- **The player camera's look speed is the engine's own.** The three zoom levels, their orbit
+  rings, fields of view, shoulder offsets and the 0.5 s blend between them are unity-explorer's.
+  The pointer still turns the camera through this engine's sensitivity and smoothing settings, so
+  the vertical travel across an orbit and the easing of a turn differ from unity-explorer's, which
+  runs each level's axes with their own gain, acceleration and deceleration.
+- **The camera's field of view does not widen while running.** unity-explorer adds up to 15
+  degrees in first and third person while the avatar runs.
+- **The zoom levels have no gamepad D-pad or stick binding.** unity-explorer steps the level with
+  D-pad up and down and cycles it with the right stick pressed down. Here the D-pad is the scene's
+  actions 1 and 3 and the right stick turns the camera, so the bumpers step the level, as they
+  zoomed before, and the cycle is the V key only.
+- **A scene that forces first person on a drone camera keeps the player's aim.** unity-explorer's
+  first-person camera then comes back with the aim it had when the player last left first person.
+  Here the camera has one aim, so first person looks along the heading and pitch the drone had.
+- **The Camera Zoom sensitivity setting scales photo mode only.** The player camera reads which
+  way the wheel turned, not how far, so the setting has nothing to scale there.
 - **Photo mode follows the engine's cursor convention.** unity-explorer's in-world camera has its
   own Lock/Unlock cursor actions. Here right-click toggles the lock as everywhere else, left-drag
   looks while the cursor is free (Unity's drag), and Escape closes photo mode. The gallery key (G,
@@ -729,8 +757,8 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   unity-explorer disables. Jump In treats a photo as taken in a World when the HUD's `worldOfRealm`
   accepts its realm, so hyphenated ENS names and Worlds-server realm URLs count, where
   unity-explorer's test is `^[a-zA-Z0-9.]+\.eth$` and sends those photos to a Genesis City parcel.
-- **The third-person camera collides with scene geometry.** It is pulled in front of the scene
-  colliders on both `CL_PHYSICS` and `CL_POINTER` and of the terrain, with unity-explorer's
+- **The third-person and drone cameras collide with scene geometry.** Each is pulled in front of
+  the scene colliders on both `CL_PHYSICS` and `CL_POINTER` and of the terrain, with unity-explorer's
   camera radius, distances and easing times. The layer rule is unity-explorer's, kept so a scene
   behaves the same in both clients: a physics-only collider, often an invisible wall, lets the
   camera through, where the avatar and the photo camera stop at any `CL_PHYSICS` collider. A

@@ -53,9 +53,10 @@
   line-height: 24px;
 }
 
+/* The tabs keep the space the old tab list left around them: 16px above (12px on phones) and 20px below. */
 .tabs {
   grid-area: tabs;
-  padding-top: var(--dcl-space-4);
+  padding: var(--dcl-space-16) 0 calc(var(--dcl-space-12) + var(--dcl-space-8));
 }
 
 .panel {
@@ -159,7 +160,7 @@
   }
 
   .tabs {
-    padding: 0 var(--dcl-space-16);
+    padding: var(--dcl-space-12) var(--dcl-space-16) calc(var(--dcl-space-12) + var(--dcl-space-8));
   }
 
   .status {

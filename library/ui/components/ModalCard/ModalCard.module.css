@@ -161,4 +161,77 @@
     flex: 0 0 auto;
     margin-left: auto;
   }
+
+  /* ---- ModalBackdrop ---- */
+  /* The layer a card opens on. Its callers restyle it by class (another scrim, no padding), which this layer lets
+     them do whatever the order of the stylesheets. */
+  .backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: var(--z-popup, 10000); /* the HUD's popup layer; 10000 in a host without that token */
+  }
+  /* The scrim is the host's reference canvas: sized at 100% / scale and scaled back from the top left, so content
+     in reference pixels is centred without a transform of its own. Its padding is reference pixels too: viewport
+     units would ignore the scale. The scale is the host's `--ui-scale`, which the Explorer HUD sets on the page. */
+  .backdrop[data-tone] {
+    box-sizing: border-box;
+    inset: auto;
+    top: 0;
+    left: 0;
+    --backdrop-scale: var(--ui-scale, 1);
+    width: calc(100% / var(--backdrop-scale));
+    height: calc(100% / var(--backdrop-scale));
+    transform: scale(var(--backdrop-scale));
+    transform-origin: top left;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: var(--dcl-space-32);
+    background: rgba(18, 7, 33, 0.6); /* the HUD's scrim purple; it has no token */
+    backdrop-filter: blur(2px);
+  }
+  .backdrop[data-tone='deep'] {
+    background: rgba(0, 0, 0, 0.68); /* the HUD's deep scrim; it has no token */
+    backdrop-filter: none;
+  }
+  /* Content under a fixed scrim reads a scale of 1 too. */
+  .backdrop[data-fixed] {
+    width: 100%;
+    height: 100%;
+    transform: none;
+    --ui-scale: 1;
+  }
+  /* Fills the scrim's centring box, so a panel sized in percentages resolves against the whole canvas. The entrance
+     scale is here and not on the scrim, so the dark layer itself never scales. */
+  .pop {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 100%;
+    height: 100%;
+  }
+  @media (prefers-reduced-motion: no-preference) {
+    .backdrop[data-tone] {
+      animation: backdrop-in 0.2s ease;
+    }
+    .pop {
+      animation: pop-in 0.2s cubic-bezier(0.34, 1.56, 0.64, 1); /* = HUD --ease-spring */
+    }
+  }
+  @keyframes backdrop-in {
+    from {
+      opacity: 0;
+    }
+    to {
+      opacity: 1;
+    }
+  }
+  @keyframes pop-in {
+    from {
+      transform: scale(0.96);
+    }
+    to {
+      transform: scale(1);
+    }
+  }
 }

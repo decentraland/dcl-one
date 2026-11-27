@@ -27,7 +27,7 @@ use serde_json::{Value, json};
 use super::SharedState;
 use super::activity_transfers::{Transfer, transfers_of_address};
 use super::bids::{Bid, BidFilters, list_bids};
-use super::orders::{Order, OrderFilters, list_orders};
+use super::orders::{BookRoute, Order, OrderFilters, list_orders_for};
 use super::readers::READER_MAX_FIRST;
 use super::sales::Sale;
 use super::signed::{MARKETPLACE_AUTH_SIGNERS, require_auth_metadata};
@@ -84,8 +84,8 @@ fn network_name<T: Serialize>(network: &T) -> String {
 }
 
 /// Collect the paged bid and order legs up to the internal cap, one page
-/// after another, and the source an unavailable envelope named when a page
-/// failed with one.
+/// after another. On failure, keep the pages already read and report the
+/// source from the error envelope or the leg label if it has no source.
 async fn pages<T, F, Fut>(fallback: &'static str, fetch: F) -> (Vec<T>, Option<String>)
 where
     F: Fn(i64) -> Fut,
@@ -183,7 +183,7 @@ pub async fn user_activity(
                 skip: Some(skip),
                 ..Default::default()
             };
-            async move { list_orders(state, &f).await }
+            async move { list_orders_for(state, &f, BookRoute::Activity).await }
         }),
         pages("orders", |skip| {
             let f = OrderFilters {
@@ -192,7 +192,7 @@ pub async fn user_activity(
                 skip: Some(skip),
                 ..Default::default()
             };
-            async move { list_orders(state, &f).await }
+            async move { list_orders_for(state, &f, BookRoute::Activity).await }
         }),
         trades_of_address(
             &state.pool,

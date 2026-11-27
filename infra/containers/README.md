@@ -286,6 +286,13 @@ On a populated ledger, prebuild `collection_event_creatorship_position_idx` with
 index procedure in `DATABASE.md`.
 The catalogue continues to
 read the collections mirror unless the on-chain projection owns that network.
+On Ethereum mainnet the same switch walks the 42 collections-v1 contracts over the `TRADE_RPC_URLS`
+entry for chain 1 (else `ETH_RPC_URL`), from block 8,828,687. Its first walk is a one-time catch-up:
+on an endpoint that takes 10,000 blocks per `eth_getLogs`, it measured 18 passes, about 7,100 RPC
+requests and 37 minutes back to back, plus the pause a job adds between passes (see `METRICS.md`).
+`CatalystIndexLagging` fires for `collections` on `ethereum` until the cursor catches up. Handing
+Ethereum to the index (`MARKETPLACE_COLLECTIONS_INDEX_OWNS=ethereum`) takes effect at its first
+publication after that.
 
 Trade digest upgrade: run `catalyst schema migrate` before deploying. Step `0069_shop_trade_digest` adds
 `shop.trades.trade_digest` and `shop.trade_chain_state.digest_failed_at`, and needs no backfill: the next

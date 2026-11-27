@@ -34,7 +34,7 @@ pub(super) async fn unclaimed_land(
     let conn = &mut *land.tx;
     let cursor = chain_walk::cursor(&mut *conn, chain.indexer(), ChainNet::Ethereum)
         .await
-        .map_err(super::nft_reads::read_error)?;
+        .map_err(super::readers::index_read_error)?;
     let Some(head) =
         cursor.and_then(|c| chain_walk::fresh_fold_on(&c, chain.id(), chrono::Utc::now()))
     else {
@@ -58,7 +58,7 @@ pub(super) async fn unclaimed_land(
     .bind(land_head)
     .fetch_one(&mut *conn)
     .await
-    .map_err(super::nft_reads::read_error)?;
+    .map_err(super::readers::index_read_error)?;
     if behind {
         tracing::debug!(
             rentals_folded_block = head,
@@ -93,7 +93,7 @@ pub(super) async fn unclaimed_land(
           AND (latest.block_number,latest.log_index) >= (arrival.block_number,arrival.log_index)",
     )
     .bind(chain.venue()).bind(owner.to_ascii_lowercase()).bind(head).bind(registries.as_slice()).bind(land_head).bind(chain.event_network())
-        .fetch_all(conn).await.map_err(super::nft_reads::read_error)
+        .fetch_all(conn).await.map_err(super::readers::index_read_error)
 }
 
 /// Before the reader cutover, the standalone Sepolia walk published the raw
@@ -114,7 +114,7 @@ pub(super) async fn require_sepolia_listings(
         .bind(chain.indexer())
         .fetch_one(conn)
         .await
-        .map_err(super::nft_reads::read_error)?;
+        .map_err(super::readers::index_read_error)?;
     if ready {
         Ok(())
     } else {
