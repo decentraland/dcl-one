@@ -1,4 +1,6 @@
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { useLocation, useNavigate } from "react-router";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { Hex } from "viem";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -90,6 +92,53 @@ describe("/shop/lands", () => {
     const browse = nftReads(client)[0]!;
     expect([browse.get("isLand"), browse.get("isOnSale"), browse.get("isOnRent"), browse.get("sortBy")]).toEqual(["true", null, null, "newest"]);
     expect(screen.getByRole("radio", { name: "All land" })).toBeChecked();
+  });
+
+  it("clears the LAND search field and restores the committed search on history navigation", async () => {
+    function HistoryControls() {
+      const navigate = useNavigate();
+      const { search } = useLocation();
+      return (
+        <>
+          <output aria-label="Current query">{search}</output>
+          <button onClick={() => navigate(-1)}>Back</button>
+          <button onClick={() => navigate(1)}>Forward</button>
+        </>
+      );
+    }
+    const user = userEvent.setup();
+    const client = stubClient({ "GET /shop-api/v1/nfts": nfts([]) });
+    render(
+      <ShopHarness session="web3" path="/shop/lands?search=missing" route="/shop/lands">
+        <LandsPage client={client} loadTiles={tiles} />
+        <HistoryControls />
+      </ShopHarness>,
+    );
+    const input = screen.getByRole("searchbox", { name: "Search LAND" });
+    expect(input).toHaveValue("missing");
+    const clear = await screen.findByRole("button", { name: "Clear filters" });
+    clear.focus();
+    await user.keyboard("{Enter}");
+    expect(screen.getByLabelText("Current query")).toBeEmptyDOMElement();
+    expect(input).toHaveValue("");
+
+    await user.click(screen.getByRole("button", { name: "Back" }));
+    expect(input).toHaveValue("missing");
+    await user.click(screen.getByRole("button", { name: "Forward" }));
+    expect(input).toHaveValue("");
+    await user.type(input, "{Enter}");
+    expect(screen.getByLabelText("Current query")).not.toHaveTextContent("missing");
+  });
+
+  it("keeps an unsubmitted search while editing other filters and discards it on Clear filters", async () => {
+    const user = userEvent.setup();
+    renderLands("web3", "/shop/lands?section=estates", { "GET /shop-api/v1/nfts": nfts([]) });
+    const input = screen.getByRole("searchbox", { name: "Search LAND" });
+    await user.type(input, "unfinished");
+    await user.click(screen.getByRole("button", { name: "Parcels" }));
+    expect(input).toHaveValue("unfinished");
+    await user.click(await screen.findByRole("button", { name: "Clear filters" }));
+    expect(input).toHaveValue("");
   });
 
   it("filters for rent through the URL and asks the index for rentals", async () => {
