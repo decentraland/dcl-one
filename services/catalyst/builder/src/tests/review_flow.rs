@@ -1154,6 +1154,7 @@ async fn the_sixth_retry_of_a_utc_day_is_refused_until_the_next_day() {
             .unwrap()
             .and_utc(),
     );
+    super::support::copy_pass_at(&node.pool, super::validator::clock()).await;
     let (id, items) = published(&node, "Busy", 1).await;
     collection_curation(&node.pool, id, "pending").await;
     for n in 0..5 {
@@ -1328,6 +1329,7 @@ async fn creator_text_is_bounded_per_collection_and_per_caller_each_utc_day() {
         (200, 200, 5, 20)
     );
     set_clock(clock().date_naive().and_hms_opt(1, 0, 0).unwrap().and_utc());
+    super::support::copy_pass_at(&node.pool, clock()).await;
     let (appealed, _) = rejected_by_validator(&node, "Appeals", 1).await;
     let (first, _) = published(&node, "Chatty", 1).await;
     let (second, _) = published(&node, "Chatty too", 1).await;
