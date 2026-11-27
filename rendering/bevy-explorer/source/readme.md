@@ -373,9 +373,11 @@ the [conventions ADR](../../../docs/adr/2026-11-17-console-command-conventions.m
   ([Smart wearables and portables](#smart-wearables-and-portables)); a portable experience's map
   pins: `/map_pins_state`.
 - Scene pointer: `/hover_entity <entity>` and `/click_entity <entity>` hover and click a scene
-  entity by id through the pointer pipeline, on native and web alike, and answer with the hit, the
-  hover entries, the scene's pointer events and a diagnosis (`docs/guidelines/running.md`). A hover
-  lasts at most 1800 frames (`--frames`) and is never cut short by `--timeout-frames`.
+  entity by id through the pointer pipeline, on native and web alike (`--button` presses any scene
+  input action by its lowercase SDK name: `pointer`, `primary`, `jump`, `action_3`, ...), and
+  answer with the hit, the hover entries, the scene's pointer events and a diagnosis
+  (`docs/guidelines/running.md`). A hover lasts at most 1800 frames (`--frames`) and is never cut
+  short by `--timeout-frames`.
 - Raycasts: `/raycast_stats` (the capped tier's `budgetMs`, `ran`, `deferred`, `spentMs` and the
   uncapped tier's `uncappedRan`, `uncappedSpentMs`) and `/raycast_budget [ms|auto]` (override the
   capped budget, a tenth of the target frame, from 0 to 10 ms). On the web, these and the two pointer commands go

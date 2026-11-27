@@ -83,12 +83,11 @@ input (`window.__dclTrustedInput`), so they need no DevTools client.
 | `--timeout-frames` | Frames the job may take in all. A hover's deadline is `max(timeout, frames + 3)`, so the default never cuts a long hover short | 600 |
 | `--clear` | End any aim and release a held press, instead of hovering | off |
 
-`/click_entity <entity> [--bounds] [--button pointer|primary|secondary] [--event click|down|up]
-[--timeout-frames N]`:
+`/click_entity <entity> [--bounds] [--button <action>] [--event click|down|up] [--timeout-frames N]`:
 
 | Option | Meaning | Default |
 | --- | --- | --- |
-| `--button` | The action to press, by its binding | `pointer` |
+| `--button` | The scene input action to press, by its SDK name in lowercase without `IA_`: `pointer`, `primary`, `secondary`, `forward`, `backward`, `right`, `left`, `jump`, `walk`, `action_3` to `action_6`, `modifier`. The command presses the key or mouse button bound to it, so the scene gets the press as that action (`events[].button`, e.g. `IaJump`) | `pointer` |
 | `--event` | `click` presses, then releases on a later scene tick; `down` presses and holds; `up` releases a held press | `click` |
 | `--timeout-frames` | Frames the click may take in all | 600 |
 
