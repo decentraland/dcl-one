@@ -1,4 +1,5 @@
-import { useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
+import { useEffect, useId, useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react'
+import { GeneralCheck, GeneralRightArrow } from '../../foundations/icons/general'
 import { Switch } from '../Switch/Switch'
 import styles from './ContextMenu.module.css'
 
@@ -20,7 +21,7 @@ export type ContextMenuItem =
       checked?: boolean
       onChange?: (checked: boolean) => void
     }
-  /** One of a set of exclusive choices (a radio): the checked one carries the mark. */
+  /** One of a set of exclusive choices (a radio): the checked one carries the mark where a row's icon sits. */
   | { kind: 'option'; label: ReactNode; icon?: ReactNode; checked: boolean; onClick?: () => void }
   /** A 'submenu' with `items` opens them beside it; without, it only shows its chevron. */
   | {
@@ -37,8 +38,8 @@ export interface ContextMenuProps {
   'aria-label'?: string
   /** Scroll past a long list's maximum height (a submenu's list of names). */
   scroll?: boolean
-  /** sheet: a flat sheet with taller rows. */
-  variant?: 'default' | 'sheet'
+  /** The surface's width in px. Unset, it fits its rows, from 180 to 280px. */
+  width?: number
   /** Handed to each list this menu opens beside a row. */
   whileSubmenuOpen?: MenuWhileOpen
 }
@@ -56,13 +57,14 @@ function classes(...names: (string | false | undefined)[]): string {
 export function ContextMenu({
   items,
   scroll = false,
-  variant = 'default',
+  width,
   whileSubmenuOpen,
   'aria-label': ariaLabel
 }: ContextMenuProps) {
   return (
     <div
-      className={classes(styles.ctx, scroll && styles.scroll, variant === 'sheet' && styles.sheet)}
+      className={classes(styles.ctx, scroll && styles.scroll)}
+      style={width != null ? ({ '--menu-width': `${width}px` } as CSSProperties) : undefined}
       role="menu"
       aria-label={ariaLabel}
     >
@@ -113,11 +115,11 @@ export function ContextMenu({
               key={index}
               onClick={item.onClick}
             >
+              <span className={styles.icon} aria-hidden="true">
+                {item.checked ? <GeneralCheck size={20} /> : null}
+              </span>
               {item.icon != null && <span className={styles.icon}>{item.icon}</span>}
               <span className={styles.label}>{item.label}</span>
-              <span className={styles.check} aria-hidden="true">
-                {item.checked ? <CheckMark /> : null}
-              </span>
             </button>
           )
         }
@@ -146,7 +148,7 @@ export function ContextMenu({
           >
             {item.icon != null && <span className={styles.icon}>{item.icon}</span>}
             <span className={styles.label}>{item.label}</span>
-            {item.kind === 'submenu' && <span className={styles.chev}>›</span>}
+            {item.kind === 'submenu' && <Chevron />}
           </button>
         )
       })}
@@ -154,21 +156,11 @@ export function ContextMenu({
   )
 }
 
-function CheckMark() {
+function Chevron() {
   return (
-    <svg
-      viewBox="0 0 12 16"
-      width="0.75em"
-      height="1em"
-      aria-hidden="true"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth={1.5}
-      strokeLinecap="round"
-      strokeLinejoin="round"
-    >
-      <path d="M1.6 8.6l3 3 5.8-7" />
-    </svg>
+    <span className={styles.chev} aria-hidden="true">
+      <GeneralRightArrow size={20} />
+    </span>
   )
 }
 
@@ -187,7 +179,7 @@ function ToggleItem({ item }: { item: Extract<ContextMenuItem, { kind: 'toggle' 
   const name = typeof item.label === 'string' ? item.label : undefined
   return (
     <div
-      className={classes(styles.item, styles.itemToggle)}
+      className={styles.item}
       role="menuitemcheckbox"
       aria-checked={on}
       aria-label={name}
@@ -293,11 +285,9 @@ export function Submenu({ label, icon, children, className, whileOpen }: Submenu
           setOpen(true)
         }}
       >
-        {icon != null && <span className={styles.subIcon}>{icon}</span>}
-        <span className={styles.subLabel}>{label}</span>
-        <span className={styles.subChev} aria-hidden="true">
-          ›
-        </span>
+        {icon != null && <span className={styles.icon}>{icon}</span>}
+        <span className={styles.label}>{label}</span>
+        <Chevron />
       </button>
       {open && (
         <div
