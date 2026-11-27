@@ -72,14 +72,14 @@ fn touch_all<M: Asset>(mut materials: ResMut<Assets<M>>) {
     for _ in materials.iter_mut() {}
 }
 
-/// The flat ground colour, which the ground showed before it was textured.
+/// The ground's stand-in: a flat green.
 const FLAT_GROUND: [u8; 4] = [77, 115, 51, 255];
-/// The plain rock grey the cliffs showed before they were textured.
+/// The cliff rock's stand-in: a plain grey.
 const PLAIN_ROCK: [u8; 4] = [110, 105, 102, 255];
 
 /// Each texture's file under `embedded://landscape/`, what it holds, and the one texel drawn in
 /// its place until it loads, or for good if it fails to decode: together they give the ground and
-/// cliffs their former flat colours.
+/// cliffs flat colours.
 const SOURCES: [(&str, TexelKind, [u8; 4]); 5] = [
     // all ground, no sand
     ("ground/splat.png", TexelKind::Data, [255, 0, 0, 0]),
