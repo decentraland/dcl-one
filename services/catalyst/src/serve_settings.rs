@@ -139,8 +139,7 @@ pub(super) fn comms_settings(config: &Config) -> anyhow::Result<comms::gatekeepe
     .context("LIVEKIT_* / COMMS_* configuration")
 }
 
-/// The builder's settings: its own `CREATE_*`/`BUILDER_*` settings and the Slack bot token social
-/// is configured with.
+/// The builder's settings: its own `CREATE_*`, `BUILDER_*`, `NEWSLETTER_*` and `CORS_*` settings.
 pub(super) fn builder_settings(config: &Config) -> anyhow::Result<builder::Settings> {
     builder::Settings::parse(builder::RawSettings {
         eth_network: Some(config.node.eth_network.clone()),
@@ -154,24 +153,9 @@ pub(super) fn builder_settings(config: &Config) -> anyhow::Result<builder::Setti
             .clone(),
         writes_enabled: config.create.create_writes_enabled,
         polygon_rpc_url: config.create.builder_polygon_rpc_url.clone(),
-        admin_addresses: config.create.builder_admin_addresses.clone(),
-        admin_token: config.create.catalyrst_builder_admin_token.clone(),
         newsletter_service_url: config.create.newsletter_service_url.clone(),
         newsletter_publication_id: config.create.newsletter_publication_id.clone(),
         newsletter_api_key: config.create.newsletter_service_api_key.clone(),
-        warehouse_url: config.create.warehouse_url.clone(),
-        warehouse_token: config.create.warehouse_token.clone(),
-        warehouse_context_prefix: config.create.warehouse_context_prefix.clone(),
-        slack_bot_token: config.social.referral_slack_token.clone(),
-        slack_curation_channel: config.create.slack_curation_channel.clone(),
-        creators_url: config.create.creators_url.clone(),
-        builder_url: Some(config.worlds.builder_url.clone()),
-        forum_url: config.create.forum_url.clone(),
-        forum_api_key: config.create.forum_api_key.clone(),
-        forum_api_username: config.create.forum_api_username.clone(),
-        forum_category: config.create.forum_category.clone(),
-        builder_server_url: config.create.builder_server_url.clone(),
-        validator_secret: config.create.wearable_validator_callback_secret.clone(),
         cors_origin: config.create.cors_origin.clone(),
         cors_method: config.create.cors_method.clone(),
         unpublished_max_bytes: config.create.builder_unpublished_max_bytes,
