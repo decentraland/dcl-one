@@ -37,6 +37,7 @@ use futures::FutureExt;
 use serde_json::{Value, json};
 use sqlx::PgPool;
 
+use super::casts;
 use super::chain_jobs::Gate;
 use super::chain_walk::{
     self, Budget, ChainIndex, Cursor, Fenced, Holdings, IndexSettings, LogGroup, LogSource,
@@ -369,23 +370,23 @@ pub async fn walk_together(
     // The endpoint's chain and the checkpoint's header, read once.
     let common_reads = async {
         let served = common(|| async {
-            Ok::<_, anyhow::Error>(source.chain_id().await.context("eth_chainId")?.value as i64)
+            Ok::<_, anyhow::Error>(source.chain_id().await.context("eth_chainId")?.value)
         })
         .await?;
         let header = common(|| async {
             Ok::<_, anyhow::Error>(
                 source
-                    .header(at.block.max(0) as u64)
+                    .header(casts::to_u64(at.block).unwrap_or(0))
                     .await
                     .context("the shared checkpoint's header")?
                     .value,
             )
         })
         .await?;
-        Ok::<_, anyhow::Error>((served, header))
+        Ok::<_, anyhow::Error>((casts::to_i64(served)?, served, header))
     }
     .await;
-    let (served, at_header) = match common_reads {
+    let (served, served_id, at_header) = match common_reads {
         Ok(r) => r,
         Err(e) => {
             for member in open {
@@ -571,7 +572,7 @@ pub async fn walk_together(
 
     // The windows.
     let mut chunk = settings.address_chunk.max(1);
-    let mut next = (at.block + 1).max(0) as u64;
+    let mut next = casts::to_u64(at.block + 1).unwrap_or(0);
     let mut first = true;
     while next <= target && !walking.is_empty() {
         let to = (next + settings.window_blocks.max(1) - 1).min(target);
@@ -626,7 +627,7 @@ pub async fn walk_together(
                 w.out.paused = true;
                 // The walk's requests are the group's, reported once.
                 w.out.requests = 0;
-                w.out.elapsed_ms = started.elapsed().as_millis() as u64;
+                w.out.elapsed_ms = casts::millis(started.elapsed());
                 let checkpoint = Some(w.checkpoint(at.full_history));
                 ends.push((
                     w.member.slot,
@@ -675,24 +676,30 @@ pub async fn walk_together(
             } else {
                 Some(source.header(window.reached).await?.value)
             };
-            let predecessor = source.header(extends.0 as u64).await?.value;
+            let predecessor = source.header(casts::to_u64(extends.0)?).await?.value;
             let after = source.header(to).await?.value;
             anyhow::ensure!(before == after, "chain changed while fetching window");
             let header = reached.unwrap_or(after);
-            Ok::<_, anyhow::Error>((window, times, header, predecessor))
+            let reached_at = casts::to_i64(window.reached)?;
+            Ok::<_, anyhow::Error>((window, times, header, predecessor, reached_at))
         }
         .await;
-        let (window, times, header, predecessor): (_, HashMap<i64, i64>, BlockHeader, BlockHeader) =
-            match read {
-                Ok(r) => r,
-                Err(e) => {
-                    tracing::warn!(error = %format!("{e:#}"), "marketplace chain index: a shared read failed; its members go on alone");
-                    for w in walking {
-                        ends.push((w.member.slot, MemberEnd::Fallback { budget: w.budget }));
-                    }
-                    return ends;
+        let (window, times, header, predecessor, reached_at): (
+            _,
+            HashMap<i64, i64>,
+            BlockHeader,
+            BlockHeader,
+            i64,
+        ) = match read {
+            Ok(r) => r,
+            Err(e) => {
+                tracing::warn!(error = %format!("{e:#}"), "marketplace chain index: a shared read failed; its members go on alone");
+                for w in walking {
+                    ends.push((w.member.slot, MemberEnd::Fallback { budget: w.budget }));
                 }
-            };
+                return ends;
+            }
+        };
         if predecessor.hash != extends.1 {
             // A stable bracket that finds the checkpoint on another branch:
             // evidence about every member's cursor. Nothing is committed;
@@ -719,7 +726,7 @@ pub async fn walk_together(
         // The shared read is accepted (its commits may still fail): offered
         // once to the shadow, whatever each member's share.
         source.accepted(&AcceptedView {
-            chain_id: served as u64,
+            chain_id: served_id,
             from: next,
             reached: window.reached,
             reached_hash: &header.hash,
@@ -764,8 +771,8 @@ pub async fn walk_together(
                 Ok(written) => {
                     w.out.logs += owned.len();
                     w.out.rows_written += written;
-                    w.out.indexed_to = window.reached as i64;
-                    w.expected = (window.reached as i64, header.hash.clone());
+                    w.out.indexed_to = reached_at;
+                    w.expected = (reached_at, header.hash.clone());
                     committed.push(w);
                 }
             }
@@ -777,8 +784,8 @@ pub async fn walk_together(
         // The walk's requests are the group's, reported once by its caller;
         // a member's outcome counts only what its close spends.
         w.out.requests = 0;
-        w.out.elapsed_ms = started.elapsed().as_millis() as u64;
-        let reached = (w.out.indexed_to.max(0) as u64) >= target;
+        w.out.elapsed_ms = casts::millis(started.elapsed());
+        let reached = casts::to_u64(w.out.indexed_to).unwrap_or(0) >= target;
         let checkpoint = Some(w.checkpoint(at.full_history));
         ends.push((
             w.member.slot,

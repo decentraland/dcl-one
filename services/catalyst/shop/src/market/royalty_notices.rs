@@ -318,7 +318,7 @@ async fn drain(
             })
             .collect();
         emitted += insert_notifications(&mut *txn, &batch).await?;
-        let full = held.is_none() && rows.len() == PAGE_SIZE as usize;
+        let full = held.is_none() && rows.len() == crate::market::casts::page(PAGE_SIZE);
         let (to_block, to_log) = match (held, ready.last()) {
             (Some(_), Some(last)) => (last.block_number, last.log_index),
             (Some(_), None) => (since_block, since_log),

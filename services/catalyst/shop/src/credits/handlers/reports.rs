@@ -312,6 +312,10 @@ pub(crate) struct AuditRequest {
 /// that is not a positive number falls back. A malformed address, sort key or
 /// direction is a 400, never quietly widened or re-sorted.
 pub(crate) fn audit_request(q: &AuditQuery) -> Result<AuditRequest, ApiError> {
+    #[allow(
+        clippy::cast_possible_truncation,
+        reason = "float-to-int `as` saturates; the value is capped next"
+    )]
     let positive = |raw: Option<&str>| {
         raw.and_then(|v| v.trim().parse::<f64>().ok())
             .filter(|v| v.is_finite() && *v >= 1.0)

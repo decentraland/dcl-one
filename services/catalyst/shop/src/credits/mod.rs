@@ -900,13 +900,13 @@ impl State {
                     std::time::Duration::from_secs(10),
                 ))
             });
-        let gate: Arc<dyn settlement::IssuanceGate> = match &chain {
-            Some(chain) => Arc::new(settlement::ChainGate::new(
-                chain.clone(),
-                settings.usage.chain_id as u64,
-            )),
-            None => Arc::new(settlement::ClosedGate),
-        };
+        let gate: Arc<dyn settlement::IssuanceGate> =
+            match (&chain, u64::try_from(settings.usage.chain_id)) {
+                (Some(chain), Ok(chain_id)) => {
+                    Arc::new(settlement::ChainGate::new(chain.clone(), chain_id))
+                }
+                _ => Arc::new(settlement::ClosedGate),
+            };
         let feed: Arc<dyn feed::MarketplaceFeed> = match &chain {
             Some(chain) => Arc::new(feed::ChainFeed::new(
                 chain.clone(),

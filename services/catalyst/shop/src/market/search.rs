@@ -476,11 +476,13 @@ pub fn rank_creators(
 }
 
 fn clamp(value: Option<f64>, default: i64, max: i64) -> usize {
-    value
-        .filter(|v| v.is_finite())
-        .map(|v| v as i64)
-        .unwrap_or(default)
-        .clamp(1, max) as usize
+    super::casts::page(
+        value
+            .filter(|v| v.is_finite())
+            .map(super::casts::saturating_i64)
+            .unwrap_or(default)
+            .clamp(1, max),
+    )
 }
 
 /// `GET /v3/catalog/creators/search?search=&first=`: nothing typed is nobody

@@ -109,6 +109,8 @@ pub fn decode_log(log: &RpcLog, block_time: i64) -> anyhow::Result<Option<Collec
         block >= 0 && block != i64::MAX && (0..=i64::from(i32::MAX)).contains(&index),
         "collections ethereum log without a valid position"
     );
+    let index =
+        i32::try_from(index).context("collections ethereum log without a valid position")?;
     let topics = log
         .topics
         .iter()
@@ -133,7 +135,7 @@ pub fn decode_log(log: &RpcLog, block_time: i64) -> anyhow::Result<Option<Collec
     };
     let base = |kind: &'static str| CollectionEvent {
         block_number: block,
-        log_index: index as i32,
+        log_index: index,
         block_time,
         kind,
         contract_address: emitter.clone(),
@@ -276,7 +278,7 @@ pub fn fold(
             is_completed: true,
             is_approved: true,
             is_editable: false,
-            items_count: added.len() as i32,
+            items_count: i32::try_from(added.len()).unwrap_or(i32::MAX),
             minters: Vec::new(),
             managers: Vec::new(),
             search_is_store_minter: false,
@@ -366,7 +368,7 @@ pub async fn project_in(
             .or_default()
             .insert(
                 row.get::<Option<String>, _>("metadata").unwrap_or_default(),
-                count as u64,
+                crate::market::casts::to_u64(count)?,
             );
     }
     let none = HashMap::new();
@@ -548,6 +550,10 @@ impl ChainIndex for CollectionsV1Index {
         }
         self.rebuilt.store(true, Ordering::SeqCst);
         match committed_unrepresented(pool).await {
+            #[allow(
+                clippy::cast_precision_loss,
+                reason = "a count of collections, far below 2^53"
+            )]
             Ok(Some(count)) => UNREPRESENTED.handle([]).set(count as f64),
             Ok(None) => {}
             Err(e) => tracing::warn!(
@@ -595,6 +601,14 @@ impl ChainIndex for CollectionsV1Index {
 
 #[cfg(test)]
 mod tests {
+    #![allow(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        clippy::cast_possible_wrap,
+        clippy::cast_precision_loss,
+        reason = "test fixtures use small literal values"
+    )]
+
     use super::*;
     use serde_json::Value;
 

@@ -226,7 +226,7 @@ impl ChainFeed {
         }
         // The marketplace's check at the read block: 0 tolerance demands a
         // round from that block.
-        let oldest_for_contract = block_time - tolerance_secs as i64;
+        let oldest_for_contract = block_time - i64::try_from(tolerance_secs).unwrap_or(i64::MAX);
         if self.refuse_past_tolerance && updated_at_s < oldest_for_contract {
             return Err(format!(
                 "the MANA/USD round ({updated_at_s}) is older than block {block}'s timestamp ({block_time}) minus the marketplace's tolerance ({tolerance_secs}s); the marketplace would revert"
@@ -296,6 +296,13 @@ fn redact(message: &str) -> String {
 }
 
 #[cfg(test)]
+#[allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    clippy::cast_possible_wrap,
+    clippy::cast_precision_loss,
+    reason = "test fixtures use small literal values"
+)]
 mod tests {
     use super::*;
     use crate::http::Outbound;

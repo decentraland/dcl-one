@@ -297,8 +297,8 @@ pub fn parse_filters(pairs: &[(String, String)]) -> Result<NftFilters, ApiError>
         .filter_map(|d| d.parse::<i64>().ok())
         .collect();
     Ok(NftFilters {
-        first: p.get_number("first", None).map(|f| f as i64),
-        skip: p.get_number("skip", None).map(|f| f as i64),
+        first: p.get_integer("first"),
+        skip: p.get_integer("skip"),
         sort_by,
         category,
         owner: p.get_address("owner", true, None),
@@ -459,19 +459,19 @@ fn graph_where(f: &NftFilters) -> Value {
         w["id_in"] = json!(f.ids);
     }
     if let Some(mn) = f.min_distance_to_plaza {
-        w["searchDistanceToPlaza_gte"] = json!(mn as i64);
+        w["searchDistanceToPlaza_gte"] = json!(super::casts::saturating_i64(mn));
     }
     if let Some(mx) = f.max_distance_to_plaza {
-        w["searchDistanceToPlaza_lte"] = json!(mx as i64);
+        w["searchDistanceToPlaza_lte"] = json!(super::casts::saturating_i64(mx));
     }
     if f.adjacent_to_road {
         w["searchAdjacentToRoad"] = json!(true);
     }
     if let Some(mn) = f.min_estate_size {
-        w["searchEstateSize_gte"] = json!(mn as i64);
+        w["searchEstateSize_gte"] = json!(super::casts::saturating_i64(mn));
     }
     if let Some(mx) = f.max_estate_size {
-        w["searchEstateSize_lte"] = json!(mx as i64);
+        w["searchEstateSize_lte"] = json!(super::casts::saturating_i64(mx));
     }
     if f.emote_has_sound {
         w["searchEmoteHasSound"] = json!(true);
@@ -536,9 +536,16 @@ fn parcels_of(v: Option<&Value>) -> Vec<EstateParcel> {
     v.and_then(Value::as_array)
         .map(|a| {
             a.iter()
-                .map(|p| EstateParcel {
-                    x: readers::int_of(p, "x") as i32,
-                    y: readers::int_of(p, "y") as i32,
+                // A parcel outside the `integer` range is not a parcel.
+                .filter_map(|p| {
+                    let (x, y) = (readers::int_of(p, "x"), readers::int_of(p, "y"));
+                    match (i32::try_from(x), i32::try_from(y)) {
+                        (Ok(x), Ok(y)) => Some(EstateParcel { x, y }),
+                        _ => {
+                            tracing::warn!(x, y, "/v1/nfts: dropped an out-of-range estate parcel");
+                            None
+                        }
+                    }
                 })
                 .collect()
         })
@@ -1077,8 +1084,8 @@ async fn list_page(
     });
     let data = rows
         .into_iter()
-        .skip(offset as usize)
-        .take(first as usize)
+        .skip(crate::market::casts::page(offset))
+        .take(crate::market::casts::page(first))
         .map(|v| nft_from_graph(&v, Network::Ethereum, now_ms))
         .collect();
     Ok((data, total, None))
