@@ -116,7 +116,13 @@
       await boot({
         canvas: '#preview-canvas',
         baseDomain: params.get('baseDomain'),
-        log: (line) => { status.textContent = `${Math.round(performance.now() - t0)} ms`; console.log(line); },
+        // Every host message is a line, an emote's progress twice a second among them: into the host's console only
+        // while debugging, kept for the overlay either way so the backquote shows them.
+        log: (line) => {
+          status.textContent = `${Math.round(performance.now() - t0)} ms`;
+          if (debug) console.log(line);
+          else push('l', [line]);
+        },
       });
     } catch (e) {
       status.textContent = `failed: ${e}`;
