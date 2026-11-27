@@ -717,7 +717,7 @@
   },
   "library/ui/components/InputField/InputField.module.css": {
     "primitives": 0,
-    "tokens": 44
+    "tokens": 43
   },
   "library/ui/components/ItemLabel/ItemLabel.module.css": {
     "primitives": 0,

@@ -204,11 +204,6 @@
   .nativeSelect {
     color-scheme: dark;
   }
-  /* The browser draws the arrow at the select's end edge and the text up to it; the end padding sits
-     between them, the same 8px the frame keeps between a field and its icons. */
-  .webField .nativeSelect {
-    padding-inline-end: var(--dcl-space-8);
-  }
   .webField .nativeTextarea {
     padding: var(--dcl-space-8) 0;
     resize: vertical;
