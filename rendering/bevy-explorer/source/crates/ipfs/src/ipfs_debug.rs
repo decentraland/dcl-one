@@ -23,6 +23,8 @@ impl Plugin for IpfsDebugPlugin {
         app.add_systems(
             Update,
             (
+                // Runs before receive_debug so that it sees this frame's show or hide;
+                // otherwise it could spawn rows into a grid that was just emptied.
                 toggle_display
                     .run_if(input_just_pressed(KeyCode::F1))
                     .before(receive_debug),
@@ -77,9 +79,6 @@ struct UiRoot;
 
 #[derive(Component)]
 struct FileGrid;
-
-#[derive(Component)]
-struct FileCell;
 
 #[derive(Component, Deref)]
 struct AtomicSource(&'static AtomicU32);
@@ -250,7 +249,6 @@ fn receive_debug(
 fn spawn_row(commands: &mut Commands, file_grid: Entity, row: &[String; CELL_PER_ROW]) {
     for cell in row {
         commands.spawn((
-            FileCell,
             ChildOf(file_grid),
             Node::default(),
             Text::new(cell.clone()),
