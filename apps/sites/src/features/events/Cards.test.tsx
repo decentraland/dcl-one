@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ComponentProps } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from "vitest";
@@ -281,6 +281,14 @@ describe("when event cards reveal their actions", () => {
         await waitFor(() =>
           expect(screen.getByRole("status").textContent).toContain("Couldn't copy"),
         );
+      });
+      it("should keep the failure visible after pointer leave and dismiss it on Escape", async () => {
+        const button = screen.getByRole("button", { name: "Copy link: Poker Night" });
+        const tooltip = await screen.findByRole("tooltip");
+        fireEvent.mouseLeave(button);
+        expect(screen.getByRole("tooltip")).toBe(tooltip);
+        fireEvent.keyDown(button, { key: "Escape" });
+        expect(screen.queryByRole("tooltip")).toBeNull();
       });
       it("should not change the reminder", async () => {
         await waitFor(() =>

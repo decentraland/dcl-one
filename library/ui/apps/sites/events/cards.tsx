@@ -144,6 +144,8 @@ function EventActions({
       anchor={copyAnchor}
       label={copyFeedback.status}
       open={Boolean(copyFeedback.status)}
+      trigger="manual"
+      closeOnScroll
       onOpenChange={(open) => {
         if (!open) copyFeedback.dismiss()
       }}

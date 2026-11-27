@@ -71,6 +71,7 @@ describe("when the managed community names include in-world formatting", () => {
       profileError: null,
       communities: [
         { id: "aliens", name: "<size=400%><color=#00FF00>👽👽" },
+        { id: "rich", name: "<b>Built</b> <#0f0><U>together</U>" },
         { id: "math", name: "Math <3 & friends" },
         { id: "formatting", name: "<color=green></color>" },
       ],
@@ -89,6 +90,10 @@ describe("when the managed community names include in-world formatting", () => {
 
   it("should hide formatting instructions and keep the community ID", () => {
     expect(screen.getByRole("option", { name: "👽👽" })).toHaveProperty("value", "aliens");
+  });
+
+  it("should hide style tags and shorthand colors", () => {
+    expect(screen.getByRole("option", { name: "Built together" })).toHaveProperty("value", "rich");
   });
 
   it("should keep angle brackets that are part of the text", () => {

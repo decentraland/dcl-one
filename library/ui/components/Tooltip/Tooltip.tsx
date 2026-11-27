@@ -20,6 +20,8 @@ export type TooltipProps = {
   portal?: boolean
   /** Controlled state. Hover and focus then only call `onOpenChange`. */
   open?: boolean
+  /** With controlled open state, ignore hover and focus on the anchor. Dismissal still works. */
+  trigger?: 'hover' | 'manual'
   /** Called when hover, focus or a dismissal asks to open or close the tip. */
   onOpenChange?: (open: boolean) => void
   /** Element the tip points at when it is not the wrapped children. */
@@ -146,6 +148,7 @@ export function Tooltip({
   children,
   portal = false,
   open: openProp,
+  trigger = 'hover',
   onOpenChange,
   anchor,
   interactive = false,
@@ -173,11 +176,13 @@ export function Tooltip({
   const portalBody = useSyncExternalStore(subscribeToHydration, clientBody, serverBody)
   const controlled = openProp !== undefined
   const anchored = anchor !== undefined
+  const manual = trigger === 'manual'
   const hud = appearance === 'hud'
   const floating =
     !hud &&
     (portal ||
       controlled ||
+      manual ||
       anchored ||
       interactive ||
       keepInViewport ||
@@ -262,7 +267,7 @@ export function Tooltip({
   )
 
   useEffect(() => {
-    if (!floating || !anchor) return
+    if (!floating || !anchor || manual) return
     const onFocus = (event: Event) => focus(event.target)
     const onBlur = (event: Event) => blur((event as FocusEvent).relatedTarget)
     anchor.addEventListener('mouseenter', enter)
@@ -275,7 +280,7 @@ export function Tooltip({
       anchor.removeEventListener('focusin', onFocus)
       anchor.removeEventListener('focusout', onBlur)
     }
-  }, [floating, anchor, enter, leave, focus, blur])
+  }, [floating, anchor, manual, enter, leave, focus, blur])
   useEffect(() => {
     if (!open || !anchor || labelChild) return
     const descriptionIds = () =>
@@ -475,10 +480,10 @@ export function Tooltip({
         .filter(Boolean)
         .join(' ')}
       aria-describedby={floating && open && !labelChild ? id : undefined}
-      onMouseEnter={floating ? enter : undefined}
-      onMouseLeave={floating ? leave : undefined}
-      onFocus={floating ? (event) => focus(event.target) : undefined}
-      onBlur={floating ? (event) => blur(event.relatedTarget) : undefined}
+      onMouseEnter={floating && !manual ? enter : undefined}
+      onMouseLeave={floating && !manual ? leave : undefined}
+      onFocus={floating && !manual ? (event) => focus(event.target) : undefined}
+      onBlur={floating && !manual ? (event) => blur(event.relatedTarget) : undefined}
     >
       {children}
       {floating ? open && portalBody && createPortal(tip, portalBody) : disabled ? null : tip}

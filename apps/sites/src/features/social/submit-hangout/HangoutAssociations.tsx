@@ -6,8 +6,8 @@ import form from "./SubmitHangout.module.css";
 import FeaturedAssetPicker from "./FeaturedAssetPicker";
 import FormField from "./FormField";
 
-// Community names can contain in-world size and color tags. The native picker displays plain text.
-const communityNameFormatting = /<\/?(?:size|color)(?:=[^<>]*)?>/gi;
+// The native picker displays in-world names as plain text while keeping ordinary angle brackets.
+const communityNameFormatting = /<\/?(?:size|color|b|i|u|s|mark|alpha|sub|sup)(?:=[^<>]*)?>|<#(?:[0-9a-f]{3,4}|[0-9a-f]{6}|[0-9a-f]{8})>/gi;
 
 export default function HangoutAssociations({ draft, options, canChangeCommunity, onEdit }: {
   draft: HangoutDraft; options: HangoutOptions | null; canChangeCommunity: boolean;
