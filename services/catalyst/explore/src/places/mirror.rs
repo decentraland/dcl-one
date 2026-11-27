@@ -78,9 +78,12 @@ const UPSERT: &str = r#"
               categories, likes, dislikes, favorites, deployed_at, disabled, highlighted, raw)
     -- An operator's decision (places::moderation) outlives every pass: the
     -- overlay's non-NULL fields win over upstream's.
-    LEFT JOIN explore.place_moderation m ON m.place_id = u.id
+    LEFT JOIN explore.genesis_place_claim genesis ON genesis.public_id = u.id
+    LEFT JOIN explore.place_moderation m ON m.place_id = COALESCE(genesis.local_id, u.id)
+        AND (genesis.public_id IS NULL OR m.set_by <> 'migration:places')
     -- and so does an operator's ranking (places::ranking): its raw keys win.
-    LEFT JOIN explore.place_ranking r ON r.place_id = u.id
+    LEFT JOIN explore.place_ranking r ON r.place_id = COALESCE(genesis.local_id, u.id)
+        AND (genesis.public_id IS NULL OR r.set_by <> 'migration:places')
     -- A world this node publishes is listed from the local leg alone
     -- (places::derive), and an id stays unique across both legs.
     WHERE NOT EXISTS (
@@ -784,14 +787,14 @@ pub async fn upsert_rows(pool: &PgPool, rows: &[MirrorRow]) -> Result<()> {
         .bind(rows.iter().map(|r| r.disabled).collect::<Vec<_>>())
         .bind(rows.iter().map(|r| r.highlighted).collect::<Vec<_>>())
         .bind(rows.iter().map(|r| r.raw.clone()).collect::<Vec<_>>());
+    let mut tx = pool.begin().await?;
+    super::interactions::lock_public_id_writes(&mut tx).await?;
+    super::moderation::lock_curation_projection(&mut tx).await?;
     if rows.iter().any(|r| !r.raw["world_name"].is_null()) {
-        let mut tx = pool.begin().await?;
         super::derive::lock_world_projection(&mut tx).await?;
-        query.execute(&mut *tx).await?;
-        tx.commit().await?;
-    } else {
-        query.execute(pool).await?;
     }
+    query.execute(&mut *tx).await?;
+    tx.commit().await?;
     Ok(())
 }
 

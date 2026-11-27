@@ -4,7 +4,7 @@
 
 The production Worlds content server identifies a scene deployment by its content ID (CID). Places gives a scene a public UUID and can retain it through successive deployments. The Worlds mirror uses the public UUID when one Places row for the same world names the exact active deployment CID. World name, base parcel and parcel overlap alone cannot identify the indexed deployment.
 
-The mirror commits scene content before looking up unresolved scenes in Places. Scheduled nodes can retry a miss after one minute, subject to worker capacity. Subsequent full passes also retry unchanged deployments and recover after a restart. On read-through-only nodes, a cached world's `/about` or `/scenes` request can trigger a background lookup. Concurrent reads share it and completed attempts have a one-minute cooldown. This lookup pairs the production Worlds server with production Places.
+The mirror commits scene content independently. A separate scheduled job checks up to 16 worlds per batch, with four concurrent Places lookups. On read-through-only nodes, a cached world's `/about` or `/scenes` request can trigger a background lookup. Both paths record the next attempt for the source, world and CID before contacting Places. The wait starts at four minutes and increases to 24 hours for repeated misses. A new CID is immediately eligible. This lookup pairs the production Worlds server with production Places.
 
 The catalogue mirror follows the public discovery feed. An opted-out scene may still have a Places UUID. The Worlds mirror therefore queries Places by the specific world name with `include_opted_out=true` when it has an unresolved WCS deployment. Explore owns the persisted identity and rechecks the deployment before recording a match.
 
@@ -28,7 +28,8 @@ can receive the same deployment in either order.
 Explore reconciles the two records when a complete walk of production Places
 finds one eligible Genesis record for the local scene's base parcel and exact
 active deployment CID. A match also requires the scene to be a live local
-publication. A repeated UUID or an ambiguous match provides insufficient evidence.
+publication. Identical sightings across overlapping pages count once. Conflicting
+identities or deployment records provide insufficient evidence.
 The catalogue mirror and the local scene derivation both retry, so an existing
 pair can converge without another scene deployment.
 
@@ -36,6 +37,9 @@ While the match holds, Places and Destinations publish one entry with the
 production UUID. A link using the parcel-derived UUID opens that entry too.
 Favorites and votes written through either link use the same local interaction
 key. Scene storage continues to use the Genesis realm and base parcel.
+
+Operator moderation and ranking follow the reserved place identity after the
+match expires. Operators can find earlier place reports using either UUID.
 
 If the local deployment changes before production Places indexes the new CID,
 the local link describes the current local scene. The upstream record follows

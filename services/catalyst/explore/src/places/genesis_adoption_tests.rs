@@ -84,6 +84,241 @@ async fn places_pass(pool: &PgPool, source: &str, places: &[Value]) {
     places_pass_with_total(pool, source, places, Some(places.len() as i64)).await;
 }
 
+#[tokio::test]
+async fn genesis_operator_curation_survives_import_mirror_and_expiry() {
+    use super::moderation::{Decision, Target, apply};
+    use super::ranking::set_ranking;
+
+    let Some(db) = OwnedDatabase::new("genesis_curation", Schema::Full, 4).await else {
+        return;
+    };
+    let pool = &db.pool;
+    let base = "5,8";
+    let local = parcel_place_id(base);
+    let public = Uuid::new_v4().to_string();
+    let upstream_row = upstream(&public, base, "first");
+    publish(pool, base, "first").await;
+    derive_held(pool).await;
+    mirror::upsert_rows(pool, &[mirror::extract_place(&upstream_row).unwrap()])
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO explore.place_moderation (place_id, disabled, highlighted, content_rating, set_by) VALUES ($1,false,false,'E','migration:places')")
+        .bind(&local).execute(pool).await.unwrap();
+    sqlx::query(r#"INSERT INTO explore.place_ranking (place_id, overlay, set_by) VALUES ($1,'{"ranking":1}','migration:places')"#)
+        .bind(&local).execute(pool).await.unwrap();
+    for decision in [
+        Decision::Rating("T".into()),
+        Decision::Highlighted(true),
+        Decision::Disabled {
+            disabled: true,
+            reason: Some("operator hold".into()),
+        },
+    ] {
+        assert!(
+            apply(pool, Target::Place(&public), &decision, "operator")
+                .await
+                .unwrap()
+                .is_some()
+        );
+    }
+    assert_eq!(
+        set_ranking(pool, &public, Some(88.0), "operator")
+            .await
+            .unwrap(),
+        1
+    );
+    places_pass(pool, SOURCE, std::slice::from_ref(&upstream_row)).await;
+    let active: bool = sqlx::query_scalar(
+        "SELECT EXISTS (SELECT 1 FROM explore.genesis_place_alias WHERE public_id=$1)",
+    )
+    .bind(&public)
+    .fetch_one(pool)
+    .await
+    .unwrap();
+    assert!(active);
+    let mut source_disabled = upstream_row.clone();
+    source_disabled["disabled"] = json!(true);
+    places_pass(pool, SOURCE, std::slice::from_ref(&source_disabled)).await;
+    let source_expired: bool = sqlx::query_scalar(
+        "SELECT NOT EXISTS (SELECT 1 FROM explore.genesis_place_alias WHERE public_id=$1)
+        AND (SELECT count(*) FROM explore.place WHERE id IN ($1,$2) AND disabled) = 2",
+    )
+    .bind(&public)
+    .bind(&local)
+    .fetch_one(pool)
+    .await
+    .unwrap();
+    assert!(source_expired);
+    places_pass(pool, SOURCE, std::slice::from_ref(&upstream_row)).await;
+    // An existing reservation may predate physical local projection.
+    sqlx::query("UPDATE explore.place SET disabled=false, highlighted=false WHERE id=$1")
+        .bind(&local)
+        .execute(pool)
+        .await
+        .unwrap();
+    publish(pool, base, "second").await;
+    derive_held(pool).await;
+    places_pass(pool, SOURCE, std::slice::from_ref(&upstream_row)).await;
+    let active: bool = sqlx::query_scalar(
+        "SELECT EXISTS (SELECT 1 FROM explore.genesis_place_alias WHERE public_id=$1)",
+    )
+    .bind(&public)
+    .fetch_one(pool)
+    .await
+    .unwrap();
+    assert!(!active);
+
+    let mut importer = pool.begin().await.unwrap();
+    sqlx::raw_sql(
+        "CREATE SCHEMA dcl_migration;
+         CREATE TABLE dcl_migration.blob_inventory (source text, object_key text, hash text);
+         CREATE TABLE dcl_migration.blob_missing (source text, object_key text);
+         CREATE TEMP TABLE stage (
+           id text, base_position text, title text, description text, creator_address text,
+           content_rating text, categories text[], deployed_at timestamptz, disabled boolean,
+           highlighted boolean, world_name text, raw jsonb, mod_disabled boolean,
+           mod_rating text, ranking_overlay jsonb
+         ) ON COMMIT DROP;",
+    )
+    .execute(&mut *importer)
+    .await
+    .unwrap();
+    sqlx::query("INSERT INTO stage (id, base_position, disabled, highlighted, raw, mod_disabled) VALUES ($1,$2,false,false,$3,false)")
+        .bind(&public).bind(base).bind(&upstream_row).execute(&mut *importer).await.unwrap();
+    sqlx::raw_sql(include_str!(concat!(
+        env!("DCL_ONE_ROOT"),
+        "/tooling/migration/sources/places/place.load.sql"
+    )))
+    .execute(&mut *importer)
+    .await
+    .unwrap();
+    importer.commit().await.unwrap();
+    let stored: Vec<(bool, bool, String, f64, String)> = sqlx::query_as(
+        "SELECT disabled, highlighted, content_rating, (raw->>'ranking')::float8, raw->>'disabled_reason'
+         FROM explore.place WHERE id = ANY($1) ORDER BY id",
+    )
+    .bind([&local, &public].map(String::as_str))
+    .fetch_all(pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        stored,
+        vec![(true, true, "T".into(), 88.0, "operator hold".into()); 2]
+    );
+    let (_, listing) = request(
+        &crate::router(state(pool)),
+        "GET",
+        &format!("/api/places?positions={base}"),
+        None,
+    )
+    .await;
+    assert_eq!(listing["total"], 0);
+    let actors: (String, String) = sqlx::query_as("SELECT m.set_by, r.set_by FROM explore.place_moderation m JOIN explore.place_ranking r ON r.place_id=m.place_id WHERE m.place_id=$1")
+        .bind(&local).fetch_one(pool).await.unwrap();
+    assert_eq!(actors, ("operator".into(), "operator".into()));
+
+    for decision in [
+        Decision::Disabled {
+            disabled: false,
+            reason: None,
+        },
+        Decision::Highlighted(false),
+    ] {
+        assert!(
+            apply(pool, Target::Place(&public), &decision, "operator")
+                .await
+                .unwrap()
+                .is_some()
+        );
+    }
+    assert_eq!(
+        set_ranking(pool, &public, None, "operator").await.unwrap(),
+        1
+    );
+    places_pass(pool, SOURCE, &[source_disabled]).await;
+    derive_held(pool).await;
+    let cleared: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM explore.place WHERE id = ANY($1) AND NOT disabled AND NOT highlighted
+         AND raw->'ranking' = 'null'::jsonb AND raw->'disabled_at' = 'null'::jsonb",
+    )
+    .bind([&local, &public].map(String::as_str))
+    .fetch_one(pool)
+    .await
+    .unwrap();
+    assert_eq!(cleared, 2);
+
+    // A purely local decision projects at claim time, before a later pass
+    // could observe that the matching deployment has already changed.
+    let local_base = "5,9";
+    let local_only = parcel_place_id(local_base);
+    let public_copy = Uuid::new_v4().to_string();
+    publish(pool, local_base, "local-only").await;
+    derive_held(pool).await;
+    apply(
+        pool,
+        Target::Place(&local_only),
+        &Decision::Disabled {
+            disabled: true,
+            reason: None,
+        },
+        "operator",
+    )
+    .await
+    .unwrap();
+    places_pass(
+        pool,
+        SOURCE,
+        &[upstream(&public_copy, local_base, "local-only")],
+    )
+    .await;
+    publish(pool, local_base, "local-only-redeploy").await;
+    let carried: bool = sqlx::query_scalar(
+        "SELECT NOT EXISTS (SELECT 1 FROM explore.genesis_place_alias WHERE public_id=$1)
+         AND (SELECT count(*) FROM explore.place WHERE id IN ($1,$2) AND disabled) = 2",
+    )
+    .bind(&public_copy)
+    .bind(&local_only)
+    .fetch_one(pool)
+    .await
+    .unwrap();
+    assert!(carried);
+
+    let import_base = "5,10";
+    let import_local = parcel_place_id(import_base);
+    let import_public = Uuid::new_v4().to_string();
+    let import_upstream = upstream(&import_public, import_base, "import-only");
+    publish(pool, import_base, "import-only").await;
+    derive_held(pool).await;
+    places_pass(pool, SOURCE, std::slice::from_ref(&import_upstream)).await;
+    sqlx::query("INSERT INTO explore.place_moderation (place_id, disabled, highlighted, set_by) VALUES ($1,true,true,'migration:places')")
+        .bind(&import_local).execute(pool).await.unwrap();
+    sqlx::query(r#"INSERT INTO explore.place_ranking (place_id, overlay, set_by) VALUES ($1,'{"ranking":71}','migration:places')"#)
+        .bind(&import_local).execute(pool).await.unwrap();
+    derive_held(pool).await;
+    places_pass(pool, SOURCE, std::slice::from_ref(&import_upstream)).await;
+    for table in ["explore.place_moderation", "explore.place_ranking"] {
+        sqlx::query(sqlx::AssertSqlSafe(format!(
+            "DELETE FROM {table} WHERE place_id = $1 AND set_by = 'migration:places'"
+        )))
+        .bind(&import_local)
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+    derive_held(pool).await;
+    places_pass(pool, SOURCE, &[import_upstream]).await;
+    let normal: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM explore.place WHERE id = ANY($1) AND NOT disabled AND NOT highlighted
+           AND raw->>'ranking' IS NULL",
+    )
+    .bind([&import_local, &import_public].map(String::as_str))
+    .fetch_one(pool)
+    .await
+    .unwrap();
+    assert_eq!(normal, 2);
+    db.drop().await;
+}
+
 async fn places_pass_with_total(
     pool: &PgPool,
     source: &str,
@@ -106,7 +341,13 @@ async fn places_pass_with_total(
     )
     .await
     .unwrap();
-    mirror::upsert_rows(pool, &rows).await.unwrap();
+    // Write in input order so the catalogue has the last row for an ID,
+    // as the production mirror's page deduplication does.
+    for row in &rows {
+        mirror::upsert_rows(pool, std::slice::from_ref(row))
+            .await
+            .unwrap();
+    }
     genesis_identity::finish_pass(pool, start.started_at.naive_utc(), source)
         .await
         .unwrap();
@@ -305,6 +546,32 @@ async fn genesis_adoption_converges_in_both_writer_orders() {
 }
 
 #[tokio::test]
+async fn ordinary_local_derive_runs_during_a_shared_interaction_lock() {
+    let Some(db) = OwnedDatabase::new("genesis_derive_busy", Schema::Full, 4).await else {
+        return;
+    };
+    let base = "6,4";
+    publish(&db.pool, base, "bafyordinarygenesis").await;
+    let mut importer = db.pool.begin().await.unwrap();
+    interactions::lock_public_id_writes(&mut importer)
+        .await
+        .unwrap();
+    tokio::time::timeout(std::time::Duration::from_secs(2), derive_held(&db.pool))
+        .await
+        .unwrap();
+    assert!(
+        state(&db.pool)
+            .places
+            .find_by_id_for(&parcel_place_id(base), None)
+            .await
+            .unwrap()
+            .is_some()
+    );
+    importer.rollback().await.unwrap();
+    db.drop().await;
+}
+
+#[tokio::test]
 async fn genesis_adoption_requires_a_unique_exact_live_production_candidate() {
     let Some(db) = OwnedDatabase::new("genesis_proof", Schema::Full, 4).await else {
         return;
@@ -320,6 +587,13 @@ async fn genesis_adoption_requires_a_unique_exact_live_production_candidate() {
     for (source, places) in [
         ("https://places.example", vec![upstream(&public, base, cid)]),
         (SOURCE, vec![upstream(&public, base, "bafywrongcid")]),
+        (
+            SOURCE,
+            vec![
+                upstream(&public, base, cid),
+                upstream(&public, base, "bafywrongcid"),
+            ],
+        ),
         (
             SOURCE,
             vec![upstream(&public, base, cid), upstream(&other, base, cid)],
@@ -350,8 +624,10 @@ async fn genesis_adoption_requires_a_unique_exact_live_production_candidate() {
         assert_eq!(row.id, fallback);
     }
 
-    // A complete source pass repairs ambiguity and can adopt the same deployment.
-    places_pass(&db.pool, SOURCE, &candidate).await;
+    // Exact repetitions from a complete walk are one sighting, including
+    // when the first complete walk repairs a previous conflict.
+    let repeated = [candidate[0].clone(), candidate[0].clone()];
+    places_pass(&db.pool, SOURCE, &repeated).await;
     derive_held(&db.pool).await;
     let row = state
         .places

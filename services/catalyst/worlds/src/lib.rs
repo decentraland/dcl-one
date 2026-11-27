@@ -398,6 +398,19 @@ impl WorldsState {
             );
             return;
         };
+        if mirror.has_places_source() {
+            let (state, mirror) = (self.clone(), mirror.clone());
+            jobs.spawn_periodic_leased(
+                "worlds-places-identities",
+                PeriodicCfg::every(Duration::from_secs(15)),
+                move |_| {
+                    let (state, mirror) = (state.clone(), mirror.clone());
+                    async move {
+                        mirror::place_ids::probe_batch(&state.http, &state.pool, &mirror).await
+                    }
+                },
+            );
+        }
         let state = self.clone();
         let cfg = PeriodicCfg::every(mirror.interval)
             .with_jitter(Duration::from_secs(30))

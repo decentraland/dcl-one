@@ -8,6 +8,13 @@ use super::interactions::{lock_public_id_merge, merge_public_id};
 
 pub(crate) const TRUSTED_SOURCE: &str = "https://places.decentraland.org";
 
+const HAS_PUBLIC_FACTS: &str =
+    "(EXISTS (SELECT 1 FROM explore.place_interaction_counts i WHERE i.entity_id = c.public_id)
+    OR EXISTS (SELECT 1 FROM explore.user_favorites i WHERE i.entity_id = c.public_id)
+    OR EXISTS (SELECT 1 FROM explore.user_likes i WHERE i.entity_id = c.public_id)
+    OR EXISTS (SELECT 1 FROM explore.place_moderation i WHERE i.place_id = c.public_id)
+    OR EXISTS (SELECT 1 FROM explore.place_ranking i WHERE i.place_id = c.public_id))";
+
 /// Store inputs before catalogue deduplication. Replaying a page replaces the
 /// evidence for that offset, including rows that appeared more than once.
 pub(crate) async fn record_page(
@@ -114,8 +121,8 @@ pub(crate) async fn clear_observations(
     tx.commit().await
 }
 
-/// Publish the complete set under the interaction claim lock; neither a
-/// duplicate public UUID nor multiple sightings of one exact scene can win.
+/// Publish complete observations. Identical pagination repeats are one fact;
+/// conflicting IDs or deployments are ineligible.
 pub(crate) async fn finish_pass(
     pool: &PgPool,
     pass_started_at: NaiveDateTime,
@@ -125,7 +132,6 @@ pub(crate) async fn finish_pass(
         return Ok(());
     }
     let mut tx = pool.begin().await?;
-    lock_public_id_merge(&mut tx).await?;
     let current = sqlx::query_scalar::<_, String>(
         "SELECT source_url FROM explore.mirror_state WHERE mirror = 'places'
            AND source_url = $1 AND pass_started_at = $2 FOR SHARE",
@@ -154,38 +160,120 @@ pub(crate) async fn finish_pass(
         tracing::warn!(%pass_started_at, "Places mirror did not verify a complete Genesis catalogue walk");
         return Ok(());
     }
-    sqlx::query("DELETE FROM explore.genesis_place_observed")
-        .execute(&mut *tx)
-        .await?;
     sqlx::query(
-        "INSERT INTO explore.genesis_place_observed (public_id, base_position, deployment_id)
-         SELECT public_id, base_position, deployment_id FROM (
+        "CREATE TEMP TABLE next_genesis_observations ON COMMIT DROP AS
+         WITH sightings AS MATERIALIZED (
+             SELECT DISTINCT public_id, base_position, deployment_id
+             FROM explore.genesis_place_sighting WHERE pass_started_at = $1
+         ), counts AS (
              SELECT *, count(*) OVER (PARTITION BY public_id) AS same_id,
                        count(*) OVER (PARTITION BY base_position, deployment_id) AS same_scene
-             FROM explore.genesis_place_sighting WHERE pass_started_at = $1
-         ) counts
-         WHERE same_id = 1 AND same_scene = 1 AND base_position IS NOT NULL AND deployment_id IS NOT NULL",
+             FROM sightings
+         )
+         SELECT public_id, base_position, deployment_id FROM counts
+         WHERE same_id = 1 AND same_scene = 1 AND base_position IS NOT NULL AND deployment_id IS NOT NULL
+         UNION ALL
+         SELECT o.public_id, o.base_position, o.deployment_id
+         FROM explore.genesis_place_observed o JOIN explore.place p ON p.id = o.public_id
+         WHERE p.origin = 'upstream' AND NOT p.world AND p.world_name IS NULL
+           AND p.raw->>'world' = 'false' AND COALESCE(p.raw->>'disabled', 'false') = 'false'
+           AND p.fetched_at >= $1
+           AND p.base_position = o.base_position AND p.raw->>'deployment_id' = o.deployment_id
+           AND NOT EXISTS (SELECT 1 FROM sightings s WHERE s.public_id = o.public_id
+                           OR (s.base_position, s.deployment_id) = (o.base_position, o.deployment_id))",
     )
     .bind(pass_started_at)
     .execute(&mut *tx)
     .await?;
-    reconcile(&mut tx, None).await?;
-    tx.commit().await
+    let observations_changed: bool = sqlx::query_scalar(
+        "SELECT EXISTS (
+            SELECT 1 FROM explore.genesis_place_observed old
+            FULL JOIN next_genesis_observations next USING (public_id, base_position, deployment_id)
+            WHERE old.public_id IS NULL OR next.public_id IS NULL
+        )",
+    )
+    .fetch_one(&mut *tx)
+    .await?;
+    if !observations_changed {
+        tx.commit().await?;
+        return reconcile_committed(pool, None).await;
+    }
+    lock_public_id_merge(&mut tx).await?;
+    sqlx::query(
+        "DELETE FROM explore.genesis_place_observed current
+         WHERE NOT EXISTS (
+             SELECT 1 FROM next_genesis_observations next
+             WHERE (next.public_id, next.base_position, next.deployment_id) =
+                   (current.public_id, current.base_position, current.deployment_id)
+         )",
+    )
+    .execute(&mut *tx)
+    .await?;
+    sqlx::query(
+        "INSERT INTO explore.genesis_place_observed (public_id, base_position, deployment_id)
+         SELECT public_id, base_position, deployment_id FROM next_genesis_observations
+         ON CONFLICT (public_id) DO NOTHING",
+    )
+    .execute(&mut *tx)
+    .await?;
+    super::moderation::lock_curation(&mut tx).await?;
+    // Reappearing reservations become live in this transaction. Fold any
+    // facts written while those aliases were unbound before publishing them.
+    reconcile_existing(&mut tx, None).await?;
+    tx.commit().await?;
+    reconcile_committed(pool, None).await
+}
+
+pub(super) async fn reconcile_existing(
+    conn: &mut PgConnection,
+    local_ids: Option<&[&str]>,
+) -> Result<(), sqlx::Error> {
+    reconcile(conn, local_ids, false).await
+}
+
+/// Both writers try after committing their input. Whichever commits second
+/// can see the other, and pages without candidates never queue an exclusive
+/// interaction lock. Each batch rechecks the live evidence after locking.
+pub(super) async fn reconcile_committed(
+    pool: &PgPool,
+    local_ids: Option<&[&str]>,
+) -> Result<(), sqlx::Error> {
+    let ids: Vec<String> = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
+        "SELECT DISTINCT c.local_id FROM explore.genesis_place_candidate c
+         LEFT JOIN explore.genesis_place_claim a ON a.public_id = c.public_id
+         WHERE ($1::text[] IS NULL OR c.local_id = ANY($1))
+           AND (a.public_id IS NULL OR (a.local_id = c.local_id AND {HAS_PUBLIC_FACTS}))
+         ORDER BY c.local_id",
+    )))
+    .bind(local_ids)
+    .fetch_all(pool)
+    .await?;
+    for batch in ids.chunks(16) {
+        let batch: Vec<_> = batch.iter().map(String::as_str).collect();
+        let mut tx = pool.begin().await?;
+        lock_public_id_merge(&mut tx).await?;
+        super::moderation::lock_curation(&mut tx).await?;
+        reconcile(&mut tx, Some(&batch), true).await?;
+        tx.commit().await?;
+    }
+    Ok(())
 }
 
 /// Caller holds the exclusive interaction claim lock before taking row locks.
 /// Reservations keep their original owner even after this live proof expires.
-pub(super) async fn reconcile(
+async fn reconcile(
     conn: &mut PgConnection,
     local_ids: Option<&[&str]>,
+    allow_new_claims: bool,
 ) -> Result<(), sqlx::Error> {
     let pending: Vec<(String, String)> = sqlx::query_as(
         "SELECT c.public_id, c.local_id FROM explore.genesis_place_candidate c
-         WHERE ($1::text[] IS NULL OR c.local_id = ANY($1))
+         WHERE $2 AND ($1::text[] IS NULL OR c.local_id = ANY($1))
            AND CASE WHEN pg_input_is_valid(c.local_id, 'uuid') THEN c.local_id::uuid::text END = c.local_id
            AND NOT EXISTS (SELECT 1 FROM explore.genesis_place_claim a WHERE a.public_id = c.public_id)",
     )
     .bind(local_ids)
+    .bind(allow_new_claims)
     .fetch_all(&mut *conn)
     .await?;
     if !pending.is_empty() {
@@ -202,7 +290,7 @@ pub(super) async fn reconcile(
     }
     // Recheck under the shared namespace locks. Only pairs whose two keys
     // were locked above may create a reservation.
-    let claims = sqlx::query_as::<_, (uuid::Uuid, uuid::Uuid)>(
+    let claims = sqlx::query_as::<_, (uuid::Uuid, uuid::Uuid)>(sqlx::AssertSqlSafe(format!(
         "WITH eligible AS (
            SELECT c.public_id, c.local_id,
                   CASE WHEN pg_input_is_valid(c.local_id, 'uuid') THEN c.local_id::uuid END AS local_uuid
@@ -226,12 +314,8 @@ pub(super) async fn reconcile(
          SELECT * FROM claimed
          UNION SELECT c.public_id::uuid, c.local_uuid FROM eligible c
          JOIN explore.genesis_place_claim a ON a.public_id = c.public_id AND a.local_id = c.local_id
-         WHERE EXISTS (SELECT 1 FROM explore.place_interaction_counts i WHERE i.entity_id = c.public_id)
-            OR EXISTS (SELECT 1 FROM explore.user_favorites i WHERE i.entity_id = c.public_id)
-            OR EXISTS (SELECT 1 FROM explore.user_likes i WHERE i.entity_id = c.public_id)
-            OR EXISTS (SELECT 1 FROM explore.place_moderation i WHERE i.place_id = c.public_id)
-            OR EXISTS (SELECT 1 FROM explore.place_ranking i WHERE i.place_id = c.public_id)",
-    )
+         WHERE {HAS_PUBLIC_FACTS}",
+    )))
     .bind(local_ids)
     .bind(pending.iter().map(|p| p.0.as_str()).collect::<Vec<_>>())
     .bind(pending.iter().map(|p| p.1.as_str()).collect::<Vec<_>>())

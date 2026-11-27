@@ -35,6 +35,34 @@ CREATE TABLE explore.genesis_place_claim (
 );
 CREATE INDEX genesis_place_claim_local_idx ON explore.genesis_place_claim (local_id);
 
+-- Operator decisions follow the reserved pair even while discovery reverts
+-- to separate catalogue rows. Interaction facts still use the live proof.
+CREATE FUNCTION explore.genesis_curation_key(input_id text) RETURNS text
+LANGUAGE sql STABLE STRICT AS $$
+    SELECT COALESCE((SELECT local_id FROM explore.genesis_place_claim
+                     WHERE public_id = input_id), input_id);
+$$;
+
+CREATE FUNCTION explore.project_genesis_place_curation(local_ids text[], include_public boolean) RETURNS void
+LANGUAGE sql AS $$
+    UPDATE explore.place p SET
+        disabled = COALESCE(m.disabled, p.disabled),
+        highlighted = COALESCE(m.highlighted, p.highlighted),
+        content_rating = COALESCE(m.content_rating, p.content_rating),
+        raw = p.raw || COALESCE(r.overlay, '{}'::jsonb) ||
+            CASE m.disabled WHEN true THEN jsonb_build_object(
+                'disabled_at', to_char(m.disabled_at, 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'),
+                'disabled_reason', m.reason)
+            WHEN false THEN '{"disabled_at":null,"disabled_reason":null}'::jsonb
+            ELSE '{}'::jsonb END
+    FROM (SELECT DISTINCT local_id AS id FROM explore.genesis_place_claim WHERE local_id = ANY(local_ids)) target
+    LEFT JOIN explore.place_moderation m ON m.place_id = target.id AND m.set_by <> 'migration:places'
+    LEFT JOIN explore.place_ranking r ON r.place_id = target.id AND r.set_by <> 'migration:places'
+    WHERE (m.place_id IS NOT NULL OR r.place_id IS NOT NULL)
+        AND (p.id = target.id OR (include_public AND p.id IN (
+            SELECT public_id FROM explore.genesis_place_claim WHERE local_id = target.id)));
+$$;
+
 -- This runs after the World insert guard, which took the per-UUID lock
 -- or verified that the Places import holds the shared claim lock.
 CREATE FUNCTION explore.guard_world_scene_genesis_reservation() RETURNS trigger

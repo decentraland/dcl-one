@@ -224,15 +224,19 @@ async fn write_overlays(
     let mut written = 0;
     for table in ["explore.place", "explore.place_world_local"] {
         let sql = format!(
-            "UPDATE {table} AS p SET raw = COALESCE(p.raw, '{{}}'::jsonb) || u.overlay
-             FROM unnest($1::text[], $2::jsonb[]) AS u(id, overlay) WHERE p.id = u.id"
+            "WITH projected AS (
+               UPDATE {table} AS p SET raw = COALESCE(p.raw, '{{}}'::jsonb) || u.overlay
+               FROM unnest($1::text[], $2::jsonb[]) AS u(id, overlay)
+               WHERE p.id = u.id OR p.id IN (
+                 SELECT public_id FROM explore.genesis_place_claim WHERE local_id = u.id)
+               RETURNING u.id
+             ) SELECT count(DISTINCT id) FROM projected"
         );
-        written += sqlx::query(sqlx::AssertSqlSafe(sql))
+        written += sqlx::query_scalar::<_, i64>(sqlx::AssertSqlSafe(sql))
             .bind(&ids)
             .bind(&docs)
-            .execute(&mut *conn)
-            .await?
-            .rows_affected();
+            .fetch_one(&mut *conn)
+            .await? as u64;
     }
     Ok(written)
 }
@@ -251,7 +255,8 @@ pub async fn set_ranking(
 ) -> Result<u64, ApiError> {
     let mut tx = pool.begin().await?;
     super::interactions::lock_public_id_writes(&mut tx).await?;
-    let key = super::interactions::interaction_key(&mut tx, id).await?;
+    super::moderation::lock_curation(&mut tx).await?;
+    let key = super::moderation::curation_key(&mut tx, id).await?;
     let written = write_overlays(
         &mut tx,
         &[(key, json!({ "ranking": ranking_value(ranking) }))],
@@ -280,7 +285,9 @@ fn scene_curation_sql() -> String {
 
 fn curation_sql(table: &str) -> String {
     format!(
-        "SELECT highlighted, {EXCLUDE_FROM_RANKING_SQL} AS excluded FROM {table} WHERE id = $1 FOR UPDATE"
+        "SELECT highlighted, {EXCLUDE_FROM_RANKING_SQL} AS excluded FROM {table}
+         WHERE id = $1 OR id IN (SELECT public_id FROM explore.genesis_place_claim WHERE local_id = $1)
+         ORDER BY (id = $1) DESC, id LIMIT 1 FOR UPDATE"
     )
 }
 
@@ -293,7 +300,8 @@ pub async fn set_ranking_from_score(
 ) -> Result<ScoreRankingOutcome, ApiError> {
     let mut tx = pool.begin().await?;
     super::interactions::lock_public_id_writes(&mut tx).await?;
-    let key = super::interactions::interaction_key(&mut tx, id).await?;
+    super::moderation::lock_curation(&mut tx).await?;
+    let key = super::moderation::curation_key(&mut tx, id).await?;
     let id = key.as_str();
     // Scene before catalogue row, the order every other curation write takes.
     lock_world_scenes(&mut tx, &[id.to_string()]).await?;
@@ -357,7 +365,8 @@ pub async fn set_exclusion(
     };
     let mut tx = pool.begin().await?;
     super::interactions::lock_public_id_writes(&mut tx).await?;
-    let key = super::interactions::interaction_key(&mut tx, id).await?;
+    super::moderation::lock_curation(&mut tx).await?;
+    let key = super::moderation::curation_key(&mut tx, id).await?;
     let written = write_overlays(&mut tx, &[(key, overlay)], actor).await?;
     tx.commit().await?;
     Ok(written)
@@ -368,7 +377,7 @@ fn place_curation_sql() -> String {
     let key = super::query::genesis_storage_key_sql("requested.id");
     let alias = super::rows::GENESIS_PLACE_JOIN;
     format!(
-        "SELECT requested.id, place_indexed.id AS storage_id,
+        "SELECT requested.id, explore.genesis_curation_key(place_indexed.id) AS storage_id,
                 COALESCE(genesis_highlighted, highlighted) AS highlighted, world,
                 COALESCE(genesis_ranking_overlay->'exclude_from_ranking' = 'true'::jsonb,
                          {EXCLUDE_FROM_RANKING_SQL}) AS exclude_from_ranking
@@ -413,8 +422,11 @@ fn clear_candidates_sql(world: bool) -> String {
     let scene = super::scene_identity::is_scene_id_sql("explore.place_indexed.id");
     let unshadowed = super::query::GENESIS_UNSHADOWED;
     format!(
-        "SELECT id FROM explore.place_indexed WHERE world IS {leg} AND highlighted IS FALSE
-         AND {EXCLUDE_FROM_RANKING_SQL} IS FALSE AND {RANKING_IS_SET_SQL} AND id <> ALL($1::text[])
+        "SELECT DISTINCT COALESCE(c.local_id, id) FROM explore.place_indexed
+         LEFT JOIN explore.genesis_place_claim c ON c.public_id = id
+         WHERE world IS {leg} AND highlighted IS FALSE
+         AND {EXCLUDE_FROM_RANKING_SQL} IS FALSE AND {RANKING_IS_SET_SQL}
+         AND COALESCE(c.local_id, id) <> ALL($1::text[])
          AND NOT {scene} AND {unshadowed}"
     )
 }
@@ -434,6 +446,7 @@ pub async fn replace_ranking(
 ) -> Result<ReplaceRankingResult, ApiError> {
     let mut tx = pool.begin().await?;
     super::interactions::lock_public_id_writes(&mut tx).await?;
+    super::moderation::lock_curation(&mut tx).await?;
     let place_ids: Vec<String> = places.iter().map(|e| e.id.clone()).collect();
     let mut curation = Vec::new();
     let mut world_backed_ids = Vec::new();

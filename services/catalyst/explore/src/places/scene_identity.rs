@@ -11,7 +11,7 @@
 //! scenes it wrote and [`retire_orphans`] after its deletes, in its own
 //! transaction under the world row; storage rows are never deleted here.
 
-use sqlx::{PgConnection, PgPool};
+use sqlx::PgConnection;
 use uuid::Uuid;
 
 /// Shared read binding: an active place refers to precisely one live
@@ -46,11 +46,10 @@ pub fn is_scene_id_sql(column: &str) -> String {
 
 pub const LOCAL_WORLD_SCENE: &str = "(s.mirror_source IS NULL AND w.mirror_source IS NULL)";
 
-/// Candidates missing current proof. Scope the probe to the caller's
-/// observed CIDs so an incomplete or late mirror response cannot target a
-/// different deployment in the same world.
+/// Test probe for active deployments that still need matching Places proof.
+#[cfg(any(test, feature = "test-support"))]
 pub async fn pending_public_ids(
-    pool: &PgPool,
+    pool: &sqlx::PgPool,
     source: &str,
     world: &str,
     active_cids: &[&str],
@@ -89,7 +88,7 @@ pub async fn bind_public_id(
 ) -> Result<PublicIdBinding, sqlx::Error> {
     super::interactions::lock_public_id_merge(conn).await?;
     let world_locked = sqlx::query_scalar::<_, String>(
-        "SELECT name FROM worlds.worlds WHERE name = $1 AND mirror_source = $2 FOR UPDATE",
+        "SELECT name FROM worlds.worlds WHERE name = $1 AND mirror_source = $2 FOR UPDATE NOWAIT",
     )
     .bind(world)
     .bind(source)
@@ -102,7 +101,7 @@ pub async fn bind_public_id(
         "SELECT p.identity FROM explore.world_scene_place p \
          JOIN worlds.world_scenes s ON s.world_name = p.world_name AND s.entity_id = p.entity_id \
          WHERE p.world_name = $1 AND p.active AND p.entity_id = $2 AND s.mirror_source = $3 \
-         FOR UPDATE OF p",
+         FOR UPDATE OF p NOWAIT",
     )
     .bind(world)
     .bind(entity_id)
@@ -327,6 +326,49 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_world_row_lock_does_not_hold_the_interaction_claim_lock() {
+        let Some(db) = OwnedDatabase::new("scene_public_busy_world", Schema::Full, 4).await else {
+            return;
+        };
+        let pool = &db.pool;
+        create_world(pool, WORLD).await;
+        deploy(pool, WORLD, "first", "0,0").await;
+        let mut publication = pool.begin().await.unwrap();
+        sqlx::query("SELECT 1 FROM worlds.worlds WHERE name = $1 FOR UPDATE")
+            .bind(WORLD)
+            .execute(&mut *publication)
+            .await
+            .unwrap();
+        let mut claim = pool.begin().await.unwrap();
+        let error = tokio::time::timeout(
+            std::time::Duration::from_secs(2),
+            bind_public_id(&mut claim, SOURCE, WORLD, "first", Uuid::new_v4()),
+        )
+        .await
+        .unwrap()
+        .unwrap_err();
+        assert_eq!(
+            error
+                .as_database_error()
+                .and_then(|db| db.code())
+                .as_deref(),
+            Some("55P03")
+        );
+        claim.rollback().await.unwrap();
+        let mut interaction = pool.begin().await.unwrap();
+        tokio::time::timeout(
+            std::time::Duration::from_secs(2),
+            super::super::interactions::lock_public_id_writes(&mut interaction),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        interaction.rollback().await.unwrap();
+        publication.rollback().await.unwrap();
+        db.drop().await;
+    }
+
+    #[tokio::test]
     async fn public_scene_binding_requires_current_proof_and_survives_redeploy() {
         let Some(db) = OwnedDatabase::new("scene_public_lifecycle", Schema::Full, 4).await else {
             return;
@@ -532,7 +574,9 @@ mod tests {
         sqlx::query(
             r#"INSERT INTO explore.user_likes ("user", entity_id, "like", created_at, updated_at)
                VALUES ('local-internal', $1, false, '2025-01-01', '2025-01-01'),
-                      ('local-public', $2, false, '2025-01-01', '2025-01-01')"#,
+                      ('local-public', $2, false, '2025-01-01', '2025-01-01'),
+                      ('legacy-import', $2, false, '2025-01-01', '2025-01-02'),
+                      ('newer-local', $2, false, '2025-01-01', '2026-02-01')"#,
         )
         .bind(&local)
         .bind(&public)
@@ -555,7 +599,9 @@ mod tests {
                       ('tied', $1, true, 100, '2026-01-01', '2026-01-01'),
                       ('tied', $2, false, 100, '2026-01-01', '2026-01-01'),
                       ('local-internal', $2, true, 100, '2026-01-01', '2026-01-01'),
-                      ('local-public', $1, true, 100, '2026-01-01', '2026-01-01')"#,
+                      ('local-public', $1, true, 100, '2026-01-01', '2026-01-01'),
+                      ('legacy-import', $2, true, 100, '2025-01-01', '2026-01-01'),
+                      ('newer-local', $2, true, 100, '2025-01-01', '2026-01-01')"#,
             )
             .bind(&local)
             .bind(&public)
@@ -587,9 +633,11 @@ mod tests {
             assert_eq!(
                 votes,
                 [
+                    ("legacy-import".into(), true, "upstream".into()),
                     ("local-internal".into(), false, "local".into()),
                     ("local-public".into(), false, "local".into()),
                     ("newer".into(), true, "upstream".into()),
+                    ("newer-local".into(), false, "local".into()),
                     ("tied".into(), false, "upstream".into()),
                 ]
             );

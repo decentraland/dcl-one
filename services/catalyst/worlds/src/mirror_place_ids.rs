@@ -1,11 +1,8 @@
 //! The production Places UUID of an exact WCS scene deployment.
+use futures::StreamExt;
+use sha2::{Digest, Sha256};
 use std::cmp::Reverse;
 use std::collections::HashMap;
-use std::sync::LazyLock;
-
-use crate::content::read_through::{Fills, MAX_CONCURRENT_FILLS};
-use futures::FutureExt;
-use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
 use super::*;
@@ -15,8 +12,8 @@ const MAX_ROWS: usize = 4_000;
 const MAX_PAGE_BYTES: usize = 4 * 1024 * 1024;
 const PAGE_TIMEOUT: Duration = Duration::from_secs(10);
 const SCAN_TIMEOUT: Duration = Duration::from_secs(90);
-static SCHEDULED_RETRIES: LazyLock<Fills> =
-    LazyLock::new(|| Fills::new(MAX_CONCURRENT_FILLS, Duration::ZERO));
+const WORLDS_PER_BATCH: i64 = 16;
+const CONCURRENT_PROBES: usize = 4;
 
 #[derive(Deserialize)]
 struct Page {
@@ -215,83 +212,113 @@ impl<'a> PlacesMatches<'a> {
 
 /// Content has already committed. A missing answer leaves the stored fallback eligible for the
 /// next pass, including when there is no change to the WCS deployments.
-pub(super) async fn refresh(
+async fn probe(
     client: &crate::http::Outbound,
     pool: &PgPool,
     settings: &MirrorSettings,
     world: &WorldName,
-    active_cids: &[&str],
-) -> bool {
+) -> Result<()> {
     let Some(places) = settings.places_source.as_deref() else {
-        return false;
+        return Ok(());
     };
     let source = &settings.source;
-    let result = async {
-        let candidates = scene_identity::pending_public_ids(pool, source, world.key(), active_cids).await?;
-        if candidates.is_empty() {
-            return Ok(false);
+    // Record the next attempt before I/O. A crash or concurrent read therefore
+    // cannot trigger another fetch for these same live CIDs before their backoff.
+    let sql = format!(
+        "INSERT INTO worlds.world_scene_place_probe AS probe (world_name, entity_id, source, attempts, retry_at)
+         SELECT p.world_name, s.entity_id, $2, 1, now() + interval '4 minutes'
+         {}
+         WHERE p.world_name = $1 AND s.mirror_source = $2 AND w.mirror_source = $2
+           AND w.blocked_since IS NULL AND canonical.public_id IS NULL
+           AND (NOT $3 OR EXISTS (
+               SELECT 1 FROM worlds.remote_worlds remote
+               WHERE remote.world_name = p.world_name AND remote.source = $2
+                 AND remote.unlisted_at IS NULL AND s.entity_id = ANY(remote.scene_ids)
+           ))
+         ON CONFLICT (world_name, entity_id, source) DO UPDATE
+         SET attempts = LEAST(probe.attempts + 1, 5),
+             retry_at = now() + make_interval(mins => CASE probe.attempts
+                 WHEN 1 THEN 10 WHEN 2 THEN 30 WHEN 3 THEN 360 ELSE 1440 END)
+         WHERE probe.retry_at <= now()
+         RETURNING entity_id",
+        scene_identity::BOUND_WORLD_SCENE_FROM
+    );
+    let candidates: Vec<String> = sqlx::query_scalar(sqlx::AssertSqlSafe(sql))
+        .bind(world.key())
+        .bind(source)
+        .bind(settings.scheduled)
+        .fetch_all(pool)
+        .await?;
+    if candidates.is_empty() {
+        return Ok(());
+    }
+    let matches = fetch_ids(client, places, world, &candidates).await?;
+    for (cid, id) in matches {
+        let result = async {
+            let mut tx = pool.begin().await?;
+            let binding =
+                scene_identity::bind_public_id(&mut tx, source, world.key(), cid, id).await?;
+            tx.commit().await?;
+            Ok::<_, sqlx::Error>(binding)
         }
-        let matches = fetch_ids(client, places, world, &candidates).await?;
-        let mut retry = matches.len() < candidates.len();
-        for (cid, id) in matches {
-            let result = async {
-                let mut tx = pool.begin().await?;
-                let binding = scene_identity::bind_public_id(&mut tx, source, world.key(), cid, id).await?;
-                tx.commit().await?;
-                Ok::<_, sqlx::Error>(binding)
-            }.await;
-            match result {
-                Ok(scene_identity::PublicIdBinding::Conflict) => {
-                    retry = true;
-                    tracing::warn!(%world, %cid, %id, "Places scene UUID conflicts with an existing identity");
-                }
-                Ok(_) => {}
-                Err(error) => {
-                    retry = true;
-                    tracing::warn!(%world, %cid, %error, "could not save the Places scene UUID");
-                }
+        .await;
+        match result {
+            Ok(scene_identity::PublicIdBinding::Conflict) => {
+                tracing::warn!(%world, %cid, %id, "Places scene UUID conflicts with an existing identity");
+            }
+            Ok(_) => {}
+            Err(error) => {
+                tracing::warn!(%world, %cid, %error, "could not save the Places scene UUID");
             }
         }
-        Ok::<_, anyhow::Error>(retry)
-    }.await;
-    match result {
-        Ok(retry) => retry,
-        Err(error) => {
-            tracing::warn!(%world, %error, "could not look up Places scene UUIDs");
-            true
-        }
     }
+    Ok(())
 }
 
-/// After a full content reconciliation, give Places' asynchronous indexing
-/// one short retry without keeping a mirror slot open. Unchanged worlds use
-/// the normal pass so old pending rows do not fill the short-retry slots.
-pub(super) async fn refresh_after_sync(
+/// The leased schedule sees all due active deployments, including ones
+/// committed by a content pass that ended before the next probe ran.
+pub(crate) async fn probe_batch(
     client: &crate::http::Outbound,
     pool: &PgPool,
     settings: &MirrorSettings,
-    world: &WorldName,
-    active_cids: &[&str],
-) {
-    let retry = refresh(client, pool, settings, world, active_cids).await;
-    let Some(delay) = settings.places_retry_delay.filter(|_| retry) else {
-        return;
-    };
-    let key = format!("{}:{}", settings.source, world.key());
-    let (client, pool, settings, world) = (
-        client.clone(),
-        pool.clone(),
-        settings.clone(),
-        world.clone(),
+) -> Result<()> {
+    if !settings.has_places_source() {
+        return Ok(());
+    }
+    let sql = format!(
+        "WITH scope AS (
+             SELECT world_name, scene_ids FROM worlds.remote_worlds
+             WHERE source = $1 AND unlisted_at IS NULL
+               AND (cardinality($2::text[]) = 0 OR world_name = ANY($2))
+             ORDER BY world_name LIMIT $3
+         )
+         SELECT p.world_name {}
+         JOIN scope ON scope.world_name = p.world_name AND s.entity_id = ANY(scope.scene_ids)
+         LEFT JOIN worlds.world_scene_place_probe probe
+           ON (probe.world_name, probe.entity_id, probe.source) = (p.world_name, s.entity_id, $1)
+         WHERE w.mirror_source = $1 AND s.mirror_source = $1 AND w.blocked_since IS NULL
+           AND canonical.public_id IS NULL AND (probe.retry_at IS NULL OR probe.retry_at <= now())
+         GROUP BY p.world_name
+         ORDER BY min(COALESCE(probe.retry_at, now())), p.world_name LIMIT $4",
+        scene_identity::BOUND_WORLD_SCENE_FROM
     );
-    let cids: Vec<_> = active_cids.iter().map(|cid| (*cid).to_owned()).collect();
-    let _ = SCHEDULED_RETRIES
-        .fill(vec![key], move |_| async move {
-            tokio::time::sleep(delay).await;
-            let cids: Vec<_> = cids.iter().map(String::as_str).collect();
-            refresh(&client, &pool, &settings, &world, &cids).await;
+    let names: Vec<String> = sqlx::query_scalar(sqlx::AssertSqlSafe(sql))
+        .bind(&settings.source)
+        .bind(&settings.names)
+        .bind(settings.limit.map(|limit| limit as i64))
+        .bind(WORLDS_PER_BATCH)
+        .fetch_all(pool)
+        .await?;
+    futures::stream::iter(names)
+        .map(|name| async move {
+            if let Ok(world) = WorldName::parse(&name) {
+                refresh_held(client, pool, settings, &world).await;
+            }
         })
-        .now_or_never();
+        .buffer_unordered(CONCURRENT_PROBES)
+        .collect::<()>()
+        .await;
+    Ok(())
 }
 
 /// Probe a held world whose content was read without making the reader wait.
@@ -301,23 +328,8 @@ pub(crate) async fn refresh_held(
     settings: &MirrorSettings,
     world: &WorldName,
 ) {
-    let cids = sqlx::query_scalar::<_, String>(
-        "SELECT s.entity_id FROM worlds.world_scenes s \
-         JOIN worlds.worlds w ON w.name = s.world_name \
-         WHERE w.name = $1 AND w.mirror_source = $2 AND s.mirror_source = $2 \
-           AND w.blocked_since IS NULL",
-    )
-    .bind(world.key())
-    .bind(&settings.source)
-    .fetch_all(pool)
-    .await;
-    match cids {
-        Ok(cids) if !cids.is_empty() => {
-            let cids: Vec<_> = cids.iter().map(String::as_str).collect();
-            refresh(client, pool, settings, world, &cids).await;
-        }
-        Ok(_) => {}
-        Err(error) => tracing::warn!(%world, %error, "could not read the held world for Places"),
+    if let Err(error) = probe(client, pool, settings, world).await {
+        tracing::warn!(%world, %error, "could not look up Places scene UUIDs");
     }
 }
 

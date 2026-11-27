@@ -664,6 +664,21 @@ async fn cached_world_retries_a_lagging_places_match_without_waiting() {
     tokio::time::advance(catalyst::content::read_through::NEGATIVE_TTL).await;
     tokio::time::resume();
     let scenes_path = format!("/world/{world}/scenes");
+    assert_eq!(get(scenes_path.clone()).await.unwrap().0, StatusCode::OK);
+    tokio::time::timeout(
+        Duration::from_secs(5),
+        fills.until(|counts| counts.finished == 2),
+    )
+    .await
+    .expect("the persisted cooldown prevents the second fill from contacting Places");
+    sqlx::query("UPDATE worlds.world_scene_place_probe SET retry_at = now() WHERE world_name = $1")
+        .bind(world)
+        .execute(&scratch.pool)
+        .await
+        .unwrap();
+    tokio::time::pause();
+    tokio::time::advance(catalyst::content::read_through::NEGATIVE_TTL).await;
+    tokio::time::resume();
     assert_eq!(get(scenes_path).await.unwrap().0, StatusCode::OK);
     tokio::time::timeout(Duration::from_secs(5), second.entered.notified())
         .await
@@ -671,13 +686,13 @@ async fn cached_world_retries_a_lagging_places_match_without_waiting() {
     assert_eq!(get(about_path.clone()).await.unwrap().0, StatusCode::OK);
     assert_eq!(
         fills.counts().started,
-        2,
+        3,
         "concurrent reads coalesce by world"
     );
     second.release.notify_one();
     tokio::time::timeout(
         Duration::from_secs(5),
-        fills.until(|counts| counts.finished == 2),
+        fills.until(|counts| counts.finished == 3),
     )
     .await
     .unwrap();

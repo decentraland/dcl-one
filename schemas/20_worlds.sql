@@ -168,6 +168,18 @@ CREATE TABLE worlds.world_scenes (
 CREATE INDEX world_scenes_world_name_created_idx
     ON worlds.world_scenes (world_name, created_at DESC);
 
+-- Durable retry for a held scene awaiting an exact Places deployment proof.
+CREATE TABLE worlds.world_scene_place_probe (
+    world_name text NOT NULL,
+    entity_id text NOT NULL,
+    source text NOT NULL,
+    attempts smallint NOT NULL CHECK (attempts BETWEEN 1 AND 5),
+    retry_at timestamptz NOT NULL,
+    PRIMARY KEY (world_name, entity_id, source),
+    FOREIGN KEY (world_name, entity_id)
+        REFERENCES worlds.world_scenes (world_name, entity_id) ON DELETE CASCADE
+);
+
 -- A scene's storage collaborators: the string entries of its
 -- `metadata.logsPermissions` array as `JSON.parse` reads them (escapes
 -- decoded), lowercased. An entry carrying an escape PostgreSQL cannot decode

@@ -25,8 +25,9 @@ DO $images$ DECLARE n bigint; BEGIN
 -- is never overwritten, and a migration overlay whose upstream decision is gone
 -- is removed.
 SELECT pg_advisory_xact_lock_shared(hashtextextended('explore.scene_interaction_import', 0));
+SELECT pg_advisory_xact_lock(hashtextextended('explore.place_curation', 0));
 ALTER TABLE stage ADD COLUMN interaction_id text, ADD COLUMN curation_winner boolean DEFAULT false;
-UPDATE stage SET interaction_id = explore.scene_interaction_entity_id(id);
+UPDATE stage SET interaction_id = explore.genesis_curation_key(explore.scene_interaction_entity_id(id));
 
 -- Select once for both overlays and their deletions. Historical aliases can
 -- resolve to the same key, but the currently verified UUID wins if present.
@@ -84,6 +85,10 @@ ON CONFLICT (place_id) DO UPDATE SET
     overlay = EXCLUDED.overlay,
     updated_at = EXCLUDED.updated_at
 WHERE r.set_by = 'migration:places' AND r.overlay IS DISTINCT FROM EXCLUDED.overlay;
+
+SELECT explore.project_genesis_place_curation(
+    ARRAY(SELECT DISTINCT interaction_id FROM stage WHERE curation_winner), true
+);
 
 -- The catalogue row, local authority: counters start at 0 because the facts
 -- (user_favorites, user_likes) are imported and counted in

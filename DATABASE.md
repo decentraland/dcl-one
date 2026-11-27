@@ -130,9 +130,10 @@ the internal identity can reuse its verified UUID or claim an unused one
 with fresh proof. A partial unique index limits each internal identity to one
 current claim.
 
-The read path probes the claim's unique internal UUID. The mirror looks up
-only the current pass's active CIDs and takes the world row lock before
-committing each proof. Claim writes serialize on the requested UUID, reject
+The read path probes the claim's unique internal UUID. The Places lookup reads
+only held active CIDs and attempts the world and scene row locks without
+waiting before committing each proof. Claim lock waits are capped at 100 ms
+per lock. Claim writes serialize on the requested UUID, reject
 any other active or retired internal identity using that UUID, and check
 existing catalogue keys. For a new claim, catalogue copies qualify only
 when both their normalized world name and deployment CID match. A verified
@@ -151,8 +152,21 @@ including stale reservations. The insert guard checks UUID ownership under
 that same batch lock, saving one advisory lock per imported scene. Ordinary
 scene writers retain per-UUID locking.
 The schema object pass installs the reservation table, index and triggers with no
-backfill. Existing mirrored deployments gain a public UUID after a subsequent
-mirror pass confirms the exact binding. Existing world storage keys need no rewrite.
+backfill. Existing mirrored deployments gain a public UUID when a background
+probe confirms the exact binding. Existing world storage keys need no rewrite.
+
+The Worlds mirror keeps content reconciliation independent of Places I/O. A
+separate leased job selects up to 16 due worlds from the held active-scene
+and Places proof join per run, with up to four concurrent named Places lookups.
+The selection runs every 15 seconds after the previous run, checks the held
+content source and configured catalogue scope, and joins persisted retry state
+by its primary key. A read-through-only node checks the same retry state under
+its bounded fill limiter. The probe records the next attempt before HTTP, in
+`worlds.world_scene_place_probe`, one row per attempted held CID and source.
+Scene deletion cascades to these rows. Without new evidence it backs off
+through four, ten and thirty minutes, then six hours, capped at one day.
+The new relation starts empty, and old mirrored scenes are eligible on the next
+probe. A failed probe keeps the local fallback ID.
 
 The claim transaction folds previously imported favorites, votes, and curation
 from the public UUID into the durable key. It deduplicates facts per wallet,
@@ -169,6 +183,10 @@ Genesis local content keeps its parcel-derived internal UUID. The Places
 mirror records raw UUID sightings by pass and page before deduplication, and
 publishes unique base/CID matches only after a complete pass from the
 production Places origin. A replay replaces the same page's evidence.
+Repeated sightings with the same UUID, base and deployment count once.
+A conflicting sighting disqualifies the observation. Prior evidence can
+survive an omitted sighting only when the pass restamps the exact matching
+catalogue row and contains no contradictory sighting.
 Page receipts require contiguous offsets, a consistent reported total, and
 that many input rows before a pass can replace the trusted snapshot.
 The most recent complete snapshot has one row per eligible public place.
@@ -181,13 +199,25 @@ all agree. Its source, exact CID and unique eligible upstream UUID are
 required. Changing the active pointer invalidates a proof immediately.
 The claim transaction preserves both catalogue rows, consolidates their
 interaction facts and holds the shared Places writer lock exclusively.
+Operator moderation and ranking keep one decision under the reserved local key
+and project it onto both catalogue rows even after the discovery proof
+expires. A new claim projects an existing local decision as well as any
+operator decision merged from the public key. A migration-owned overlay
+yields to an operator decision during consolidation. The curation lock
+serializes decisions and imports against catalogue refreshes independently
+of player interaction writes. The source row's raw disable flag remains
+part of proof eligibility even if an operator re-enables its projection.
 An existing claim is consolidated again only when there are facts, counts
 or curation under its public key.
 New Genesis claims take the existing sorted per-UUID namespace locks.
 World identity creation takes the same lock before checking Genesis
 reservations. Imports skip already reserved identities.
-The mirror publishes and reconciles its observations once per complete
-pass. Derive reconciles its own IDs inside the page write transaction.
+The mirror stages its evidence before taking the exclusive claim lock,
+publishes changed observations and folds returning claims in one transaction.
+The mirror and derive then look for new claims after committing their inputs
+and reconcile up to 16 local identities per transaction. Ordinary derive
+refreshes do not acquire the exclusive claim lock. Derive folds an existing
+claim inside the page transaction when a change could reactivate the alias.
 Existing databases get the tables, index and views from the schema object
 pass and populate them through future mirror and derive work.
 

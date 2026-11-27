@@ -378,8 +378,6 @@ pub(super) async fn mirror_world(
             }
             refresh_listed_scenes(&mut tx, name, &listed).await?;
             tx.commit().await.context("commit tx")?;
-            let active_cids: Vec<_> = listed.iter().map(|scene| scene.id.as_str()).collect();
-            place_ids::refresh(client, pool, settings, &world, &active_cids).await;
             return Ok(Outcome::Unchanged);
         }
     }
@@ -748,9 +746,6 @@ pub(super) async fn mirror_world(
         .await
         .with_context(|| format!("retire the storage identities of {name}"))?;
     tx.commit().await.context("commit tx")?;
-    if verify.is_none() {
-        place_ids::refresh_after_sync(client, pool, settings, &world, &cids).await;
-    }
 
     Ok(Outcome::Synced {
         scenes: records.len(),

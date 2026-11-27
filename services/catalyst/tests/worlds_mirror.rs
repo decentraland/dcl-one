@@ -363,13 +363,13 @@ async fn fake_places(
     State((s, _)): State<(Shared, String)>,
     Query(query): Query<HashMap<String, String>>,
 ) -> axum::response::Response {
-    assert_eq!(query["names"], "canon.dcl.eth");
     assert_eq!(query["include_opted_out"], "true");
     assert_eq!(query["order_by"], "updated_at");
     assert_eq!(query["order"], "desc");
     let offset: usize = query["offset"].parse().unwrap();
     let limit: usize = query["limit"].parse().unwrap();
     let mut state = s.lock();
+    assert!(state.worlds.contains_key(&query["names"]));
     state.places_offsets.push(offset);
     if let Some(status) = state.places_status {
         return status.into_response();
@@ -1028,6 +1028,19 @@ async fn identities(pool: &PgPool, world: &str) -> Vec<(uuid::Uuid, Vec<String>,
     .unwrap()
 }
 
+async fn probe_places(node: &Node) {
+    catalyst::worlds::mirror::probe_places_for_tests(&node.client, &node.pool, &node.settings)
+        .await
+        .unwrap();
+}
+
+async fn make_probe_due(pool: &PgPool) {
+    sqlx::query("UPDATE worlds.world_scene_place_probe SET retry_at = now()")
+        .execute(pool)
+        .await
+        .unwrap();
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn an_unchanged_mirror_retries_places_after_a_failed_lookup_and_restart() {
     let Some(scratch) = db::scratch_database().await else {
@@ -1050,12 +1063,14 @@ async fn an_unchanged_mirror_retries_places_after_a_failed_lookup_and_restart() 
     let mut node = Node::new(scratch.pool.clone(), &fake.base, "places-first").await;
     let ctx = node.ctx().await;
     assert_eq!(node.pass(&ctx).await.scenes.synced, 1);
+    probe_places(&node).await;
     assert!(fake.state.lock().places_offsets.is_empty());
     assert_eq!(pending().await, std::slice::from_ref(&cid));
 
     fake.state.lock().places_status = Some(StatusCode::SERVICE_UNAVAILABLE);
     node.settings = node.settings.clone().with_places_source(&fake.base);
     assert_eq!(node.pass(&ctx).await.scenes.unchanged, 1);
+    probe_places(&node).await;
     assert_eq!(pending().await, std::slice::from_ref(&cid));
     let internal = identities(&scratch.pool, world).await;
     node.jobs.shutdown(std::time::Duration::from_secs(1)).await;
@@ -1093,6 +1108,10 @@ async fn an_unchanged_mirror_retries_places_after_a_failed_lookup_and_restart() 
     node.jobs = Jobs::new();
     let ctx = node.ctx().await;
     assert_eq!(node.pass(&ctx).await.scenes.unchanged, 1);
+    probe_places(&node).await;
+    assert_eq!(fake.state.lock().places_offsets, [0]);
+    make_probe_due(&scratch.pool).await;
+    probe_places(&node).await;
     assert_eq!(pending().await, std::slice::from_ref(&cid));
     assert_eq!(fake.state.lock().places_offsets, [0, 0, 100]);
     {
@@ -1101,6 +1120,8 @@ async fn an_unchanged_mirror_retries_places_after_a_failed_lookup_and_restart() 
         upstream.places_rows[100]["disabled_reason"] = json!("opt_out");
     }
     assert_eq!(node.pass(&ctx).await.scenes.unchanged, 1);
+    make_probe_due(&scratch.pool).await;
+    probe_places(&node).await;
     assert!(pending().await.is_empty());
     assert_eq!(identities(&scratch.pool, world).await, internal);
     assert_eq!(about_calls(&fake, world), 1);
@@ -1109,6 +1130,7 @@ async fn an_unchanged_mirror_retries_places_after_a_failed_lookup_and_restart() 
         [0, 0, 100, 0, 100, 0, 100]
     );
     assert_eq!(node.pass(&ctx).await.scenes.unchanged, 1);
+    probe_places(&node).await;
     assert_eq!(
         fake.state.lock().places_offsets,
         [0, 0, 100, 0, 100, 0, 100]
@@ -1127,11 +1149,7 @@ async fn a_scheduled_mirror_retries_when_places_indexes_a_deployment_late() {
     let world = "canon.dcl.eth";
     let cid = add_scene(&mut fake.state.lock(), world, "Canon", "0,0", &[]);
     let mut node = Node::new(scratch.pool.clone(), &fake.base, "places-delayed").await;
-    node.settings = node
-        .settings
-        .clone()
-        .with_places_source(&fake.base)
-        .with_places_retry_delay(std::time::Duration::from_millis(200));
+    node.settings = node.settings.clone().with_places_source(&fake.base);
     {
         let mut upstream = fake.state.lock();
         upstream.places_empty_on_first_request = true;
@@ -1145,24 +1163,59 @@ async fn a_scheduled_mirror_retries_when_places_indexes_a_deployment_late() {
     }
     let ctx = node.ctx().await;
     assert_eq!(node.pass(&ctx).await.scenes.synced, 1);
-    tokio::time::timeout(std::time::Duration::from_secs(5), async {
-        while !catalyst::explore::places::scene_identity::pending_public_ids(
+    assert!(
+        fake.state.lock().places_offsets.is_empty(),
+        "content workers never await Places"
+    );
+    probe_places(&node).await;
+    probe_places(&node).await;
+    assert_eq!(fake.state.lock().places_offsets, [0]);
+    make_probe_due(&scratch.pool).await;
+    probe_places(&node).await;
+    assert!(
+        catalyst::explore::places::scene_identity::pending_public_ids(
             &scratch.pool,
             &fake.base,
             world,
-            &[cid.as_str()],
+            &[cid.as_str()]
         )
         .await
         .unwrap()
         .is_empty()
-        {
-            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
-        }
-    })
-    .await
-    .expect("the short retry binds the UUID without another mirror pass");
+    );
     assert_eq!(about_calls(&fake, world), 1);
     assert_eq!(fake.state.lock().places_offsets, [0, 0]);
+    node.jobs.shutdown(std::time::Duration::from_secs(1)).await;
+    drop(node);
+    scratch.teardown().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn places_probe_batch_keeps_unadmitted_worlds_due_for_the_next_batch() {
+    let Some(scratch) = db::scratch_database().await else {
+        return;
+    };
+    let fake = start_fake().await;
+    {
+        let mut upstream = fake.state.lock();
+        for index in 0..17 {
+            let world = format!("probe-{index:02}.dcl.eth");
+            add_scene(&mut upstream, &world, "Pending", "0,0", &[]);
+        }
+    }
+    let mut node = Node::new(scratch.pool.clone(), &fake.base, "places-backlog").await;
+    node.settings = node.settings.clone().with_places_source(&fake.base);
+    let ctx = node.ctx().await;
+    assert_eq!(node.pass(&ctx).await.scenes.synced, 17);
+    assert!(fake.state.lock().places_offsets.is_empty());
+
+    probe_places(&node).await;
+    assert_eq!(fake.state.lock().places_offsets.len(), 16);
+    probe_places(&node).await;
+    assert_eq!(fake.state.lock().places_offsets.len(), 17);
+    probe_places(&node).await;
+    assert_eq!(fake.state.lock().places_offsets.len(), 17);
+
     node.jobs.shutdown(std::time::Duration::from_secs(1)).await;
     drop(node);
     scratch.teardown().await;

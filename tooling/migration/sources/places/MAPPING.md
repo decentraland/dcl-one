@@ -65,8 +65,11 @@ which then count twice with the imported facts. Rows upstream does not list
   for an imported place, an eligible world scene, or any upstream world name.
   Likes from this import carry upstream provenance. Local votes take
   precedence, then the latest upstream vote wins, with ties settled
-  consistently during import and claim. Earlier imports that already
-  recorded a vote as local remain protected. Each batch recounts its
+  consistently during import and claim. Earlier imports used the local
+  default but copied the source creation and update times. Replay adopts
+  a vote with the same creation time if the source update is newer or the
+  timestamp, vote and activity all match. A newer local decision is preserved.
+  Each batch recounts its
   entities from the fact tables (`REBUILD_COUNTS` rule).
   To backfill scene facts older than the saved incremental watermarks, run
   `python3 tooling/migration/migrate.py run places --step user_favorite --step user_like --restart`.
@@ -76,6 +79,9 @@ which then count twice with the imported facts. Rows upstream does not list
   the same key after a proof is invalidated.
   When several rows in the catalogue batch fold onto the same key, the
   currently verified UUID supplies moderation and ranking.
+  Genesis moderation and ranking use the reserved local UUID even when
+  evidence for the live alias expires. Operator overlays stay protected
+  across import replay.
   A Genesis catalogue row present in the trusted Places mirror snapshot remains
   mirror-owned on replay. Its curation still comes through the import and a
   verified live alias redirects its interaction facts to the local UUID.

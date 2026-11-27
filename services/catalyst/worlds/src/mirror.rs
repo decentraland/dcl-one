@@ -94,6 +94,16 @@ mod catalogue;
 mod config;
 #[path = "mirror_place_ids.rs"]
 pub(super) mod place_ids;
+
+/// Tests run the leased Places job independently of the content pass.
+#[cfg(any(test, feature = "test-support"))]
+pub async fn probe_places_for_tests(
+    client: &crate::http::Outbound,
+    pool: &PgPool,
+    settings: &MirrorSettings,
+) -> Result<()> {
+    place_ids::probe_batch(client, pool, settings).await
+}
 #[path = "mirror_reconcile.rs"]
 mod reconcile;
 #[path = "mirror_upstream.rs"]

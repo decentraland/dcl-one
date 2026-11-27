@@ -14,7 +14,6 @@ pub struct MirrorSettings {
     pub source: String,
     /// Places deployment identities belong to the corresponding WCS source.
     pub(super) places_source: Option<String>,
-    pub(super) places_retry_delay: Option<Duration>,
     /// Pause between passes; the v1 stack's timer ran every six hours.
     pub interval: Duration,
     /// Worlds mirrored at once (one batch; the cursor moves per batch).
@@ -177,7 +176,6 @@ impl MirrorSettings {
         };
         Ok(Self {
             places_source,
-            places_retry_delay: (!allow_private_source).then_some(Duration::from_secs(60)),
             source,
             interval,
             concurrency,
@@ -207,13 +205,6 @@ impl MirrorSettings {
     #[cfg(any(test, feature = "test-support"))]
     pub fn with_places_source(mut self, source: &str) -> Self {
         self.places_source = Some(source.to_string());
-        self
-    }
-
-    /// Tests only: exercise the short scheduled retry without a minute-long test.
-    #[cfg(any(test, feature = "test-support"))]
-    pub fn with_places_retry_delay(mut self, delay: Duration) -> Self {
-        self.places_retry_delay = Some(delay);
         self
     }
 

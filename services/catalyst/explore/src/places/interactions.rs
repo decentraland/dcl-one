@@ -318,6 +318,9 @@ async fn recount(tx: &mut PgConnection, entity_id: &str) -> Result<(), sqlx::Err
 /// Claims take the exclusive side before the world or scene row lock. Writers
 /// and migration batches hold the shared side through key resolution and writes.
 pub(super) async fn lock_public_id_merge(tx: &mut PgConnection) -> Result<(), sqlx::Error> {
+    sqlx::query("SELECT set_config('lock_timeout', '100ms', true)")
+        .execute(&mut *tx)
+        .await?;
     sqlx::query(
         "SELECT pg_advisory_xact_lock(hashtextextended('explore.scene_interaction_import', 0))",
     )
@@ -427,11 +430,19 @@ pub(super) async fn merge_public_id(
              (place_id, disabled, highlighted, content_rating, reason, set_by, updated_at, disabled_at)
          SELECT $2, disabled, highlighted, content_rating, reason, set_by, updated_at, disabled_at FROM moved
          ON CONFLICT (place_id) DO UPDATE SET
-             disabled = COALESCE(m.disabled, EXCLUDED.disabled),
-             highlighted = COALESCE(m.highlighted, EXCLUDED.highlighted),
-             content_rating = COALESCE(m.content_rating, EXCLUDED.content_rating),
-             reason = CASE WHEN m.disabled IS NULL THEN EXCLUDED.reason ELSE m.reason END,
-             disabled_at = CASE WHEN m.disabled IS NULL THEN EXCLUDED.disabled_at ELSE m.disabled_at END,
+             disabled = CASE WHEN m.set_by = 'migration:places' AND EXCLUDED.set_by <> 'migration:places'
+                 THEN COALESCE(EXCLUDED.disabled, m.disabled) ELSE COALESCE(m.disabled, EXCLUDED.disabled) END,
+             highlighted = CASE WHEN m.set_by = 'migration:places' AND EXCLUDED.set_by <> 'migration:places'
+                 THEN COALESCE(EXCLUDED.highlighted, m.highlighted) ELSE COALESCE(m.highlighted, EXCLUDED.highlighted) END,
+             content_rating = CASE WHEN m.set_by = 'migration:places' AND EXCLUDED.set_by <> 'migration:places'
+                 THEN COALESCE(EXCLUDED.content_rating, m.content_rating) ELSE COALESCE(m.content_rating, EXCLUDED.content_rating) END,
+             reason = CASE WHEN m.disabled IS NULL OR (EXCLUDED.disabled IS NOT NULL
+                 AND m.set_by = 'migration:places' AND EXCLUDED.set_by <> 'migration:places')
+                 THEN EXCLUDED.reason ELSE m.reason END,
+             disabled_at = CASE WHEN m.disabled IS NULL OR (EXCLUDED.disabled IS NOT NULL
+                 AND m.set_by = 'migration:places' AND EXCLUDED.set_by <> 'migration:places')
+                 THEN EXCLUDED.disabled_at ELSE m.disabled_at END,
+             set_by = CASE WHEN m.set_by = 'migration:places' THEN EXCLUDED.set_by ELSE m.set_by END,
              updated_at = GREATEST(m.updated_at, EXCLUDED.updated_at)",
     )
     .bind(&public)
@@ -443,13 +454,16 @@ pub(super) async fn merge_public_id(
          INSERT INTO explore.place_ranking AS r (place_id, overlay, set_by, updated_at)
          SELECT $2, overlay, set_by, updated_at FROM moved
          ON CONFLICT (place_id) DO UPDATE SET
-             overlay = EXCLUDED.overlay || r.overlay,
+             overlay = CASE WHEN r.set_by = 'migration:places' AND EXCLUDED.set_by <> 'migration:places'
+                            THEN r.overlay || EXCLUDED.overlay ELSE EXCLUDED.overlay || r.overlay END,
+             set_by = CASE WHEN r.set_by = 'migration:places' THEN EXCLUDED.set_by ELSE r.set_by END,
              updated_at = GREATEST(r.updated_at, EXCLUDED.updated_at)",
     )
     .bind(&public)
     .bind(&local)
-    .execute(tx)
+    .execute(&mut *tx)
     .await?;
+    super::moderation::project_genesis_curation(tx, &[&local]).await?;
     Ok(())
 }
 

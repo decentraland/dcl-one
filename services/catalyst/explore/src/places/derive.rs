@@ -270,7 +270,11 @@ const UPSERT: &str = r#"
          AS u(id, base_position, title, description, creator_address, content_rating,
               deployed_at, raw, origin)
     LEFT JOIN explore.place_moderation m ON m.place_id = u.id
+        AND (m.set_by <> 'migration:places' OR NOT EXISTS (
+            SELECT 1 FROM explore.genesis_place_claim WHERE local_id = u.id))
     LEFT JOIN explore.place_ranking r ON r.place_id = u.id
+        AND (r.set_by <> 'migration:places' OR NOT EXISTS (
+            SELECT 1 FROM explore.genesis_place_claim WHERE local_id = u.id))
     ON CONFLICT (id) DO UPDATE SET
         base_position   = EXCLUDED.base_position,
         title           = EXCLUDED.title,
@@ -773,8 +777,44 @@ async fn upsert_page(pool: &PgPool, page: Vec<DerivedPlace>) -> Result<()> {
         .filter(|p| p.local)
         .map(|p| p.id.as_str())
         .collect();
-    if !local_ids.is_empty() {
+    // A changed local row can reactivate an existing alias as soon as the
+    // upsert commits. Reconcile its public facts in that transaction, while
+    // leaving ordinary refreshes and first-time derivation lock-free.
+    let reactivates_claim = if local_ids.is_empty() {
+        false
+    } else {
+        sqlx::query_scalar(
+            "SELECT EXISTS (
+                SELECT 1 FROM unnest($1::text[], $2::text[], $3::text[]) incoming(id, base, cid)
+                JOIN explore.genesis_place_claim claim ON claim.local_id = incoming.id
+                WHERE NOT EXISTS (
+                    SELECT 1 FROM explore.place p WHERE p.id = incoming.id AND p.origin = 'local'
+                      AND NOT p.world AND p.raw->>'source' = 'content'
+                      AND p.base_position = incoming.base AND p.raw->>'deployment_id' = incoming.cid
+                )
+            )",
+        )
+        .bind(&local_ids)
+        .bind(
+            rows.iter()
+                .filter(|p| p.local)
+                .map(|p| p.base_position.as_str())
+                .collect::<Vec<_>>(),
+        )
+        .bind(
+            rows.iter()
+                .filter(|p| p.local)
+                .map(|p| p.raw["deployment_id"].as_str())
+                .collect::<Vec<_>>(),
+        )
+        .fetch_one(&mut *tx)
+        .await?
+    };
+    if reactivates_claim {
         super::interactions::lock_public_id_merge(&mut tx).await?;
+        super::moderation::lock_curation(&mut tx).await?;
+    } else {
+        super::moderation::lock_curation_projection(&mut tx).await?;
     }
     let inserted: HashMap<String, bool> = sqlx::query(UPSERT)
         .bind(rows.iter().map(|p| p.id.clone()).collect::<Vec<_>>())
@@ -816,9 +856,10 @@ async fn upsert_page(pool: &PgPool, page: Vec<DerivedPlace>) -> Result<()> {
             )
         })
         .collect();
-    if !local_ids.is_empty() {
-        super::genesis_identity::reconcile(&mut tx, Some(&local_ids)).await?;
+    if reactivates_claim {
+        super::genesis_identity::reconcile_existing(&mut tx, Some(&local_ids)).await?;
     }
+    super::moderation::project_local_genesis_curation(&mut tx, &local_ids).await?;
     let fresh: Vec<(&DerivedPlace, Vec<String>)> = rows
         .iter()
         .filter(|p| inserted.get(&p.id).copied().unwrap_or(false))
@@ -827,6 +868,9 @@ async fn upsert_page(pool: &PgPool, page: Vec<DerivedPlace>) -> Result<()> {
         .collect();
     if fresh.is_empty() {
         tx.commit().await?;
+        if !local_ids.is_empty() {
+            super::genesis_identity::reconcile_committed(pool, Some(&local_ids)).await?;
+        }
         return Ok(());
     }
     let mut candidates: HashMap<String, Vec<(String, CurationCandidate)>> = HashMap::new();
@@ -906,6 +950,9 @@ async fn upsert_page(pool: &PgPool, page: Vec<DerivedPlace>) -> Result<()> {
             .await?;
     }
     tx.commit().await?;
+    if !local_ids.is_empty() {
+        super::genesis_identity::reconcile_committed(pool, Some(&local_ids)).await?;
+    }
     Ok(())
 }
 

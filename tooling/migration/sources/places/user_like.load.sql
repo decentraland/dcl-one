@@ -23,11 +23,18 @@ ORDER BY "user", entity_id, stage.updated_at DESC, stage.created_at DESC, "like"
 ON CONFLICT ("user", entity_id) DO UPDATE SET
     "like" = EXCLUDED."like",
     user_activity = EXCLUDED.user_activity,
+    source = 'upstream',
     created_at = EXCLUDED.created_at,
     updated_at = EXCLUDED.updated_at
-WHERE l.source = 'upstream'
+WHERE (l.source = 'upstream'
   AND (l.updated_at, l.created_at, NOT l."like", l.user_activity)
-      < (EXCLUDED.updated_at, EXCLUDED.created_at, NOT EXCLUDED."like", EXCLUDED.user_activity);
+      < (EXCLUDED.updated_at, EXCLUDED.created_at, NOT EXCLUDED."like", EXCLUDED.user_activity))
+   -- The previous loader copied both source timestamps but used the local
+   -- default for provenance. Recognize the same original vote on replay.
+   OR (l.source = 'local' AND l.created_at = EXCLUDED.created_at AND
+       (l.updated_at < EXCLUDED.updated_at OR
+        (l.updated_at, l."like", l.user_activity) =
+        (EXCLUDED.updated_at, EXCLUDED."like", EXCLUDED.user_activity)));
 
 -- place_interaction_counts is derived from the two fact tables (the rule of
 -- places::interactions REBUILD_COUNTS); recount every entity of the batch.

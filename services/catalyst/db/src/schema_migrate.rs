@@ -1657,6 +1657,8 @@ mod tests {
         };
         sqlx::raw_sql(
             "DROP FUNCTION explore.scene_interaction_entity_id(text);
+             DROP FUNCTION explore.genesis_curation_key(text);
+             DROP FUNCTION explore.project_genesis_place_curation(text[], boolean);
              DROP VIEW explore.genesis_place_alias;
              DROP VIEW explore.genesis_place_candidate;
              DROP TRIGGER world_scene_identity_reserved_genesis ON explore.world_scene_place;
