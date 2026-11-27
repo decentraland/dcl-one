@@ -9953,7 +9953,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/deploy/web/engine/boot.js",
-      "sha256": "6f7be71f11d0491c7a88e57766ab630818d79d56c970a5180226648249b46287"
+      "sha256": "7b629d38b68e6ea08f03a7e68ab0deffd3c7848e557157e8eaf433c8404142f7"
     },
     {
       "path": "rendering/bevy-explorer/source/deploy/web/engine/content_cache.js",
@@ -10296,6 +10296,10 @@
       "sha256": "8e915c54cb9af10d6e06e8f774f1bf7a10b0400e3a0dfce73b390be8e8dc0470"
     },
     {
+      "path": "rendering/bevy-explorer/source/react-web/src/test/bootKeyForwarding.test.ts",
+      "sha256": "7dd86f186db6bbbe9e42414ace562793f0ca7e075488dbe0ef6c31cd1edbd0d3"
+    },
+    {
       "path": "rendering/bevy-explorer/source/react-web/src/test/bootWatchdog.test.ts",
       "sha256": "b16d26264b805f36607a4641c2759256cb55325e527e7278cf196e8146934a2a"
     },
@@ -10610,6 +10614,7 @@
     "rendering/bevy-explorer/source/react-web/src/test/avatarSaveApi.test.ts",
     "rendering/bevy-explorer/source/react-web/src/test/baseDomain.test.ts",
     "rendering/bevy-explorer/source/react-web/src/test/benchmarkSwitches.test.tsx",
+    "rendering/bevy-explorer/source/react-web/src/test/bootKeyForwarding.test.ts",
     "rendering/bevy-explorer/source/react-web/src/test/bootWatchdog.test.ts",
     "rendering/bevy-explorer/source/react-web/src/test/bridgeAvatarDraft.test.ts",
     "rendering/bevy-explorer/source/react-web/src/test/bridgeAvatarPreviewShop.test.ts",
@@ -14374,7 +14379,7 @@
     },
     {
       "path": "library/ui/apps/hud/lib/bindingLabels.ts",
-      "sha256": "ab1b4c9b56f8f657a6b364d4a9e90b3cb7f69f3143f0c676cf3686c1470f971d"
+      "sha256": "6e047ced87325a83489442b57dee54a7c92e0d4e54fcd14f14eb91cfa6c91bbf"
     },
     {
       "path": "library/ui/apps/hud/lib/hudInset.ts",
@@ -14446,7 +14451,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/editableTarget.test.ts",
-      "sha256": "74ff24558dd84aad1e23b84b092d13d5b04fba0c2e66b487983bdecccaf84d99"
+      "sha256": "ac195e251af1365c3ae6d8b13ffe74901757722caecd723669f169729d583976"
     },
     {
       "path": "library/ui/apps/hud/test/engineViewport.test.tsx",
@@ -67120,6 +67125,11 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/src/test/benchmarkSwitches.test.tsx",
       "to": "library/ui/apps/hud/features/engine/EngineHost.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/src/test/bootKeyForwarding.test.ts",
+      "to": "library/ui/apps/hud/lib/bindingLabels.ts",
       "kind": "test:runtime"
     },
     {
