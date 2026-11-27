@@ -1,5 +1,5 @@
 import type { CSSProperties, KeyboardEvent as ReactKeyboardEvent, ReactNode } from 'react'
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useId, useRef, useState } from 'react'
 import { Button } from '../../../components/Button/Button'
 import { CardActionButton } from '../../../components/CardActionButton/CardActionButton'
 import { CloseButton } from '../../../components/CloseButton/CloseButton'
@@ -355,20 +355,21 @@ function SceneJumpIn({
             </div>
             <div className={styles.ctaRow}>
               <JumpIn href={jumpHref} onClick={onJumpIn} size="xl" className={styles.modalJump} />
-              <Button
-                iconOnly
-                variant="outline"
-                size="lg"
-                aria-label="Copy link"
-                onClick={copyLink}
-              >
-                <GeneralCopy size={20} aria-hidden="true" />
-                {copied && (
-                  <span className={styles.copied} role="status">
-                    Copied!
-                  </span>
-                )}
-              </Button>
+              <span className={styles.copyWrap}>
+                <Button
+                  iconOnly
+                  variant="outline"
+                  size="lg"
+                  aria-label="Copy link"
+                  onClick={copyLink}
+                >
+                  <GeneralCopy size={20} aria-hidden="true" />
+                </Button>
+                {/* Outside the Button, so the note keeps its own text style instead of the button's. */}
+                <span role="status" className={copied ? styles.copied : styles.visuallyHidden}>
+                  {copied ? 'Copied!' : ''}
+                </span>
+              </span>
             </div>
             {rating}
           </div>
@@ -533,19 +534,22 @@ type ScenePickerProps = {
 }
 
 function ScenePicker({ options, value, onChange }: ScenePickerProps) {
+  const id = useId()
   return (
-    <label className={styles.pickerRow}>
-      <span className={styles.pickerLabel}>Scene</span>
-      <span className={styles.pickerField}>
-        <WebSelect value={value} onChange={(e) => onChange(e.target.value)}>
+    <div className={styles.pickerRow}>
+      <label htmlFor={id} className={styles.pickerLabel}>
+        Scene
+      </label>
+      <div className={styles.pickerField}>
+        <WebSelect id={id} value={value} onChange={(e) => onChange(e.target.value)}>
           {options.map((o) => (
             <option key={o.value} value={o.value}>
               {o.label}
             </option>
           ))}
         </WebSelect>
-      </span>
-    </label>
+      </div>
+    </div>
   )
 }
 

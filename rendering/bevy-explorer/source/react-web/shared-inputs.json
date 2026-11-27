@@ -16422,7 +16422,7 @@
     },
     {
       "path": "library/ui/apps/sites/places/ExploreBand.tsx",
-      "sha256": "bdbdbe968c5dbf74adb5e910273ccadb2722d7b6ff36e786bca8f89e13a2127b"
+      "sha256": "d5aaa5b87b731ed09d2fe61f78cf9f40d91e3a47a97672cb112c0218128baab3"
     },
     {
       "path": "library/ui/apps/sites/places/JumpInModal.module.css",
@@ -16442,11 +16442,11 @@
     },
     {
       "path": "library/ui/apps/sites/places/PlaceDetail.module.css",
-      "sha256": "ef7bd326e6c23cf50cd25345b72d6bc5f02599851c449df6e013ee99808de5a1"
+      "sha256": "8005e2991750902a24354f4a377f7e71c8eb3a1d41227545f9341c7188f18328"
     },
     {
       "path": "library/ui/apps/sites/places/PlaceDetail.tsx",
-      "sha256": "c36fa7066083a6168df4c5d0485d99121ac235aa609c79f3e657b685a46336e2"
+      "sha256": "3f79e91251f6d91d891ef41ba737378141f1b30452b1a949200b57c1ddfff1f8"
     },
     {
       "path": "library/ui/apps/sites/places/PlaceGrid.module.css",
@@ -60333,6 +60333,21 @@
       "from": "library/ui/apps/sites/places/LiveNow.tsx",
       "to": "library/ui/foundations/icons/index.ts",
       "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/sites/places/PlaceDetail.module.css",
+      "to": "library/ui/foundations/typography/text-styles.module.css",
+      "kind": "native:composes"
+    },
+    {
+      "from": "library/ui/apps/sites/places/PlaceDetail.module.css",
+      "to": "library/ui/foundations/typography/text-styles.module.css",
+      "kind": "production:composes"
+    },
+    {
+      "from": "library/ui/apps/sites/places/PlaceDetail.module.css",
+      "to": "library/ui/foundations/typography/text-styles.module.css",
+      "kind": "test:composes"
     },
     {
       "from": "library/ui/apps/sites/places/PlaceDetail.tsx",

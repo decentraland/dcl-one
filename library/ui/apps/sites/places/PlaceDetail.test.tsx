@@ -55,11 +55,12 @@ describe('PlaceDetail', () => {
       expect(within(viewer).getByText('MetaDoge')).toBeInTheDocument()
     })
 
-    it('should draw the bar actions with the shared Button and JumpInCTA', () => {
+    it('should draw Explore the scene as the shared inverse Button beside a Jump in link', () => {
       const explore = screen.getByRole('button', { name: 'Explore the scene' })
       expect(explore).toHaveAttribute('data-variant', 'inverse')
       expect(explore).toHaveAttribute('data-size', 'md')
       expect(explore).toBeEnabled()
+      expect(screen.getByRole('link', { name: 'Jump in' })).toHaveAttribute('href', JUMP)
     })
 
     it('should link both jump-in actions to the scene', () => {
@@ -362,8 +363,10 @@ describe('PlaceDetail', () => {
 
   describe('when the visitor copies the link from the jump-in dialog', () => {
     let writeText: Mock<(text: string) => Promise<void>>
+    let original: PropertyDescriptor | undefined
 
     beforeEach(() => {
+      original = Object.getOwnPropertyDescriptor(navigator, 'clipboard')
       writeText = vi
         .fn<(text: string) => Promise<void>>()
         .mockRejectedValueOnce(new Error('denied'))
@@ -372,12 +375,23 @@ describe('PlaceDetail', () => {
       mount({ livePlayers: 0 })
     })
 
+    afterEach(() => {
+      if (original) Object.defineProperty(navigator, 'clipboard', original)
+      else Reflect.deleteProperty(navigator, 'clipboard')
+    })
+
     it('should stay silent when the clipboard refuses and confirm once it accepts', async () => {
       fireEvent.click(screen.getByRole('button', { name: 'Copy link' }))
       await waitFor(() => expect(writeText).toHaveBeenCalledOnce())
       expect(screen.queryByText('Copied!')).toBeNull()
       fireEvent.click(screen.getByRole('button', { name: 'Copy link' }))
-      expect(await screen.findByRole('status')).toHaveTextContent('Copied!')
+      await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('Copied!'))
+    })
+
+    it('should keep the empty live region outside the copy button before the first copy', () => {
+      const status = screen.getByRole('status')
+      expect(status).toHaveTextContent('')
+      expect(screen.getByRole('button', { name: 'Copy link' })).not.toContainElement(status)
     })
   })
 

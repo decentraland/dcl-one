@@ -606,8 +606,14 @@ button.creatorName:focus-visible {
   flex: 1 1 auto;
 }
 
-/* Over the copy button, which positions it. */
+/* The copy button with its "Copied!" note above it, as the Jump In dialog draws it. */
+.copyWrap {
+  position: relative;
+  display: inline-flex;
+}
+
 .copied {
+  composes: text6c6162656c2f746167 from '../../../foundations/typography/text-styles.module.css';
   position: absolute;
   bottom: calc(100% + var(--dcl-space-8));
   left: 50%;
@@ -616,10 +622,17 @@ button.creatorName:focus-visible {
   border-radius: var(--dcl-radius-xs);
   background-color: var(--dcl-neutrals-shadow);
   color: var(--dcl-neutrals-snow);
-  font-size: var(--dcl-font-size-label-tag);
-  font-weight: 600;
   white-space: nowrap;
   pointer-events: none;
+}
+
+.visuallyHidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
 }
 
 .about {

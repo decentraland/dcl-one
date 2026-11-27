@@ -160,7 +160,7 @@ function CategorySelect({
   className?: string
 }) {
   return (
-    <span className={`${styles.selectBox} ${className ?? ''}`}>
+    <div className={`${styles.selectBox} ${className ?? ''}`}>
       <WebSelect
         aria-label={label}
         value={value}
@@ -172,7 +172,7 @@ function CategorySelect({
           </option>
         ))}
       </WebSelect>
-    </span>
+    </div>
   )
 }
 
