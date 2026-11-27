@@ -9,7 +9,7 @@ use dcl_component::proto_components::kernel::apis::{
     VideoTrackSourceType, VideoTracksActiveStreamsData, VideoTracksActiveStreamsResponse,
 };
 use input_manager::{InputManager, InputPriority};
-use livestream_manager::ActiveTransmitter;
+use livestream_manager::{livekit_track_url, ActiveTransmitter, LIVEKIT_CURRENT_STREAM};
 use system_bridge::SystemApi;
 use tokio::{sync::mpsc, task::JoinHandle};
 #[cfg(not(target_arch = "wasm32"))]
@@ -54,8 +54,12 @@ impl Plugin for LivekitPlugin {
 
         #[cfg(target_arch = "wasm32")]
         {
+            // the page dispatch fills these; the microphone routes and the Microphone setting
+            // read them
             app.insert_resource(crate::livekit::web::take_event_receiver())
                 .init_resource::<crate::livekit::web::MicrophoneStatus>()
+                .init_resource::<common::structs::MicrophoneDevices>()
+                .init_resource::<crate::livekit::web::MicrophoneTrackInputs>()
                 .add_systems(PreUpdate, crate::livekit::web::dispatch_page_events);
         }
 
@@ -443,12 +447,12 @@ fn respond_to_rpc_calls(
                         tracks.iter_many(publishing.collection())
                     {
                         let identity = participant.identity().0;
-                        let track_sid = format!("livekit-video://{}/{}", identity, track.sid());
+                        let track_sid = livekit_track_url(&identity, track.sid());
 
                         if has_active_streamer {
                             streams.push(VideoTracksActiveStreamsData {
                                 identity: participant.identity().0.clone(),
-                                track_sid: "livekit-video://current-stream".to_owned(),
+                                track_sid: LIVEKIT_CURRENT_STREAM.to_owned(),
                                 source_type: match source {
                                     (Some(_), _) => VideoTrackSourceType::VtstCamera as i32,
                                     (_, Some(_)) => VideoTrackSourceType::VtstScreenShare as i32,

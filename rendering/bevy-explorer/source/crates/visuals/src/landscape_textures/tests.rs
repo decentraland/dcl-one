@@ -306,7 +306,10 @@ fn materials_are_touched_when_a_texture_is_replaced() {
     let _flat = world
         .resource_mut::<Assets<TerrainFlatMaterial>>()
         .add(TerrainFlatMaterial {
-            base: StandardMaterial::default(),
+            base: StandardMaterial {
+                alpha_mode: AlphaMode::Mask(0.5),
+                ..default()
+            },
             extension: TerrainExtension::new(&textures),
         });
     let _grass = world

@@ -16,8 +16,9 @@
 //! so it sells nothing here. A sale of an item the catalogue lacks holds its
 //! cursor until the item appears, or a complete items mirror pass
 //! `ITEM_WAIT_SECS` after the sale (on a network the collections index owns:
-//! its publication covering the sale's block), as the badge processor's do
-//! ([`ItemWait`]). The Ethereum ERC721Bid was never polled.
+//! its publication covering the sale's block, however long that takes), as
+//! the badge processor's do ([`ItemWait`]). A held cursor shows as a growing
+//! `shop_notification_cursor_lag`. The Ethereum ERC721Bid was never polled.
 //!
 //! Each (source, network) reads only up to its index's `folded_block` while
 //! `chain_walk::is_ready`; its first pass starts at that published block, so
@@ -35,7 +36,7 @@ use sqlx::PgPool;
 use uuid::Uuid;
 
 use super::MarketplaceState;
-use super::catalogue::{self, ItemWait};
+use super::catalogue::{self, ItemWait, Waited};
 use super::chain_walk::{self, ChainNet, INDEXER_NFT, INDEXER_SALES, INDEXER_TRADE_EVENTS};
 use super::notice_cursor;
 use super::trade_events::{self, AssetMeta, StoredTrade};
@@ -532,6 +533,8 @@ async fn drain(
             .await?;
         if rows.is_empty() {
             txn.rollback().await?;
+            // Nothing left up to `published`.
+            notice_cursor::report_lag(producer, published, published);
             break;
         }
         // The assets' descriptions and the item wait from one snapshot, so a
@@ -542,7 +545,7 @@ async fn drain(
             let metas = Metas::fetch(&mut snap, links, source, net, &rows).await?;
             let wait = ItemWait::read(
                 &mut snap,
-                net,
+                net.db_name(),
                 links.chain(source, net),
                 DateTime::from_timestamp(now, 0).unwrap_or_default(),
             )
@@ -553,15 +556,18 @@ async fn drain(
         let mut done: Option<(i64, i32)> = None;
         let mut held = false;
         for row in &rows {
-            if waits_for_item(source, row, &metas, wait, links, now) {
-                tracing::debug!(
-                    source = source.db_name(),
-                    block = row.block_number,
-                    log = row.log_index,
-                    "sale of an item not mirrored yet: held"
-                );
-                held = true;
-                break;
+            match decided(source, net, row, &metas, wait, links, now) {
+                Waited::Hold => {
+                    tracing::debug!(
+                        source = source.db_name(),
+                        block = row.block_number,
+                        log = row.log_index,
+                        "sale of an item the catalogue does not describe yet: held"
+                    );
+                    held = true;
+                    break;
+                }
+                Waited::Describe => {}
             }
             done = Some((row.block_number, row.log_index));
             let found = notices(links, source, net, row, &metas).unwrap_or_default();
@@ -595,11 +601,19 @@ async fn drain(
         }
         let Some((done_block, done_log)) = done else {
             txn.rollback().await?;
+            notice_cursor::report_lag(producer, published, since_block);
             break;
         };
         emitted += insert_notifications(&mut *txn, &batch).await?;
         notice_cursor::advance(&mut txn, producer, None, done_block, done_log).await?;
         txn.commit().await?;
+        // A page short of full read everything up to `published`.
+        let drained = !held && rows.len() < PAGE_SIZE as usize;
+        notice_cursor::report_lag(
+            producer,
+            published,
+            if drained { published } else { done_block },
+        );
         if held || rows.len() < PAGE_SIZE as usize {
             break;
         }
@@ -607,34 +621,38 @@ async fn drain(
     Ok(emitted)
 }
 
-/// A row waits while [`ItemWait::awaited`]: under the mirrors, a
-/// sales-index row whose item they lack, as the badge processor's do; on a
-/// network the collections index owns, every row with an asset the
-/// publication does not cover yet, since its description (a mint's creator
-/// is its recipient) must come from a published row.
-fn waits_for_item(
+/// What becomes of a row ([`ItemWait::decide`]). Under the mirrors only a
+/// sales-index row (a mint or a bid acceptance) waits for its item, as the
+/// badge processor's do. On a network the collections index owns, every row
+/// whose asset the catalogue describes waits for the publication over its
+/// block, since its description (a mint's creator is its recipient) must
+/// come from a published row; a LAND, estate or NAME token, which other
+/// sources describe, never waits for it.
+fn decided(
     source: Source,
+    net: ChainNet,
     row: &LogRow,
     metas: &Metas,
     wait: ItemWait,
     links: &Links,
     now: i64,
-) -> bool {
+) -> Waited {
     let Some((nft, contract, value)) = wanted(source, row) else {
-        return false;
+        return Waited::Describe;
     };
-    let described = metas.get(nft, contract, value).is_some();
-    let waits_under_mirror = matches!(source, Source::Mint | Source::BidAccepted);
-    match wait {
-        ItemWait::Mirror(_) if !waits_under_mirror => false,
-        _ => wait.awaited(
-            links.items_mirror_enabled,
-            described,
-            row.block_number,
-            row.block_time,
-            now,
-        ),
+    if matches!(wait, ItemWait::Index(_))
+        && !super::nft_reads::described_by_catalogue(net, &contract, links.chain(source, net))
+    {
+        return Waited::Describe;
     }
+    let described = metas.get(nft, contract, value).is_some();
+    wait.decide(
+        links.items_mirror_enabled && matches!(source, Source::Mint | Source::BidAccepted),
+        described,
+        row.block_number,
+        row.block_time,
+        now,
+    )
 }
 
 /// One pass's result: notifications inserted and the indexes not published yet.
@@ -730,6 +748,63 @@ mod tests {
         assert_ne!(
             id,
             notification_id("order_successful", "matic", "0xa:0:0x01")
+        );
+    }
+
+    /// On a network the collections index owns, a trade of a token the
+    /// catalogue describes waits for the publication over its block; a LAND,
+    /// estate or NAME trade, which other sources describe, never does. Under
+    /// the mirrors a trade never waits.
+    #[test]
+    fn only_a_token_the_catalogue_describes_waits_for_the_index() {
+        use crate::land_authz::LAND_REGISTRY_MAINNET;
+        let links = Links {
+            marketplace: String::new(),
+            land_images: String::new(),
+            items_mirror_enabled: true,
+            trade_chains: (1, 137),
+        };
+        let now = Utc::now().timestamp();
+        let trade = |contract: &str| LogRow {
+            id_key: String::new(),
+            block_number: 105,
+            log_index: 0,
+            block_time: now - 60,
+            recipient: None,
+            counterparty: None,
+            assets: Some(json!({
+                "sent": [asset(ASSET_TYPE_ERC721, contract, "1")],
+                "received": [asset(ASSET_TYPE_ERC20, "0x0000000000000000000000000000000000000ffa", "1")],
+            })),
+            contract_address: None,
+            token_id: None,
+            item_id: None,
+            price: None,
+            tx_hash: None,
+        };
+        let metas = Metas::default();
+        let decide = |row: &LogRow, wait| {
+            decided(
+                Source::Traded,
+                ChainNet::Ethereum,
+                row,
+                &metas,
+                wait,
+                &links,
+                now,
+            )
+        };
+        let land = trade(LAND_REGISTRY_MAINNET);
+        let collection = trade(COLLECTION);
+        assert_eq!(decide(&land, ItemWait::Index(None)), Waited::Describe);
+        assert_eq!(decide(&collection, ItemWait::Index(None)), Waited::Hold);
+        assert_eq!(
+            decide(&collection, ItemWait::Index(Some(105))),
+            Waited::Describe
+        );
+        assert_eq!(
+            decide(&collection, ItemWait::Mirror(None)),
+            Waited::Describe
         );
     }
 
@@ -1070,7 +1145,6 @@ mod tests {
         }
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn mint<'a>(
         block: i64,
         log: i32,

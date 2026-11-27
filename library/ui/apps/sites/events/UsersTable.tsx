@@ -1,5 +1,6 @@
 import { useId, useState } from 'react'
 import { InputField } from '../../../components/InputField/InputField'
+import { WebSelect } from '../../../components/InputField/InputFieldWebControls'
 import {
   GeneralCheck,
   GeneralLeftArrow,
@@ -128,42 +129,45 @@ export function UsersTable({ rows, onAdd, onEdit }: UsersTableProps) {
           <label className={styles.rowsPerPage} htmlFor={rowsPerPageId}>
             {adminCopy.users.rowsPerPage}
           </label>
-          <select
-            id={rowsPerPageId}
-            className={styles.select}
-            value={rowsPerPage}
-            onChange={(event) => {
-              setRowsPerPage(Number(event.target.value))
-              setPage(0)
-            }}
-          >
-            {ROWS_PER_PAGE.map((size) => (
-              <option key={size} value={size}>
-                {size}
-              </option>
-            ))}
-          </select>
+          <div className={styles.select}>
+            <WebSelect
+              id={rowsPerPageId}
+              value={rowsPerPage}
+              onChange={(event) => {
+                setRowsPerPage(Number(event.target.value))
+                setPage(0)
+              }}
+            >
+              {ROWS_PER_PAGE.map((size) => (
+                <option key={size} value={size}>
+                  {size}
+                </option>
+              ))}
+            </WebSelect>
+          </div>
           <span className={styles.range} aria-live="polite">
             {adminCopy.users.range(from, to, filtered.length)}
           </span>
-          <button
-            type="button"
-            className={styles.pageButton}
+          <Button
+            variant="text"
+            size="sm"
+            iconOnly
             aria-label={adminCopy.users.previousPage}
             disabled={current === 0}
             onClick={() => setPage(current - 1)}
           >
-            <GeneralLeftArrow size={20} aria-hidden="true" />
-          </button>
-          <button
-            type="button"
-            className={styles.pageButton}
+            <GeneralLeftArrow className={styles.pageIcon} size={20} aria-hidden="true" />
+          </Button>
+          <Button
+            variant="text"
+            size="sm"
+            iconOnly
             aria-label={adminCopy.users.nextPage}
             disabled={current >= pages - 1}
             onClick={() => setPage(current + 1)}
           >
-            <GeneralRightArrow size={20} aria-hidden="true" />
-          </button>
+            <GeneralRightArrow className={styles.pageIcon} size={20} aria-hidden="true" />
+          </Button>
         </div>
       </div>
     </>

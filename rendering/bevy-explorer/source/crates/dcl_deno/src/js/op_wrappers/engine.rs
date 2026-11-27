@@ -21,7 +21,7 @@ fn op_crdt_send_to_renderer(op_state: Rc<RefCell<OpState>>, #[buffer] messages: 
     dcl_js::engine::crdt_send_to_renderer(op_state, messages)
 }
 
-#[op2(async)]
+#[op2]
 #[serde]
 async fn op_crdt_recv_from_renderer(op_state: Rc<RefCell<OpState>>) -> Vec<Vec<u8>> {
     dcl_js::engine::op_crdt_recv_from_renderer(op_state).await

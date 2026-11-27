@@ -1,4 +1,5 @@
 //! The Pulse bot against a real Pulse server in this process.
+#![allow(clippy::unwrap_used, reason = "test support")]
 
 mod support;
 

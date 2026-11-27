@@ -942,6 +942,16 @@ pub(super) async fn one_used_credit_index(
     wallet: &str,
     pledge: &str,
 ) -> super::usage::UsageIndex {
+    used_credit_index(pool, wallet, pledge, 10u128.pow(19)).await
+}
+
+/// [`one_used_credit_index`] with `used` wei consumed.
+pub(super) async fn used_credit_index(
+    pool: &PgPool,
+    wallet: &str,
+    pledge: &str,
+    used: u128,
+) -> super::usage::UsageIndex {
     let chain_id: i64 = 137;
     let contract = format!("0x{}", &uuid::Uuid::new_v4().simple().to_string()[..32]) + "00000000";
     let chain: SharedChain = Arc::new(std::sync::Mutex::new(ChainStub {
@@ -957,7 +967,7 @@ pub(super) async fn one_used_credit_index(
             wallet,
             pledge,
             10u128.pow(19),
-            10u128.pow(19),
+            used,
         )],
         get_logs: 0,
     }));

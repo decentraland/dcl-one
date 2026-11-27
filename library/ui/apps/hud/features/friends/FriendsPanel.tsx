@@ -3,8 +3,9 @@
 // actions; blocked shows an empty placeholder. Data + actions come from the bridge
 // relay of the scene social state (BevyApi.social.*), guest-disabled.
 
+import { Button, MaskIcon, Spinner, Tooltip } from '@dcl/one-ui'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Avatar, BlockedUser, Button, ControlButton, Envelope, Kebab, MaskIcon, Spinner, Tabs, Tooltip, VerifiedBadge, hasOpenPopup, type TabItem } from '../../design'
+import { Avatar, BlockedUser, ControlButton, Envelope, Kebab, Tabs, VerifiedBadge, hasOpenPopup, type TabItem } from '../../design'
 import { shortAddr, splitName, userColor } from '@explorer-core/lib/identity'
 import type { BlockedUser as Blocked, Friend, FriendRequest } from '@explorer-core/engine/protocol'
 import type { FriendLocation } from '@explorer-core/features/friends/friendLocation'
@@ -58,7 +59,7 @@ function NameLabel({ name, user, message }: { name: string; user: Identity; mess
 /** The row's ⋮ button: opens the user menu anchored under it. */
 function RowMenu({ address, onOpen }: { address: string; onOpen: MenuAt }): React.JSX.Element {
   return (
-    <Tooltip label="Menu" side="top" variant="rail">
+    <Tooltip appearance="hud" label="Menu" side="top" variant="rail">
       <button
         type="button"
         className={styles.menuBtn}
@@ -193,7 +194,7 @@ function FriendRow({
       <div className={styles.hoverActions}>
         {/* unity-explorer's row offers it to a friend who is not offline */}
         {onJump != null && friend.status !== 'offline' && (
-          <Tooltip label="Jump to Location" side="top" variant="rail">
+          <Tooltip appearance="hud" label="Jump to Location" side="top" variant="rail">
             <button
               type="button"
               className={styles.menuBtn}
@@ -207,7 +208,7 @@ function FriendRow({
             </button>
           </Tooltip>
         )}
-        <Tooltip label="Chat" side="top" variant="rail">
+        <Tooltip appearance="hud" label="Chat" side="top" variant="rail">
           <button
             type="button"
             className={styles.menuBtn}
@@ -270,15 +271,15 @@ function RequestRow({
       <div className={styles.actions}>
         {mode === 'received' ? (
           <>
-            <Button variant="secondary" size="row" disabled={isPending(pending, 'reject', req.address)} onClick={stop(onReject)}>
+            <Button appearance="hud" variant="secondary" size="row" disabled={isPending(pending, 'reject', req.address)} onClick={stop(onReject)}>
               Delete
             </Button>
-            <Button variant="primary" size="row" disabled={isPending(pending, 'accept', req.address)} onClick={stop(onAccept)}>
+            <Button appearance="hud" variant="primary" size="row" disabled={isPending(pending, 'accept', req.address)} onClick={stop(onAccept)}>
               Accept
             </Button>
           </>
         ) : (
-          <Button variant="secondary" size="row" disabled={isPending(pending, 'cancel', req.address)} onClick={stop(onCancel)}>
+          <Button appearance="hud" variant="secondary" size="row" disabled={isPending(pending, 'cancel', req.address)} onClick={stop(onCancel)}>
             Cancel
           </Button>
         )}
@@ -309,7 +310,7 @@ function BlockedRow({ user, menuOpen, onMenu, pending, onUnblock }: { user: Bloc
         <NameLabel name={name} user={user} />
       </div>
       <div className={`${styles.actions} ${styles.blockedActions}`}>
-        <Button
+        <Button appearance="hud"
           variant="secondary"
           size="row"
           className={styles.unblock}
@@ -431,7 +432,7 @@ export function FriendsPanel({
       <div className={styles.body}>
         {friends.loading ? (
           <div className={styles.placeholder}>
-            <Spinner />
+            <Spinner variant="thin" />
           </div>
         ) : !friends.available ? (
           <div className={styles.placeholder}>

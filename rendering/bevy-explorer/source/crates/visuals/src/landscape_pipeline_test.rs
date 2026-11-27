@@ -80,7 +80,7 @@ fn sky_cube(images: &mut Assets<Image>) -> Handle<Image> {
     images.add(cube)
 }
 
-/// Spawns the camera, with the sky's environment map, and light, then updates until no pipeline is pending, and fails on any
+/// Spawns the cameras (one with a depth prepass alone), the first with the sky's environment map, and light, then updates until no pipeline is pending, and fails on any
 /// pipeline error or if no pipeline compiled with each of `fragment_shaders` (file names).
 pub(crate) fn assert_pipelines_compile(
     app: &mut App,
@@ -109,7 +109,7 @@ pub(crate) fn assert_pipelines_compile(
         DepthPrepass,
         NormalPrepass,
         Camera {
-            target: RenderTarget::Image(target.into()),
+            target: RenderTarget::Image(target.clone().into()),
             ..default()
         },
         Transform::from_translation(from).looking_at(looking_at, Vec3::Y),
@@ -119,6 +119,17 @@ pub(crate) fn assert_pipelines_compile(
             intensity: 1.0,
             ..default()
         },
+    ));
+    // the avatar outline off: a depth prepass that writes no normals, so it has no fragment output
+    world.spawn((
+        Camera3d::default(),
+        DepthPrepass,
+        Camera {
+            target: RenderTarget::Image(target.into()),
+            order: 1,
+            ..default()
+        },
+        Transform::from_translation(from).looking_at(looking_at, Vec3::Y),
     ));
     world.spawn((
         DirectionalLight {

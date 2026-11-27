@@ -1,7 +1,7 @@
 // Shared by the Backpack specs (wearables, emotes, outfits, visibility): open the Backpack on a
 // view, find the item cards and the emote and outfit slots by their accessible names, equip, and
 // take the look to the engine. Names are the HUD's (library/ui/apps/hud/features/backpack/BackpackPage.tsx,
-// design/WearableCard.tsx, design/Pager.tsx).
+// design/Pager.tsx) and the shared card's (library/ui/components/WearableCard/WearableCard.tsx).
 //
 // Two facts about the HUD shape every equip check:
 // - A card's EQUIP and UNEQUIP buttons are nested in the card and exist (non-empty box) only while
@@ -21,7 +21,7 @@ export const GRID_TIMEOUT_MS = 90_000
 /** The wearables grid, which says it is loading (`aria-busy`) while its newest query is in flight
  *  or the search box waits out its debounce: its cards are the current page once it is ready. */
 export const CATALOG: Selector = { name: 'Catalog', role: 'region' }
-/** The Saved Outfits slots, loading until the saved outfits arrive: before, every slot reads empty. */
+/** The Saved Outfits slots, loading until the saved outfits arrive: before, each slot is a skeleton. */
 export const SAVED_OUTFITS: Selector = { name: 'Saved outfits', role: 'region' }
 /** An equip taking effect in the HUD. */
 export const EQUIP_TIMEOUT_MS = 8_000
@@ -373,7 +373,8 @@ export async function outfitSlots(explorer: Explorer): Promise<[number, boolean]
   return slots.sort(([a], [b]) => a - b)
 }
 
-/** The slots once the saved outfits have arrived: until then every slot reads empty. */
+/** The slots once the saved outfits have arrived: until then each slot is a skeleton and none is
+ *  listed; a slot being saved or deleted is not listed either. */
 export async function waitForOutfitSlots(explorer: Explorer, timeoutMs = 20_000): Promise<[number, boolean][]> {
   await explorer.hud.waitReady(SAVED_OUTFITS, timeoutMs)
   return until(() => outfitSlots(explorer), (slots) => slots.length >= 5, { timeoutMs, what: 'the Saved Outfits slots' })

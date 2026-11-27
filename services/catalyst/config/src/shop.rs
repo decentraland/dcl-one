@@ -105,6 +105,73 @@ pub struct MarketplaceConfig {
     #[arg(long, env = "MARKET_ADMIN_TOKEN", hide_env_values = true)]
     pub market_admin_token: Option<String>,
 
+    /// Bearer of the marketplace historical holdings reads. Unset disables the routes.
+    #[arg(long, env = "HISTORICAL_ADMIN_TOKEN", hide_env_values = true)]
+    pub historical_admin_token: Option<String>,
+
+    // The Wert card on-ramp (`POST /v1/wert/sign`): all four, or none (the
+    // route then answers 503 naming them).
+    /// Wert's Ed25519 partner key (32 bytes, hex) for card purchases into a
+    /// contract; read from WERT_PRIVATE_KEY_FILE alone.
+    #[arg(long, env = "WERT_PRIVATE_KEY", hide_env_values = true)]
+    pub wert_private_key: Option<String>,
+
+    /// The key a `publicationFees` signature uses; WERT_PUBLICATION_FEES_PRIVATE_KEY_FILE alone.
+    #[arg(
+        long,
+        env = "WERT_PUBLICATION_FEES_PRIVATE_KEY",
+        hide_env_values = true
+    )]
+    pub wert_publication_fees_private_key: Option<String>,
+
+    /// Wert's partner API, which creates the widget session (`{WERT_API_URL}/create-session`).
+    #[arg(long, env = "WERT_API_URL")]
+    pub wert_api_url: Option<String>,
+
+    /// Wert's partner API key, sent as `x-api-key`.
+    #[arg(long, env = "WERT_API_KEY", hide_env_values = true)]
+    pub wert_api_key: Option<String>,
+
+    /// Extra Wert contract tuples as comma-separated `network:address:target`
+    /// entries. Networks are ethereum, polygon, amoy and sepolia. Targets
+    /// are default and publicationFees.
+    #[arg(long, env = "WERT_EXTRA_CONTRACTS")]
+    pub wert_extra_contracts: Option<String>,
+
+    // The Transak card on-ramp (`/v1/transak/*`): all six, or none (the routes
+    // then answer 503 naming them).
+    /// Transak's partner API (`/v2/refresh-token`, `/v2/order/{id}`).
+    #[arg(long, env = "TRANSAK_API_URL")]
+    pub transak_api_url: Option<String>,
+
+    /// Transak's API gateway, which creates the widget session (`/v2/auth/session`).
+    #[arg(long, env = "TRANSAK_API_GATEWAY_URL")]
+    pub transak_api_gateway_url: Option<String>,
+
+    /// Transak's partner API key, sent as `x-api-key`. Never the key
+    /// marketplace-server is serving with: each refresh invalidates the
+    /// other's token, and marketplace-server does not recover. Use separate
+    /// partner credentials, or set the six TRANSAK_* only once
+    /// marketplace-server has stopped serving Transak.
+    #[arg(long, env = "TRANSAK_API_KEY", hide_env_values = true)]
+    pub transak_api_key: Option<String>,
+
+    /// Transak's partner API secret, sent only to refresh the access token.
+    #[arg(long, env = "TRANSAK_API_SECRET", hide_env_values = true)]
+    pub transak_api_secret: Option<String>,
+
+    /// Bearer of `PUT /v1/transak/access-token`, which forces a token refresh.
+    #[arg(
+        long,
+        env = "TRANSAK_REFRESH_ACCESS_TOKEN_AUTH",
+        hide_env_values = true
+    )]
+    pub transak_refresh_access_token_auth: Option<String>,
+
+    /// The host Transak has registered for the partner (`referrerDomain` of every widget).
+    #[arg(long, env = "TRANSAK_REFERRER_DOMAIN")]
+    pub transak_referrer_domain: Option<String>,
+
     /// 0 disables the catalog page cache.
     #[arg(long, env = "MARKETPLACE_CATALOG_CACHE_TTL_SECS", default_value_t = 30)]
     pub marketplace_catalog_cache_ttl_secs: u64,
@@ -161,13 +228,15 @@ pub struct MarketplaceConfig {
     #[arg(long, env = "MARKETPLACE_THIRD_PARTY_REGISTRY_INDEX_ENABLED", default_value_t = false, action = clap::ArgAction::Set)]
     pub marketplace_third_party_registry_index_enabled: bool,
 
-    /// Walk the Polygon collection factories and their collections' events into
-    /// `shop.collection_event` over the `TRADE_RPC_URLS` 137 entry for collection counts and sales analytics.
+    /// Walk the Polygon collection factories and their collections' events, and on Ethereum
+    /// mainnet the collections-v1 contracts', into `shop.collection_event`, over each network's
+    /// `TRADE_RPC_URLS` entry (Ethereum's falls back to `ETH_RPC_URL`).
     #[arg(long, env = "MARKETPLACE_COLLECTIONS_INDEX_ENABLED", default_value_t = false, action = clap::ArgAction::Set)]
     pub marketplace_collections_index_enabled: bool,
 
     /// The networks whose `shop.collections` and `shop.items` rows the collections index's fold
-    /// takes from the collections mirror and writes (`matic`); empty, it keeps its log alone.
+    /// takes from the collections mirror and writes (`matic`, `ethereum`); empty, it keeps its log
+    /// alone.
     #[arg(long, env = "MARKETPLACE_COLLECTIONS_INDEX_OWNS", default_value = "")]
     pub marketplace_collections_index_owns: String,
 
@@ -445,8 +514,25 @@ pub struct ShopConfig {
     /// cross-wallet credits list and its grant reasons), comma-separated: the
     /// old credits server's `READ_ONLY_ADMIN_ADDRESSES` and
     /// `READ_WRITE_ADMIN_ADDRESSES` together. Empty leaves them to the bearer.
+    /// A write admin (`CREDITS_WRITE_ADMIN_ADDRESSES`) reads them too.
     #[arg(long, env = "CREDITS_READ_ADMIN_ADDRESSES", default_value = "")]
     pub credits_read_admin_addresses: String,
+
+    /// Wallets whose signed requests may change the studios (create, rename,
+    /// pause, operators, budget) and read what a read admin reads,
+    /// comma-separated: the old credits server's `READ_WRITE_ADMIN_ADDRESSES`.
+    /// Empty leaves the changes to the bearer. An entry that is not a wallet
+    /// address fails startup.
+    #[arg(long, env = "CREDITS_WRITE_ADMIN_ADDRESSES", default_value = "")]
+    pub credits_write_admin_addresses: String,
+
+    /// Refuse a write admin's wallet-signed change, and a studio operator's
+    /// grant, that does not sign its body's SHA-256 (`bodySha256` in the
+    /// signed metadata). Off, such a change is accepted with a warning, as the
+    /// old server accepted it; a signed hash that does not match the body is
+    /// refused either way.
+    #[arg(long, env = "CREDITS_ADMIN_WRITES_REQUIRE_BOUND_BODY", default_value_t = false, action = clap::ArgAction::Set)]
+    pub credits_admin_writes_require_bound_body: bool,
 
     /// The hCaptcha secret (or `_FILE`); unset skips the token check.
     #[arg(long, env = "CREDITS_CAPTCHA_SECRET", hide_env_values = true)]
@@ -458,6 +544,11 @@ pub struct ShopConfig {
         default_value = "https://hcaptcha.com/siteverify"
     )]
     pub credits_captcha_verify_url: String,
+
+    /// The Slack incoming webhook the credits alerts are posted to (or
+    /// `_FILE`), a public https URL; unset, each alert is logged at error.
+    #[arg(long, env = "CREDITS_ALERTS_SLACK_WEBHOOK", hide_env_values = true)]
+    pub credits_alerts_slack_webhook: Option<String>,
 
     /// Enables the Stripe client (or `_FILE`); unset, the card routes answer 501/503.
     #[arg(long, env = "STRIPE_SECRET_KEY", hide_env_values = true)]
@@ -639,6 +730,26 @@ pub struct ShopConfig {
 
     #[arg(long, env = "CREDITS_CHECKOUT_CANCEL_URL_BUILDER")]
     pub credits_checkout_cancel_url_builder: Option<String>,
+
+    /// The most new studio budget (deposits and upward adjustments, every
+    /// studio together) one UTC day may add, in USD cents (credits-server's
+    /// `DAILY_STUDIO_DEPOSIT_LIMIT_CENTS`). Unset or negative refuses new
+    /// budget.
+    #[arg(
+        long,
+        env = "CREDITS_DAILY_STUDIO_DEPOSIT_LIMIT_CENTS",
+        allow_negative_numbers = true
+    )]
+    pub credits_daily_studio_deposit_limit_cents: Option<i64>,
+
+    /// The most one studio grant may give, in USD cents (credits-server's
+    /// `STUDIO_GRANT_MAX_CENTS`). Unset or negative refuses studio grants.
+    #[arg(
+        long,
+        env = "CREDITS_STUDIO_GRANT_MAX_CENTS",
+        allow_negative_numbers = true
+    )]
+    pub credits_studio_grant_max_cents: Option<i64>,
 
     /// Attach the CreditUsed index (credits.usages, over RPC_ENDPOINT_POLYGON
     /// and CREDITS_MANAGER_CONTRACT); POST /credits/authorize mints only while it is ready.

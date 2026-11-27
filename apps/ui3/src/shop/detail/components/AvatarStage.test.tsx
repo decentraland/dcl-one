@@ -221,3 +221,49 @@ describe("changes", () => {
     expect(cover()).toBeNull();
   });
 });
+
+describe("the Bevy avatar preview", () => {
+  const fromBevy = (data: unknown) =>
+    act(() => {
+      window.dispatchEvent(new MessageEvent("message", { data, source: frame()!.contentWindow, origin: window.location.origin }));
+    });
+
+  test("with its flag on, a full device draws with Bevy in the stage's mode, before Unity", () => {
+    primeRemoteFlags({ "dapps-unity-wearable-preview": true, "dapps-shop-bevy-avatar-preview": true });
+    stage();
+    expect(new URL(frame()!.src).pathname).toBe("/avatar-preview/");
+    expect(params().get("mode")).toBe("builder");
+    expect(params().has("unity")).toBe(false);
+    fromBevy({ type: "load", payload: { renderer: "bevy" } });
+    expect(cover()).toBeNull();
+  });
+
+  test("Bevy failing gives way to Unity, and Unity failing then to Babylon", () => {
+    primeRemoteFlags({ "dapps-unity-wearable-preview": true, "dapps-shop-bevy-avatar-preview": true });
+    stage();
+    fromBevy({ type: "error", payload: { message: "renderer failed to start" } });
+    expect(new URL(frame()!.src).origin).toBe(PREVIEW);
+    expect(params().get("unity")).toBe("true");
+    expect(cover()).not.toBeNull();
+    fromPreview({ type: "error", payload: { message: "unity failed" } });
+    expect(params().has("unity")).toBe(false);
+  });
+
+  test("Bevy silent for 45 seconds gives way too", () => {
+    vi.useFakeTimers();
+    primeRemoteFlags({ "dapps-unity-wearable-preview": false, "dapps-shop-bevy-avatar-preview": true });
+    stage();
+    act(() => vi.advanceTimersByTime(45_000));
+    expect(new URL(frame()!.src).origin).toBe(PREVIEW);
+    expect(params().has("unity")).toBe(false);
+  });
+
+  test("a lighter device draws with Babylon whatever the flag says", () => {
+    primeRemoteFlags({ "dapps-shop-bevy-avatar-preview": true });
+    env.device = "lite";
+    env.reason = "mobile";
+    stage();
+    expect(new URL(frame()!.src).origin).toBe(PREVIEW);
+    expect(params().has("unity")).toBe(false);
+  });
+});

@@ -1009,6 +1009,10 @@ fn spawn_ground(
         TerrainFlatMaterial {
             base: StandardMaterial {
                 depth_bias: -100.0,
+                // the shader discards beyond the coast in both passes: a mask material keeps its
+                // fragment stage in a depth prepass without a normal prepass (the avatar outline
+                // off). The colour is opaque, so the cutoff discards nothing
+                alpha_mode: AlphaMode::Mask(0.5),
                 ..ground_surface()
             },
             extension: TerrainExtension::new(&textures),

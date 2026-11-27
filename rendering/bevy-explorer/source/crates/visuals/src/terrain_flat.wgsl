@@ -1,7 +1,12 @@
 // The ground: the splat-textured ground colour under standard lighting, ending at the coast.
 
 #ifdef PREPASS_PIPELINE
+#ifdef PREPASS_FRAGMENT
     #import bevy_pbr::prepass_io::{VertexOutput, FragmentOutput};
+#else
+    // a depth-only pass (a depth prepass without a normal prepass, a shadow map) has no output
+    #import bevy_pbr::prepass_io::VertexOutput;
+#endif
 #else
     #import bevy_pbr::forward_io::{VertexOutput, FragmentOutput};
     #import bevy_pbr::pbr_fragment::pbr_input_from_standard_material;
@@ -49,8 +54,15 @@ override fn ambient::ambient_light(world_position: vec4<f32>, world_normal: vec3
 #endif
 
 @fragment
+#ifdef PREPASS_PIPELINE
+#ifdef PREPASS_FRAGMENT
 fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> FragmentOutput {
-#ifndef PREPASS_PIPELINE
+#else
+// depth only: the ground still ends at the coast
+fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) {
+#endif
+#else
+fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> FragmentOutput {
     // sampled before the discard, in uniform control flow
     let ground = ground_albedo_normal(in.world_position.xz);
 #endif
@@ -58,20 +70,22 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
         discard;
     }
 
-    var out: FragmentOutput;
-
 #ifdef PREPASS_PIPELINE
+#ifdef PREPASS_FRAGMENT
+    var out: FragmentOutput;
 #ifdef NORMAL_PREPASS
     out.normal = vec4(in.world_normal * 0.5 + vec3(0.5), 1.0);
 #endif
 #ifdef UNCLIPPED_DEPTH_ORTHO_EMULATION
     out.frag_depth = in.unclipped_depth;
 #endif
-#else
+    return out;
+#endif // PREPASS_FRAGMENT
+#else // PREPASS_PIPELINE
+    var out: FragmentOutput;
     var pbr_input = pbr_input_from_standard_material(in, is_front);
     pbr_input.material.base_color = vec4(ground.albedo, 1.0);
     out.color = main_pass_post_lighting_processing(pbr_input, apply_pbr_lighting(pbr_input));
-#endif
-
     return out;
+#endif // PREPASS_PIPELINE
 }

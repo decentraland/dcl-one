@@ -217,11 +217,13 @@ fn peer_base_of(content_base: &str) -> String {
 /// render exits between the timeout firing and this call, and ESRCH is the
 /// ordinary result rather than a fault to report.
 #[cfg(unix)]
+#[allow(unsafe_code, reason = "libc kill on a process group")]
 fn kill_process_group(pgid: u32) {
     let pgid = pgid as i32;
     if pgid <= 0 {
         return;
     }
+    // SAFETY: kill takes plain integers and touches no memory; pgid > 0, so -pgid names one group.
     unsafe {
         libc::kill(-pgid, libc::SIGKILL);
     }
