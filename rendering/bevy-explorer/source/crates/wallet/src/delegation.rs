@@ -85,7 +85,7 @@ impl Envelope {
 
 /// `meta` with the body's SHA-256 added as `hashPayload` when there is a body, every other
 /// claim-derived field kept as the delegation built it.
-pub fn delegated_meta(meta: &str, body_hash: Option<String>) -> Result<String, serde_json::Error> {
+fn delegated_meta(meta: &str, body_hash: Option<String>) -> Result<String, serde_json::Error> {
     let Some(hash) = body_hash else {
         return Ok(meta.to_owned());
     };
@@ -345,6 +345,16 @@ pub enum CreditsRefusal {
     Malformed(String),
 }
 
+impl std::fmt::Display for CreditsRefusal {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::NotAssigned => f.write_str("no current assignment with that id"),
+            Self::WrongScene => f.write_str("the claim names another scene"),
+            Self::Malformed(reason) => write!(f, "malformed: {reason}"),
+        }
+    }
+}
+
 /// Per-scene Credits assignments, held only by an orchestrated headless server. There is no
 /// fallback slot: a process-wide Credits credential would act for every co-tenant scene.
 ///
@@ -412,7 +422,14 @@ impl CreditsDelegations {
         }) {
             return Err(CreditsRefusal::WrongScene);
         }
-        slot.delegation = Some(delegation);
+        // renewals can arrive out of order: keep whichever expires later
+        if slot
+            .delegation
+            .as_ref()
+            .is_none_or(|current| delegation.expiration >= current.expiration)
+        {
+            slot.delegation = Some(delegation);
+        }
         Ok(())
     }
 
@@ -760,6 +777,34 @@ mod test {
             delegations.renew("bafkreiplaza", "a1", &credits_claim_for(&other_scene)),
             Err(CreditsRefusal::WrongScene)
         );
+    }
+
+    #[test]
+    fn delegation_claims_are_preserved_when_body_is_bound() {
+        let original = r#"{"signer":"dcl:authoritative-server","sceneId":"Mixed","parcel":"1,2"}"#;
+        let digest = "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a";
+        assert_eq!(delegated_meta(original, None).unwrap(), original);
+        let meta: serde_json::Value =
+            serde_json::from_str(&delegated_meta(original, Some(digest.to_owned())).unwrap())
+                .unwrap();
+        assert_eq!(meta["sceneId"], "Mixed");
+        assert_eq!(meta["signer"], "dcl:authoritative-server");
+        assert_eq!(meta["parcel"], "1,2");
+        assert_eq!(meta["hashPayload"], digest);
+    }
+
+    #[test]
+    fn a_renewal_that_arrives_late_keeps_the_later_expiry() {
+        let mut delegations = CreditsDelegations::default();
+        let earlier = credits_claim_for(&credits_lines("2030-01-01T00:00:00.000Z"));
+        let later = credits_claim_for(&credits_lines("2030-01-01T00:10:00.000Z"));
+        delegations
+            .assign("bafkreiplaza", "a1".into(), Some(&earlier))
+            .unwrap();
+        delegations.renew("bafkreiplaza", "a1", &later).unwrap();
+        delegations.renew("bafkreiplaza", "a1", &earlier).unwrap();
+        let expiry = 1_893_456_000_000;
+        assert!(delegations.valid_for("bafkreiplaza", expiry).is_some());
     }
 
     #[test]

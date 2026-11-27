@@ -866,7 +866,7 @@ fn project_server_scene_rooms(
 /// Credits asks per assignment, naming it, and also for an assignment whose first mint failed.
 fn request_delegation_renewals(
     storage: Res<StorageDelegations>,
-    credits: Option<Res<CreditsDelegations>>,
+    credits: Res<CreditsDelegations>,
     time: Res<Time>,
     mut last_request: Local<std::collections::HashMap<String, f64>>,
 ) {
@@ -900,14 +900,12 @@ fn request_delegation_renewals(
             );
         }
     }
-    if let Some(credits) = &credits {
-        for (scene, assignment) in credits.needing_renewal(now_ms, REFRESH_BUFFER_MS) {
-            ask(format!("credits:{assignment}"), &|| {
-                serde_json::json!({
-                    "type": "credits-delegation-request", "scene": scene, "assignment": assignment
-                })
-            });
-        }
+    for (scene, assignment) in credits.needing_renewal(now_ms, REFRESH_BUFFER_MS) {
+        ask(format!("credits:{assignment}"), &|| {
+            serde_json::json!({
+                "type": "credits-delegation-request", "scene": scene, "assignment": assignment
+            })
+        });
     }
     last_request.retain(|key, _| due.contains(key));
 }
@@ -935,7 +933,7 @@ fn drain_control_commands(
             Ok(()) => {}
             Err(refusal) => ctl_emit(&serde_json::json!({
                 "type": "error", "scene": scene_id,
-                "error": format!("credits delegation not stored: {refusal:?}")
+                "error": format!("credits delegation not stored: {refusal}")
             })),
         };
     let store_delegation = |scene_id: &str, encoded: &str, delegations: &mut StorageDelegations| {
@@ -990,11 +988,12 @@ fn drain_control_commands(
                     // pre-minted by the trusted orchestrator: never sign anything ourselves
                     Some(adapter) => {
                         if let Err(error) = livekit_address(&adapter) {
-                            // a scene already running keeps its room; a new one never starts
-                            let event = if orch.wanted.contains_key(&scene_id) {
-                                "error"
+                            // a scene already running keeps its room, but not its Credits
+                            // assignment, ended above; a new one never starts
+                            let (event, error) = if orch.wanted.contains_key(&scene_id) {
+                                ("error", format!("{error}; credits assignment dropped"))
                             } else {
-                                "scene-failed"
+                                ("scene-failed", error)
                             };
                             ctl_emit(
                                 &serde_json::json!({"type": event, "scene": scene_id, "error": error}),

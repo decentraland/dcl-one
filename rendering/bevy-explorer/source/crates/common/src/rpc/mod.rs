@@ -390,7 +390,6 @@ pub enum RpcCall {
     ActiveVideoStreams {
         response: RpcResultSender<VideoTracksActiveStreamsResponse>,
     },
-    // last, so the variants before it keep their wire indices
     GrantCredits(GrantCreditsRequest),
 }
 
@@ -406,9 +405,9 @@ pub struct GrantCreditsRequest {
 }
 
 /// `grantCredits`'s answer, shaped like the protocol's `GrantCreditsResponse`
-/// (scene_credits.proto). A paid answer carries the whole receipt: `replayed`, `receipt_id` and
-/// `credits` (whole Credits as a decimal string), and no `error`. A refusal carries only `error`, a
-/// `GrantCreditsError` number.
+/// (`library/protocol`'s `kernel/apis/scene_credits.proto`). A paid answer carries the whole
+/// receipt: `replayed`, `receipt_id` and `credits` (whole Credits as a decimal string), and no
+/// `error`. A refusal carries only `error`, a `GrantCreditsError` number.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GrantCreditsAnswer {
@@ -419,7 +418,8 @@ pub struct GrantCreditsAnswer {
     pub credits: Option<String>,
 }
 
-/// The protocol's `GrantCreditsError`, numbered as in scene_credits.proto.
+/// The protocol's `GrantCreditsError`, numbered as in `library/protocol`'s
+/// `kernel/apis/scene_credits.proto`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(i32)]
 pub enum GrantCreditsError {

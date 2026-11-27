@@ -285,8 +285,8 @@ impl Plugin for SceneCreditsPlugin {
 }
 
 /// One Credits request on its way to credits-server, as an entity of its own that is despawned
-/// with the scene that asked (`DespawnWith`). A scene that goes away cancels its requests and
-/// drops their answer senders, which its module reads as `Unavailable`.
+/// with the scene that asked (`DespawnWith`). A scene that goes away cancels its requests; no one is
+/// left to answer.
 #[derive(Component)]
 pub(crate) struct PendingGrantCredits {
     scene: Entity,
@@ -410,7 +410,7 @@ pub(crate) fn answer_grant_credits(
     for (entity, mut request) in &mut pending {
         if let Some(answer) = request.task.complete() {
             request.response.send(answer);
-            commands.entity(entity).despawn();
+            commands.entity(entity).try_despawn();
         }
     }
 }
@@ -496,7 +496,7 @@ mod lifecycle_tests {
         app.update();
 
         assert!(app.world().get_entity(request).is_err());
-        // the scene's module reads a dropped answer as GCE_UNAVAILABLE
+        // the request went with the scene, and its sender with it
         assert!(answer.poll_once().is_err());
     }
 }
@@ -788,20 +788,27 @@ mod tests {
         .into_bytes()
     }
 
-    /// A Credits delegation for throwaway key 1, its claim naming that key.
-    fn delegation() -> wallet::delegation::CreditsDelegation {
-        use base64::Engine;
-        let address = "0x7e5f4552091a69125d5dfcb7b8c2659029395bdf";
+    const EPHEMERAL: &str = "0x7e5f4552091a69125d5dfcb7b8c2659029395bdf";
+
+    /// The claim the orchestrator signed, naming throwaway key 1.
+    fn delegation_scope() -> serde_json::Value {
         let payload = [
             "Decentraland Authoritative Delegation",
             "Audience: credits",
-            &format!("Ephemeral: {address}"),
+            &format!("Ephemeral: {EPHEMERAL}"),
             "World: boundary.dcl.eth",
             "SceneId: bafkreiboundary",
             "Parcel: 0,0",
             "Expiration: 2099-01-01T00:00:00.000Z",
         ]
         .join("\n");
+        serde_json::json!({ "payload": payload, "signature": "0xsig" })
+    }
+
+    /// A Credits delegation for throwaway key 1, its claim naming that key.
+    fn delegation() -> wallet::delegation::CreditsDelegation {
+        use base64::Engine;
+        let address = EPHEMERAL;
         let envelope = serde_json::json!({
             "v": 1,
             "ephemeral": {
@@ -809,7 +816,7 @@ mod tests {
                 "publicKey": "unused",
                 "address": address,
             },
-            "scope": { "payload": payload, "signature": "0xsig" },
+            "scope": delegation_scope(),
         });
         wallet::delegation::CreditsDelegation::parse(
             &base64::engine::general_purpose::STANDARD.encode(envelope.to_string()),
@@ -866,7 +873,22 @@ mod tests {
             .unwrap()
             .starts_with(&format!("post:{ROUTE}:")));
         assert!(!received.headers.contains_key("x-identity-auth-chain-2"));
-        assert!(!received.headers["x-authoritative-scope"].is_empty());
+        // signed by the claim's ephemeral key, carrying that claim
+        use alloy_core::primitives::Signature;
+        use std::str::FromStr;
+        let signer = Signature::from_str(link["signature"].as_str().unwrap())
+            .unwrap()
+            .recover_address_from_msg(link["payload"].as_str().unwrap().as_bytes())
+            .unwrap();
+        assert_eq!(format!("{signer:#x}"), EPHEMERAL);
+        use base64::Engine;
+        let scope: serde_json::Value = serde_json::from_slice(
+            &base64::engine::general_purpose::STANDARD
+                .decode(&received.headers["x-authoritative-scope"])
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(scope, delegation_scope());
     }
 
     #[test]
@@ -915,9 +937,7 @@ mod tests {
 
     #[test]
     fn only_an_https_credits_service_is_ever_sent_to() {
-        let (base, seen) = listener(http_reply("200 OK", "", "{}"));
-        assert_eq!(grant_url_for(&base, PROGRAM), None);
-        assert!(seen.lock().unwrap().is_empty());
+        assert_eq!(grant_url_for("http://credits.example/", PROGRAM), None);
         assert_eq!(
             grant_url_for("https://credits.example/", PROGRAM).as_deref(),
             Some("https://credits.example/scene-rewards/programs/0b5c8d7e-1f2a-4b3c-9d4e-5f6a7b8c9d0e/grants")

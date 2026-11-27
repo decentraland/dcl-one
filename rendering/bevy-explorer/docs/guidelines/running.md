@@ -79,7 +79,7 @@ Pulse also accepts the `PULSE_SERVER` environment variable. Configure a private 
 `--pulse-server <host[:port]>`, `--social-rpc wss://example.org/social-rpc`,
 `--ethereum-rpc wss://example.org/rpc` and `--storage https://storage.example.org`
 as appropriate for that deployment. Storage delegates authorize an origin, so select
-the intended storage origin explicitly. A headless server that pays scene rewards signs its
+the intended storage origin explicitly. A headless server that pays scene Credits signs its
 Credits requests the same way: set `--credits https://credits.example.org` when it is not the
 base domain's, over HTTPS only. The authentication page and public Reels links
 also keep their configured destinations, set with `--auth-page https://example.org/auth`

@@ -1,6 +1,7 @@
-// `~system/SceneCredits` (protocol scene_credits.proto). A scene's authoritative server pays a player Credits out of
-// a Credits program that Decentraland set up. Only the engine decides whether it can: an orchestrated headless server
-// holding the scene's Credits delegation asks credits-server; anywhere else the answer is GCE_NOT_AVAILABLE.
+// `~system/SceneCredits` (library/protocol's kernel/apis/scene_credits.proto). A scene's authoritative server pays a
+// player Credits out of a Credits program that Decentraland set up. Only the engine decides whether it can: an
+// orchestrated headless server holding the scene's Credits delegation asks credits-server; anywhere else the answer
+// is GCE_NOT_AVAILABLE.
 
 // The protocol enum as a runtime value, shaped like the generated ts-proto enum.
 function makeEnum(entries) {

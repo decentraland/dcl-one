@@ -3432,25 +3432,6 @@ mod signed_fetch_body_tests {
     }
 
     #[test]
-    fn delegation_claims_are_preserved_when_body_is_bound() {
-        let original = r#"{"signer":"dcl:authoritative-server","sceneId":"Mixed","parcel":"1,2"}"#;
-        let digest = "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a";
-        let (_, hash_payload) =
-            validate_signed_fetch("https://storage.decentraland.org", Some(digest), false).unwrap();
-        assert_eq!(
-            wallet::delegation::delegated_meta(original, None).unwrap(),
-            original
-        );
-        let meta: serde_json::Value = serde_json::from_str(
-            &wallet::delegation::delegated_meta(original, hash_payload).unwrap(),
-        )
-        .unwrap();
-        assert_eq!(meta["sceneId"], "Mixed");
-        assert_eq!(meta["signer"], "dcl:authoritative-server");
-        assert_eq!(meta["parcel"], "1,2");
-        assert_eq!(meta["hashPayload"], digest);
-    }
-    #[test]
     fn normalizes_fetch_url_before_signing() {
         let (uri, _) = validate_signed_fetch(
             "https://Example.org/assets/../API/Mixed?Q=Yes#fragment",
