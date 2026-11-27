@@ -22,6 +22,8 @@ use collectibles::{
     Emote, EmoteExtraData, EmoteUrn,
 };
 #[cfg(feature = "explorer")]
+use common::inputs::{CommonInputAction, MOVE_SET};
+#[cfg(feature = "explorer")]
 use common::rpc::{RpcCall, RpcCallEvent, RpcEventSender, RpcOrigin};
 use common::{
     dynamics::landed,
@@ -38,6 +40,8 @@ use common::{
 use comms::{broadcast, profile::CurrentUserProfile, BroadcastTarget, Transport};
 #[cfg(feature = "explorer")]
 use console::DoAddConsoleCommand;
+#[cfg(feature = "explorer")]
+use input_manager::{InputManager, InputPriority};
 use ipfs::partition::PartitionedEmoteDownloads;
 use ipfs::IpfsAssetServer;
 #[cfg(feature = "explorer")]
@@ -183,7 +187,10 @@ impl Plugin for AvatarAnimationPlugin {
         {
             app.add_systems(
                 Update,
-                (handle_trigger_emotes, broadcast_emote)
+                (
+                    (handle_trigger_emotes, drop_scene_emote_on_input).chain(),
+                    broadcast_emote,
+                )
                     .before(animate)
                     .in_set(SceneSets::PostLoop),
             );
@@ -260,6 +267,17 @@ pub(crate) fn emote_download_hashes<'a>(
 
 #[derive(Component, Default)]
 pub struct LastEmoteCommand(EmoteCommand);
+
+/// The player's full-body emote command from a scene (`triggerEmote`, `triggerSceneEmote`; the
+/// HUD's own emotes come through a system scene and are the player's). While it waits to start,
+/// movement or jump input drops it (`drop_scene_emote_on_input`), as Unity drops a waiting scene
+/// emote; the player's own emote waits until the avatar stands still.
+#[derive(Component, Clone, Debug, PartialEq)]
+pub struct SceneEmoteRequest {
+    command: EmoteCommand,
+    /// Movement or jump input came while the command waited: `animate` ends it unplayed.
+    dropped: bool,
+}
 
 /// The body shape and equipped emote urns whose clips have all loaded, on the player. Present
 /// only while it matches what they have equipped; `preload_equipped_emotes` stops asking while it
@@ -411,10 +429,61 @@ fn handle_trigger_emotes(
                 source,
             });
         }
-        commands.entity(player).try_insert(emote);
+        let mut entity = commands.entity(player);
+        if source == "scene" && emote.mask == EmoteMask::FullBody && !emote.urn.is_empty() {
+            entity.try_insert(SceneEmoteRequest {
+                command: emote.clone(),
+                dropped: false,
+            });
+        } else {
+            entity.try_remove::<SceneEmoteRequest>();
+        }
+        entity.try_insert(emote);
     }
 
     for _ in perms.drain_fail(common::structs::PermissionType::PlayEmote) {}
+}
+
+/// Length of the movement input axis above which a scene's waiting emote is dropped (Unity's).
+#[cfg(feature = "explorer")]
+const DROP_SCENE_EMOTE_INPUT: f32 = 0.1;
+
+/// Unity's movement input for dropping a scene's waiting emote: the movement axis past
+/// `DROP_SCENE_EMOTE_INPUT` unless every gait is blocked, or the jump held unless jumping is.
+#[cfg(feature = "explorer")]
+fn wants_to_move(user: &PrimaryUser, movement: Vec2, jump: bool) -> bool {
+    let moves = !(user.block_all || user.block_walk && user.block_run)
+        && movement.length_squared() > DROP_SCENE_EMOTE_INPUT * DROP_SCENE_EMOTE_INPUT;
+    moves || jump && !(user.block_all || user.block_jump)
+}
+
+/// Marks the player's waiting scene emote dropped on movement or jump input, held or new, before
+/// `animate` can start it. Once an emote plays, ending it on input is the movement scene's (its
+/// animation stops being idle).
+#[cfg(feature = "explorer")]
+fn drop_scene_emote_on_input(
+    mut player: Query<(
+        &PrimaryUser,
+        Option<&PlayerModifiers>,
+        &EmoteCommand,
+        Option<&LastEmoteCommand>,
+        &mut SceneEmoteRequest,
+    )>,
+    input: InputManager,
+) {
+    let Ok((user, modifiers, command, last, mut request)) = player.single_mut() else {
+        return;
+    };
+    let waiting = request.command == *command && last.is_none_or(|last| last.0 != *command);
+    if !waiting || request.dropped {
+        return;
+    }
+    let user = modifiers.map_or_else(|| user.clone(), |m| m.combine(user));
+    let movement = input.get_analog(MOVE_SET, InputPriority::Scene);
+    let jump = input.is_down(CommonInputAction::IaJump, InputPriority::Scene);
+    if wants_to_move(&user, movement, jump) {
+        request.dropped = true;
+    }
 }
 
 // Broadcast the local player's triggered emotes. Sourced from `ActiveEmote` (set by `animate` and
@@ -700,6 +769,7 @@ fn animate(
         Option<&ForeignAvatar>,
         Option<&mut LastEmoteCommand>,
         Option<Ref<SceneDrivenAnim>>,
+        Option<&SceneEmoteRequest>,
     )>,
     time: Res<Time>,
     player: Query<(&PrimaryUser, Option<&PlayerModifiers>)>,
@@ -722,6 +792,7 @@ fn animate(
         maybe_foreign,
         last_emote,
         maybe_scene_anim,
+        scene_request,
     ) in avatars.iter_mut()
     {
         let Some((mut active_emote, mut anim_state, mut masked)) = active_emote else {
@@ -835,6 +906,19 @@ fn animate(
         if active_emote.source == ActiveEmoteSource::SceneMovementAnim && !active_emote.overridable
         {
             requested_emote = None;
+        }
+
+        // A scene's emote that movement or jump input dropped while it waited ends unplayed, as
+        // does the emote it would have replaced.
+        if let Some(command) = emote.filter(|command| {
+            emote_changed && scene_request.is_some_and(|r| r.dropped && r.command == **command)
+        }) {
+            debug!("drop scene emote on input {:?}", command.urn);
+            requested_emote = None;
+            commands
+                .entity(avatar_ent)
+                .try_insert(LastEmoteCommand(command.clone()))
+                .try_remove::<SceneEmoteRequest>();
         }
 
         // check / cancel requested emote
@@ -2594,5 +2678,179 @@ mod stop_tests {
         assert!(ends_with_stop(&one_shot(
             comms::PULSE_MAX_EMOTE_DURATION_MS + 1
         )));
+    }
+}
+
+#[cfg(test)]
+mod scene_emote_drop_tests {
+    use super::*;
+    use common::structs::SceneDrivenAnimationRequest;
+
+    fn wave(timestamp: i64) -> EmoteCommand {
+        EmoteCommand {
+            urn: "wave".to_owned(),
+            timestamp,
+            r#loop: true,
+            mask: EmoteMask::FullBody,
+        }
+    }
+
+    fn running(idle: bool) -> SceneDrivenAnim {
+        SceneDrivenAnim {
+            active: Some(SceneDrivenAnimationRequest {
+                urn: "run".to_owned(),
+                r#loop: true,
+                speed: 1.0,
+                idle,
+                ..Default::default()
+            }),
+        }
+    }
+
+    /// The player standing on the ground, held by the movement scene's running animation until
+    /// `animate` has set it up.
+    fn app() -> (App, Entity) {
+        let mut app = App::new();
+        app.init_resource::<Time>()
+            .add_event::<EmoteLifecycleEvent>()
+            .add_systems(Update, animate);
+        let player = app
+            .world_mut()
+            .spawn((
+                AvatarDynamicState::default(),
+                GlobalTransform::default(),
+                running(false),
+            ))
+            .id();
+        app.update();
+        app.update();
+        assert_eq!(source(&app, player), ActiveEmoteSource::SceneMovementAnim);
+        (app, player)
+    }
+
+    fn source(app: &App, player: Entity) -> ActiveEmoteSource {
+        app.world().get::<ActiveEmote>(player).unwrap().source()
+    }
+
+    fn request(app: &mut App, player: Entity, from_scene: bool) {
+        let command = wave(1);
+        let mut entity = app.world_mut().entity_mut(player);
+        if from_scene {
+            entity.insert(SceneEmoteRequest {
+                command: command.clone(),
+                dropped: false,
+            });
+        }
+        entity.insert(command);
+    }
+
+    fn drop_on_input(app: &mut App, player: Entity) {
+        app.world_mut()
+            .get_mut::<SceneEmoteRequest>(player)
+            .unwrap()
+            .dropped = true;
+    }
+
+    /// The movement scene's animation turns idle; `animate` lets an emote over it the frame after.
+    fn stand_still(app: &mut App, player: Entity) {
+        app.world_mut().entity_mut(player).insert(running(true));
+        app.update();
+    }
+
+    #[test]
+    fn a_waiting_scene_emote_dropped_on_input_never_plays() {
+        let (mut app, player) = app();
+        request(&mut app, player, true);
+        app.update();
+        // held while the movement scene's animation is not idle
+        assert_eq!(source(&app, player), ActiveEmoteSource::SceneMovementAnim);
+
+        drop_on_input(&mut app, player);
+        app.update();
+        stand_still(&mut app, player);
+        app.update();
+
+        assert_eq!(source(&app, player), ActiveEmoteSource::SceneMovementAnim);
+        assert!(app.world().get::<SceneEmoteRequest>(player).is_none());
+        assert_eq!(
+            app.world().get::<LastEmoteCommand>(player).unwrap().0,
+            wave(1)
+        );
+    }
+
+    #[test]
+    fn a_waiting_scene_emote_without_input_plays_once_the_player_stands_still() {
+        let (mut app, player) = app();
+        request(&mut app, player, true);
+        app.update();
+        stand_still(&mut app, player);
+        app.update();
+
+        assert_eq!(source(&app, player), ActiveEmoteSource::TriggeredEmote);
+    }
+
+    #[test]
+    fn the_players_own_waiting_emote_plays_once_the_player_stands_still() {
+        let (mut app, player) = app();
+        request(&mut app, player, false);
+        app.update();
+        assert_eq!(source(&app, player), ActiveEmoteSource::SceneMovementAnim);
+        stand_still(&mut app, player);
+        app.update();
+
+        assert_eq!(source(&app, player), ActiveEmoteSource::TriggeredEmote);
+    }
+
+    #[test]
+    fn a_scene_emote_dropped_as_it_arrives_ends_the_playing_one() {
+        let (mut app, player) = app();
+        stand_still(&mut app, player);
+        request(&mut app, player, false);
+        app.update();
+        assert_eq!(source(&app, player), ActiveEmoteSource::TriggeredEmote);
+
+        // the scene asks again; input is held in the frame it arrives
+        let command = wave(2);
+        app.world_mut().entity_mut(player).insert((
+            SceneEmoteRequest {
+                command: command.clone(),
+                dropped: true,
+            },
+            command,
+        ));
+        app.update();
+
+        assert_ne!(source(&app, player), ActiveEmoteSource::TriggeredEmote);
+    }
+
+    #[cfg(feature = "explorer")]
+    #[test]
+    fn movement_or_jump_input_drops_unless_blocked() {
+        let user = PrimaryUser::default();
+        assert!(wants_to_move(&user, Vec2::Y, false));
+        assert!(wants_to_move(&user, Vec2::ZERO, true));
+        assert!(!wants_to_move(&user, Vec2::splat(0.05), false));
+        assert!(!wants_to_move(&user, Vec2::ZERO, false));
+
+        let no_gait = PrimaryUser {
+            block_walk: true,
+            block_run: true,
+            ..Default::default()
+        };
+        assert!(!wants_to_move(&no_gait, Vec2::Y, false));
+        assert!(wants_to_move(&no_gait, Vec2::ZERO, true));
+
+        let no_jump = PrimaryUser {
+            block_jump: true,
+            ..Default::default()
+        };
+        assert!(!wants_to_move(&no_jump, Vec2::ZERO, true));
+        assert!(wants_to_move(&no_jump, Vec2::X, false));
+
+        let blocked = PrimaryUser {
+            block_all: true,
+            ..Default::default()
+        };
+        assert!(!wants_to_move(&blocked, Vec2::Y, true));
     }
 }
