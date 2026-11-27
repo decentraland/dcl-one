@@ -100,6 +100,24 @@
     text-decoration: underline;
   }
 
+  .shop .icon {
+    color: var(--dcl-text-secondary);
+  }
+  .shop .title {
+    color: var(--dcl-text-primary);
+    font-weight: 800;
+    overflow-wrap: anywhere;
+  }
+  .shop:not(.inline, .screen, .error) .title {
+    font-size: 17px;
+  }
+  .shop .sub {
+    color: var(--dcl-text-secondary);
+    font-size: 13px;
+    font-weight: 600;
+    opacity: 1;
+  }
+
   .actions {
     display: flex;
     flex-wrap: wrap;

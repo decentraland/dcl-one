@@ -5,6 +5,14 @@
 //! and a recording mailer), plus the crash and idempotency cases the local
 //! outbox adds.
 
+#![allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    clippy::cast_possible_wrap,
+    clippy::cast_precision_loss,
+    reason = "test fixtures use small literal values"
+)]
+
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 

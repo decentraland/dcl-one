@@ -516,6 +516,18 @@ pub fn at<'a>(v: &'a Value, path: &str) -> Option<&'a Value> {
     Some(cur)
 }
 
+/// Compare the two raw expiry encodings on the Graph before paging.
+/// Nest the OR under AND so it can share a query with field filters and
+/// the count cursor. The boundary matches the wire's unit conversion.
+pub(super) fn graph_unexpired(field: &str, now_ms: i64) -> Value {
+    let threshold = super::nft_index::LEGACY_EXPIRY_UNIT_THRESHOLD.to_string();
+    let gt = format!("{field}_gt");
+    json!([{ "or": [
+        { (&gt): now_ms.div_euclid(1_000).to_string(), (format!("{field}_lt")): threshold },
+        { (&gt): now_ms.to_string(), (format!("{field}_gte")): threshold },
+    ] }])
+}
+
 /// The subgraph's unix seconds as the wire's milliseconds.
 pub fn seconds_to_ms(seconds: i64) -> i64 {
     seconds.saturating_mul(1000)
@@ -746,7 +758,7 @@ async fn read_top(
             },
         )
         .await?;
-        let n = got.len() as i64;
+        let n = super::casts::len_i64(got.len());
         out.extend(got);
         if n < first {
             exhausted = true;
@@ -754,22 +766,23 @@ async fn read_top(
         }
         skip += first;
     }
-    while !exhausted && (out.len() as i64) < want {
+    while !exhausted && super::casts::len_i64(out.len()) < want {
         let Some(cursor) = out.last().and_then(|r| r.get(p.order_by)).cloned() else {
             return Err(format!("a keyset page needs `{}` in every row", p.order_by));
         };
-        let ties = out
-            .iter()
-            .rev()
-            .take_while(|r| r.get(p.order_by) == Some(&cursor))
-            .count() as i64;
+        let ties = super::casts::len_i64(
+            out.iter()
+                .rev()
+                .take_while(|r| r.get(p.order_by) == Some(&cursor))
+                .count(),
+        );
         if ties > GRAPH_MAX_SKIP {
             return Err(format!(
                 "more than {GRAPH_MAX_SKIP} rows share one `{}`",
                 p.order_by
             ));
         }
-        let first = (want - out.len() as i64).min(size);
+        let first = (want - super::casts::len_i64(out.len())).min(size);
         let where_ = keyset_where(&p.where_, p.order_by, p.direction, &cursor);
         let got = page(
             state,
@@ -784,7 +797,7 @@ async fn read_top(
             },
         )
         .await?;
-        let n = got.len() as i64;
+        let n = super::casts::len_i64(got.len());
         out.extend(got);
         exhausted = n < first;
     }
@@ -912,7 +925,7 @@ pub async fn count_to(
             )
             .await?;
             let ids = rows(&data, entity);
-            let n = ids.len() as i64;
+            let n = super::casts::len_i64(ids.len());
             total += n;
             last_id = ids.last().map(|r| str_of(r, "id"));
             if n < page_size {

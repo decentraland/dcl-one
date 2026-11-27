@@ -68,7 +68,7 @@ function require(moduleName) {
         sealRealm();
     }
 
-    const [wrapped, err] = denoRef.core.evalContext(source, "file://${moduleName}");
+    const [wrapped, err] = denoRef.core.evalContext(source, `file://${moduleName}`);
     if (err) {
         throw err.thrown;
     }

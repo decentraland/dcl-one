@@ -1,3 +1,4 @@
+import userEvent from "@testing-library/user-event";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter } from "react-router";
@@ -61,7 +62,7 @@ describe("who saved an item", () => {
     vi.unstubAllGlobals();
   });
 
-  function heart(opts: { count: number; total?: number; failFirst?: boolean }) {
+  function heart(opts: { count: number; total?: number; failFirst?: boolean; placement?: "title" | "preview" }) {
     const total = opts.total ?? opts.count;
     let fail = !!opts.failFirst;
     const shop = fakeShop([
@@ -85,7 +86,7 @@ describe("who saved an item", () => {
     setShopClient(shop.client);
     render(
       <QueryClientProvider client={new QueryClient()}>
-        <MemoryRouter><StoryShell who="web3"><FavoriteButton contractAddress={BOOK.collection} itemId="7" name="Jacket" /></StoryShell></MemoryRouter>
+        <MemoryRouter><StoryShell who="web3"><FavoriteButton contractAddress={BOOK.collection} itemId="7" name="Jacket" placement={opts.placement} /></StoryShell></MemoryRouter>
       </QueryClientProvider>,
     );
     const reads = () => shop.requests.filter((r) => /^\/v1\/picks\/(?!stats$)[^/]+$/.test(r.url.pathname.replace(/^\/shop-api/, ""))).map((r) => [r.url.searchParams.get("limit"), r.url.searchParams.get("offset")]);
@@ -111,6 +112,21 @@ describe("who saved an item", () => {
     await waitFor(() => expect(within(dialog).getAllByRole("link")).toHaveLength(51));
     expect(reads()).toEqual([["50", "0"], ["50", "50"]]);
     expect(within(dialog).queryByTestId("load-more")).toBeNull();
+  });
+
+  describe.each(["title", "preview"] as const)("when opened from the %s count", (placement) => {
+    it("should describe the dialog with the item name and return focus to the count on Escape", async () => {
+      const user = userEvent.setup();
+      heart({ count: 1, total: 0, placement });
+      const opener = await screen.findByRole("button", { name: /See who saved Jacket/ });
+      await user.click(opener);
+      const dialog = await screen.findByRole("dialog", { name: "Saved by", description: "Jacket" });
+      expect(await within(dialog).findByText("Nobody has saved this item yet.")).toBeVisible();
+      within(dialog).getByRole("button", { name: "Close" }).focus();
+      await user.keyboard("{Escape}");
+      expect(dialog).not.toBeInTheDocument();
+      expect(opener).toHaveFocus();
+    });
   });
 
   it("keeps a zero count inside the heart: it saves, as before, and opens nothing", async () => {

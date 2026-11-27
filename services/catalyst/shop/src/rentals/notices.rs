@@ -251,7 +251,7 @@ pub async fn run_started(pool: &PgPool, base: &str) -> anyhow::Result<Pass> {
         emitted += insert_notifications(&mut *txn, &batch).await?;
         advance(&mut txn, KIND_STARTED, None, last_block, last_log).await?;
         txn.commit().await?;
-        if rows.len() < PAGE_SIZE as usize {
+        if i64::try_from(rows.len()).is_ok_and(|n| n < PAGE_SIZE) {
             break;
         }
     }
@@ -314,7 +314,7 @@ pub async fn run_ended(pool: &PgPool, base: &str) -> anyhow::Result<Pass> {
         emitted += insert_notifications(&mut *txn, &batch).await?;
         advance(&mut txn, KIND_ENDED, Some(last_end), last_block, last_log).await?;
         txn.commit().await?;
-        if rows.len() < PAGE_SIZE as usize {
+        if i64::try_from(rows.len()).is_ok_and(|n| n < PAGE_SIZE) {
             break;
         }
     }

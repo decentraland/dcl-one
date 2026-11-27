@@ -11,7 +11,7 @@ use bevy::{
 use bevy_console::ConsoleCommandEntered;
 use common::{
     rpc::RpcStreamReceiver,
-    structs::{PlayerModifiers, PrimaryPlayerRes},
+    structs::{CameraZoomLevel, PlayerModifiers, PrimaryPlayerRes},
     sync::MutexExt,
 };
 use scene_runner::update_world::text_shape::{GlyphAtlases, Page};
@@ -643,9 +643,9 @@ impl Harness {
         })
     }
 
-    fn set_camera_distance(&mut self, distance: f32) {
+    fn set_camera_level(&mut self, level: CameraZoomLevel) {
         let mut cameras = self.app.world_mut().query::<&mut PrimaryCamera>();
-        cameras.single_mut(self.app.world_mut()).unwrap().distance = distance;
+        cameras.single_mut(self.app.world_mut()).unwrap().level = level;
     }
 
     /// A particle over the local player, its glyphs landed and a frame on.
@@ -1236,7 +1236,7 @@ fn in_first_person_the_local_users_own_are_not_drawn() {
     assert!(harness.drawn(mine));
 
     // one alive as the camera goes into the player's head is hidden
-    harness.set_camera_distance(0.0);
+    harness.set_camera_level(CameraZoomLevel::FirstPerson);
     harness.app.update();
     assert!(!harness.drawn(mine));
     // and the next gets no particle, while it is passed to the HUD as any is
@@ -1259,7 +1259,7 @@ fn in_first_person_the_local_users_own_are_not_drawn() {
         .unwrap();
     assert!(harness.drawn(theirs));
 
-    harness.set_camera_distance(1.0);
+    harness.set_camera_level(CameraZoomLevel::ThirdPerson);
     harness.app.update();
     assert!(harness.drawn(mine));
 }

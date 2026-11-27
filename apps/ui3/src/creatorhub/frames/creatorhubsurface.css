@@ -25,7 +25,3 @@
   --font-family: var(--ui-font);
   font-size: 13px;
 }
-
-.ch .es__title { font-weight: 600; }
-.ch .es__sub { font-weight: 400; line-height: 1.6; }
-.ch .es__cta { border-radius: var(--ui-radius); }

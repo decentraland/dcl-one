@@ -1040,6 +1040,31 @@ mod tests {
         assert!(run_scene(false, scene).is_err());
     }
 
+    /// Each module is evaluated under its own name, so a stack trace says where an error is.
+    #[test]
+    fn a_module_script_is_named_after_the_module() {
+        run_scene(
+            false,
+            r#"
+            const scene = new Error("x").stack;
+            if (!scene.includes("file://~scene.js/:")) { throw new Error(scene); }
+            // a setter the module's `exports.getRealm = ...` runs, from inside that module
+            let system = "the setter did not run";
+            Object.defineProperty(Object.prototype, "getRealm", {
+                set(value) {
+                    system = new Error("x").stack;
+                    Object.defineProperty(this, "getRealm", { value, writable: true });
+                },
+                configurable: true,
+            });
+            require("~system/Runtime");
+            delete Object.prototype.getRealm;
+            if (!system.includes("file://~system/Runtime:")) { throw new Error(system); }
+            "#,
+        )
+        .unwrap();
+    }
+
     /// ...while the modules the scene is *supposed* to use still get it, via the `Deno`
     /// parameter `require` injects. Required from scene code, i.e. after the seal.
     #[test]

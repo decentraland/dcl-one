@@ -439,7 +439,7 @@ pub(super) async fn trades_rows(
 const BID_FIELDS: &str = "id bidAddress nftAddress tokenId bidder seller price status blockchainId blockNumber expiresAt createdAt updatedAt";
 
 fn legacy_where(f: &BidFilters, now_ms: i64) -> Value {
-    let mut w = json!({ "expiresAt_gt": now_ms.to_string() });
+    let mut w = json!({ "and": readers::graph_unexpired("expiresAt", now_ms) });
     if let Some(v) = &f.bidder {
         w["bidder"] = json!(v.to_lowercase());
     }
@@ -470,7 +470,7 @@ fn legacy_order(sort_by: Option<BidSortBy>) -> (&'static str, &'static str) {
 fn bid_from_graph(b: &Value, network: Network, chain_id: ChainId) -> Bid {
     let ms = |key: &str| {
         let raw = readers::int_of(b, key);
-        if raw != 0 && raw < 100_000_000_000 {
+        if raw != 0 && raw < super::nft_index::LEGACY_EXPIRY_UNIT_THRESHOLD {
             seconds_to_ms(raw)
         } else {
             raw
@@ -1283,14 +1283,14 @@ pub async fn list_bids(
         let (rows, total) = legacy_leg(state, f, window, now.timestamp_millis()).await?;
         (rows, total, trades)
     };
-    let total = legacy_total + trades.len() as i64;
+    let total = legacy_total + crate::market::casts::len_i64(trades.len());
     merged.extend(trades);
     sort_bids(&mut merged, f.sort_by);
     Ok((
         merged
             .into_iter()
-            .skip(f.offset as usize)
-            .take(limit as usize)
+            .skip(crate::market::casts::page(f.offset))
+            .take(crate::market::casts::page(limit))
             .collect(),
         total,
     ))
@@ -1518,7 +1518,13 @@ mod tests {
         );
         let w = legacy_where(&f, 7);
         assert_eq!(w["bidder"], "0xb");
-        assert_eq!(w["expiresAt_gt"], "7");
+        assert_eq!(
+            w["and"],
+            json!([{ "or": [
+                { "expiresAt_gt": "0", "expiresAt_lt": "100000000000" },
+                { "expiresAt_gt": "7", "expiresAt_gte": "100000000000" },
+            ] }])
+        );
         assert_eq!(legacy_order(f.sort_by), ("price", "desc"));
         let mut rows = vec![minimal_bid(), full_bid()];
         sort_bids(&mut rows, f.sort_by);

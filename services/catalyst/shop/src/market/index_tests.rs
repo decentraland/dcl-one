@@ -8,6 +8,14 @@
 //! after readiness (the envelope, then the answer), plus the neighbours
 //! build and the coupon reads, writes and state refresh.
 
+#![allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    clippy::cast_possible_wrap,
+    clippy::cast_precision_loss,
+    reason = "test fixtures use small literal values"
+)]
+
 use super::nft_index::deployments::Deployments;
 use std::collections::HashMap;
 use std::str::FromStr;
@@ -4312,6 +4320,449 @@ async fn the_nft_walk_folds_owners_orders_and_resumes_a_kill_backfills_a_late_co
         owner_of(&db.pool, "matic", late, v2_token(0, 7)).await,
         Some(Some(ALICE.to_string())),
         "the backfilled token is folded"
+    );
+    // The comparison tool asks for a historical window before this
+    // collection's forward admission. Its completed backfill covers it.
+    let comparison = super::compare_sources::index_for(INDEXER_NFT, ChainNet::Matic).unwrap();
+    let transfer_block = s + 1_500;
+    let anchor = (head + 100, time_of(head + 100));
+    let groups = comparison
+        .groups(&db.pool, transfer_block, transfer_block, anchor)
+        .await
+        .unwrap();
+    assert!(groups.iter().any(|g| g.addresses.iter().any(|a| a == late)));
+    sqlx::query("DELETE FROM shop.collections WHERE network='matic' AND contract_address=$1")
+        .bind(late)
+        .execute(&db.pool)
+        .await
+        .unwrap();
+    comparison.begin_pass();
+    let groups = comparison
+        .groups(&db.pool, transfer_block, transfer_block, anchor)
+        .await
+        .unwrap();
+    assert!(groups.iter().any(|g| g.addresses.iter().any(|a| a == late)));
+    db.drop().await;
+}
+
+#[tokio::test]
+async fn walks_use_the_standing_projection_or_the_chain_bound_mirror_pass() {
+    let Some(db) = ScratchDb::create().await else {
+        return;
+    };
+    use super::catalogue::owning;
+    let pool = &db.pool;
+    let net = ChainNet::Matic;
+    let wait = |chain| nft_index::catalogue_wait(pool, net, chain);
+    assert!(wait(137).await.unwrap().unwrap().contains("mirror"));
+    sqlx::query(
+        "INSERT INTO shop.mirror_state (mirror, network, source_url, last_complete_pass_at)
+         VALUES ('collections','matic','test',timezone('UTC',now()))",
+    )
+    .execute(pool)
+    .await
+    .unwrap();
+    assert_eq!(wait(137).await.unwrap(), None);
+    assert!(wait(80_002).await.unwrap().unwrap().contains("mirror"));
+    owning::own(pool, "matic", 137, 100, 3 * 60 * 60).await;
+    assert_eq!(wait(137).await.unwrap(), None);
+    assert!(wait(80_002).await.unwrap().unwrap().contains("projection"));
+
+    // A catch-up close withdraws the fold marker while the projected rows
+    // still stand. Age and catch-up do not interrupt either walk.
+    sqlx::query(
+        "UPDATE shop.chain_cursor SET last_block=120,folded_block=NULL,folded_at=NULL
+         WHERE indexer='collections' AND network='matic'",
+    )
+    .execute(pool)
+    .await
+    .unwrap();
+    assert_eq!(wait(137).await.unwrap(), None);
+    sqlx::query(
+        "UPDATE shop.chain_cursor SET quarantined_at=timezone('UTC',now()),quarantine_reason='test'
+         WHERE indexer='collections' AND network='matic'",
+    )
+    .execute(pool)
+    .await
+    .unwrap();
+    assert!(wait(137).await.unwrap().unwrap().contains("projection"));
+    sqlx::query(
+        "UPDATE shop.chain_cursor SET quarantined_at=NULL,quarantine_reason=NULL
+         WHERE indexer='collections' AND network='matic'",
+    )
+    .execute(pool)
+    .await
+    .unwrap();
+    owning::rewind(pool, "matic").await;
+    assert!(wait(137).await.unwrap().unwrap().contains("projection"));
+    db.drop().await;
+}
+
+#[tokio::test]
+async fn a_catalogue_hand_back_after_the_gate_cannot_advance_either_walk() {
+    let Some(db) = ScratchDb::create().await else {
+        return;
+    };
+    let pool = &db.pool;
+    let net = ChainNet::Matic;
+    let start = Deployments::mainnet(net).start;
+    let chain = FakeChain::new(start + 150, vec![], 1_000, 100);
+    chain.finalized_lag.store(2, Ordering::SeqCst);
+    let url = serve(chain.clone()).await;
+    let st = state_over(pool.clone(), &url, index_settings(50, 1_000), false);
+    let nft = NftIndex::new(net).with_catalogue_gate();
+    let sales = POLYGON_SALES.with_catalogue_gate();
+    super::catalogue::owning::own(pool, "matic", 137, (start + 148) as i64, 10_800).await;
+    for ix in [&nft as &dyn ChainIndex, &sales] {
+        assert!(publish(&st, &url, ix).await.published, "{}", ix.indexer());
+        assert_eq!(
+            nft_index::catalogue_wait(pool, net, 137).await.unwrap(),
+            None
+        );
+    }
+    // The native state persists in the log but no longer supplies the
+    // catalogue. The first subsequent mirror pass is the new gate.
+    assert!(
+        super::collections_projection::hand_back(pool, net)
+            .await
+            .unwrap()
+    );
+    *chain.head.lock() += 20;
+    let log_calls = chain.get_logs.load(Ordering::SeqCst);
+    for ix in [&nft as &dyn ChainIndex, &sales] {
+        let before = chain_walk::cursor(pool, ix.indexer(), net)
+            .await
+            .unwrap()
+            .unwrap();
+        let error = try_pass(&st, &url, ix).await.unwrap_err();
+        assert!(
+            format!("{error:#}").contains("mirror's first complete pass"),
+            "{error:#}"
+        );
+        let after = chain_walk::cursor(pool, ix.indexer(), net)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            (after.last_block, after.last_block_hash),
+            (before.last_block, before.last_block_hash)
+        );
+    }
+    assert_eq!(chain.get_logs.load(Ordering::SeqCst), log_calls);
+
+    // A valid empty pass is different from a withdrawn source.
+    sqlx::query(
+        "INSERT INTO shop.mirror_state (mirror, network, source_url, last_complete_pass_at, chain_id)
+         VALUES ('collections','matic','test',timezone('UTC',now()),137)",
+    )
+    .execute(pool)
+    .await
+    .unwrap();
+    for ix in [&nft as &dyn ChainIndex, &sales] {
+        let resumed = publish(&st, &url, ix).await;
+        assert!(resumed.published, "{resumed:?}");
+        assert!(resumed.indexed_to > (start + 148) as i64, "{resumed:?}");
+    }
+    db.drop().await;
+}
+
+#[tokio::test]
+async fn an_admitted_nft_collection_stays_walked_across_a_smaller_publication() {
+    let Some(db) = ScratchDb::create().await else {
+        return;
+    };
+    use super::catalogue::owning;
+    let pool = &db.pool;
+    let net = ChainNet::Matic;
+    let start = Deployments::mainnet(net).start;
+    let contract = "0x00000000000000000000000000000000000000c1";
+    let urn = "urn:decentraland:matic:collections-v2:0xc1";
+    let token = v2_token(0, 1);
+    let chain = FakeChain::new(
+        start + 100,
+        vec![transfer(contract, ZERO, ALICE, token, start + 30, 0)],
+        1_000,
+        100,
+    );
+    chain.finalized_lag.store(2, Ordering::SeqCst);
+    let url = serve(chain.clone()).await;
+    let st = state_over(pool.clone(), &url, index_settings(50, 1_000), false);
+    let nft = NftIndex::new(net).with_catalogue_gate();
+    seed_collection(pool, "matic", contract, start + 20, urn, "Pirates").await;
+    owning::own(pool, "matic", 137, (start + 98) as i64, 10_800).await;
+    assert!(publish_nft(&st, &url, &nft).await.published);
+    assert_eq!(
+        owner_of(pool, "matic", contract, token).await,
+        Some(Some(ALICE.into()))
+    );
+    let registration = || async {
+        sqlx::query_as::<_, (i64, Option<i64>)>(
+            "SELECT walked_from_block,backfill_from_block FROM shop.nft_contract
+             WHERE network='matic' AND contract_address=$1",
+        )
+        .bind(contract)
+        .fetch_one(pool)
+        .await
+        .unwrap()
+    };
+    let before = registration().await;
+
+    owning::rewind(pool, "matic").await;
+    sqlx::query("DELETE FROM shop.collections WHERE network='matic' AND contract_address=$1")
+        .bind(contract)
+        .execute(pool)
+        .await
+        .unwrap();
+    owning::own(pool, "matic", 137, (start + 10) as i64, 10_800).await;
+    chain.logs.lock().push(log_json(&transfer(
+        contract,
+        ALICE,
+        BOB,
+        token,
+        start + 110,
+        0,
+    )));
+    *chain.head.lock() = start + 180;
+    assert!(publish_nft(&st, &url, &nft).await.published);
+    assert_eq!(
+        owner_of(pool, "matic", contract, token).await,
+        Some(Some(BOB.into()))
+    );
+
+    seed_collection(pool, "matic", contract, start + 20, urn, "Pirates").await;
+    owning::own(pool, "matic", 137, (start + 178) as i64, 10_800).await;
+    assert!(publish_nft(&st, &url, &nft).await.published);
+    assert_eq!(registration().await, before);
+    assert_eq!(
+        owner_of(pool, "matic", contract, token).await,
+        Some(Some(BOB.into()))
+    );
+    db.drop().await;
+}
+
+#[tokio::test]
+async fn the_object_pass_installs_nft_order_proof_for_an_existing_cursor() {
+    let Some(db) = ScratchDb::create().await else {
+        return;
+    };
+    let pool = &db.pool;
+    let net = ChainNet::Matic;
+    let index = NftIndex::new(net);
+    let settings = IndexSettings::default();
+    let owner = chain_walk::test_owner(pool, &index, &settings).await;
+    let block = index.start_block() as i64;
+    sqlx::raw_sql(
+        "DROP TRIGGER nft_order_written_insert ON shop.nft_order;
+         DROP TRIGGER nft_order_written_update ON shop.nft_order;
+         DROP TRIGGER nft_order_written_delete ON shop.nft_order;
+         DROP TRIGGER chain_cursor_nft_order_publication ON shop.chain_cursor;
+         DROP FUNCTION shop.record_nft_order_publication()",
+    )
+    .execute(pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "UPDATE shop.chain_cursor SET last_block=$1, last_block_hash='0x'||repeat('1',64),
+         full_history=true, fold_through=$1, folded_block=$1, folded_at=timezone('UTC',now())
+         WHERE indexer='nft' AND network='matic'",
+    )
+    .bind(block)
+    .execute(pool)
+    .await
+    .unwrap();
+    crate::db::schema_migrate::migrate(pool, crate::db::SCHEMA_SQL, crate::db::MIGRATIONS_SQL)
+        .await
+        .unwrap();
+    let proof = || async {
+        let mut conn = pool.acquire().await.unwrap();
+        chain_walk::rows_published_on(&mut conn, INDEXER_NFT, net, &[], Some("nft_order"))
+            .await
+            .unwrap()
+    };
+    assert!(
+        !proof().await,
+        "the old publication cannot certify order rows"
+    );
+    // An older binary's same-height publication establishes proof for the
+    // empty order projection. No application code writes the proof row.
+    sqlx::query(
+        "UPDATE shop.chain_cursor SET folded_at=folded_at+interval '1 second'
+         WHERE indexer='nft' AND network='matic'",
+    )
+    .execute(pool)
+    .await
+    .unwrap();
+    assert!(proof().await);
+    let market = Deployments::mainnet(net).markets[0].0;
+    let contract = "0x00000000000000000000000000000000000000c1";
+    sqlx::query(
+        "INSERT INTO shop.nft_event (network,block_number,log_index,block_time,kind,
+         emitter,contract_address,token_id,from_address,amount,expires_at,detail)
+         VALUES ('matic',$1,0,1,'order_created',$2,$3,1,$4,50,4102444800000,'upgrade-order')",
+    )
+    .bind(block)
+    .bind(market)
+    .bind(contract)
+    .bind(ALICE)
+    .execute(pool)
+    .await
+    .unwrap();
+    let counts = nft_index::fold(pool, net, Some(block - 1), &owner)
+        .await
+        .unwrap();
+    assert_eq!((counts.nfts, counts.orders), (0, 1));
+    assert!(
+        !proof().await,
+        "a committed order fold needs its publication"
+    );
+    assert!(
+        chain_walk::mark_folded(pool, &index, &owner, block, chrono::Utc::now())
+            .await
+            .unwrap()
+    );
+    assert!(proof().await);
+    db.drop().await;
+}
+
+#[tokio::test]
+async fn order_filtered_collections_refuse_a_committed_unpublished_nft_fold() {
+    let Some(db) = ScratchDb::create().await else {
+        return;
+    };
+    let pool = &db.pool;
+    let net = ChainNet::Matic;
+    let index = NftIndex::new(net);
+    let start = index.start_block();
+    let contract = "0x00000000000000000000000000000000000000c1";
+    let (market, market_start) = Deployments::mainnet(net).markets[0];
+    seed_collection(
+        pool,
+        "matic",
+        contract,
+        start + 10,
+        "urn:decentraland:matic:collections-v2:0xc1",
+        "Pirates",
+    )
+    .await;
+    seed_item(
+        pool,
+        "matic",
+        contract,
+        0,
+        "urn:decentraland:matic:collections-v2:0xc1:0",
+        "Pirate Hat",
+        "wearable_v2",
+        "hat",
+    )
+    .await;
+    trade_events::tests::publish_cursors(pool).await;
+    let logs = vec![
+        transfer(contract, ZERO, ALICE, U256::from(1), start + 20, 0),
+        log_at(
+            market,
+            vec![
+                nft_index::TOPIC_ORDER_CREATED.into(),
+                topic_word(U256::from(1)),
+                topic_addr(ALICE),
+            ],
+            (
+                FixedBytes::<32>::repeat_byte(0x42),
+                Address::from_str(contract).unwrap(),
+                U256::from(5_000),
+                U256::from(4_000_000_000_000_u64),
+            )
+                .abi_encode_params(),
+            market_start + 1,
+            0,
+        ),
+    ];
+    let chain = FakeChain::new(market_start + 100, logs, 1_000, 100);
+    chain.finalized_lag.store(2, Ordering::SeqCst);
+    let url = serve(chain.clone()).await;
+    let settings = index_settings(50, 1_000);
+    let state = trades_from_upstream(state_over(pool.clone(), &url, settings.clone(), false));
+    trades_pass_ended(&state, std::time::Duration::ZERO).await;
+    let before = publish_nft(&state, &url, &index).await;
+    assert!(before.published, "{before:?}");
+    let app = super::market_router(state.clone());
+    let endpoint = "/v1/nfts?network=MATIC&category=wearable&isOnSale=true";
+    let (code, body) = get_json(&app, endpoint).await;
+    assert_eq!(
+        (code, body["total"].as_i64()),
+        (StatusCode::OK, Some(1)),
+        "{body}"
+    );
+
+    // Walk a mint for another token. This fold changes ownership rows
+    // only, so the existing nft_order proof is still acknowledged.
+    let previous = chain_walk::cursor(pool, INDEXER_NFT, net)
+        .await
+        .unwrap()
+        .unwrap();
+    let next = previous.last_block + 1;
+    *chain.head.lock() += 1;
+    let source = chain_walk::RpcSource::new(Rpc::at(&state.http, &url));
+    let header = chain_walk::LogSource::header(&source, next as u64)
+        .await
+        .unwrap()
+        .value;
+    let owner = chain_walk::test_owner(pool, &index, &settings).await;
+    let mut tx = pool.begin().await.unwrap();
+    owner.check(&mut tx).await.unwrap();
+    index
+        .write(
+            &mut tx,
+            &[transfer(
+                contract,
+                ZERO,
+                ALICE,
+                U256::from(2),
+                next as u64,
+                0,
+            )],
+            &Default::default(),
+        )
+        .await
+        .unwrap();
+    chain_walk::advance(
+        &mut tx,
+        INDEXER_NFT,
+        net,
+        (previous.last_block, previous.last_block_hash.as_deref()),
+        &header,
+        false,
+    )
+    .await
+    .unwrap();
+    tx.commit().await.unwrap();
+    let counts = nft_index::fold(pool, net, Some(previous.last_block), &owner)
+        .await
+        .unwrap();
+    assert_eq!((counts.nfts, counts.orders), (1, 0));
+    chain_walk::record_fold(pool, &owner, next).await.unwrap();
+    let (code, body) = get_json(&app, endpoint).await;
+    assert_eq!(
+        (code, body["source"].as_str()),
+        (StatusCode::SERVICE_UNAVAILABLE, Some("nft-index")),
+        "{body}"
+    );
+    let (code, body) = get_json(&app, "/v1/nfts?network=MATIC&category=wearable").await;
+    assert_eq!(
+        (code, body["total"].as_i64()),
+        (StatusCode::OK, Some(2)),
+        "{body}"
+    );
+
+    assert!(
+        chain_walk::mark_folded(pool, &index, &owner, next, chrono::Utc::now())
+            .await
+            .unwrap()
+    );
+    let (code, body) = get_json(&app, endpoint).await;
+    assert_eq!(
+        (code, body["total"].as_i64()),
+        (StatusCode::OK, Some(1)),
+        "{body}"
     );
     db.drop().await;
 }

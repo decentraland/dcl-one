@@ -232,7 +232,7 @@ impl Facts {
         if self.granted_cents > 0 {
             PURCHASE_USD_CENTS
                 .handle([])
-                .increment(self.granted_cents as u64);
+                .increment(u64::try_from(self.granted_cents).unwrap_or(0));
         }
         for (kind, shortfall) in self.reversals {
             let kind = match kind {
@@ -368,6 +368,7 @@ impl Snapshot {
         })
     }
 
+    #[allow(clippy::cast_precision_loss, reason = "gauge values; exact below 2^53")]
     pub fn record(self) {
         PLEDGES_LIVE.handle([]).set(self.pledges_live as f64);
         PLEDGED_USD_CENTS
