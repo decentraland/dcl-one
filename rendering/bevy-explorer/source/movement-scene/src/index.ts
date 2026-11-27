@@ -9,6 +9,8 @@ import { MAX_SPEED, MAX_TICK_TIME, GLIDE_TILT_DAMP_TIME, GLIDE_TILT_FULL_ANGLE, 
 import { settings } from './settings';
 import { beginTick } from './clock';
 import { endEmoteOnInput } from './emote';
+import { Animator } from './animator';
+import { CHARACTER_ANIMATOR, GLIDE_POSE, LOCOMOTION } from './character-animator';
 
 // Avatar-bus audio clip pools published via MovementAnimation.sounds. Engine
 // plays each listed clip once per frame on the avatar's local audio bus — the
@@ -61,129 +63,16 @@ const WALK_CLIP_SPEED = 1.5;
 const JOG_CLIP_SPEED = 8;
 const RUN_CLIP_SPEED = 10;
 
-// New phased / per-locomotion animation set lives in assets/animations/.
-// Locomotion is a real 3-tier system: walk -> jog (default move) -> run (sprint).
-// The engine reads jumps, the glide and the stun for its jump timing and network state from these
-// exact file names (crates/common/src/movement_clip.rs), so a renamed clip is renamed there too.
-const ANIM = 'assets/animations/';
-const CLIP_IDLE = ANIM + 'Idle.glb';
-const CLIP_WALK = ANIM + 'Walk.glb';
-const CLIP_JOG = ANIM + 'Jog.glb';
-const CLIP_RUN = ANIM + 'Run.glb';
-
-// Jump clip sets, one per locomotion tier ('idle' is the standing set), picked by the movement blend when a state of
-// the jump chain starts (see AnimState): Start, Mid, the Fall loop and the End of the landing.
-type JumpVariation = 'idle' | 'jog' | 'run';
-const JUMP_SETS: Record<JumpVariation, { start: string; mid: string; fall: string; end: string }> = {
-  idle: { start: ANIM + 'Jump_Start.glb', mid: ANIM + 'Jump_Mid.glb', fall: ANIM + 'Jump_Fall_Loop.glb', end: ANIM + 'Idle_Jump_End.glb' },
-  jog: { start: ANIM + 'Jog_Jump_Start.glb', mid: ANIM + 'Jog_Jump_Mid.glb', fall: ANIM + 'Jog_Jump_Fall_Loop.glb', end: ANIM + 'Jog_Jump_End.glb' },
-  run: { start: ANIM + 'Run_Jump_Start.glb', mid: ANIM + 'Run_Jump_Mid.glb', fall: ANIM + 'Run_Jump_Fall_Loop.glb', end: ANIM + 'Run_Jump_End.glb' },
-};
-const CLIP_LONG_FALL = ANIM + 'Long_Fall_Loop.glb';
-// The tier's End (as in JUMP_SETS) with the glider closing embedded, for a landing while the glider is open: the
-// glider folds and shrinks away over the first 0.267 s, or vanishes with the clip when locomotion takes over earlier.
-const GLIDE_LANDING: Record<JumpVariation, string> = {
-  idle: ANIM + 'Gliding_Idle_Jump_EndRig.glb',
-  jog: ANIM + 'Gliding_Jog_Jump_EndRig.glb',
-  run: ANIM + 'Gliding_Run_Jump_EndRig.glb',
-};
-// Hard landing on a stunning touchdown out of the long fall loop. The engine's network state reads a stun from these
-// clips played at speed 1 or slower: Enter and Loop, not the faster Exit.
-const HARD_LANDING = {
-  enter: ANIM + 'Hard_Landing_Enter.glb',
-  loop: ANIM + 'Hard_Landing_Loop.glb',
-  exit: ANIM + 'Hard_Landing_Exit.glb',
-};
-const HARD_LANDING_ENTER_BLEND = 0.0585; // s, from the long fall
-const HARD_LANDING_LOOP_BLEND = 0.15; // s, from the end of Enter. The stun's end waits for it.
-const HARD_LANDING_EXIT_BLEND = 0.05; // s, from Loop
-const HARD_LANDING_EXIT_SPEED = 1.2;
-const HARD_LANDING_EXIT_END = 0.2; // fraction of Exit
-const HARD_LANDING_AFTER_BLEND = 0.14; // s, from Exit to the next clip
-
-// Double-jump avatar clips, per tier of the movement blend at the air jump (tierFor).
-const DOUBLE_JUMP: Record<JumpVariation, { plain: string; right: string }> = {
-  idle: { plain: ANIM + 'DoubleJump_Base.glb', right: ANIM + 'DoubleJump_Base_Right.glb' },
-  jog: { plain: ANIM + 'DoubleJump_Jog.glb', right: ANIM + 'DoubleJump_Jog_Right.glb' },
-  run: { plain: ANIM + 'DoubleJump_Run.glb', right: ANIM + 'DoubleJump_Run_Right.glb' },
-};
-const DOUBLE_JUMP_SPEED = 0.7;
-const DOUBLE_JUMP_BLEND = 0.05; // s
-const DOUBLE_JUMP_EXIT = 0.778; // fraction of the clip at which the fall loop takes over
-// Directional glide avatar poses.
-// The glider model is embedded in these clips, so it renders and networks for free via the scene-driven movement animation — no
-// separate prop rig. Left/right banking is procedural (tiltRoll), not per-clip.
-const GLIDE_AVATAR = {
-  forward: ANIM + 'Gliding_AvatarForwardRig.glb', // pitched forward (moving fast)
-  idle: ANIM + 'Gliding_AvatarIdleRig.glb',       // upright / lean-back (slow)
-  start: ANIM + 'Gliding_AvatarStartRig.glb',     // deploy: glider opens (Glider_Start, played whole)
-  end: ANIM + 'Gliding_AvatarEndRig.glb',         // stow: glider closes (Glider_Close)
-};
-
-// Lengths (s) of the clips whose timing the animation states read on the frame they start, before the engine reports
-// them (all 60 fps clips).
-const CLIP_LENGTH: Record<string, number> = {
-  [CLIP_IDLE]: 120 / 60, [CLIP_WALK]: 60 / 60, [CLIP_JOG]: 40 / 60, [CLIP_RUN]: 32 / 60,
-  [JUMP_SETS.idle.start]: 12 / 60, [JUMP_SETS.jog.start]: 14 / 60, [JUMP_SETS.run.start]: 14 / 60,
-  [JUMP_SETS.idle.mid]: 26 / 60, [JUMP_SETS.jog.mid]: 24 / 60, [JUMP_SETS.run.mid]: 24 / 60,
-  [JUMP_SETS.idle.fall]: 40 / 60, [JUMP_SETS.jog.fall]: 40 / 60, [JUMP_SETS.run.fall]: 40 / 60,
-  [JUMP_SETS.idle.end]: 16 / 60, [JUMP_SETS.jog.end]: 24 / 60, [JUMP_SETS.run.end]: 22 / 60,
-  [CLIP_LONG_FALL]: 48 / 60,
-  [GLIDE_AVATAR.start]: 68 / 60, [GLIDE_AVATAR.end]: 16 / 60,
-  [HARD_LANDING.enter]: 30 / 60, [HARD_LANDING.exit]: 25 / 60,
-};
-// The locomotion clips at movement blend 0 (idle), 1 (walk), 2 (jog) and 3 (run).
-const MOVE_CLIPS = [CLIP_IDLE, CLIP_WALK, CLIP_JOG, CLIP_RUN];
-
 // Animation parameters, from the movement model (see updateAnimationParameters).
 // The movement blend eases toward its target at MOVE_BLEND_RATE per second, faster when far from it.
 const MOVE_BLEND_RATE = 5;
 const FALLING_SPEED = -3; // m/s: below it an ungrounded avatar falls
 const LONG_FALLING_SPEED = -8; // m/s: below it the fall is a long fall
-// Movement blend from which a jump-chain state picks the jog clip (the run clip from 2.5), and the fall loop's.
-const JOG_TIER_FROM = 1.5;
-const JOG_FALL_FROM = 1.85;
-
-// Animation state timing. Positions (*_FROM, *_EXIT) are fractions of the named clip; blends are seconds, or
-// fractions (*_BLEND_OF) of the clip the state leaves.
-const JUMP_START_FROM = 0.3291; // Start begins here
-const JUMP_START_BLEND = 0.1311;
-const JUMP_START_EXIT = 0.8145; // of Start: Up
-const JUMP_MID_BLEND = 0.0645; // Up to Mid
-const JUMP_MID_EXIT = 0.5; // of Mid: Down, rising or not
-const JUMP_FALL_BLEND_OF = 0.2165; // of Mid
-const FALL_BLEND_OF = 0.2904; // of the locomotion cycle (moveCycleLength), Movement to Down
-const FALL_FROM = 0.0071; // of the fall loop, from Movement
-const LONG_FALL_BLEND_OF = 0.3367; // of the fall loop
-const LONG_FALL_END_BLEND = 0.25; // long fall back to the fall loop
-const LAND_FROM_JUMP_BLEND_OF = 0.0218; // of Start or Mid
-const LAND_FROM_JUMP_FROM = 0.0172; // of End
-const LAND_FROM_FALL_BLEND_OF = 0.0624; // of the fall or long fall loop
-const LAND_FROM_AIR_JUMP_BLEND = 0.1; // from the air jump or the glider
-const LAND_MOVE_BLEND = 0.5; // movement blend above which a landing hands over to locomotion
-const LAND_MOVE_BLEND_OF = 0.358; // of End
-const LAND_MOVE_FROM = 0.0259; // of the locomotion clip
-const LAND_EXIT = 0.4778; // of End: locomotion
-const LAND_EXIT_BLEND_OF = 0.3982; // of End
 const EMOTE_MOVE_BLEND = 0.1; // movement blend above which a requested emote waits
-const GLIDE_START_BLEND = 0.05; // into the glide's Start, from any state
-const GLIDE_LOOP_BLEND = 0.05; // Start to the glide loop, at the end of Start
-const GLIDE_END_BLEND = 0.1; // Start or the loop to the glide's End, when the glide ends in the air
-const GLIDE_END_FROM = 0.05; // of the glide's End: it begins here
-const GLIDE_FALL_BLEND = 0.1; // the glide's End to Down, at the end of End
 
-// Every GLB clip the scene can drive, collected from the constants above so the
-// list never drifts. Fed to a single AssetLoad entity in main() to pre-load all
-// of them at startup — otherwise the first use of a clip hitches while its GLB
-// streams in (most visible on the first jump/glide of a session).
-const PRELOAD_CLIPS: string[] = [
-  CLIP_IDLE, CLIP_WALK, CLIP_JOG, CLIP_RUN,
-  ...Object.values(JUMP_SETS).flatMap((s) => [s.start, s.mid, s.fall, s.end]),
-  CLIP_LONG_FALL, ...Object.values(GLIDE_LANDING),
-  ...Object.values(HARD_LANDING),
-  ...Object.values(DOUBLE_JUMP).flatMap((d) => [d.plain, d.right]),
-  ...Object.values(GLIDE_AVATAR),
-];
+// Every GLB clip the scene can drive, pre-loaded by a single AssetLoad entity in main(): otherwise the first use of a
+// clip hitches while its GLB streams in (most visible on the first jump/glide of a session).
+const PRELOAD_CLIPS: string[] = Object.keys(CHARACTER_ANIMATOR.clips);
 
 // export all the functions required to make the scene work
 export * from '@dcl/sdk'
@@ -287,40 +176,14 @@ var prevSoundTrackedTime: number = 0;
 var moveBlend = 0;
 // Jumps since the ground the animation has seen; a rise starts a jump state.
 var animJumps = 0;
+// Clip variation of the air jump, drawn when one starts: 0 the plain clip, 1 the Right one.
+var jumpVariation = 0;
+// The glider prop last tick: the glide starts when the prop starts opening.
+var prevGlideProp = GlideProp.CLOSED;
 
 // --- Animation state ---
-// One state per tick, advanced in stateAnimation from the movement model and the parameters above; Movement is the
-// locomotion clips. A jump starts Jump, and the chain then runs on time: Start from JUMP_START_FROM, Up for one tick
-// (it keeps Start), Mid, and Down from JUMP_MID_EXIT of Mid whether the avatar still rises or not. A fall enters Down
-// only below FALLING_SPEED, so a short drop keeps the locomotion clips; a walk off a ledge that the movement model
-// counts as a jump (past its grace window) starts Jump in the air. A state with a clip per tier picks it on starting
-// and keeps it.
-type AnimState = 'Movement' | 'Jump' | 'Up' | 'UpToDown' | 'Down' | 'LongFall' | 'Grounded' | 'HardLanding'
-  | 'DoubleJump' | 'Gliding';
-var animState: AnimState = 'Movement';
-// The state before it.
-var animPrev: AnimState = 'Movement';
-// Scene time and tick the state started.
-var animFrom = 0;
-var animTick = 0;
-// Blend into the state's clip (undefined: the clip's own), and where in it the state starts (fraction of the clip;
-// undefined: no seek).
-var animBlend: number | undefined = undefined;
-var animOffset: number | undefined = undefined;
-var animTier: JumpVariation = 'idle';
-// Grounded plays the tier's glide landing (GLIDE_LANDING) instead of its End: the landing of a glide, not of a stow.
-var glideLanding = false;
-
-// --- Double jump ---
-// Clip of the current air jump, picked when DoubleJump starts.
-var doubleJumpClip = '';
-
-// --- Hard landing ---
-type HardLandingPhase = 'none' | 'enter' | 'loop' | 'exit';
-var hardLanding: HardLandingPhase = 'none';
-var prevHardLanding: HardLandingPhase = 'none';
-// Scene time Loop or Exit started.
-var hardLandingFrom = 0;
+// The reference client's base layer (character-animator.ts), advanced once per tick from the parameters above.
+const animator = new Animator(CHARACTER_ANIMATOR);
 
 // --- Glide turn rate ---
 // Smoothed avatar turn rate (deg/s), used to pick the left/right glide lean.
@@ -332,56 +195,8 @@ var glideTurnRate = 0;
 // so the engine banks the whole avatar.
 var glideTilt = 0;
 
-// Glide animation phase, from the vertical model's glider prop (glideProp), on time: 'deploy' plays the
-// Start clip (glider opens) whole from the tick the prop starts opening, 'glide' is the steady
-// forward/idle loop after it while the prop stays open, 'stow' plays the End clip (glider closes)
-// from GLIDE_END_FROM over the rest of its length when the glide ends mid-air, then the fall goes
-// on. A glide that ends by landing skips 'stow' (the glide landing closes the glider).
-type GlidePhase = 'none' | 'deploy' | 'glide' | 'stow';
-var glidePhase: GlidePhase = 'none';
-// Scene time and tick the current 'deploy' or 'stow' started.
-var glideFrom = 0;
-var glideTick = 0;
-// Set when a glide ends by touching down, so its landing plays the glide landing (GLIDE_LANDING).
-// Consumed in stateAnimation.
-var landingFromGlide = false;
-// Set with landingFromGlide when the touchdown comes while the glider's Start plays.
-var landingFromGlideStart = false;
 // Glide pose clip published last frame (forward/idle), to detect a swap mid-glide.
 var prevGlideSrc: string | undefined = undefined;
-
-// True once the engine reports the clip has played the given fraction of its length.
-function clipReached(src: string, fraction: number): boolean {
-  const s = activeAnimationState;
-  return s !== undefined && s.src === src && (s.loopCount >= 1 || s.playbackTime >= fraction * s.duration);
-}
-
-// True on the tick the state's clip, started `from` (a fraction of its `length`) into it, crosses `exit` (or exit + k: the
-// position recurs each cycle) once the state's blend in is over. No exit is taken while a blend runs, nor on the tick it
-// ends, so an exit reached inside the blend waits for the clip's next cycle (the jump's Start, entered at 0.33 of its
-// length, reaches its exit inside its own blend and passes to Up a cycle later).
-function exitReached(from: number, length: number, exit: number): boolean {
-  const t = time - animFrom + 1e-6;
-  const before = t - tickTime;
-  if (animTick === tick || before < (animBlend ?? 0)) return false;
-  const a = from + before / length - exit;
-  const b = from + t / length - exit;
-  return b >= 0 && Math.floor(b) > Math.floor(a);
-}
-
-// The jump-chain clip tier nearest the movement blend: the sets sit at blends 1 (idle), 2 (jog) and 3 (run), the fall
-// loops' idle clip at 1.7 (jogFrom JOG_FALL_FROM).
-function tierFor(blend: number, jogFrom = JOG_TIER_FROM): JumpVariation {
-  return blend < jogFrom ? 'idle' : blend < 2.5 ? 'jog' : 'run';
-}
-
-// Length (s) of one locomotion cycle at the movement blend: the locomotion clips share their phase, so a cycle lasts
-// the lengths of the two nearest clips weighted by the blend between them.
-function moveCycleLength(blend: number): number {
-  const i = Math.min(Math.floor(blend), MOVE_CLIPS.length - 2);
-  const f = Math.min(1, blend - i);
-  return (1 - f) * CLIP_LENGTH[MOVE_CLIPS[i]] + f * CLIP_LENGTH[MOVE_CLIPS[i + 1]];
-}
 
 function moveTowards(from: number, to: number, maxDelta: number): number {
   return Math.abs(to - from) <= maxDelta ? to : from + Math.sign(to - from) * maxDelta;
@@ -397,220 +212,24 @@ function updateAnimationParameters(horizontalSpeed: number) {
   if (moveBlend < 0.01) moveBlend = 0;
 }
 
-// Starts a state on this tick: its clip blends in over `blend` (s) from `offset` of its length. Up keeps Jump's clip.
-function enterState(state: AnimState, blend?: number, offset?: number) {
-  if (state !== 'Up') animTier = tierFor(moveBlend, state === 'Down' ? JOG_FALL_FROM : JOG_TIER_FROM);
-  animPrev = animState;
-  animState = state;
-  animFrom = time;
-  animTick = tick;
-  animBlend = blend;
-  animOffset = offset;
-  glideLanding = false;
-  if (state !== 'HardLanding') hardLanding = 'none';
-}
-
-// Touchdown from an airborne state: a stunning landing plays the hard landing, blending in over `hardBlend`, from the
-// states that have one (the long fall, the glider's Start); any other landing plays the tier's End.
-function land(blend: number, offset = 0, hardBlend?: number) {
-  // the model may count the touchdown a frame after this one: landingStuns() tells it before
-  const stun = stunned() || landingStuns();
-  if (stun && hardBlend !== undefined) {
-    enterState('HardLanding', hardBlend);
-    hardLanding = 'enter';
-    prevHardLanding = 'none';
-  } else {
-    enterState('Grounded', blend, offset);
-  }
-}
-
-// Advances the animation state for this tick and returns its clip; null in Movement (the locomotion clips). At most
-// one transition per tick: a state started this tick is not advanced again.
-function stateAnimation(
-  jumpTrigger: boolean, jumps: number, airborne: boolean, horizontalSpeed: number,
-): MovementAnimation | null {
-  const glideOpen = glideProp === GlideProp.OPENING || glideProp === GlideProp.GLIDING;
-  // the End clip runs its length, then the fall takes over (below)
-  if (glidePhase === 'stow' && time - glideFrom + 1e-6 >= CLIP_LENGTH[GLIDE_AVATAR.end]) glidePhase = 'none';
-  if (airborne && (glideOpen || glidePhase === 'stow')) {
-    if (animState !== 'Gliding') enterState('Gliding');
-    if (glideOpen) {
-      // Deploy: the Start clip (glider opens), whole, from the tick the prop starts opening, then the steady loop.
-      if (glideProp === GlideProp.OPENING && glidePhase !== 'deploy') {
-        glidePhase = 'deploy';
-        glideFrom = time;
-      }
-      if (glidePhase === 'deploy' && time - glideFrom + 1e-6 < CLIP_LENGTH[GLIDE_AVATAR.start]) {
-        return {
-          src: GLIDE_AVATAR.start,
-          speed: 1,
-          loop: false,
-          idle: false,
-          transitionSeconds: GLIDE_START_BLEND,
-          sounds: [],
-        };
-      }
-      const loopStarts = glidePhase !== 'glide';
-      if (loopStarts) {
-        glidePhase = 'glide';
-        prevGlideSrc = undefined; // first steady frame isn't a pose swap
-      }
-      // Steady glide. Left/right banking is procedural via tiltRoll (see applyMovement /
-      // writeMovement) — the engine rolls the whole avatar — so the clip only
-      // distinguishes forward-lean (moving fast, pitched) from idle (slow / lean-back).
-      const src = horizontalSpeed > settings.glideForwardSpeed
-        ? GLIDE_AVATAR.forward
-        : GLIDE_AVATAR.idle;
-      // On a forward<->idle swap mid-glide, hand the engine the current playback time so
-      // the new clip, glider included, continues in phase instead of snapping to 0.
-      // `activeAnimationState.playbackTime` is the engine's value from its last report, so
-      // add this frame's `stepTime`. Sent only on the swap frame: the clip has no prop to
-      // load, so the engine applies it in that frame.
-      const poseSwapped = prevGlideSrc !== undefined && prevGlideSrc !== src;
-      prevGlideSrc = src;
-      return {
-        src,
-        speed: 1,
-        loop: true,
-        idle: false,
-        transitionSeconds: loopStarts ? GLIDE_LOOP_BLEND : settings.gliderFade,
-        playbackTime:
-          poseSwapped && activeAnimationState !== undefined
-            ? activeAnimationState.playbackTime + stepTime
-            : undefined,
-        sounds: [],
-      };
-    }
-
-    // Stow: glide ended mid-air -> play the End clip (glider closes) from GLIDE_END_FROM, then the fall resumes.
-    return {
-      src: GLIDE_AVATAR.end,
-      speed: 1,
-      loop: false,
-      idle: false,
-      transitionSeconds: GLIDE_END_BLEND,
-      playbackTime: glideTick === tick ? GLIDE_END_FROM * CLIP_LENGTH[GLIDE_AVATAR.end] : undefined,
-      sounds: [],
-    };
-  }
-
-  if (animState === 'Gliding') {
-    // the glide is over: in the air the fall goes on; on the ground it lands in Grounded (a hard landing comes only
-    // from the long fall), a glide (not a stow) on the glide landing, which closes the glider
-    if (airborne) enterState('Down', GLIDE_FALL_BLEND, 0);
-    else {
-      // a stunning touchdown while the glider still opens (Start) is a hard landing
-      land(LAND_FROM_AIR_JUMP_BLEND, 0, landingFromGlideStart ? LAND_FROM_AIR_JUMP_BLEND : undefined);
-      glideLanding = landingFromGlide && hardLanding === 'none';
-    }
-    landingFromGlide = false;
-    landingFromGlideStart = false;
-  } else if (jumpTrigger && jumps > 1) {
-    enterState('DoubleJump', DOUBLE_JUMP_BLEND, 0);
-    const clips = DOUBLE_JUMP[animTier];
-    doubleJumpClip = Math.random() < 0.5 ? clips.plain : clips.right;
-  } else if (jumpTrigger && animState !== 'Jump') {
-    enterState('Jump', JUMP_START_BLEND, JUMP_START_FROM);
-  } else if (animTick !== tick) {
-    // time in the state; the margin lets a tick that reaches an exit exactly (sums of frame times) take it
-    const t = time - animFrom + 1e-6;
-    const set = JUMP_SETS[animTier];
-    switch (animState) {
-      case 'Movement':
-        if (airborne && velocity.y < FALLING_SPEED) {
-          enterState('Down', FALL_BLEND_OF * moveCycleLength(moveBlend), FALL_FROM);
-        }
-        break;
-      case 'Jump':
-        if (exitReached(JUMP_START_FROM, CLIP_LENGTH[set.start], JUMP_START_EXIT)) enterState('Up', animBlend);
-        else if (!airborne) land(LAND_FROM_JUMP_BLEND_OF * CLIP_LENGTH[set.start], LAND_FROM_JUMP_FROM);
-        break;
-      case 'Up':
-        enterState('UpToDown', JUMP_MID_BLEND, 0);
-        break;
-      case 'UpToDown':
-        if (!airborne) land(LAND_FROM_JUMP_BLEND_OF * CLIP_LENGTH[set.mid], LAND_FROM_JUMP_FROM);
-        else if (exitReached(0, CLIP_LENGTH[set.mid], JUMP_MID_EXIT)) {
-          enterState('Down', JUMP_FALL_BLEND_OF * CLIP_LENGTH[set.mid], 0);
-        }
-        break;
-      case 'Down':
-        if (!airborne) land(LAND_FROM_FALL_BLEND_OF * CLIP_LENGTH[set.fall]);
-        else if (velocity.y < LONG_FALLING_SPEED) {
-          enterState('LongFall', LONG_FALL_BLEND_OF * CLIP_LENGTH[set.fall], 0);
-        }
-        break;
-      case 'LongFall':
-        // a touchdown while the long fall still blends in lands as from Down, the state it blends from
-        if (!airborne) {
-          if (t - tickTime < (animBlend ?? 0)) enterState('Grounded', LAND_FROM_FALL_BLEND_OF * CLIP_LENGTH[set.fall], 0);
-          else land(LAND_FROM_FALL_BLEND_OF * CLIP_LENGTH[CLIP_LONG_FALL], 0, HARD_LANDING_ENTER_BLEND);
-        }
-        else if (velocity.y >= LONG_FALLING_SPEED) enterState('Down', LONG_FALL_END_BLEND, 0);
-        break;
-      case 'DoubleJump':
-        if (!airborne) land(LAND_FROM_AIR_JUMP_BLEND);
-        else if (clipReached(doubleJumpClip, DOUBLE_JUMP_EXIT)) enterState('Down', settings.transAir, 0);
-        break;
-      case 'Grounded': {
-        // locomotion on the tick after the entry blend is over if the avatar moves, or from LAND_EXIT of End
-        const end = CLIP_LENGTH[set.end];
-        if (t - tickTime >= (animBlend ?? 0) && moveBlend > LAND_MOVE_BLEND) {
-          enterState('Movement', LAND_MOVE_BLEND_OF * end, LAND_MOVE_FROM);
-        } else if (exitReached(animOffset ?? 0, end, LAND_EXIT)) enterState('Movement', LAND_EXIT_BLEND_OF * end);
-        break;
-      }
-    }
-  }
-
-  const set = JUMP_SETS[animTier];
-  const clip = (src: string, loop: boolean, idle = false): MovementAnimation => ({
+// The glide loop's pose. Left/right banking is procedural via tiltRoll (see applyMovement / writeMovement): the engine
+// rolls the whole avatar, so the clip only distinguishes forward-lean (moving fast, pitched) from idle (slow /
+// lean-back).
+function glidePoseAnimation(horizontalSpeed: number, entered: boolean): MovementAnimation {
+  const src = horizontalSpeed > settings.glideForwardSpeed ? GLIDE_POSE.forward : GLIDE_POSE.idle;
+  // On a forward<->idle swap mid-glide, hand the engine the current playback time so the new clip, glider included,
+  // continues in phase instead of snapping to 0. `activeAnimationState.playbackTime` is the engine's value from its
+  // last report, so add this frame's `stepTime`. Sent only on the swap frame: the clip has no prop to load, so the
+  // engine applies it in that frame.
+  const poseSwapped = !entered && prevGlideSrc !== src;
+  prevGlideSrc = src;
+  return {
     src,
     speed: 1,
-    loop,
-    idle,
-    transitionSeconds: animBlend ?? settings.transAir,
-    playbackTime: animTick === tick && animOffset !== undefined ? animOffset * (CLIP_LENGTH[src] ?? 0) : undefined,
-    sounds: [],
-  });
-  switch (animState) {
-    case 'Jump': case 'Up': return clip(set.start, false);
-    case 'UpToDown': return clip(set.mid, false);
-    case 'Down': return clip(set.fall, true);
-    case 'LongFall': return clip(CLIP_LONG_FALL, true);
-    case 'Grounded': return clip(glideLanding ? GLIDE_LANDING[animTier] : set.end, false);
-    case 'DoubleJump': return { ...clip(doubleJumpClip, false), speed: DOUBLE_JUMP_SPEED };
-    case 'HardLanding': return hardLandingAnimation();
-    default: return null;
-  }
-}
-
-// Hard landing after the touchdown frame, on time: Enter whole (exitReached), Loop until the stun is over (and at least
-// its blend-in), Exit to HARD_LANDING_EXIT_END of its length at HARD_LANDING_EXIT_SPEED, then null to let what follows
-// blend in over HARD_LANDING_AFTER_BLEND.
-function hardLandingAnimation(): MovementAnimation | null {
-  if (hardLanding === 'enter' && exitReached(0, CLIP_LENGTH[HARD_LANDING.enter], 1)) {
-    hardLanding = 'loop';
-    hardLandingFrom = time;
-  } else if (hardLanding === 'loop' && !stunned() && time - hardLandingFrom >= HARD_LANDING_LOOP_BLEND) {
-    hardLanding = 'exit';
-    hardLandingFrom = time;
-  } else if (hardLanding === 'exit'
-    && time - hardLandingFrom + 1e-6 >= HARD_LANDING_EXIT_END * CLIP_LENGTH[HARD_LANDING.exit] / HARD_LANDING_EXIT_SPEED) {
-    enterState('Movement', HARD_LANDING_AFTER_BLEND);
-    return null;
-  }
-  const changed = hardLanding !== prevHardLanding;
-  prevHardLanding = hardLanding;
-  const exit = hardLanding === 'exit';
-  return {
-    src: HARD_LANDING[hardLanding as 'enter' | 'loop' | 'exit'],
-    speed: exit ? HARD_LANDING_EXIT_SPEED : 1,
-    loop: hardLanding === 'loop',
-    // Enter, until Loop has blended in, holds a requested emote back as the landing does (selectAnimation)
-    idle: hardLanding !== 'enter' && !(hardLanding === 'loop' && time - hardLandingFrom < HARD_LANDING_LOOP_BLEND),
-    transitionSeconds: hardLanding === 'enter' ? animBlend ?? HARD_LANDING_ENTER_BLEND : exit ? HARD_LANDING_EXIT_BLEND : HARD_LANDING_LOOP_BLEND,
-    playbackTime: changed ? 0 : undefined,
+    loop: true,
+    idle: true,
+    transitionSeconds: settings.gliderFade,
+    playbackTime: poseSwapped && activeAnimationState !== undefined ? activeAnimationState.playbackTime + stepTime : undefined,
     sounds: [],
   };
 }
@@ -636,28 +255,6 @@ function stepTriggered(prev: number, cur: number, duration: number, triggers: nu
 }
 
 function selectAnimation(): MovementAnimation {
-  const glideOpen = glideProp === GlideProp.OPENING || glideProp === GlideProp.GLIDING;
-  if (!glideOpen || grounded) {
-    // Glide ended, or the avatar is on the ground with the prop still open(ing). Stow (close)
-    // only if we ended mid-air (jump released while falling); a glide that ends by landing
-    // lets the glide landing take over. A stow ends at the end of its clip (stateAnimation), on
-    // touchdown, or when the prop has closed.
-    if (glidePhase === 'deploy' || glidePhase === 'glide') {
-      if (grounded) {
-        // Landed while gliding: the glide landing closes the glider (close embedded).
-        landingFromGlide = wasJumpingOrFalling;
-        landingFromGlideStart = landingFromGlide && glidePhase === 'deploy';
-        glidePhase = 'none';
-      } else {
-        glidePhase = 'stow';
-        glideFrom = time;
-        glideTick = tick;
-      }
-    } else if (glidePhase === 'stow' && (grounded || glideProp === GlideProp.CLOSED)) {
-      glidePhase = 'none';
-    }
-    prevGlideSrc = undefined;
-  }
   const jumpingOrFalling = jumpStartHeight !== undefined || !grounded;
   const newJump = jumpStartHeight !== undefined && prevJumpStartHeight === undefined;
   prevJumpStartHeight = jumpStartHeight;
@@ -679,20 +276,37 @@ function selectAnimation(): MovementAnimation {
   const jumps = Math.max(jumpCount(), isDoubleJump ? 2 : jumpStartHeight !== undefined ? 1 : 0);
   const jumpTrigger = jumps > animJumps || (newJump && !isDoubleJump);
   animJumps = jumps;
+  // step(0.5, random) as the reference client draws it, here only for the air jump that reads it
+  if (jumpTrigger && jumps > 1) jumpVariation = Math.random() < 0.5 ? 0 : 1;
+  const startGliding = glideProp === GlideProp.OPENING && prevGlideProp !== GlideProp.OPENING;
+  prevGlideProp = glideProp;
 
-  const animation = stateAnimation(jumpTrigger, jumps, jumpingOrFalling, horizontalSpeed)
-    ?? locomotionAnimation(horizontalSpeed);
-  if (animState === 'Movement' && animTick === tick) {
-    if (animBlend !== undefined) animation.transitionSeconds = animBlend;
-    if (animOffset !== undefined && MOVE_CLIPS.includes(animation.src)) {
-      animation.playbackTime = animOffset * CLIP_LENGTH[animation.src];
-    }
+  const pose = animator.update({
+    MovementBlend: moveBlend,
+    Jump: jumpTrigger,
+    JumpCount: jumps,
+    JumpVariation: jumpVariation,
+    IsGrounded: !jumpingOrFalling,
+    IsFalling: jumpingOrFalling && velocity.y < FALLING_SPEED,
+    IsLongFall: jumpingOrFalling && velocity.y < LONG_FALLING_SPEED,
+    // the model may count the touchdown a frame after this one: landingStuns() tells it before
+    IsStunned: stunned() || landingStuns(),
+    StartGliding: startGliding,
+    IsGliding: glideProp === GlideProp.OPENING || glideProp === GlideProp.GLIDING,
+  }, tickTime, activeAnimationState);
+  const animation: MovementAnimation = pose.scene === 'locomotion' ? locomotionAnimation(horizontalSpeed)
+    : pose.scene === 'glidePose' ? glidePoseAnimation(horizontalSpeed, pose.entered)
+    : { src: pose.clip!, speed: pose.speed, loop: pose.loop, idle: true, transitionSeconds: pose.blend, sounds: [] };
+  if (pose.entered) {
+    animation.transitionSeconds = pose.blend;
+    if (pose.seek !== undefined) animation.playbackTime = pose.seek * CHARACTER_ANIMATOR.clips[animation.src].length;
   }
-  // A requested emote waits, as in the reference client, until the avatar stands: grounded, out of the landing until its
-  // blend into locomotion is over, and with the movement blend at most EMOTE_MOVE_BLEND. A published animation that is
-  // not idle holds the request back.
-  const landingBlendsOut = animState === 'Movement' && animPrev === 'Grounded' && time - animFrom + 1e-6 < (animBlend ?? 0);
-  if (moveBlend > EMOTE_MOVE_BLEND || landingBlendsOut) animation.idle = false;
+  // A requested emote waits, as in the reference client, until the avatar stands: grounded, out of the jump states
+  // (the landing until its blend into locomotion is over, the hard landing's start until its loop has blended in), and
+  // with the movement blend at most EMOTE_MOVE_BLEND. A published animation that is not idle holds the request back.
+  // Scene: a jump state being blended into holds it too (the reference client reads only the state blended from).
+  const jumpState = animator.tag === 'Jumping' || CHARACTER_ANIMATOR.states[animator.state].tag === 'Jumping';
+  if (jumpState || jumpingOrFalling || moveBlend > EMOTE_MOVE_BLEND) animation.idle = false;
   const sounds = [
     ...(newJump ? [pickRandom(JUMP_SOUNDS)] : []),
     ...(justLanded && drop > 0.5 ? [pickRandom(LAND_SOUNDS)] : []),
@@ -714,39 +328,39 @@ function locomotionAnimation(horizontalSpeed: number): MovementAnimation {
     // Tier 1: walk
     if (horizontalSpeed <= settings.walkRunThreshold) {
       return {
-        src: CLIP_WALK,
+        src: LOCOMOTION.walk,
         speed: horizontalSpeed / WALK_CLIP_SPEED,
         loop: true,
         idle: false,
         transitionSeconds: settings.transWalk,
-        sounds: footstepsFor(CLIP_WALK, WALK_STEP_TIMES, WALK_STEP_SOUNDS),
+        sounds: footstepsFor(LOCOMOTION.walk, WALK_STEP_TIMES, WALK_STEP_SOUNDS),
       };
     }
     // Tier 2: jog (the default movement speed)
     if (horizontalSpeed <= settings.sprintThreshold) {
       return {
-        src: CLIP_JOG,
+        src: LOCOMOTION.jog,
         speed: horizontalSpeed / JOG_CLIP_SPEED,
         loop: true,
         idle: false,
         transitionSeconds: settings.transRun,
-        sounds: footstepsFor(CLIP_JOG, RUN_STEP_TIMES, RUN_STEP_SOUNDS),
+        sounds: footstepsFor(LOCOMOTION.jog, RUN_STEP_TIMES, RUN_STEP_SOUNDS),
       };
     }
     // Tier 3: run (sprint)
     return {
-      src: CLIP_RUN,
+      src: LOCOMOTION.run,
       speed: horizontalSpeed / RUN_CLIP_SPEED,
       loop: true,
       idle: false,
       transitionSeconds: settings.transRun,
-      sounds: footstepsFor(CLIP_RUN, RUN_STEP_TIMES, RUN_STEP_SOUNDS),
+      sounds: footstepsFor(LOCOMOTION.run, RUN_STEP_TIMES, RUN_STEP_SOUNDS),
     };
   }
 
   // A stop settles straight into idle, as in the reference client, which never plays a stop clip.
   return {
-    src: CLIP_IDLE,
+    src: LOCOMOTION.idle,
     speed: 1.0,
     loop: true,
     idle: true,
@@ -788,6 +402,7 @@ function writeMovement() {
 
   Vector3.copyFrom(velocity, lastPublished);
 }
+
 
 function applyMovement() {
   updateVerticalVelocity();
