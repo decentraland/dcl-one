@@ -333,14 +333,16 @@ is the engine default); changing one shows the preset as Custom.
   reads back. At 150 nothing is cut.
 - **Pointers cover the rings.** The parcels whose scenes are resolved reach the widest ring in
   use, whatever the imposters reach, so Off leaves the live ring and near LODs their scenes in
-  a realm that lists none.
+  a realm that lists none. An app without stand-ins reaches the live ring alone, and one that
+  never loads by player position (a negative load distance) none.
 - **Off.** "Distant Scene Rendering" Off removes the imposters and turns far LODs off: the far
   LOD count is 0 while there are no imposter distances, and at 0 no far LOD is spawned or kept.
   "Far LOD Ring" and "Imposter Ring" keep their values, which the panel shows disabled until it
   is turned on again, as "Unlimited Avatars" does to "Max Avatars". Live scenes and near LODs
   are unchanged.
 
-The rings stay ordered whatever the values. A config value outside a range is clamped to it.
+Settings, presets and the generation 7 migration keep the rings ordered; a hand-edited config
+may not be. A config value outside a range is clamped to it.
 Far LODs start one ring past the near keep ring, or past the live keep ring when the live ring
 reaches further. A near ring at or inside the live ring leaves near LODs only to live scenes
 still loading. A far ring inside the near keep ring leaves no normal far-start band; far LODs
