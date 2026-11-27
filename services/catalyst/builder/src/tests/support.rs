@@ -398,6 +398,25 @@ pub async fn signed_map(
     map
 }
 
+/// The signer `key` as a signed `PATCH` of `path` proves it.
+pub async fn signer_of(key: &str, path: &str) -> crate::shared::signed_fetch::Signer {
+    let mut headers = axum::http::HeaderMap::new();
+    for (name, value) in signed_map(key, "patch", path, "{}", false).await {
+        headers.insert(
+            axum::http::HeaderName::from_bytes(name.as_bytes()).unwrap(),
+            value.parse().unwrap(),
+        );
+    }
+    crate::auth::require_signer(
+        &headers,
+        "patch",
+        &crate::auth::SignedPath::local(path.to_string()),
+        None,
+    )
+    .await
+    .unwrap()
+}
+
 pub(crate) fn lazy_pool() -> sqlx::PgPool {
     sqlx::postgres::PgPoolOptions::new()
         .acquire_timeout(std::time::Duration::from_millis(250))

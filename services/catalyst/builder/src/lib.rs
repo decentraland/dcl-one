@@ -21,7 +21,8 @@
 //! collection's body and listings merge ([`collections`]). The one client
 //! it does not share is [`guarded_client`]: guarded as the shared one, but
 //! it follows no redirect, so a credential it carries never reaches another
-//! host; the newsletter forward takes it. Every write goes behind
+//! host; the terms-of-service forward to the warehouse ([`terms`]), the
+//! newsletter forward, the Slack notices and the forum take it. Every write goes behind
 //! `CREATE_WRITES_ENABLED` ([`writes`], default false, 503 with
 //! `Retry-After`, built the way `social::writes` gates the social writes).
 //!
@@ -166,6 +167,31 @@ pub struct RawSettings {
     pub newsletter_service_url: Option<String>,
     pub newsletter_publication_id: Option<String>,
     pub newsletter_api_key: Option<String>,
+    pub warehouse_url: Option<String>,
+    pub warehouse_token: Option<String>,
+    pub warehouse_context_prefix: Option<String>,
+    /// `SLACK_BOT_TOKEN`: the bot the curation notices are posted as, the
+    /// one social's Slack notices use.
+    pub slack_bot_token: Option<String>,
+    /// `SLACK_CURATION_CHANNEL`: the curators' channel; notices are posted
+    /// only when it is set, and it needs `SLACK_BOT_TOKEN`.
+    pub slack_curation_channel: Option<String>,
+    /// `CREATORS_URL`: the creators site a notice links to.
+    pub creators_url: Option<String>,
+    /// `BUILDER_URL`: the legacy builder a notice links to without
+    /// `CREATORS_URL`.
+    pub builder_url: Option<String>,
+    /// `FORUM_URL`: the forum's origin a collection's topic is posted to.
+    pub forum_url: Option<String>,
+    /// `FORUM_API_KEY`: the forum API key; the forum needs all four.
+    pub forum_api_key: Option<String>,
+    /// `FORUM_API_USERNAME`: the forum account the node posts as.
+    pub forum_api_username: Option<String>,
+    /// `FORUM_CATEGORY`: the id of the category a topic is created in.
+    pub forum_category: Option<String>,
+    /// `BUILDER_SERVER_URL`: the public origin of these routes, which a
+    /// forum post's thumbnails link into.
+    pub builder_server_url: Option<String>,
     /// `CORS_ORIGIN`: the origins that may read the answers ([`cors`]).
     pub cors_origin: Option<String>,
     /// `CORS_METHOD`: the methods a preflight allows ([`cors`]).
@@ -417,8 +443,8 @@ pub struct State {
     pub market: Option<Arc<ChainIndex>>,
     pub settings: Settings,
     pub http: Outbound,
-    /// [`guarded_client`]: the newsletter forward, whose requests carry a
-    /// credential.
+    /// [`guarded_client`]: the warehouse forward, the newsletter forward,
+    /// the Slack notices and the forum, whose requests carry a credential.
     pub guarded: Outbound,
     pub eip1654: Option<Arc<dyn Eip1654Validator>>,
     /// The content state's denylist (the same `Arc`): a hash the camera reel

@@ -2076,7 +2076,7 @@ async fn a_committee_member_dropped_before_the_publish_writes_nothing() {
         let path = format!("/v1/collections/{id}/publish");
         let sync = crate::access::sync_collection(
             &node.state,
-            &super::curation_routes::signer_of(COMMITTEE_KEY, &path).await,
+            &super::support::signer_of(COMMITTEE_KEY, &path).await,
             &id.to_string(),
         )
         .await

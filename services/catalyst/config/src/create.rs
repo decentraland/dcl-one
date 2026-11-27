@@ -60,6 +60,52 @@ pub struct CreateConfig {
     #[arg(long, env = "BUILDER_VIDEO_UPLOADS_MAX")]
     pub builder_video_uploads_max: Option<usize>,
 
+    /// The warehouse a terms-of-service acceptance is forwarded to; the
+    /// forward is configured only when the token is set too. Without it the
+    /// acceptance is stored and kept for a later forward.
+    #[arg(long, env = "WAREHOUSE_URL", hide_env_values = true)]
+    pub warehouse_url: Option<String>,
+
+    /// Sent as the warehouse's `x-token` header.
+    #[arg(long, env = "WAREHOUSE_TOKEN", hide_env_values = true)]
+    pub warehouse_token: Option<String>,
+
+    /// Prefixes the forward's `builder` context as `<prefix>-builder`.
+    #[arg(long, env = "WAREHOUSE_CONTEXT_PREFIX")]
+    pub warehouse_context_prefix: Option<String>,
+
+    /// The curators' Slack channel (name or id) the `SLACK_BOT_TOKEN` bot
+    /// posts curation notices to; unset, no notice is sent. Set without
+    /// `SLACK_BOT_TOKEN`, the node refuses to start.
+    #[arg(long, env = "SLACK_CURATION_CHANNEL")]
+    pub slack_curation_channel: Option<String>,
+
+    /// The creators site (an http(s) URL, such as `https://example.org/create`)
+    /// a curation notice links a collection's review page to; its origin also
+    /// links the people it names.
+    #[arg(long, env = "CREATORS_URL")]
+    pub creators_url: Option<String>,
+
+    /// The public origin of the curators' Discourse forum.
+    #[arg(long, env = "FORUM_URL")]
+    pub forum_url: Option<String>,
+
+    /// The forum API key; all four forum settings are required to post.
+    #[arg(long, env = "FORUM_API_KEY", hide_env_values = true)]
+    pub forum_api_key: Option<String>,
+
+    /// The forum account the node posts and replies as.
+    #[arg(long, env = "FORUM_API_USERNAME")]
+    pub forum_api_username: Option<String>,
+
+    /// The numeric category id for collection topics.
+    #[arg(long, env = "FORUM_CATEGORY")]
+    pub forum_category: Option<String>,
+
+    /// The public builder API base for forum item thumbnails.
+    #[arg(long, env = "BUILDER_SERVER_URL")]
+    pub builder_server_url: Option<String>,
+
     /// Bearer of the moderator routes; unset refuses them.
     #[arg(
         long,
@@ -111,6 +157,45 @@ mod tests {
     }
 
     #[test]
+    fn forum_settings_are_optional_and_accept_the_deployed_names() {
+        let defaults = parse(&["x", "--database-url", "postgres:///catalyst"]).unwrap();
+        assert!(defaults.create.forum_url.is_none());
+        let configured = parse(&[
+            "x",
+            "--database-url",
+            "postgres:///catalyst",
+            "--forum-url",
+            "https://forum.example.org",
+            "--forum-api-key",
+            "sk-example123",
+            "--forum-api-username",
+            "builder-example",
+            "--forum-category",
+            "12",
+            "--builder-server-url",
+            "https://builder-api.example.org",
+        ])
+        .unwrap();
+        assert_eq!(
+            configured.create.forum_url.as_deref(),
+            Some("https://forum.example.org")
+        );
+        assert_eq!(
+            configured.create.forum_api_key.as_deref(),
+            Some("sk-example123")
+        );
+        assert_eq!(
+            configured.create.forum_api_username.as_deref(),
+            Some("builder-example")
+        );
+        assert_eq!(configured.create.forum_category.as_deref(), Some("12"));
+        assert_eq!(
+            configured.create.builder_server_url.as_deref(),
+            Some("https://builder-api.example.org")
+        );
+    }
+
+    #[test]
     fn create_defaults_are_the_old_bundles_values_and_writes_are_off() {
         let cli = parse(&["x", "--database-url", "postgres:///catalyst"]).unwrap();
         let c = cli;
@@ -121,6 +206,12 @@ mod tests {
                 && c.create.newsletter_publication_id.is_none()
                 && c.create.newsletter_service_api_key.is_none()
         );
+        assert!(
+            c.create.warehouse_url.is_none()
+                && c.create.warehouse_token.is_none()
+                && c.create.warehouse_context_prefix.is_none()
+        );
+        assert!(c.create.slack_curation_channel.is_none() && c.create.creators_url.is_none());
         assert!(
             c.create.catalyrst_camera_reel_admin_token.is_none()
                 && c.create.camera_reel_bucket_url.is_none()

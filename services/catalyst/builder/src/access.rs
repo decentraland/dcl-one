@@ -163,6 +163,44 @@ pub struct FileRead {
     public: bool,
 }
 
+/// May lock the collection, at `at`.
+#[derive(Debug)]
+pub struct CollectionLock {
+    id: Uuid,
+    signer: String,
+    at: DateTime<Utc>,
+}
+
+/// May delete the collection or accept its terms of service.
+#[derive(Debug)]
+pub struct CollectionManage {
+    id: Uuid,
+    signer: String,
+    at: DateTime<Utc>,
+    registry: Option<Registry>,
+}
+
+/// May publish the collection's standard deployment or sync its owner;
+/// `committee` when the current committee admitted the signer.
+#[derive(Debug)]
+pub struct CollectionSync {
+    id: Uuid,
+    signer: String,
+    committee: bool,
+    provider: Option<String>,
+    registry: Option<Registry>,
+}
+
+/// May submit the third-party collection's items for curation with a slot
+/// cheque: a manager of its provider, by the registry the decision read.
+#[derive(Debug)]
+pub struct ThirdPartyPublish {
+    id: Uuid,
+    signer: String,
+    provider: String,
+    registry: Registry,
+}
+
 impl FileRead {
     pub fn hash(&self) -> &str {
         &self.hash
@@ -213,6 +251,9 @@ mod sealed {
     pub trait Sealed {}
     impl Sealed for super::CollectionRead {}
     impl Sealed for super::CollectionEdit {}
+    impl Sealed for super::CollectionSync {}
+    impl Sealed for super::CollectionManage {}
+    impl Sealed for super::ThirdPartyPublish {}
 }
 
 /// A grant over one collection, for the reads that answer its row; only
@@ -229,6 +270,30 @@ impl CollectionGrant for CollectionRead {
 
 impl CollectionGrant for CollectionEdit {
     fn collection(&self) -> Uuid {
+        self.id
+    }
+}
+
+impl CollectionGrant for CollectionSync {
+    fn collection(&self) -> Uuid {
+        self.id
+    }
+}
+
+/// A grant to record a review of one collection: a curation of it or of its
+/// items ([`crate::curation`]); only this module's write grants implement it.
+pub trait CurationGrant: sealed::Sealed {
+    fn curated(&self) -> Uuid;
+}
+
+impl CurationGrant for CollectionManage {
+    fn curated(&self) -> Uuid {
+        self.id
+    }
+}
+
+impl CurationGrant for ThirdPartyPublish {
+    fn curated(&self) -> Uuid {
         self.id
     }
 }
@@ -281,6 +346,44 @@ impl Publisher {
     }
 }
 
+impl CollectionLock {
+    pub fn id(&self) -> Uuid {
+        self.id
+    }
+    pub fn at(&self) -> DateTime<Utc> {
+        self.at
+    }
+}
+
+impl CollectionManage {
+    pub fn id(&self) -> Uuid {
+        self.id
+    }
+    pub fn signer(&self) -> &str {
+        &self.signer
+    }
+}
+
+impl CollectionSync {
+    pub fn id(&self) -> Uuid {
+        self.id
+    }
+    pub fn signer(&self) -> &str {
+        &self.signer
+    }
+    pub fn third_party(&self) -> bool {
+        self.provider.is_some()
+    }
+    /// The full read this grant opens: the body and every item.
+    pub fn full_read(&self) -> CollectionRead {
+        CollectionRead {
+            id: self.id,
+            full: true,
+            programmatic: false,
+        }
+    }
+}
+
 const COLLECTIONS: &str = "collections";
 const ITEMS: &str = "items";
 const UPSERT: &str = "inserted or updated";
@@ -310,6 +413,7 @@ fn parse(raw: &str) -> Result<Uuid, ApiError> {
 struct Collection {
     stored_owner: String,
     contract: Option<String>,
+    provider: Option<String>,
     third_party: bool,
     provider_managers: Vec<String>,
     programmatic: bool,
@@ -497,6 +601,7 @@ async fn collection(
     Ok(Some(Collection {
         stored_owner,
         contract,
+        provider,
         third_party,
         provider_managers,
         programmatic,
@@ -1449,6 +1554,40 @@ pub(crate) async fn confirm_item_change(
     })
 }
 
+/// May read the data the committee's registry transaction needs to approve
+/// the collection.
+#[derive(Debug)]
+pub struct ApprovalRead {
+    id: Uuid,
+}
+
+impl ApprovalRead {
+    pub fn id(&self) -> Uuid {
+        self.id
+    }
+}
+
+/// `GET /v1/collections/:id/approvalData`: the collection must exist (400,
+/// 404), then the signer must be a current committee member (401; 503
+/// while the committee can't be read).
+pub async fn read_approval(
+    state: &SharedState,
+    signer: &Signer,
+    raw: &str,
+) -> Result<ApprovalRead, ApiError> {
+    let id = parse(raw)?;
+    let exists: bool =
+        sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM builder.collections WHERE id = $1)")
+            .bind(id)
+            .fetch_one(state.items.pool())
+            .await?;
+    if !exists {
+        return Err(not_found(id, COLLECTIONS));
+    }
+    committee(state, signer).await?;
+    Ok(ApprovalRead { id })
+}
+
 /// `POST /v1/collections/:id/lock`: only the owner of a standard collection.
 pub async fn lock_collection(
     state: &SharedState,
@@ -1692,282 +1831,6 @@ pub(crate) async fn confirm_collection_sync(
         return Err(unauthorized_user(&sync.signer, COLLECTIONS, sync.id));
     }
     Ok(())
-}
-
-/// `builder-server`'s curation 404: no collection, or an item without one.
-fn curation_not_found(signer: &str) -> ApiError {
-    ApiError::not_found("Not found").with_data(json!({ "ethAddress": signer }))
-}
-
-/// `GET /v1/curations`: the committee reads every collection's curation
-/// (503 while the committee can't be read); anyone else the curations of the
-/// collections it holds a role on.
-pub async fn curation_scope(
-    state: &SharedState,
-    signer: &Signer,
-) -> Result<CurationScope, ApiError> {
-    if on_committee(state, Since::read(), signer.as_str()).await? {
-        return Ok(CurationScope::Every(OnCommittee {
-            member: signer.as_str().to_string(),
-        }));
-    }
-    Ok(CurationScope::Own(managing(state, signer).await?))
-}
-
-/// The curation routes of the collection `raw`: the collection must exist
-/// (404) and be published (409), then the signer must hold a role on it or
-/// be on the committee (401).
-/// A curation read decides on [`Since::read`], a write on [`Since::write`].
-pub async fn curate_collection(
-    state: &SharedState,
-    signer: &Signer,
-    raw: &str,
-    since: Since,
-) -> Result<Curator, ApiError> {
-    let id = parse(raw)?;
-    let registry = registry_for(state, since, &[id], &[]).await?;
-    let (mut conn, view) = decision(state).await?;
-    let c = collection(&mut conn, &view, id, providers(&registry))
-        .await?
-        .ok_or_else(|| curation_not_found(signer.as_str()))?;
-    drop(conn);
-    let role = c.role(signer.as_str());
-    admit(state, signer, &c, id, None, role, since).await
-}
-
-/// The curation routes of the item `raw`: its collection must exist (404)
-/// and be published (409), then the signer must hold a role on its
-/// collection or be on the committee (401).
-/// A curation read decides on [`Since::read`], a write on [`Since::write`].
-pub async fn curate_item(
-    state: &SharedState,
-    signer: &Signer,
-    raw: &str,
-    since: Since,
-) -> Result<Curator, ApiError> {
-    let id = parse(raw)?;
-    let registry = registry_for(state, since, &[], &[id]).await?;
-    let (mut conn, view) = decision(state).await?;
-    let not_found = || curation_not_found(signer.as_str());
-    let i = item(&mut conn, id).await?.ok_or_else(not_found)?;
-    let parent_id = i.collection.ok_or_else(not_found)?;
-    let c = parent(&mut conn, &view, parent_id, providers(&registry)).await?;
-    drop(conn);
-    let role = c.role(signer.as_str());
-    admit(state, signer, &c, parent_id, Some(id), role, since).await
-}
-
-/// `GET /v1/collections/:id/events`: the signer holds a role on the
-/// collection or is on the committee (503 while the committee can't be read
-/// for a signer without a role, whether or not the collection exists).
-/// While the registry can't be read nobody holds a role on a third-party
-/// collection. Anyone else gets the answer an absent collection gets.
-pub async fn read_review(
-    state: &SharedState,
-    signer: &Signer,
-    raw: &str,
-) -> Result<ReviewRead, ApiError> {
-    let id = parse(raw)?;
-    let registry = registry_for(state, Since::read(), &[id], &[])
-        .await
-        .ok()
-        .flatten();
-    let (mut conn, view) = decision(state).await?;
-    let c = collection(&mut conn, &view, id, providers(&registry)).await?;
-    drop(conn);
-    let s = signer.as_str();
-    if let Some(c) = &c
-        && c.role(s)
-    {
-        return Ok(ReviewRead {
-            id,
-            committee: known_committee(state, Since::read(), s).await,
-        });
-    }
-    if on_committee(state, Since::read(), s).await? && c.is_some() {
-        return Ok(ReviewRead {
-            id,
-            committee: true,
-        });
-    }
-    Err(not_found(id, COLLECTIONS))
-}
-
-/// `POST /v1/collections/:id/comments`: the collection must exist (404),
-/// then the signer must hold a role on it or be on the committee (401). A
-/// role holder writes as the committee only when the committee shows it on it.
-pub async fn review_member(
-    state: &SharedState,
-    signer: &Signer,
-    raw: &str,
-) -> Result<Curator, ApiError> {
-    let (id, c) = reviewed(state, raw).await?;
-    let s = signer.as_str();
-    let role = c.role(s);
-    let committee = if role {
-        known_committee(state, Since::write(), s).await
-    } else {
-        on_committee(state, Since::write(), s).await?
-    };
-    if !role && !committee {
-        return Err(
-            ApiError::unauthorized("Unauthorized").with_data(json!({ "id": id, "ethAddress": s }))
-        );
-    }
-    Ok(Curator {
-        collection: id,
-        item: None,
-        signer: s.to_string(),
-        committee,
-    })
-}
-
-/// `POST /v1/collections/:id/validations` and `.../curation/appeal`: the
-/// collection must exist (404), then the signer must hold a role on it
-/// (401); the committee gets nothing here.
-pub async fn review_creator(
-    state: &SharedState,
-    signer: &Signer,
-    raw: &str,
-) -> Result<Curator, ApiError> {
-    let (id, c) = reviewed(state, raw).await?;
-    let s = signer.as_str();
-    if !c.role(s) {
-        return Err(unauthorized_user(s, COLLECTIONS, id));
-    }
-    Ok(Curator {
-        collection: id,
-        item: None,
-        signer: s.to_string(),
-        committee: false,
-    })
-}
-
-async fn reviewed(state: &SharedState, raw: &str) -> Result<(Uuid, Collection), ApiError> {
-    let id = parse(raw)?;
-    let registry = registry_for(state, Since::write(), &[id], &[]).await?;
-    let (mut conn, view) = decision(state).await?;
-    let c = collection(&mut conn, &view, id, providers(&registry))
-        .await?
-        .ok_or_else(|| not_found(id, COLLECTIONS))?;
-    Ok((id, c))
-}
-
-async fn admit(
-    state: &SharedState,
-    signer: &Signer,
-    c: &Collection,
-    collection: Uuid,
-    item: Option<Uuid>,
-    role: bool,
-    since: Since,
-) -> Result<Curator, ApiError> {
-    let s = signer.as_str();
-    if !c.published {
-        return Err(ApiError::conflict("Unpublished collection")
-            .with_data(json!({ "id": collection, "ethAddress": s })));
-    }
-    let committee = !role && on_committee(state, since, s).await?;
-    if !role && !committee {
-        return Err(ApiError::unauthorized("Unauthorized")
-            .with_data(json!({ "id": item.unwrap_or(collection), "ethAddress": s })));
-    }
-    Ok(Curator {
-        collection,
-        item,
-        signer: s.to_string(),
-        committee,
-    })
-}
-
-/// `curator`, admitted as the committee when the signer is on it: for a
-/// write the transition table gives only the committee (503 while the
-/// committee can't be read).
-pub async fn as_committee(state: &SharedState, mut curator: Curator) -> Result<Curator, ApiError> {
-    if !curator.committee {
-        curator.committee = on_committee(state, Since::write(), &curator.signer).await?;
-    }
-    Ok(curator)
-}
-
-/// Whether `address` is on the current committee: who may be assigned a
-/// review (503 while the committee can't be read).
-pub async fn assignable(state: &State, address: &str) -> Result<bool, ApiError> {
-    on_committee(state, Since::write(), &address.to_ascii_lowercase()).await
-}
-
-/// May set the status of item curations of one published collection
-/// through the operator's item status routes: made only from an [`Admin`]
-/// proof; it grants no other role.
-#[derive(Debug)]
-pub struct Operator {
-    collection: Uuid,
-    actor: String,
-}
-
-impl Operator {
-    pub fn collection(&self) -> Uuid {
-        self.collection
-    }
-    /// Who acts, for the audit row.
-    pub fn actor(&self) -> &str {
-        &self.actor
-    }
-}
-
-/// The operator's item status routes over `collection`: it must exist (404)
-/// and be published (409).
-pub async fn operate(
-    state: &SharedState,
-    admin: &crate::auth::Admin,
-    collection: Uuid,
-) -> Result<Operator, ApiError> {
-    let (mut conn, view) = decision(state).await?;
-    operated(&mut conn, &view, collection).await?;
-    Ok(Operator {
-        collection,
-        actor: admin.actor().to_string(),
-    })
-}
-
-async fn operated(
-    conn: &mut PgConnection,
-    view: &DecisionView,
-    collection: Uuid,
-) -> Result<(), ApiError> {
-    let exists: bool =
-        sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM builder.collections WHERE id = $1)")
-            .bind(collection)
-            .fetch_one(&mut *conn)
-            .await?;
-    if !exists {
-        return Err(ApiError::not_found("Not found"));
-    }
-    if !chain_state::published(conn, view, collection).await? {
-        return Err(
-            ApiError::conflict("Unpublished collection").with_data(json!({ "id": collection }))
-        );
-    }
-    Ok(())
-}
-
-/// Whether the committee shows the signer on it, false when it
-/// can't tell: for a notice, never for a grant.
-pub async fn known_curator(state: &SharedState, curator: &Curator) -> bool {
-    curator.committee || known_committee(state, Since::read(), &curator.signer).await
-}
-
-/// The facts of the curated collection a write reads, decided again inside
-/// its transaction.
-#[derive(Debug)]
-pub struct CuratedState {
-    pub name: String,
-    /// The signer is the collection's creator: the chain's once the copy
-    /// holds it, the stored owner before.
-    pub creator: bool,
-    pub third_party: bool,
-    pub contract: Option<String>,
-    pub published: bool,
 }
 
 /// The node's own standard publication routes: the stored owner of a
@@ -2388,6 +2251,15 @@ pub(crate) mod granted {
             signer: signer.to_string(),
             at: Utc::now(),
             registry: no_registry(),
+        }
+    }
+
+    pub fn third_party_publish(signer: &str, id: Uuid, provider: &str) -> ThirdPartyPublish {
+        ThirdPartyPublish {
+            id,
+            signer: signer.to_string(),
+            provider: provider.to_string(),
+            registry: Registry::default(),
         }
     }
 
