@@ -272,10 +272,9 @@ pub struct Refusal {
     /// The source that cannot answer and why; `None` when the snapshot
     /// could not be read (an internal error).
     pub refused: Option<(Source, String)>,
-    /// The index refused: a network it owns cannot answer.
-    pub by_index: bool,
-    /// The networks the index owned in the refusing snapshot.
-    pub owned: Vec<Network>,
+    /// A graph read may replace this snapshot only when no catalogue in
+    /// scope belongs to, or is preparing to switch to, the index.
+    pub may_fall_back_to_graph: bool,
 }
 
 impl Refusal {
@@ -649,8 +648,7 @@ async fn open(
         tracing::error!(error = %e, "catalogue snapshot read failed");
         Refusal {
             refused: None,
-            by_index: false,
-            owned: Vec::new(),
+            may_fall_back_to_graph: false,
         }
     };
     let mut tx = state.pool.begin().await.map_err(failed)?;
@@ -669,10 +667,18 @@ async fn open(
         .filter(|s| s.owned)
         .filter_map(|s| Network::parse_db(&s.network))
         .collect();
-    let refused = |source: Source, message: String, by_index: bool| Refusal {
+    let preparing: Vec<Network> = states
+        .iter()
+        .filter(|s| !s.owned)
+        .filter_map(|s| Network::parse_db(&s.network))
+        .filter(|&network| {
+            scope.is_none_or(|scope| network == scope) && expects_projection(state, network.into())
+        })
+        .collect();
+    let may_fall_back_to_graph = owned_networks.is_empty() && preparing.is_empty();
+    let refused = |source: Source, message: String| Refusal {
         refused: Some((source, message)),
-        by_index,
-        owned: owned_networks.clone(),
+        may_fall_back_to_graph,
     };
     // The chain this node serves for each network (a testnet reader serves
     // Sepolia and Amoy), as the mirrors' rule binds their passes.
@@ -690,7 +696,7 @@ async fn open(
             .find(|s| s.network == network.db_name())
             .expect("every network is read");
         let publication = index_verdict(s, pair.map(|p| p.chain_id(net)), purpose, now)
-            .map_err(|why| refused(Source::CollectionsIndex, why, true))?;
+            .map_err(|why| refused(Source::CollectionsIndex, why))?;
         owned.push((*network, publication));
     }
     // Every network the index does not own that the read may return rows
@@ -704,15 +710,12 @@ async fn open(
         None
     } else {
         let all_unowned: Vec<&NetworkState> = states.iter().filter(|s| !s.owned).collect();
-        let mut preparing = Vec::new();
         for &snapshot in &unowned {
             let network =
                 Network::parse_db(&snapshot.network).expect("every catalogue network is known");
-            let net = ChainNet::from(network);
-            if expects_projection(state, net) {
+            if preparing.contains(&network) {
                 require_mirror_during_takeover(state, network, snapshot, needs, purpose, now)
-                    .map_err(|why| refused(Source::CollectionsIndex, why, true))?;
-                preparing.push(network);
+                    .map_err(|why| refused(Source::CollectionsIndex, why))?;
             }
         }
         // Polygon first, as a missing subgraph is named.
@@ -744,7 +747,7 @@ async fn open(
                 purpose,
                 now,
             )
-            .map_err(|(source, why)| refused(source, why, false))?,
+            .map_err(|(source, why)| refused(source, why))?,
         )
     };
     Ok(CatalogueRead {

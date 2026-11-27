@@ -4116,8 +4116,8 @@ With no subgraph configured, a network an index owns answers. An unscoped
 priced read names the subgraph of the network without a source; a
 descriptive or authorizing read serves the passes the tables record. The
 lambdas catalogue falls back to asking the subgraphs only when the mirrors
-refused and the index owns no network; it never stands in for a network the
-index owns.
+refused and no network is owned by the index or awaiting configured native
+ownership.
 
 A memo over catalogue rows is filed under what its read saw: each mirror's
 pass on each network it may take rows from, configured or not (the oldest
@@ -4143,16 +4143,19 @@ they predate the live window.
 
 ### Mainnet catalogue cutover
 
-On the mainnet mirror posture the collections index owns `matic,ethereum`
-by default. The posture turns off the collections and items mirrors and
-leaves their two subgraph URLs unset. An explicit ownership list can keep
-either network on its mirror. A start or stop block override retains the
-mirror for the bounded network. Sepolia and Amoy keep both mirrors.
-Island and journey leave ownership empty and their mirrors off.
+On the mainnet mirror posture the collections index takes `matic,ethereum`
+by default. The collections and items jobs mirror each network until the
+index publishes its ownership. A start or stop block override excludes
+that network from default ownership. An explicit list can keep either
+network mirrored. Both collections subgraph URLs also serve direct readers
+such as `/v1/owners` and `/v1/trendings`. They stay configured after the
+projection takes over. Sepolia and Amoy keep both mirrors. Island and
+journey leave ownership empty and their mirrors off.
 
 Until a configured native network first publishes, a scoped or combined
 read needs the mirror proof for that network. A read without its required
-mirror copy returns `503 collections-index`.
+mirror copy returns `503 collections-index`. A priced read also needs the
+items pass within its money budget.
 
 **Before switching an existing database**
 
@@ -4170,8 +4173,8 @@ mirror copy returns `503 collections-index`.
 3. During the cutover window, stop the catalogue writers sharing the
    database. Use the same ownership list on each replacement writer.
    Set `MARKETPLACE_COLLECTIONS_INDEX_OWNS=matic,ethereum`, or let the
-   mainnet mirror posture choose it. Remove any overrides that kept both
-   mirrors active. The first publication replaces the owned network's
+   mainnet mirror posture choose it. Keep both collections subgraph URLs
+   for direct reads. The first publication replaces the network's
    catalogue rows and takes ownership in the same transaction. Ethereum
    publishes its v1 royalty catalogue with those rows.
 4. Check `SELECT network, owned_at, projected_through, pending, generation
@@ -4184,7 +4187,7 @@ mirror copy returns `503 collections-index`.
 
 **Handing a network back to the mirror**
 
-1. Stop the catalogue writers. Explicitly set
+1. Stop the catalogue writers. On each writer, explicitly set
    `MARKETPLACE_COLLECTIONS_INDEX_OWNS` to the networks that stay owned,
    or to an empty value if neither stays owned. Enable
    `MARKETPLACE_MIRRORS_ENABLED=true` and restore the handed-back network's

@@ -288,8 +288,10 @@ The mainnet mirror posture gives the collections index ownership of both
 catalogues by default. Apply the [mainnet catalogue cutover runbook](../../DATABASE.md#mainnet-catalogue-cutover)
 when upgrading an existing writer. For the warming phase, explicitly keep
 `MARKETPLACE_COLLECTIONS_INDEX_OWNS=` empty and enable
-`MARKETPLACE_MIRRORS_ENABLED=true`. A start or stop block override keeps
-the affected network on its mirror by default. Sepolia and Amoy keep their
+`MARKETPLACE_MIRRORS_ENABLED=true`. The mirrors skip each network once its
+index publishes ownership. Keep both subgraph URLs for direct readers such
+as the owner and trending pages. A start or stop block override keeps the
+affected network on its mirror by default. Sepolia and Amoy keep their
 collections mirrors.
 On Ethereum mainnet the same switch walks the 42 collections-v1 contracts over the `TRADE_RPC_URLS`
 entry for chain 1 (else `ETH_RPC_URL`), from block 8,828,687. Its first walk is a one-time catch-up:

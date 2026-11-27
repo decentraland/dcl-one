@@ -21,6 +21,10 @@ fn expanded(posture: Posture, pairs: &[(&str, &str)]) -> HashMap<&'static str, S
 /// The config a process would parse: the explicit pairs, then the
 /// posture's expansion for the keys they leave unset.
 fn parsed(pairs: &[(&str, &str)]) -> Config {
+    parsed_with_flags(pairs, &[])
+}
+
+fn parsed_with_flags(pairs: &[(&str, &str)], flags: &[&str]) -> Config {
     let map = env(pairs);
     let mut all = map.clone();
     if let Some((_, vars)) = resolve(&lookup(&map)).unwrap() {
@@ -28,25 +32,47 @@ fn parsed(pairs: &[(&str, &str)]) -> Config {
             all.insert(k.to_string(), v);
         }
     }
-    Config::parse_env_for_tests(all).unwrap()
+    Config::parse_env_with_flags_for_tests(all, flags).unwrap()
+}
+
+#[test]
+fn cli_ownership_overrides_keep_a_catalogue_writer() {
+    let env_pairs = [(ENV, "mirror"), ("DATABASE_URL", "postgres:///catalyst")];
+    for (flag, ownership, index_enabled) in [
+        ("--marketplace-collections-index-owns=matic", "matic", true),
+        ("--marketplace-collections-index-owns=", "", true),
+        (
+            "--marketplace-collections-index-enabled=false",
+            "matic,ethereum",
+            false,
+        ),
+    ] {
+        let config = parsed_with_flags(&env_pairs, &[flag]);
+        let market = &config.marketplace;
+        assert_eq!(
+            market.marketplace_collections_index_owns, ownership,
+            "{flag}"
+        );
+        assert_eq!(
+            market.marketplace_collections_index_enabled, index_enabled,
+            "{flag}"
+        );
+        assert!(market.marketplace_mirrors_enabled, "{flag}");
+        assert!(
+            Config::non_empty(&config.market_upstreams.eth_collections_subgraph_url).is_some(),
+            "{flag}"
+        );
+        assert!(
+            Config::non_empty(&config.market_upstreams.matic_collections_subgraph_url).is_some(),
+            "{flag}"
+        );
+        check(&config, &lookup(&env(&env_pairs))).unwrap();
+    }
 }
 
 #[test]
 fn a_bounded_mainnet_walk_retains_its_mirror() {
-    for (chain, owned, mirrored, projected) in [
-        (
-            "MATIC",
-            "ethereum",
-            "MATIC_COLLECTIONS_SUBGRAPH_URL",
-            "ETH_COLLECTIONS_SUBGRAPH_URL",
-        ),
-        (
-            "ETHEREUM",
-            "matic",
-            "ETH_COLLECTIONS_SUBGRAPH_URL",
-            "MATIC_COLLECTIONS_SUBGRAPH_URL",
-        ),
-    ] {
+    for (chain, owned) in [("MATIC", "ethereum"), ("ETHEREUM", "matic")] {
         for bound in ["START", "STOP"] {
             let key = format!("MARKETPLACE_INDEX_{bound}_BLOCK_{chain}");
             let values = [
@@ -57,8 +83,8 @@ fn a_bounded_mainnet_walk_retains_its_mirror() {
             let vars = expanded(Posture::Mirror, &values);
             assert_eq!(vars["MARKETPLACE_COLLECTIONS_INDEX_OWNS"], owned, "{key}");
             assert_eq!(vars["MARKETPLACE_MIRRORS_ENABLED"], "true", "{key}");
-            assert!(vars.contains_key(mirrored), "{key}");
-            assert!(!vars.contains_key(projected), "{key}");
+            assert!(vars.contains_key("ETH_COLLECTIONS_SUBGRAPH_URL"), "{key}");
+            assert!(vars.contains_key("MATIC_COLLECTIONS_SUBGRAPH_URL"), "{key}");
             check(&parsed(&values), &lookup(&env(&values))).unwrap();
         }
     }
@@ -66,10 +92,13 @@ fn a_bounded_mainnet_walk_retains_its_mirror() {
 
 #[test]
 fn a_parsed_replay_bound_with_ownership_and_no_mirror_is_refused() {
-    let values = [(ENV, "mirror"), ("DATABASE_URL", "postgres:///catalyst")];
-    let mut config = parsed(&values);
-    // CLI options are parsed after the posture expands its defaults.
-    config.marketplace.marketplace_index_stop_block_matic = Some(16_000_000);
+    let values = [
+        (ENV, "mirror"),
+        ("DATABASE_URL", "postgres:///catalyst"),
+        ("MARKETPLACE_MIRRORS_ENABLED", "false"),
+    ];
+    let flag = "--marketplace-index-stop-block-matic=16000000";
+    let config = parsed_with_flags(&values, &[flag]);
     let error = check(&config, &lookup(&env(&values))).unwrap_err();
     assert!(
         error
@@ -89,9 +118,7 @@ fn a_parsed_replay_bound_with_ownership_and_no_mirror_is_refused() {
 fn the_mirror_sources_follow_the_catalogue_chain_pair() {
     let main = expanded(Posture::Mirror, &[]);
     assert_eq!(main["MARKETPLACE_COLLECTIONS_INDEX_OWNS"], "matic,ethereum");
-    assert_eq!(main["MARKETPLACE_MIRRORS_ENABLED"], "false");
-    assert!(!main.contains_key("ETH_COLLECTIONS_SUBGRAPH_URL"));
-    assert!(!main.contains_key("MATIC_COLLECTIONS_SUBGRAPH_URL"));
+    assert_eq!(main["MARKETPLACE_MIRRORS_ENABLED"], "true");
     let hand_back = expanded(
         Posture::Mirror,
         &[("MARKETPLACE_COLLECTIONS_INDEX_OWNS", "")],
@@ -114,7 +141,18 @@ fn the_mirror_sources_follow_the_catalogue_chain_pair() {
         partial["ETH_COLLECTIONS_SUBGRAPH_URL"],
         hand_back["ETH_COLLECTIONS_SUBGRAPH_URL"]
     );
-    assert!(!partial.contains_key("MATIC_COLLECTIONS_SUBGRAPH_URL"));
+    assert_eq!(
+        main["ETH_COLLECTIONS_SUBGRAPH_URL"],
+        hand_back["ETH_COLLECTIONS_SUBGRAPH_URL"]
+    );
+    assert_eq!(
+        main["MATIC_COLLECTIONS_SUBGRAPH_URL"],
+        hand_back["MATIC_COLLECTIONS_SUBGRAPH_URL"]
+    );
+    assert_eq!(
+        partial["MATIC_COLLECTIONS_SUBGRAPH_URL"],
+        hand_back["MATIC_COLLECTIONS_SUBGRAPH_URL"]
+    );
     let disabled = expanded(
         Posture::Mirror,
         &[("MARKETPLACE_COLLECTIONS_INDEX_ENABLED", "false")],

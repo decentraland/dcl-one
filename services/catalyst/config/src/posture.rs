@@ -199,24 +199,7 @@ fn can_default_to_projection(lookup: &Lookup, network: CollectionsNetwork) -> bo
         && set(lookup, network.replay_stop).is_none()
 }
 
-fn serves_projected_collections(lookup: &Lookup, network: CollectionsNetwork) -> bool {
-    can_default_to_projection(lookup, network)
-        && set(lookup, "MARKETPLACE_COLLECTIONS_INDEX_OWNS")
-            .is_some_and(|raw| owns_collections(&raw, network.names))
-}
-
-fn default_collections_mirrors(lookup: &Lookup) -> Option<String> {
-    Some(
-        (!serves_projected_collections(lookup, ETH_COLLECTIONS)
-            || !serves_projected_collections(lookup, MATIC_COLLECTIONS))
-        .to_string(),
-    )
-}
-
 fn eth_collections_source(lookup: &Lookup) -> Option<String> {
-    if serves_projected_collections(lookup, ETH_COLLECTIONS) {
-        return None;
-    }
     Some(
         if set(lookup, "MARKETPLACE_INDEX_CHAIN_ID_ETHEREUM").as_deref() == Some("11155111") {
             "https://subgraph.decentraland.org/collections-ethereum-sepolia"
@@ -228,9 +211,6 @@ fn eth_collections_source(lookup: &Lookup) -> Option<String> {
 }
 
 fn matic_collections_source(lookup: &Lookup) -> Option<String> {
-    if serves_projected_collections(lookup, MATIC_COLLECTIONS) {
-        return None;
-    }
     Some(
         if set(lookup, "MARKETPLACE_INDEX_CHAIN_ID_MATIC").as_deref() == Some("80002") {
             "https://subgraph.decentraland.org/collections-matic-amoy"
@@ -389,6 +369,7 @@ const ROWS: &[Row] = &[
         "WORLD_MANIFEST_UPSTREAM_URL",
         "https://places-dcf8abb.s3.amazonaws.com/WorldManifest.json",
     ),
+    mirrored("mirrors", "MARKETPLACE_MIRRORS_ENABLED"),
     upstream(
         "mirrors",
         "TRADES_SYNC_UPSTREAM_URL",
@@ -423,16 +404,6 @@ const ROWS: &[Row] = &[
         ),
         Is(""),
         Is(""),
-    ),
-    row(
-        "mirrors",
-        "MARKETPLACE_MIRRORS_ENABLED",
-        From(
-            "while a network still needs its collections mirror",
-            default_collections_mirrors,
-        ),
-        Is("false"),
-        Is("false"),
     ),
     row(
         "mirrors",
