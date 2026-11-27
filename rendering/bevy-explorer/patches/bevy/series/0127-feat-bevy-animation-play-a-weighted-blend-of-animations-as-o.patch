@@ -1,0 +1,864 @@
+From 0000000000000000000000000000000000000000
+Subject: feat(bevy_animation): play a weighted blend of animations as one transition layer
+Date: 2026-11-27T14:19:45+00:00
+
+---
+diff --git a/crates/bevy_animation/src/lib.rs b/crates/bevy_animation/src/lib.rs
+index 0849c67f2f8d620453e4c85a0c47b4ad2fd5bf23..3a80f77cb8b39dac24ae35276a1d3882923d1799 100644
+--- a/crates/bevy_animation/src/lib.rs
++++ b/crates/bevy_animation/src/lib.rs
+@@ -62,7 +62,9 @@ pub mod prelude {
+ use crate::{
+     animation_curves::AnimationCurve,
+     graph::{AnimationGraph, AnimationGraphAssetLoader, AnimationNodeIndex},
+-    transition::{advance_transitions, expire_completed_transitions, AnimationTransitions},
++    transition::{
++        advance_blends, advance_transitions, expire_completed_transitions, AnimationTransitions,
++    },
+ };
+ use alloc::sync::Arc;
+ 
+@@ -1239,6 +1241,7 @@ impl Plugin for AnimationPlugin {
+                 (
+                     graph::thread_animation_graphs.before(AssetEvents),
+                     advance_transitions,
++                    advance_blends,
+                     advance_animations,
+                     // TODO: `animate_targets` can animate anything, so
+                     // ambiguity testing currently considers it ambiguous with
+diff --git a/crates/bevy_animation/src/transition.rs b/crates/bevy_animation/src/transition.rs
+index 94aa573bcb380ad266c35f24ac099d7db0d84de6..91ee5f425893e1cd4e306c7978de702be34e7656 100644
+--- a/crates/bevy_animation/src/transition.rs
++++ b/crates/bevy_animation/src/transition.rs
+@@ -3,6 +3,7 @@
+ //! Please note that this is an unstable temporary API. It may be replaced by a
+ //! state machine in the future.
+ 
++use bevy_asset::Assets;
+ use bevy_ecs::{
+     component::Component,
+     reflect::ReflectComponent,
+@@ -12,13 +13,16 @@ use bevy_reflect::{std_traits::ReflectDefault, Reflect};
+ use bevy_time::Time;
+ use core::time::Duration;
+ 
+-use crate::{graph::AnimationNodeIndex, ActiveAnimation, AnimationPlayer};
++use crate::{
++    graph::{AnimationGraph, AnimationGraphHandle, AnimationNodeIndex, AnimationNodeType},
++    ActiveAnimation, AnimationClip, AnimationPlayer,
++};
+ 
+ /// Manages animation blend factors, allowing for smooth transitions between
+ /// animations.
+ ///
+ /// To use this component, place it on the same entity as the
+-/// [`AnimationPlayer`] and [`AnimationGraphHandle`](crate::AnimationGraphHandle). It'll take
++/// [`AnimationPlayer`] and [`AnimationGraphHandle`]. It'll take
+ /// responsibility for adjusting the weight on the [`ActiveAnimation`] in order
+ /// to fade animations in and out smoothly.
+ ///
+@@ -28,10 +32,14 @@ use crate::{graph::AnimationNodeIndex, ActiveAnimation, AnimationPlayer};
+ /// that starts while another is running fades in over that blend, which carries
+ /// on underneath, so the pose doesn't jump. The weights always sum to 1.
+ ///
++/// The new animation can also be a blend of several that fades in and out as
++/// one: see [`AnimationTransitions::play_blend`].
++///
+ /// When using an [`AnimationTransitions`] component, you should play all
+-/// animations through the [`AnimationTransitions::play`] method, rather than by
+-/// directly manipulating the [`AnimationPlayer`]. Playing animations through
+-/// the [`AnimationPlayer`] directly will cause the [`AnimationTransitions`]
++/// animations through the [`AnimationTransitions::play`] and
++/// [`AnimationTransitions::play_blend`] methods, rather than by directly
++/// manipulating the [`AnimationPlayer`]. Playing animations through the
++/// [`AnimationPlayer`] directly will cause the [`AnimationTransitions`]
+ /// component to get confused about which animation is the "main" animation, and
+ /// transitions will usually be incorrect as a result.
+ #[derive(Component, Default, Reflect)]
+@@ -56,7 +64,7 @@ impl Clone for AnimationTransitions {
+ }
+ 
+ /// An animation being blended as part of a transition
+-#[derive(Debug, Clone, Copy, Reflect)]
++#[derive(Debug, Clone, Reflect)]
+ #[reflect(Clone)]
+ pub struct AnimationTransition {
+     /// The share of the pose this animation takes from the animations under
+@@ -65,8 +73,236 @@ pub struct AnimationTransition {
+     share: f32,
+     /// How much to increase `share` per second
+     share_increase_per_sec: f32,
+-    /// The animation
++    /// What the layer plays
++    layer: Layer,
++}
++
++/// What a transition layer plays: one animation, or a blend of several.
++#[derive(Debug, Clone, Reflect)]
++#[reflect(Clone)]
++enum Layer {
++    Animation(AnimationNodeIndex),
++    Blend(AnimationBlend),
++}
++
++impl Layer {
++    /// The animations this layer plays.
++    fn animations(&self) -> impl Iterator<Item = AnimationNodeIndex> + '_ {
++        let (animation, blend) = match self {
++            Layer::Animation(animation) => (Some(*animation), None),
++            Layer::Blend(blend) => (None, Some(blend.members.iter())),
++        };
++        animation
++            .into_iter()
++            .chain(blend.into_iter().flatten().map(|member| member.animation))
++    }
++
++    fn plays(&self, animation: AnimationNodeIndex) -> bool {
++        self.animations().any(|played| played == animation)
++    }
++
++    /// Whether `other` plays the same thing: the same animation, or a blend of
++    /// the same animations, whatever their weights and order.
++    fn same_as(&self, other: &Layer) -> bool {
++        match (self, other) {
++            (Layer::Animation(a), Layer::Animation(b)) => a == b,
++            (Layer::Blend(a), Layer::Blend(b)) => a.same_members(b),
++            _ => false,
++        }
++    }
++}
++
++/// Several animations that play as one transition layer, started with
++/// [`AnimationTransitions::play_blend`].
++///
++/// The members split the layer's weight in proportion to their own weights,
++/// and share one normalized phase: they start together and reach the end of
++/// their clips together, however long each clip is. A cycle lasts the mean of
++/// the members' clip durations weighted by their weights, so changing the
++/// weights changes the tempo but never the phase. A 1D blend tree of a state
++/// machine plays a walk and a run this way.
++///
++/// The members loop. [`advance_blends`] sets each member's seek time and speed
++/// from the phase, so seek and set the speed here, not on the
++/// [`ActiveAnimation`]s.
++#[derive(Debug, Clone, Reflect)]
++#[reflect(Clone)]
++pub struct AnimationBlend {
++    members: Vec<BlendMember>,
++    /// Where the members are in their cycle, in `[0, 1)`.
++    phase: f32,
++    speed: f32,
++    /// The length of a cycle at speed 1 when the blend last advanced, in
++    /// seconds.
++    cycle: f32,
++    completions: u32,
++}
++
++#[derive(Debug, Clone, Copy, Reflect)]
++#[reflect(Clone)]
++struct BlendMember {
+     animation: AnimationNodeIndex,
++    weight: f32,
++}
++
++impl AnimationBlend {
++    /// A blend of `members` at phase 0; an animation listed twice gets the sum
++    /// of its weights.
++    fn new(members: &[(AnimationNodeIndex, f32)]) -> Self {
++        let mut blend = Self {
++            members: Vec::with_capacity(members.len()),
++            phase: 0.0,
++            speed: 1.0,
++            cycle: 0.0,
++            completions: 0,
++        };
++        for &(animation, weight) in members {
++            match blend.member_mut(animation) {
++                Some(member) => member.weight += weight,
++                None => blend.members.push(BlendMember { animation, weight }),
++            }
++        }
++        blend
++    }
++
++    fn member_mut(&mut self, animation: AnimationNodeIndex) -> Option<&mut BlendMember> {
++        self.members
++            .iter_mut()
++            .find(|member| member.animation == animation)
++    }
++
++    fn same_members(&self, other: &AnimationBlend) -> bool {
++        self.members.len() == other.members.len()
++            && other.members.iter().all(|member| {
++                self.members
++                    .iter()
++                    .any(|own| own.animation == member.animation)
++            })
++    }
++
++    /// The member animations and their weights.
++    pub fn members(&self) -> impl Iterator<Item = (AnimationNodeIndex, f32)> + '_ {
++        self.members
++            .iter()
++            .map(|member| (member.animation, member.weight))
++    }
++
++    /// Sets the members' weights, in the order of [`members`](Self::members).
++    /// The phase carries on and nothing fades: the new weights apply when the
++    /// transitions next advance. A negative weight counts as 0.
++    pub fn set_weights(&mut self, weights: impl IntoIterator<Item = f32>) -> &mut Self {
++        for (member, weight) in self.members.iter_mut().zip(weights) {
++            member.weight = weight;
++        }
++        self
++    }
++
++    /// Each member's share of the layer: its weight over the sum of the
++    /// weights, or an equal share when no weight is positive.
++    fn shares(&self) -> impl Iterator<Item = (AnimationNodeIndex, f32)> + '_ {
++        let total: f32 = self
++            .members
++            .iter()
++            .map(|member| member.weight.max(0.0))
++            .sum();
++        let count = self.members.len() as f32;
++        self.members.iter().map(move |member| {
++            let share = if total > 0.0 {
++                member.weight.max(0.0) / total
++            } else {
++                1.0 / count
++            };
++            (member.animation, share)
++        })
++    }
++
++    /// Where the members are in their cycle, in `[0, 1)`: 0 at the start of
++    /// their clips, 0.5 halfway through.
++    pub fn phase(&self) -> f32 {
++        self.phase
++    }
++
++    /// Moves every member to `phase` of its clip, wrapped into `[0, 1)`. Takes
++    /// effect when the blend next advances, and triggers no events on the way.
++    pub fn seek(&mut self, phase: f32) -> &mut Self {
++        self.phase = wrap(phase);
++        self
++    }
++
++    /// The factor applied to the rate at which the phase advances.
++    pub fn speed(&self) -> f32 {
++        self.speed
++    }
++
++    /// Sets the factor applied to the rate at which the phase advances: 1 plays
++    /// a cycle in [`cycle_secs`](Self::cycle_secs), 0 holds the pose and a
++    /// negative speed plays backwards.
++    pub fn set_speed(&mut self, speed: f32) -> &mut Self {
++        self.speed = speed;
++        self
++    }
++
++    /// The length of a cycle at speed 1, in seconds, when the blend last
++    /// advanced: the mean of the durations of the members whose clips are
++    /// loaded, weighted by their weights. It is 0, and the phase holds, until a
++    /// member with weight has its clip loaded.
++    pub fn cycle_secs(&self) -> f32 {
++        self.cycle
++    }
++
++    /// The number of cycles completed since the blend started.
++    pub fn completions(&self) -> u32 {
++        self.completions
++    }
++
++    /// Puts each member at the phase, with the speed that keeps it there
++    /// through [`advance_animations`](crate::advance_animations), and advances
++    /// the phase by `delta` seconds.
++    fn advance(
++        &mut self,
++        player: &mut AnimationPlayer,
++        duration: impl Fn(AnimationNodeIndex) -> Option<f32>,
++        delta: f32,
++    ) {
++        let (mut weighted, mut total) = (0.0, 0.0);
++        for (animation, share) in self.shares() {
++            if let Some(duration) = duration(animation) {
++                weighted += share * duration;
++                total += share;
++            }
++        }
++        self.cycle = if total > 0.0 { weighted / total } else { 0.0 };
++        let rate = if self.cycle > 0.0 {
++            self.speed / self.cycle
++        } else {
++            0.0
++        };
++
++        for member in &self.members {
++            if let (Some(duration), Some(animation)) = (
++                duration(member.animation),
++                player.animation_mut(member.animation),
++            ) {
++                animation
++                    .set_seek_time(self.phase * duration)
++                    .set_speed(rate * duration);
++            }
++        }
++
++        let phase = self.phase + rate * delta;
++        self.completions = self.completions.saturating_add(phase.floor().abs() as u32);
++        self.phase = wrap(phase);
++    }
++}
++
++/// `phase` wrapped into `[0, 1)`.
++fn wrap(phase: f32) -> f32 {
++    let wrapped = phase - phase.floor();
++    if wrapped < 1.0 {
++        wrapped
++    } else {
++        0.0
++    }
+ }
+ 
+ impl AnimationTransitions {
+@@ -88,57 +324,148 @@ impl AnimationTransitions {
+         transition_duration: Duration,
+     ) -> &'p mut ActiveAnimation {
+         if self.get_main_animation() != Some(new_animation) {
+-            // A paused main animation is not faded out: it leaves the blend at
+-            // once, so the weights still sum to 1.
+-            if let Some(main) = self.layers.last() {
+-                let animation = player.animation_mut(main.animation);
+-                if animation.as_ref().is_none_or(|animation| animation.is_paused()) {
+-                    if let Some(animation) = animation {
+-                        animation.weight = 0.0;
++            self.push(player, Layer::Animation(new_animation), transition_duration);
++        }
++
++        player.start(new_animation)
++    }
++
++    /// Plays `members`, each an animation with its weight, as one
++    /// [`AnimationBlend`] on the given [`AnimationPlayer`].
++    ///
++    /// When the main animation is a blend of the same animations, in any order,
++    /// only the weights change: the blend carries on at its phase and nothing
++    /// fades, so this can be called every frame with new weights. Otherwise the
++    /// blend fades in as one animation across the `transition_duration`, as
++    /// [`play`](Self::play) does, its members starting together at phase 0.
++    ///
++    /// An animation plays in one layer at a time: a new blend takes its
++    /// animations from the layers fading out under it. To crossfade between two
++    /// blends of the same clip, give each blend its own node for the clip.
++    ///
++    /// # Panics
++    ///
++    /// Panics if `members` is empty.
++    pub fn play_blend(
++        &mut self,
++        player: &mut AnimationPlayer,
++        members: &[(AnimationNodeIndex, f32)],
++        transition_duration: Duration,
++    ) -> &mut AnimationBlend {
++        assert!(!members.is_empty(), "a blend needs at least one animation");
++        let blend = AnimationBlend::new(members);
++        match self.get_main_blend_mut() {
++            Some(main) if main.same_members(&blend) => {
++                for (animation, weight) in blend.members() {
++                    if let Some(member) = main.member_mut(animation) {
++                        member.weight = weight;
+                     }
+-                    self.layers.pop();
+                 }
+             }
++            _ => {
++                let layer = Layer::Blend(blend);
++                for animation in layer.animations() {
++                    player.start(animation).repeat();
++                }
++                self.push(player, layer, transition_duration);
++            }
++        }
++        self.get_main_blend_mut()
++            .expect("the main animation is the blend")
++    }
+ 
+-            let share = match self
+-                .layers
+-                .iter()
+-                .position(|layer| layer.animation == new_animation)
+-            {
+-                // Already transitioning away from this animation: it fades in
+-                // from the weight it has, and the others keep theirs.
+-                Some(index) => {
+-                    let mut weights: Vec<f32> = weights(&self.layers).collect();
+-                    weights.reverse();
+-                    let share = weights.remove(index);
+-                    self.layers.remove(index);
+-                    let mut remaining = 1.0 - share;
+-                    for (layer, weight) in self.layers.iter_mut().zip(weights).rev() {
+-                        layer.share = if remaining > 0.0 {
+-                            (weight / remaining).min(1.0)
+-                        } else {
+-                            1.0
+-                        };
+-                        remaining -= weight;
++    /// Makes `layer` the main animation, fading it in over the others across
++    /// the `transition_duration`.
++    fn push(&mut self, player: &mut AnimationPlayer, layer: Layer, transition_duration: Duration) {
++        // A paused main animation is not faded out: it leaves the blend at
++        // once, so the weights still sum to 1. So does a stopped one.
++        if let Some(main) = self.layers.last() {
++            let gone = match &main.layer {
++                Layer::Animation(main) => match player.animation_mut(*main) {
++                    Some(animation) if animation.is_paused() => {
++                        animation.weight = 0.0;
++                        true
+                     }
+-                    share
+-                }
+-                None if self.layers.is_empty() => 1.0,
+-                None => 0.0,
++                    Some(_) => false,
++                    None => true,
++                },
++                Layer::Blend(main) => main
++                    .members
++                    .iter()
++                    .all(|member| player.animation(member.animation).is_none()),
+             };
+-            self.layers.push(AnimationTransition {
+-                share,
+-                share_increase_per_sec: 1.0 / transition_duration.as_secs_f32(),
+-                animation: new_animation,
+-            });
++            if gone {
++                self.layers.pop();
++            }
+         }
+ 
+-        player.start(new_animation)
++        let share = match self.layers.iter().position(|old| old.layer.same_as(&layer)) {
++            // Already transitioning away from this animation: it fades in
++            // from the weight it has, and the others keep theirs.
++            Some(index) => {
++                let mut weights: Vec<f32> = weights(&self.layers).collect();
++                weights.reverse();
++                let share = weights.remove(index);
++                self.layers.remove(index);
++                let mut remaining = 1.0 - share;
++                for (layer, weight) in self.layers.iter_mut().zip(weights).rev() {
++                    layer.share = if remaining > 0.0 {
++                        (weight / remaining).min(1.0)
++                    } else {
++                        1.0
++                    };
++                    remaining -= weight;
++                }
++                share
++            }
++            None => {
++                // An animation plays in one layer at a time.
++                self.layers.retain_mut(|old| match &mut old.layer {
++                    Layer::Animation(animation) => !layer.plays(*animation),
++                    Layer::Blend(blend) => {
++                        blend
++                            .members
++                            .retain(|member| !layer.plays(member.animation));
++                        !blend.members.is_empty()
++                    }
++                });
++                if self.layers.is_empty() {
++                    1.0
++                } else {
++                    0.0
++                }
++            }
++        };
++        self.layers.push(AnimationTransition {
++            share,
++            share_increase_per_sec: 1.0 / transition_duration.as_secs_f32(),
++            layer,
++        });
+     }
+ 
+-    /// Obtain the currently playing main animation.
++    /// Obtain the currently playing main animation; `None` when it is a blend.
+     pub fn get_main_animation(&self) -> Option<AnimationNodeIndex> {
+-        self.layers.last().map(|layer| layer.animation)
++        match self.layers.last()?.layer {
++            Layer::Animation(animation) => Some(animation),
++            Layer::Blend(_) => None,
++        }
++    }
++
++    /// The main animation when it is a blend.
++    pub fn get_main_blend(&self) -> Option<&AnimationBlend> {
++        match &self.layers.last()?.layer {
++            Layer::Blend(blend) => Some(blend),
++            Layer::Animation(_) => None,
++        }
++    }
++
++    /// The main animation when it is a blend, to change its weights, phase or
++    /// speed.
++    pub fn get_main_blend_mut(&mut self) -> Option<&mut AnimationBlend> {
++        match &mut self.layers.last_mut()?.layer {
++            Layer::Blend(blend) => Some(blend),
++            Layer::Animation(_) => None,
++        }
+     }
+ }
+ 
+@@ -158,7 +485,8 @@ fn weights(layers: &[AnimationTransition]) -> impl Iterator<Item = f32> + '_ {
+ }
+ 
+ /// A system that alters the weight of currently-playing transitions based on
+-/// the current time and the transitions' durations.
++/// the current time and the transitions' durations. The members of a blend
++/// split its weight.
+ pub fn advance_transitions(
+     mut query: Query<(&mut AnimationTransitions, &mut AnimationPlayer)>,
+     time: Res<Time>,
+@@ -170,8 +498,58 @@ pub fn advance_transitions(
+ 
+         let layers = &animation_transitions.layers;
+         for (layer, weight) in layers.iter().rev().zip(weights(layers)) {
+-            if let Some(animation) = player.animation_mut(layer.animation) {
+-                animation.weight = weight;
++            match &layer.layer {
++                Layer::Animation(animation) => {
++                    if let Some(animation) = player.animation_mut(*animation) {
++                        animation.weight = weight;
++                    }
++                }
++                Layer::Blend(blend) => {
++                    for (animation, share) in blend.shares() {
++                        if let Some(animation) = player.animation_mut(animation) {
++                            animation.weight = weight * share;
++                        }
++                    }
++                }
++            }
++        }
++    }
++}
++
++/// A system that keeps the members of each [`AnimationBlend`] on its phase and
++/// advances the phase. It runs after [`advance_transitions`] and before
++/// [`advance_animations`](crate::advance_animations).
++pub fn advance_blends(
++    mut query: Query<(
++        &mut AnimationTransitions,
++        &mut AnimationPlayer,
++        &AnimationGraphHandle,
++    )>,
++    graphs: Res<Assets<AnimationGraph>>,
++    clips: Res<Assets<AnimationClip>>,
++    time: Res<Time>,
++) {
++    for (mut animation_transitions, mut player, graph) in query.iter_mut() {
++        if !animation_transitions
++            .layers
++            .iter()
++            .any(|layer| matches!(layer.layer, Layer::Blend(_)))
++        {
++            continue;
++        }
++        let Some(graph) = graphs.get(graph) else {
++            continue;
++        };
++        let duration = |animation| match &graph.get(animation)?.node_type {
++            AnimationNodeType::Clip(clip) => clips
++                .get(clip)
++                .map(AnimationClip::duration)
++                .filter(|duration| *duration > 0.0),
++            _ => None,
++        };
++        for layer in &mut animation_transitions.layers {
++            if let Layer::Blend(blend) = &mut layer.layer {
++                blend.advance(&mut player, duration, time.delta_secs());
+             }
+         }
+     }
+@@ -192,7 +570,9 @@ pub fn expire_completed_transitions(
+             continue;
+         };
+         for layer in animation_transitions.layers.drain(..full) {
+-            player.stop(layer.animation);
++            for animation in layer.layer.animations() {
++                player.stop(animation);
++            }
+         }
+     }
+ }
+@@ -200,6 +580,7 @@ pub fn expire_completed_transitions(
+ #[cfg(test)]
+ mod tests {
+     use super::*;
++    use crate::advance_animations;
+     use bevy_ecs::{entity::Entity, system::RunSystemOnce, world::World};
+ 
+     struct Rig {
+@@ -210,14 +591,35 @@ mod tests {
+     impl Rig {
+         /// Animation 0 plays alone at full weight.
+         fn new() -> Self {
++            let mut rig = Self::with_clips(&[]);
++            rig.play(0, 0.0);
++            rig
++        }
++
++        /// Nothing plays. Animation `i + 1` is a clip of `durations[i]`
++        /// seconds; 0 is the graph's root.
++        fn with_clips(durations: &[f32]) -> Self {
+             let mut world = World::new();
+             world.insert_resource(Time::<()>::default());
++            let mut clips = Assets::<AnimationClip>::default();
++            let mut graph = AnimationGraph::new();
++            for &duration in durations {
++                let mut clip = AnimationClip::default();
++                clip.set_duration(duration);
++                graph.add_clip(clips.add(clip), 1.0, graph.root);
++            }
++            let mut graphs = Assets::<AnimationGraph>::default();
++            let graph = AnimationGraphHandle(graphs.add(graph));
++            world.insert_resource(clips);
++            world.insert_resource(graphs);
+             let entity = world
+-                .spawn((AnimationTransitions::new(), AnimationPlayer::default()))
++                .spawn((
++                    AnimationTransitions::new(),
++                    AnimationPlayer::default(),
++                    graph,
++                ))
+                 .id();
+-            let mut rig = Self { world, entity };
+-            rig.play(0, 0.0);
+-            rig
++            Self { world, entity }
+         }
+ 
+         fn play(&mut self, animation: usize, transition_secs: f32) {
+@@ -233,6 +635,34 @@ mod tests {
+             );
+         }
+ 
++        fn play_blend(&mut self, members: &[(usize, f32)], transition_secs: f32) {
++            let members: Vec<_> = members
++                .iter()
++                .map(|&(animation, weight)| (AnimationNodeIndex::new(animation), weight))
++                .collect();
++            let mut query = self
++                .world
++                .query::<(&mut AnimationTransitions, &mut AnimationPlayer)>();
++            let (mut transitions, mut player) =
++                query.get_mut(&mut self.world, self.entity).unwrap();
++            transitions.play_blend(
++                &mut player,
++                &members,
++                Duration::from_secs_f32(transition_secs),
++            );
++        }
++
++        fn transitions(&mut self) -> &mut AnimationTransitions {
++            self.world
++                .get_mut::<AnimationTransitions>(self.entity)
++                .unwrap()
++                .into_inner()
++        }
++
++        fn blend(&mut self) -> &mut AnimationBlend {
++            self.transitions().get_main_blend_mut().unwrap()
++        }
++
+         fn player(&mut self) -> &mut AnimationPlayer {
+             self.world
+                 .get_mut::<AnimationPlayer>(self.entity)
+@@ -245,23 +675,30 @@ mod tests {
+                 .animation_mut(AnimationNodeIndex::new(animation))
+         }
+ 
++        fn seek_time(&mut self, animation: usize) -> f32 {
++            self.animation(animation).unwrap().seek_time()
++        }
++
+         /// One frame of `secs`, in the order the animation plugin runs them.
+         fn advance(&mut self, secs: f32) {
+             self.world
+                 .resource_mut::<Time>()
+                 .advance_by(Duration::from_secs_f32(secs));
+             self.world.run_system_once(advance_transitions).unwrap();
++            self.world.run_system_once(advance_blends).unwrap();
++            self.world.run_system_once(advance_animations).unwrap();
+             self.world
+                 .run_system_once(expire_completed_transitions)
+                 .unwrap();
+         }
+ 
+-        /// The weight of animations 0, 1 and 2, `None` for one the player
++        /// The weight of animations 0, 1, ..., `None` for one the player
+         /// doesn't hold.
+         #[track_caller]
+-        fn assert_weights(&mut self, expected: [Option<f32>; 3]) {
+-            let got =
+-                [0, 1, 2].map(|index| self.animation(index).map(|animation| animation.weight));
++        fn assert_weights<const N: usize>(&mut self, expected: [Option<f32>; N]) {
++            let got: [Option<f32>; N] = core::array::from_fn(|index| {
++                self.animation(index).map(|animation| animation.weight)
++            });
+             for (got, expected) in got.iter().zip(expected) {
+                 match (got, expected) {
+                     (Some(got), Some(expected)) => {
+@@ -275,6 +712,11 @@ mod tests {
+         }
+     }
+ 
++    #[track_caller]
++    fn assert_close(got: f32, expected: f32) {
++        assert!((got - expected).abs() < 1e-5, "{got} != {expected}");
++    }
++
+     #[test]
+     fn transition_fades_the_new_animation_in() {
+         let mut rig = Rig::new();
+@@ -347,4 +789,138 @@ mod tests {
+         rig.advance(0.5);
+         rig.assert_weights([Some(0.5), None, Some(0.5)]);
+     }
++
++    #[test]
++    fn blend_members_split_its_weight() {
++        let mut rig = Rig::with_clips(&[1.0, 1.0, 1.0]);
++        rig.play(1, 0.0);
++        rig.play_blend(&[(2, 1.0), (3, 3.0)], 1.0);
++        rig.advance(0.5);
++        rig.assert_weights([None, Some(0.5), Some(0.125), Some(0.375)]);
++        rig.advance(0.5);
++        rig.assert_weights([None, None, Some(0.25), Some(0.75)]);
++    }
++
++    #[test]
++    fn blend_members_share_one_phase() {
++        let mut rig = Rig::with_clips(&[1.0, 3.0]);
++        rig.play_blend(&[(1, 1.0), (2, 1.0)], 0.0);
++        rig.advance(0.5);
++        assert_eq!(rig.blend().phase(), 0.25);
++        assert_eq!(rig.seek_time(1), 0.25);
++        assert_eq!(rig.seek_time(2), 0.75);
++        rig.assert_weights([None, Some(0.5), Some(0.5)]);
++    }
++
++    #[test]
++    fn a_cycle_lasts_the_weighted_mean_of_the_member_durations() {
++        let mut rig = Rig::with_clips(&[1.0, 5.0]);
++        rig.play_blend(&[(1, 3.0), (2, 1.0)], 0.0);
++        rig.advance(1.0);
++        // 0.75 * 1 + 0.25 * 5
++        assert_eq!(rig.blend().cycle_secs(), 2.0);
++        assert_eq!(rig.blend().phase(), 0.5);
++        assert_eq!(rig.seek_time(1), 0.5);
++        assert_eq!(rig.seek_time(2), 2.5);
++        rig.advance(1.0);
++        assert_eq!(rig.blend().completions(), 1);
++        assert_eq!(rig.blend().phase(), 0.0);
++        assert_eq!(rig.seek_time(1), 0.0);
++        assert_eq!(rig.seek_time(2), 0.0);
++    }
++
++    #[test]
++    fn new_weights_keep_the_phase_and_do_not_fade() {
++        let mut rig = Rig::with_clips(&[1.0, 3.0]);
++        rig.play_blend(&[(1, 1.0), (2, 0.0)], 0.0);
++        rig.advance(0.25);
++        // The same animations in another order, with a transition: no restart.
++        rig.play_blend(&[(2, 1.0), (1, 0.0)], 1.0);
++        assert_eq!(rig.transitions().layers.len(), 1);
++        assert_eq!(rig.blend().phase(), 0.25);
++        assert_eq!(rig.seek_time(1), 0.25);
++        assert_eq!(rig.seek_time(2), 0.75);
++        rig.advance(0.75);
++        // A cycle now lasts 3 s: the phase moves on by a quarter of that.
++        rig.assert_weights([None, Some(0.0), Some(1.0)]);
++        assert_close(rig.blend().phase(), 0.5);
++        assert_close(rig.seek_time(1), 0.5);
++        assert_close(rig.seek_time(2), 1.5);
++
++        rig.blend().set_weights([1.0, 3.0]);
++        rig.advance(0.0);
++        rig.assert_weights([None, Some(0.25), Some(0.75)]);
++        assert_close(rig.blend().phase(), 0.5);
++    }
++
++    #[test]
++    fn a_new_set_of_animations_crossfades() {
++        let mut rig = Rig::with_clips(&[1.0, 1.0, 1.0]);
++        rig.play_blend(&[(1, 1.0), (2, 1.0)], 0.0);
++        rig.advance(0.25);
++        rig.play_blend(&[(3, 1.0)], 1.0);
++        rig.advance(0.5);
++        rig.assert_weights([None, Some(0.25), Some(0.25), Some(0.5)]);
++        // The blend fading out carries on at its phase.
++        assert_close(rig.seek_time(1), 0.75);
++        assert_close(rig.seek_time(2), 0.75);
++        assert_close(rig.seek_time(3), 0.5);
++        rig.advance(0.5);
++        rig.assert_weights([None, None, None, Some(1.0)]);
++    }
++
++    #[test]
++    fn an_animation_crossfades_over_a_blend_and_back() {
++        let mut rig = Rig::with_clips(&[1.0, 1.0, 1.0]);
++        rig.play_blend(&[(1, 1.0), (2, 3.0)], 0.0);
++        rig.advance(0.25);
++        rig.play(3, 0.5);
++        assert_eq!(
++            rig.transitions().get_main_animation(),
++            Some(AnimationNodeIndex::new(3))
++        );
++        rig.advance(0.25);
++        rig.assert_weights([None, Some(0.125), Some(0.375), Some(0.5)]);
++        // Back to the same blend: it fades in from its weight, from the start.
++        rig.play_blend(&[(1, 1.0), (2, 3.0)], 0.5);
++        rig.advance(0.125);
++        rig.assert_weights([None, Some(0.1875), Some(0.5625), Some(0.25)]);
++        assert_eq!(rig.blend().phase(), 0.125);
++        rig.advance(0.125);
++        rig.assert_weights([None, Some(0.25), Some(0.75), None]);
++    }
++
++    #[test]
++    fn a_blend_takes_its_animations_from_the_blends_under_it() {
++        let mut rig = Rig::with_clips(&[1.0, 1.0, 1.0]);
++        rig.play_blend(&[(1, 1.0), (2, 1.0)], 0.0);
++        rig.play_blend(&[(2, 1.0), (3, 1.0)], 1.0);
++        rig.advance(0.5);
++        rig.assert_weights([None, Some(0.5), Some(0.25), Some(0.25)]);
++    }
++
++    #[test]
++    fn seeking_sets_the_shared_phase() {
++        let mut rig = Rig::with_clips(&[1.0, 3.0]);
++        rig.play_blend(&[(1, 1.0), (2, 1.0)], 0.0);
++        rig.advance(0.25);
++        rig.blend().seek(1.25);
++        rig.advance(0.0);
++        assert_eq!(rig.blend().phase(), 0.25);
++        assert_eq!(rig.seek_time(1), 0.25);
++        assert_eq!(rig.seek_time(2), 0.75);
++        rig.blend().seek(-0.25);
++        assert_eq!(rig.blend().phase(), 0.75);
++    }
++
++    #[test]
++    fn the_phase_holds_until_a_clip_with_weight_loads() {
++        let mut rig = Rig::with_clips(&[1.0]);
++        // Animation 2 is not a node of the graph, so it has no duration.
++        rig.play_blend(&[(1, 0.0), (2, 1.0)], 0.0);
++        rig.advance(0.5);
++        assert_eq!(rig.blend().cycle_secs(), 0.0);
++        assert_eq!(rig.blend().phase(), 0.0);
++        assert_eq!(rig.seek_time(1), 0.0);
++    }
+ }
