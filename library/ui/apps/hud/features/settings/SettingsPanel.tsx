@@ -19,6 +19,7 @@ import { Mark } from '../../design/Glyphs'
 import { CAN_ASK_BEFORE_LEAVING } from '@hud-host'
 import { setAskBeforeLeaving, useAskBeforeLeaving } from './askBeforeLeaving'
 import styles from './SettingsPanel.module.css'
+import { getSettingsTab, setSettingsTab } from './settingsTab'
 
 // The Controls tab holds the engine's Controls rows and, in a card of its own under them, the key
 // bindings: (action, keys[]) rows from the bindings relay, not numeric engine settings. The tab is
@@ -276,12 +277,9 @@ function AskBeforeLeavingField(): React.JSX.Element {
   )
 }
 
-// The full page and the lobby's compact Settings open on the tab last picked in either.
-let lastTab: string | null = null
-
 /** Forget the last tab: for tests. */
 export function resetSettingsTab(): void {
-  lastTab = null
+  setSettingsTab(null)
 }
 
 type SettingsPanelProps = {
@@ -305,7 +303,7 @@ export function SettingsPanel({ settings, bindings, profile, lobbyStage, compact
   // The full page stays mounted while closed, so the shared value is read on each render.
   const [, rerender] = useState(0)
   const setTab = (next: string): void => {
-    lastTab = next
+    setSettingsTab(next)
     rerender((n) => n + 1)
   }
   const { refresh } = settings
@@ -318,6 +316,7 @@ export function SettingsPanel({ settings, bindings, profile, lobbyStage, compact
 
   // Opens on Graphics, as the reference does; without it, on the engine's first category.
   const firstTab = categories.find((c) => tabRank(c) === 0) ?? settings.list[0]?.category ?? categories[0]
+  const lastTab = getSettingsTab()
   const activeTab = lastTab && categories.includes(lastTab) ? lastTab : firstTab
   const items = settings.list.filter((s) => s.category === activeTab)
   const isControls = activeTab.toLowerCase() === CONTROLS_TAB.toLowerCase()

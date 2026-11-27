@@ -1303,22 +1303,6 @@ impl AutoGraphics {
     }
 }
 
-/// Each time Auto Graphics settles on lower graphics than it has announced, `count` goes up and
-/// `adjusted` holds what is lowered; the HUD shows a message for each (`system_bridge`'s auto
-/// graphics stream).
-#[derive(Resource, Default, Debug, Clone, Copy, PartialEq)]
-pub struct AutoGraphicsNotices {
-    pub count: u32,
-    pub adjusted: AutoGraphics,
-}
-
-impl AutoGraphicsNotices {
-    pub fn raise(&mut self, adjusted: AutoGraphics) {
-        self.count = self.count.wrapping_add(1);
-        self.adjusted = adjusted;
-    }
-}
-
 impl SessionGraphics {
     /// The lowest render scale a host can set. It is below the player's Render Resolution floor
     /// (50%) on purpose: a player needs the world sharp enough to play in, while a host such as

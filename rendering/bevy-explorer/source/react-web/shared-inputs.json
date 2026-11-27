@@ -3514,11 +3514,7 @@
       "path": "library/ui/apps/hud/features/autoGraphics",
       "entries": [
         {
-          "name": "AutoGraphicsBanner.module.css",
-          "kind": "regular"
-        },
-        {
-          "name": "AutoGraphicsBanner.tsx",
+          "name": "autoGraphicsToast.tsx",
           "kind": "regular"
         }
       ]
@@ -4725,6 +4721,10 @@
         },
         {
           "name": "askBeforeLeaving.ts",
+          "kind": "regular"
+        },
+        {
+          "name": "settingsTab.ts",
           "kind": "regular"
         }
       ]
@@ -10615,7 +10615,7 @@
     },
     {
       "path": "library/explorer-core/engine/mockBridge.ts",
-      "sha256": "9ec57f756e8b92ed11e4ea7fa3ba728f2639636582845c23611348f585a6b3ce"
+      "sha256": "39a0497dd65937819662dd88ec8b9b3d33a3ac351e21cdbd937ec0b53682b632"
     },
     {
       "path": "library/explorer-core/engine/mockEvents.ts",
@@ -11259,7 +11259,7 @@
     },
     {
       "path": "library/ui/apps/hud/App.tsx",
-      "sha256": "1043ba46b2d15600a4b7f1fbbfd549b9be84a52d9f8f11dd7599476e25072376"
+      "sha256": "607867985980314ebde403fdb0dfb89498ebd8d3046dd0dab82619a94f99e6ec"
     },
     {
       "path": "library/ui/apps/hud/assets/backpack/add-gradient.webp",
@@ -12998,12 +12998,8 @@
       "sha256": "cae16f1ce1c61943c5ab8fa5f1db5fca2d926a65a5a736117f0cfd0b3de131ab"
     },
     {
-      "path": "library/ui/apps/hud/features/autoGraphics/AutoGraphicsBanner.module.css",
-      "sha256": "4d02b3d352126156c3c2ead822be12026f9d9aaa55a8082832e8aeb97f525cb3"
-    },
-    {
-      "path": "library/ui/apps/hud/features/autoGraphics/AutoGraphicsBanner.tsx",
-      "sha256": "78ecd5007588923049643c6343e3ce137b5785510c800790426c52bb73dff6d8"
+      "path": "library/ui/apps/hud/features/autoGraphics/autoGraphicsToast.tsx",
+      "sha256": "f972513ee5739cc99dbafc1b1dd6b1f1e67cfa9272992a7b0b9084a4bc7d643c"
     },
     {
       "path": "library/ui/apps/hud/features/backpack/BackpackModal.module.css",
@@ -14007,7 +14003,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/session/useEngineSession.ts",
-      "sha256": "b69a5f68a8753333a99c63b5ab4d932d6381929ddb54089b06a29c79141fd5d1"
+      "sha256": "8468e47eeab0a744f546bc43df59808944f5a2940ecf944d618099e53014aa45"
     },
     {
       "path": "library/ui/apps/hud/features/settings/KeyBindingsTab.module.css",
@@ -14031,11 +14027,15 @@
     },
     {
       "path": "library/ui/apps/hud/features/settings/SettingsPanel.tsx",
-      "sha256": "cf5f4332d320fe914b7539571bf5c399939388438648a0a6dd249c139d627e07"
+      "sha256": "a53121e83b299362c19414453a2408d267cf1e8003c269e84bf5472469e30b19"
     },
     {
       "path": "library/ui/apps/hud/features/settings/askBeforeLeaving.ts",
       "sha256": "17b1d9a8faa6390db9698efd5d7fd2d992a231a5af3e0b64708e703ac216eaf0"
+    },
+    {
+      "path": "library/ui/apps/hud/features/settings/settingsTab.ts",
+      "sha256": "366e4a00a3c3112fbb99f877abc2d1ac2dc821d617e10a99c7a299526eb16124"
     },
     {
       "path": "library/ui/apps/hud/features/shop/ShopPage.module.css",
@@ -14355,7 +14355,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/harness.tsx",
-      "sha256": "6b22101ca3d1a7aef08130abd3143fb2bd0688a0e458f1b88ce068caedb9bf2b"
+      "sha256": "c81cbcc3aa19f5f1e76052890f9c40222bd0c3eec0b2c035580ab143bcd67e78"
     },
     {
       "path": "library/ui/apps/hud/test/hintsButton.test.tsx",
@@ -14371,7 +14371,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/hosted/autoGraphics.test.tsx",
-      "sha256": "71bfa0ccd24a7ba6f7c4c9a24bb3395ec01c3037dd8089dc9fa0a127e3c75264"
+      "sha256": "9aafb70965538466c6d64518e2d754319bf7f0d7f388cef9c3436182719c9be0"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/avatarPreview.test.tsx",
@@ -20433,17 +20433,17 @@
     },
     {
       "from": "library/ui/apps/hud/App.tsx",
-      "to": "library/ui/apps/hud/features/autoGraphics/AutoGraphicsBanner.tsx",
+      "to": "library/ui/apps/hud/features/autoGraphics/autoGraphicsToast.tsx",
       "kind": "native:runtime"
     },
     {
       "from": "library/ui/apps/hud/App.tsx",
-      "to": "library/ui/apps/hud/features/autoGraphics/AutoGraphicsBanner.tsx",
+      "to": "library/ui/apps/hud/features/autoGraphics/autoGraphicsToast.tsx",
       "kind": "production:runtime"
     },
     {
       "from": "library/ui/apps/hud/App.tsx",
-      "to": "library/ui/apps/hud/features/autoGraphics/AutoGraphicsBanner.tsx",
+      "to": "library/ui/apps/hud/features/autoGraphics/autoGraphicsToast.tsx",
       "kind": "test:runtime"
     },
     {
@@ -23492,33 +23492,18 @@
       "kind": "test:runtime"
     },
     {
-      "from": "library/ui/apps/hud/features/autoGraphics/AutoGraphicsBanner.tsx",
-      "to": "library/ui/apps/hud/features/autoGraphics/AutoGraphicsBanner.module.css",
+      "from": "library/ui/apps/hud/features/autoGraphics/autoGraphicsToast.tsx",
+      "to": "library/ui/apps/hud/design/index.ts",
       "kind": "native:runtime"
     },
     {
-      "from": "library/ui/apps/hud/features/autoGraphics/AutoGraphicsBanner.tsx",
-      "to": "library/ui/apps/hud/features/autoGraphics/AutoGraphicsBanner.module.css",
+      "from": "library/ui/apps/hud/features/autoGraphics/autoGraphicsToast.tsx",
+      "to": "library/ui/apps/hud/design/index.ts",
       "kind": "production:runtime"
     },
     {
-      "from": "library/ui/apps/hud/features/autoGraphics/AutoGraphicsBanner.tsx",
-      "to": "library/ui/apps/hud/features/autoGraphics/AutoGraphicsBanner.module.css",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/features/autoGraphics/AutoGraphicsBanner.tsx",
-      "to": "library/ui/index.ts",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/features/autoGraphics/AutoGraphicsBanner.tsx",
-      "to": "library/ui/index.ts",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/features/autoGraphics/AutoGraphicsBanner.tsx",
-      "to": "library/ui/index.ts",
+      "from": "library/ui/apps/hud/features/autoGraphics/autoGraphicsToast.tsx",
+      "to": "library/ui/apps/hud/design/index.ts",
       "kind": "test:runtime"
     },
     {
@@ -40563,6 +40548,21 @@
     },
     {
       "from": "library/ui/apps/hud/features/session/useEngineSession.ts",
+      "to": "library/ui/apps/hud/features/settings/settingsTab.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/session/useEngineSession.ts",
+      "to": "library/ui/apps/hud/features/settings/settingsTab.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/session/useEngineSession.ts",
+      "to": "library/ui/apps/hud/features/settings/settingsTab.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/session/useEngineSession.ts",
       "to": "library/ui/apps/hud/features/voiceChat/streamHere.ts",
       "kind": "native:runtime"
     },
@@ -40904,6 +40904,21 @@
     {
       "from": "library/ui/apps/hud/features/settings/SettingsPanel.tsx",
       "to": "library/ui/apps/hud/features/settings/askBeforeLeaving.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/settings/SettingsPanel.tsx",
+      "to": "library/ui/apps/hud/features/settings/settingsTab.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/settings/SettingsPanel.tsx",
+      "to": "library/ui/apps/hud/features/settings/settingsTab.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/settings/SettingsPanel.tsx",
+      "to": "library/ui/apps/hud/features/settings/settingsTab.ts",
       "kind": "test:runtime"
     },
     {
@@ -45108,17 +45123,47 @@
     },
     {
       "from": "library/ui/apps/hud/test/hosted/autoGraphics.test.tsx",
-      "to": "library/ui/apps/hud/features/autoGraphics/AutoGraphicsBanner.tsx",
+      "to": "library/ui/apps/hud/design/index.ts",
       "kind": "native:runtime"
     },
     {
       "from": "library/ui/apps/hud/test/hosted/autoGraphics.test.tsx",
-      "to": "library/ui/apps/hud/features/autoGraphics/AutoGraphicsBanner.tsx",
+      "to": "library/ui/apps/hud/design/index.ts",
       "kind": "production:runtime"
     },
     {
       "from": "library/ui/apps/hud/test/hosted/autoGraphics.test.tsx",
-      "to": "library/ui/apps/hud/features/autoGraphics/AutoGraphicsBanner.tsx",
+      "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/autoGraphics.test.tsx",
+      "to": "library/ui/apps/hud/features/autoGraphics/autoGraphicsToast.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/autoGraphics.test.tsx",
+      "to": "library/ui/apps/hud/features/autoGraphics/autoGraphicsToast.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/autoGraphics.test.tsx",
+      "to": "library/ui/apps/hud/features/autoGraphics/autoGraphicsToast.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/autoGraphics.test.tsx",
+      "to": "library/ui/apps/hud/features/settings/settingsTab.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/autoGraphics.test.tsx",
+      "to": "library/ui/apps/hud/features/settings/settingsTab.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/autoGraphics.test.tsx",
+      "to": "library/ui/apps/hud/features/settings/settingsTab.ts",
       "kind": "test:runtime"
     },
     {
@@ -67553,7 +67598,7 @@
     },
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
-      "to": "library/ui/apps/hud/features/autoGraphics/AutoGraphicsBanner.tsx",
+      "to": "library/ui/apps/hud/features/autoGraphics/autoGraphicsToast.tsx",
       "kind": "type"
     },
     {
@@ -68409,6 +68454,11 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/ui/apps/hud/features/settings/askBeforeLeaving.ts",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/ui/apps/hud/features/settings/settingsTab.ts",
       "kind": "type"
     },
     {

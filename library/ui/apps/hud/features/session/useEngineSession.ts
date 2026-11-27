@@ -51,6 +51,7 @@ import { formatConsoleReply, parseChatCommand, resolveGoto, type GotoHere } from
 import { applyLanguageSetting, clearAutoTranslate } from '@explorer-core/features/chat/translation'
 import { clearPingMode, sendSoundEnabled, shouldPing } from '../chat/ping'
 import { useAskBeforeLeaving } from '../settings/askBeforeLeaving'
+import { setSettingsTab } from '../settings/settingsTab'
 import { risingIds, rowKeys } from '@explorer-core/features/chat/lineIds'
 import { communityChannel, communityIdOf } from '@explorer-core/engine/communityChannel'
 import { mentionName, mentionsName } from '@explorer-core/engine/mention'
@@ -669,6 +670,8 @@ export interface SettingsState {
   list: Setting[]
   open: boolean
   toggle: () => void
+  /** Open the page on a tab (a category such as 'Performance'); one already open only changes tab. */
+  openOn: (tab: string) => void
   set: (name: string, value: number) => void
   /** Fetch the settings without opening the page (once per session). */
   load: () => void
@@ -3450,6 +3453,15 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
   // Re-read on every open: the engine changes settings itself (the DM privacy slot follows the
   // social service), and settings are local, so there is nothing to spare by caching.
   const toggleSettings = useCallback(() => exclusive(setSettingsOpen, () => send('getSettings')), [exclusive, send])
+  const settingsOpenRef = useRef(settingsOpen)
+  settingsOpenRef.current = settingsOpen
+  const openSettingsOn = useCallback(
+    (tab: string) => {
+      setSettingsTab(tab)
+      if (!settingsOpenRef.current) toggleSettings()
+    },
+    [toggleSettings]
+  )
   const toggleProfile = useCallback(() => exclusive(setProfileOpen, () => ensure('getProfile')), [exclusive, ensure])
   const toggleNotifications = useCallback(() => exclusive(setNotificationsOpen, () => send('getNotifications')), [exclusive, send])
   const toggleEmotes = useCallback(() => exclusive(setEmotesOpen, () => ensure('getEmotes')), [exclusive, ensure])
@@ -5578,7 +5590,7 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
       mutuals: mutualFriends,
       loadMutuals: loadMutualFriends
     },
-    settings: { list: settings, open: settingsOpen, toggle: toggleSettings, set: settingSet, load: loadSettings, refresh: refreshSettings },
+    settings: { list: settings, open: settingsOpen, toggle: toggleSettings, openOn: openSettingsOn, set: settingSet, load: loadSettings, refresh: refreshSettings },
     bindings: { list: bindings, set: bindingsSet, reset: bindingsReset, capture: captureBinding },
     profile: {
       data: profile,

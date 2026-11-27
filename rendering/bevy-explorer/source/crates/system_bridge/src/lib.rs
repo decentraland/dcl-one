@@ -1,7 +1,6 @@
 #![forbid(unsafe_code)]
 
 pub mod agent_commands;
-pub mod auto_graphics_stream;
 pub mod settings;
 pub mod world_access;
 
@@ -45,7 +44,6 @@ impl Plugin for SystemBridgePlugin {
             ),
         );
         world_access::install_prompter(app);
-        app.add_plugins(auto_graphics_stream::AutoGraphicsStreamPlugin);
 
         if self.bare {
             return;

@@ -533,6 +533,27 @@ preview socket; the engine relays it (`textureOptimization`, from `getTextureOpt
   through the session),
   `src/test/bridgeTextureOptimization.test.ts` (the relay).
 
+## Auto Graphics message
+
+Each time Auto Graphics settles on lower graphics for the session, the engine relays what it lowered
+(`autoGraphics`, from `getAutoGraphicsStream`, `bridge-scene/src/domains/autoGraphics.ts`) and the shared
+HUD's `library/ui/apps/hud/features/autoGraphics/autoGraphicsToast.tsx` shows it as one toast under the key
+`autoGraphics`. Expectations:
+
+- The toast names "Graphics lowered to keep things smooth", what changed ("Shadows off · Resolution 70% ·
+  Bloom off": only the parts that apply) and that the saved settings did not change. It has a Dismiss and a
+  **Settings** button (accessible name "Open graphics settings") and goes after 15 s; a later message
+  replaces it in place.
+- It shows only while the session is in the world and the HUD's chrome is up (no menu page, editor, photo mode
+  or hidden HUD, and not the embedded mode). A message arriving at any other time is dropped, not held, and the
+  toast goes when the chrome goes.
+- **Settings** opens the Settings page on the Performance tab, where Auto Graphics lives, not on the tab last
+  used. Sign-out clears the pending message.
+- `?mock=1&autographics=1` raises a sample message 8 s after load (drop it with a page open to see the gating).
+- Tests: `library/ui/apps/hud/test/hosted/autoGraphics.test.tsx` (the session's message and `settings.openOn`;
+  the toast's content, gating, Settings and Dismiss, expiry and replacement); the end-to-end
+  `apps/bevy-explorer/e2e/specs/auto-graphics.test.ts`. The relay has no test of its own.
+
 ## Gallery (camera reel)
 
 The Gallery page and the passport's Photos tab (`library/ui/apps/hud/features/gallery`, bridge `domains/gallery.ts`).

@@ -207,7 +207,8 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
 - **Auto Graphics decides on frame time, not GPU time, and lowers shadows first.** The setting
   is off by default. While it is on and no host set a session render scale, a controller
   (`visuals::auto_graphics`) moves down and up a ladder built from the player's settings: the
-  sun's shadows off, then the render scale in 10% steps down to 50%, then bloom off, each rung
+  shadows off (the sun's, and the scene lights' shadow casters: `ShadowSetting::Off` sets
+  both), then the render scale in 10% steps down to 50%, then bloom off, each rung
   only when the player has that setting on. The order is what measured the most frame time on
   the web in Genesis Plaza: shadows off took 7 to 9 ms, 50% render scale about 9 ms, bloom
   off about 5 ms once shadows were off, and fog, imposters, sky reflection, depth of field, lens
@@ -224,9 +225,13 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   it has stayed 10 seconds on a rung lower than it has told the player about, the HUD shows a
   message; a descent stops on several rungs on its way down, so this names where it ended. On the web a
   frame whose main schedules take longer than one refresh cannot get shorter by lowering
-  graphics, which the CPU check covers only when the CPU side is most of the frame.
-  Unverified: the picture at 50 to 70% on a high-density display, the cost of the frame a rung
-  change lands in, and the controller's behaviour outside Chrome on Apple silicon.
+  graphics, which the CPU check covers only when the CPU side is most of the frame. Where the
+  display's refresh is unknown (the web), a steady frame pinned at a common refresh period and
+  over the target is taken as the display's rate and becomes the effective target, so a target
+  above the display's is not chased; a frame clearly shorter than that period clears it. The
+  controller pauses, and drops its reading, while the viewport is inactive or the window is
+  unfocused. A kept lower rung with the frame well under its target is left again after 5 seconds
+  instead of 30.
 - **Sun shadows keep bevy's default bias.** Unity's `DepthBias` (1.75 or 1.56 texels, times
   URP's soft kernel radius 2.5) is a depth bias, not a normal bias, and carried over as bevy's
   normal bias it offset each lookup about half a metre on Low at 60 m, dropping thin and contact

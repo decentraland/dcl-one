@@ -341,8 +341,9 @@ the [conventions ADR](../../../docs/adr/2026-11-17-console-command-conventions.m
   ([scheduling](../docs/guidelines/scheduling.md)).
 - `/auto_graphics_state`: Auto Graphics' reading (enabled, phase, rung, what it lowered: shadows, render
   scale, bloom, and the messages raised); `/auto_graphics_notice` raises a sample message (shadows off,
-  70%) without changing any setting. The HUD shows each as a `status` named `Graphics lowered`, with
-  `Settings` and `OK` buttons, closing itself after 15 s.
+  70%) without changing any setting. The HUD shows each as a toast with a Dismiss and a `Settings` button
+  (named `Open graphics settings`, opening Settings on the Performance tab), closing itself after 15 s, only while
+  the player is in the world with the HUD's chrome up; a message arriving at any other time is dropped.
 - The HUD, by role and accessible name (`library/explorer-core/lib/hudAutomation.ts`): `/hud_list [role]`,
   `/hud_read`, `/hud_click`, `/hud_fill` (`{"name", "text"}`), `/hud_wait` (`"state"`: `visible`,
   `hidden`, `enabled`, `actionable`, `ready`; `"timeout"` ms). A selector is the name or JSON

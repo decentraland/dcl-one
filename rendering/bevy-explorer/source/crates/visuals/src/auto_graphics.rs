@@ -14,14 +14,18 @@
 use bevy::prelude::*;
 use bevy_console::ConsoleCommand;
 use common::{
-    perf::FrameTimeBreakdown,
+    perf::{FocusPause, FrameTimeBreakdown},
     structs::{
-        AppConfig, AutoGraphics, AutoGraphicsNotices, BloomSetting, GraphicsSettings,
-        SessionGraphics, ShadowSetting,
+        AppConfig, AutoGraphics, BloomSetting, GraphicsSettings, SessionGraphics, ShadowSetting,
+        UNCAPPED_FPS,
     },
 };
 use console::DoAddConsoleCommand;
 use scene_runner::SceneLoopTiming;
+
+use crate::auto_graphics_stream::{
+    AutoGraphicsRaised, AutoGraphicsStreamPlugin, AutoGraphicsStreams,
+};
 
 /// After a change of rung, the time left out of the next reading: the scene target is resized,
 /// pipelines may compile (the compositor's, the first time away from 100%).
@@ -54,10 +58,20 @@ const LONGEST_HOLD_SECONDS: f64 = 600.0;
 const ANNOUNCE_AFTER_SECONDS: f64 = 10.0;
 /// The wait between higher rungs while each one is kept.
 const CLIMB_SECONDS: f64 = 5.0;
+/// A kept lower rung with the frame under this share of its target has headroom: the next hold
+/// before climbing back is at most [`CLIMB_SECONDS`], so a rung kept on a misleading reading is
+/// left again quickly.
+const HEADROOM: f32 = 0.9;
+/// Where the display's refresh is not known (the web), frames pinned at one of these periods
+/// (60, 75, 90, 100, 120, 144, 165 and 240 Hz), within [`REFRESH_TOLERANCE`] and with a spread
+/// of at most [`PINNED_SPREAD`] of the median, are taken to be at the display's rate.
+const REFRESH_PERIODS_HZ: [f32; 8] = [60.0, 75.0, 90.0, 100.0, 120.0, 144.0, 165.0, 240.0];
+const REFRESH_TOLERANCE: f32 = 0.05;
+const PINNED_SPREAD: f32 = 0.12;
 
 /// What the controller is doing.
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub enum Phase {
+enum Phase {
     /// Reading the frame at the rung it has settled on.
     Steady,
     /// Trying lower rungs, from this rung and frame time, until one shortens the frame.
@@ -70,7 +84,7 @@ pub enum Phase {
 }
 
 impl Phase {
-    pub fn name(&self) -> &'static str {
+    fn name(&self) -> &'static str {
         match self {
             Phase::Steady => "steady",
             Phase::TryingLower { .. } => "trying lower",
@@ -80,19 +94,20 @@ impl Phase {
     }
 }
 
-/// The range of rungs and the frame time to reach.
+/// The top rung (the ladder's length less one; 0 is the lowest graphics) and the frame time to
+/// reach.
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub struct Limits {
-    pub floor_steps: i32,
-    pub ceiling_steps: i32,
-    pub target_ms: f32,
+struct Limits {
+    ceiling_steps: i32,
+    target_ms: f32,
+    /// The display's refresh is known, so `target_ms` is already capped by it.
+    refresh_known: bool,
 }
 
 /// The decisions, apart from the engine so a test can drive them with a clock and frame times.
 #[derive(Debug)]
-pub struct Controller {
+struct Controller {
     steps: i32,
-    ceiling_steps: i32,
     phase: Phase,
     frame_ms: Vec<f32>,
     cpu_ms: Vec<f32>,
@@ -102,14 +117,16 @@ pub struct Controller {
     lower_hold_seconds: f64,
     higher_hold_until: f64,
     higher_hold_seconds: f64,
+    /// The frame time the display is taken to hold frames to, learned where its refresh is not
+    /// known; 0 until then.
+    display_ms: f32,
 }
 
 impl Controller {
     /// Starts at the ceiling.
-    pub fn new(ceiling_steps: i32) -> Self {
+    fn new(ceiling_steps: i32) -> Self {
         Self {
             steps: ceiling_steps,
-            ceiling_steps,
             phase: Phase::Steady,
             frame_ms: Vec::new(),
             cpu_ms: Vec::new(),
@@ -119,32 +136,29 @@ impl Controller {
             lower_hold_seconds: FIRST_HOLD_SECONDS,
             higher_hold_until: 0.0,
             higher_hold_seconds: FIRST_HOLD_SECONDS,
+            display_ms: 0.0,
         }
     }
 
-    pub fn steps(&self) -> i32 {
+    fn steps(&self) -> i32 {
         self.steps
     }
 
-    pub fn phase(&self) -> Phase {
+    fn phase(&self) -> Phase {
         self.phase
     }
 
-    /// Takes one frame's wall time and CPU time at `now` (seconds) and returns the rung to use. `cpu_ms` is the longer of the main world's and the render world's
-    /// busy time.
-    pub fn frame(&mut self, now: f64, frame_ms: f32, cpu_ms: f32, limits: Limits) -> i32 {
-        if limits.ceiling_steps != self.ceiling_steps {
-            // the ladder got shorter or longer: start again from its top, keeping a lower rung
-            // already in use
-            *self = Self {
-                steps: self.steps.min(limits.ceiling_steps),
-                ..Self::new(limits.ceiling_steps)
-            };
-            self.settle_until = now + SETTLE_SECONDS;
-        }
-        if self.steps < limits.floor_steps {
-            self.steps = limits.floor_steps.min(limits.ceiling_steps);
-        }
+    /// The frames of a pause (an inactive viewport, an unfocused window) are not a measurement:
+    /// the reading in progress is dropped and the next one waits for the frames to settle.
+    fn pause(&mut self, now: f64) {
+        self.clear_window();
+        self.settle_until = now + SETTLE_SECONDS;
+    }
+
+    /// Takes one frame's wall time and CPU time at `now` (seconds) and returns the rung to use.
+    /// `cpu_ms` is the longer of the main world's and the render world's busy time. The ladder's
+    /// length stays the same for the controller's life: a new ladder is a new controller.
+    fn frame(&mut self, now: f64, frame_ms: f32, cpu_ms: f32, limits: Limits) -> i32 {
         if frame_ms > STALL_MS {
             self.clear_window();
             return self.steps;
@@ -159,23 +173,30 @@ impl Controller {
             return self.steps;
         }
         let frame = median(&mut self.frame_ms);
+        // sorted by `median`
+        let last = self.frame_ms.len() - 1;
+        let spread = (self.frame_ms[last * 9 / 10] - self.frame_ms[last / 10]) / frame;
         let cpu = median(&mut self.cpu_ms);
         self.clear_window();
-        self.decide(now, frame, cpu, limits);
+        self.decide(now, frame, cpu, spread, limits);
         self.steps
     }
 
-    fn decide(&mut self, now: f64, frame_ms: f32, cpu_ms: f32, limits: Limits) {
+    fn decide(&mut self, now: f64, frame_ms: f32, cpu_ms: f32, spread: f32, limits: Limits) {
+        if !limits.refresh_known {
+            self.learn_display_rate(frame_ms, spread, limits.target_ms);
+        }
+        // a target the display cannot reach is not one to lower graphics for
+        let limits = Limits {
+            target_ms: limits.target_ms.max(self.display_ms),
+            ..limits
+        };
         let at_target = frame_ms <= limits.target_ms * AT_TARGET;
         match self.phase {
             Phase::Steady => {
                 let over_target = frame_ms > limits.target_ms * OVER_TARGET;
                 let cpu_bound = cpu_ms >= frame_ms * CPU_BOUND_SHARE;
-                if over_target
-                    && !cpu_bound
-                    && self.steps > limits.floor_steps
-                    && now >= self.lower_hold_until
-                {
+                if over_target && !cpu_bound && self.steps > 0 && now >= self.lower_hold_until {
                     self.phase = Phase::TryingLower {
                         from_steps: self.steps,
                         from_ms: frame_ms,
@@ -196,7 +217,7 @@ impl Controller {
                         from_ms,
                     };
                 } else {
-                    self.lower_further(now, from_steps, from_ms, limits);
+                    self.lower_further(now, from_steps, from_ms);
                 }
             }
             Phase::Confirming {
@@ -206,9 +227,14 @@ impl Controller {
                 if helped(from_ms, frame_ms) || at_target {
                     self.phase = Phase::Steady;
                     self.lower_hold_seconds = FIRST_HOLD_SECONDS;
-                    self.higher_hold_until = now + self.higher_hold_seconds;
+                    let hold = if frame_ms <= limits.target_ms * HEADROOM {
+                        self.higher_hold_seconds.min(CLIMB_SECONDS)
+                    } else {
+                        self.higher_hold_seconds
+                    };
+                    self.higher_hold_until = now + hold;
                 } else {
-                    self.lower_further(now, from_steps, from_ms, limits);
+                    self.lower_further(now, from_steps, from_ms);
                 }
             }
             Phase::TryingHigher { from_ms } => {
@@ -228,10 +254,32 @@ impl Controller {
         }
     }
 
+    /// Where the display's refresh is not known: a steady frame pinned at a common refresh
+    /// period and over the target is taken as the display's rate, which lowering graphics cannot
+    /// beat. A later frame clearly shorter than that period shows the display is faster.
+    fn learn_display_rate(&mut self, frame_ms: f32, spread: f32, target_ms: f32) {
+        if self.display_ms > 0.0 {
+            if frame_ms < self.display_ms * (1.0 - REFRESH_TOLERANCE) {
+                self.display_ms = 0.0;
+            }
+            return;
+        }
+        let pinned = REFRESH_PERIODS_HZ
+            .iter()
+            .any(|hz| (frame_ms * hz / 1000.0 - 1.0).abs() <= REFRESH_TOLERANCE);
+        if self.phase == Phase::Steady
+            && frame_ms > target_ms * OVER_TARGET
+            && pinned
+            && spread <= PINNED_SPREAD
+        {
+            self.display_ms = frame_ms;
+        }
+    }
+
     /// The rung on trial did not help: the next lower one, or back to where the trial started
     /// at the bottom of the ladder, with a hold before the next trial.
-    fn lower_further(&mut self, now: f64, from_steps: i32, from_ms: f32, limits: Limits) {
-        if self.steps > limits.floor_steps {
+    fn lower_further(&mut self, now: f64, from_steps: i32, from_ms: f32) {
+        if self.steps > 0 {
             self.phase = Phase::TryingLower {
                 from_steps,
                 from_ms,
@@ -239,7 +287,7 @@ impl Controller {
             self.set_steps(self.steps - 1, now);
         } else {
             self.phase = Phase::Steady;
-            self.set_steps(from_steps.min(limits.ceiling_steps), now);
+            self.set_steps(from_steps, now);
             self.lower_hold_until = now + self.lower_hold_seconds;
             self.lower_hold_seconds = (self.lower_hold_seconds * 2.0).min(LONGEST_HOLD_SECONDS);
         }
@@ -268,12 +316,14 @@ fn median(values: &mut [f32]) -> f32 {
     values[values.len() / 2]
 }
 
-pub struct AutoGraphicsPlugin;
+pub(crate) struct AutoGraphicsPlugin;
 
 impl Plugin for AutoGraphicsPlugin {
     fn build(&self, app: &mut App) {
+        // `FocusPause` is written by the frame inputs; without them nothing pauses
         app.init_resource::<AutoGraphicsState>()
-            .init_resource::<AutoGraphicsNotices>()
+            .init_resource::<FocusPause>()
+            .add_plugins(AutoGraphicsStreamPlugin)
             .add_systems(Update, auto_adjust_graphics)
             .add_console_command::<AutoGraphicsStateCommand, _>(auto_graphics_state)
             .add_console_command::<AutoGraphicsNoticeCommand, _>(auto_graphics_notice);
@@ -283,7 +333,7 @@ impl Plugin for AutoGraphicsPlugin {
 /// The rungs from the lowest graphics (index 0) to the player's own settings (the last), for the
 /// player's settings: only what the player has on is turned off, and the render scale goes down
 /// from the player's Render Resolution.
-pub fn ladder(graphics: &GraphicsSettings) -> Vec<AutoGraphics> {
+fn ladder(graphics: &GraphicsSettings) -> Vec<AutoGraphics> {
     let mut rungs = vec![AutoGraphics::default()];
     let mut rung = AutoGraphics::default();
     if graphics.shadow_settings != ShadowSetting::Off {
@@ -305,7 +355,7 @@ pub fn ladder(graphics: &GraphicsSettings) -> Vec<AutoGraphics> {
 
 /// Auto Graphics while it runs: the controller over the ladder built from the player's settings.
 #[derive(Resource, Default)]
-pub struct AutoGraphicsState {
+struct AutoGraphicsState {
     running: Option<Running>,
 }
 
@@ -319,14 +369,14 @@ struct Running {
 }
 
 impl AutoGraphicsState {
-    pub fn phase(&self) -> Option<Phase> {
+    fn phase(&self) -> Option<Phase> {
         self.running
             .as_ref()
             .map(|running| running.controller.phase())
     }
 
     /// The rung in use and the number of rungs, while running.
-    pub fn rung(&self) -> Option<(usize, usize)> {
+    fn rung(&self) -> Option<(usize, usize)> {
         self.running
             .as_ref()
             .map(|running| (running.controller.steps() as usize, running.ladder.len()))
@@ -341,7 +391,7 @@ fn target_frame_ms(
     refresh_hz: Option<usize>,
 ) -> f32 {
     let paced = SessionGraphics::paced_fps(Some(session), config, refresh_hz);
-    let fps = if paced == 0 || paced >= 999 {
+    let fps = if paced == 0 || paced >= UNCAPPED_FPS {
         refresh_hz.unwrap_or(60)
     } else {
         paced
@@ -352,14 +402,15 @@ fn target_frame_ms(
 /// Feeds the controller the previous frame and writes its rung into `SessionGraphics::auto`. The
 /// setting being off, or a host's session render scale, stops it and gives the player's settings
 /// back; it starts again from the top of the ladder.
-pub fn auto_adjust_graphics(
+fn auto_adjust_graphics(
     time: Res<Time<Real>>,
     config: Res<AppConfig>,
     mut session: ResMut<SessionGraphics>,
     breakdown: Option<Res<FrameTimeBreakdown>>,
     scene_loop: Option<Res<SceneLoopTiming>>,
+    focus_pause: Res<FocusPause>,
     mut state: ResMut<AutoGraphicsState>,
-    mut notices: ResMut<AutoGraphicsNotices>,
+    mut notices: EventWriter<AutoGraphicsRaised>,
 ) {
     if !config.graphics.auto_graphics || session.render_scale.is_some() {
         if state.running.is_some() {
@@ -370,26 +421,30 @@ pub fn auto_adjust_graphics(
         }
         return;
     }
-    let ladder = ladder(&config.graphics);
-    if state
-        .running
-        .as_ref()
-        .is_none_or(|running| running.ladder != ladder)
-    {
-        // the player changed a setting the ladder is built from: start from their settings
-        let top = ladder.len() as i32 - 1;
-        state.running = Some(Running {
-            ladder,
-            controller: Controller::new(top),
-            announced: top,
-            settled: None,
-        });
+    if state.running.is_none() || config.is_changed() {
+        let ladder = ladder(&config.graphics);
+        if state
+            .running
+            .as_ref()
+            .is_none_or(|running| running.ladder != ladder)
+        {
+            // the player changed a setting the ladder is built from: start from their settings
+            let top = ladder.len() as i32 - 1;
+            state.running = Some(Running {
+                ladder,
+                controller: Controller::new(top),
+                announced: top,
+                settled: None,
+            });
+        }
     }
-    let target_ms = target_frame_ms(
-        &session,
-        &config,
-        scene_loop.and_then(|timing| timing.refresh_hz),
-    );
+    if focus_pause.0.is_some() {
+        let running = state.running.as_mut().unwrap();
+        running.controller.pause(time.elapsed_secs_f64());
+        return;
+    }
+    let refresh_hz = scene_loop.and_then(|timing| timing.refresh_hz);
+    let target_ms = target_frame_ms(&session, &config, refresh_hz);
     // the limiter's sleep is inside the main world's schedules and is not work
     let cpu_ms = breakdown.map_or(0.0, |breakdown| {
         (breakdown.main_world_schedules_ms - breakdown.frame_limiter_sleep_ms)
@@ -398,9 +453,9 @@ pub fn auto_adjust_graphics(
     let frame_ms = time.delta_secs_f64() as f32 * 1000.0;
     let running = state.running.as_mut().unwrap();
     let limits = Limits {
-        floor_steps: 0,
         ceiling_steps: running.ladder.len() as i32 - 1,
         target_ms,
+        refresh_known: refresh_hz.is_some(),
     };
     let steps = running
         .controller
@@ -422,7 +477,7 @@ pub fn auto_adjust_graphics(
         running.announced = steps;
     }
     if announce {
-        notices.raise(rung);
+        notices.write(AutoGraphicsRaised(rung));
     }
     if session.auto != rung {
         session.auto = rung;
@@ -442,7 +497,7 @@ fn auto_graphics_state(
     config: Res<AppConfig>,
     session: Res<SessionGraphics>,
     state: Res<AutoGraphicsState>,
-    notices: Res<AutoGraphicsNotices>,
+    streams: Res<AutoGraphicsStreams>,
 ) {
     let Some(Ok(_)) = cmd.take() else { return };
     let (rung, rungs) = state.rung().unzip();
@@ -455,30 +510,29 @@ fn auto_graphics_state(
             "shadows": session.auto.shadows.map(|s| format!("{s:?}")),
             "renderScale": session.auto.render_scale,
             "bloom": session.auto.bloom.map(|b| format!("{b:?}")),
-            "notices": notices.count,
+            "notices": streams.raised,
         })
         .to_string(),
     );
 }
 
 /// Raise the Auto Graphics message without changing any setting, as if graphics had been lowered
-/// to shadows off and 70% render resolution, for checking the HUD. Replies with the number of
-/// messages raised this session.
+/// to shadows off and 70% render resolution, for checking the HUD.
 #[derive(clap::Parser, ConsoleCommand)]
 #[command(name = "/auto_graphics_notice")]
 struct AutoGraphicsNoticeCommand;
 
 fn auto_graphics_notice(
     mut cmd: ConsoleCommand<AutoGraphicsNoticeCommand>,
-    mut notices: ResMut<AutoGraphicsNotices>,
+    mut notices: EventWriter<AutoGraphicsRaised>,
 ) {
     let Some(Ok(_)) = cmd.take() else { return };
-    notices.raise(AutoGraphics {
+    notices.write(AutoGraphicsRaised(AutoGraphics {
         shadows: Some(ShadowSetting::Off),
         render_scale: Some(0.7),
         bloom: None,
-    });
-    cmd.reply_ok(notices.count.to_string());
+    }));
+    cmd.reply_ok("raised");
 }
 
 #[cfg(test)]
@@ -486,9 +540,9 @@ mod tests {
     use super::*;
 
     const LIMITS: Limits = Limits {
-        floor_steps: 5,
         ceiling_steps: 10,
         target_ms: 1000.0 / 60.0,
+        refresh_known: true,
     };
 
     /// Runs the controller until `until` seconds with the frame and CPU time `cost` gives each
@@ -535,7 +589,7 @@ mod tests {
         let mut controller = Controller::new(10);
         let mut now = 0.0;
         let lowest = run(&mut controller, &mut now, 40.0, |_| (30.0, 10.0));
-        assert_eq!(lowest, 5);
+        assert_eq!(lowest, 0);
         assert_eq!(
             (controller.steps(), controller.phase()),
             (10, Phase::Steady)
@@ -570,16 +624,43 @@ mod tests {
     }
 
     #[test]
-    fn ignores_stalls_and_follows_a_lower_ceiling() {
+    fn ignores_stalls() {
         let mut controller = Controller::new(10);
         let lowest = run(&mut controller, &mut 0.0, 60.0, |_| (300.0, 10.0));
         assert_eq!(lowest, 10);
+    }
 
-        let lowered = Limits {
-            ceiling_steps: 7,
+    #[test]
+    fn a_pause_drops_the_reading_in_progress() {
+        let mut controller = Controller::new(10);
+        let mut now = 0.0;
+        // 1.9 s of a slow reading, then a pause: the window starts again afterwards
+        run(&mut controller, &mut now, 1.9, |_| (30.0, 10.0));
+        controller.pause(now);
+        now += 0.1;
+        controller.frame(now, 30.0, 10.0, LIMITS);
+        assert_eq!(controller.phase(), Phase::Steady);
+        assert_eq!(controller.steps(), 10);
+    }
+
+    #[test]
+    fn frames_pinned_at_an_unknown_display_rate_are_at_target() {
+        // a 60 Hz display behind a target of 144 fps, refresh not known: nothing to lower for
+        let web = Limits {
+            target_ms: 1000.0 / 144.0,
+            refresh_known: false,
             ..LIMITS
         };
-        assert_eq!(controller.frame(61.0, 16.0, 8.0, lowered), 7);
+        let mut controller = Controller::new(10);
+        let mut now = 0.0;
+        while now < 60.0 {
+            now += 1.0 / 60.0;
+            controller.frame(now, 16.67, 8.0, web);
+        }
+        assert_eq!(
+            (controller.steps(), controller.phase()),
+            (10, Phase::Steady)
+        );
     }
 
     #[test]

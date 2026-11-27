@@ -1,16 +1,28 @@
 import { describe, it, expect, vi, afterEach } from 'vitest'
-import { act, render, screen, waitFor } from '@testing-library/react'
+import { act, render, renderHook, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { renderSession, enterAsGuest } from '../harness'
-import { AUTO_GRAPHICS_DISMISS_MS, AUTO_GRAPHICS_TITLE, AutoGraphicsBanner, autoGraphicsSummary } from '../../features/autoGraphics/AutoGraphicsBanner'
+import { ToastHost, dismissToast } from '../../design'
+import { getSettingsTab, setSettingsTab } from '../../features/settings/settingsTab'
+import {
+  AUTO_GRAPHICS_TITLE,
+  AUTO_GRAPHICS_TOAST_KEY,
+  AUTO_GRAPHICS_TOAST_MS,
+  autoGraphicsSummary,
+  useAutoGraphicsToast
+} from '../../features/autoGraphics/autoGraphicsToast'
 import type { AutoGraphicsNotice } from '@explorer-core/engine/generated'
 
 const NOTICE: AutoGraphicsNotice = { shadowsOff: true, renderScalePercent: 70, bloomOff: false }
 const ALL: AutoGraphicsNotice = { shadowsOff: true, renderScalePercent: 50, bloomOff: true }
 
-const banner = () => screen.queryByRole('status', { name: 'Graphics lowered' })
+const toast = () => screen.queryByRole('button', { name: 'Open graphics settings' })
 
-afterEach(() => vi.useRealTimers())
+afterEach(() => {
+  act(() => dismissToast(AUTO_GRAPHICS_TOAST_KEY))
+  setSettingsTab(null)
+  vi.useRealTimers()
+})
 
 // DOMAIN: Auto Graphics — each notice from the engine is kept with a new id, and sign-out clears it.
 describe('auto graphics domain', () => {
@@ -36,16 +48,31 @@ describe('auto graphics domain', () => {
     await waitFor(() => expect(h.session().phase).toBe('login'))
     expect(h.session().autoGraphics.notice).toBeNull()
   })
+
+  it('openOn opens Settings on the given tab, and changes the tab of Settings already open', async () => {
+    const h = renderSession()
+    await enterAsGuest(h)
+    act(() => h.session().settings.openOn('Performance'))
+    await waitFor(() => expect(h.session().settings.open).toBe(true))
+    expect(getSettingsTab()).toBe('Performance')
+    act(() => h.session().settings.openOn('Audio'))
+    expect(h.session().settings.open).toBe(true)
+    expect(getSettingsTab()).toBe('Audio')
+  })
 })
 
-describe('the auto graphics banner', () => {
+describe('the auto graphics toast', () => {
   const withId = (notice: AutoGraphicsNotice, id = 1) => ({ ...notice, id })
 
-  function mount(notice: AutoGraphicsNotice | null, settingsOpen = false) {
+  function mount(notice: AutoGraphicsNotice | null, active = true) {
     const dismiss = vi.fn()
     const openSettings = vi.fn()
-    const view = render(<AutoGraphicsBanner notice={notice && withId(notice)} dismiss={dismiss} settingsOpen={settingsOpen} openSettings={openSettings} />)
-    return { dismiss, openSettings, ...view }
+    render(<ToastHost />)
+    const hook = renderHook(
+      ({ notice, active }) => useAutoGraphicsToast({ notice: notice && withId(notice), dismiss }, active, openSettings),
+      { initialProps: { notice, active } }
+    )
+    return { dismiss, openSettings, ...hook }
   }
 
   it('words only the parts that changed', () => {
@@ -56,56 +83,68 @@ describe('the auto graphics banner', () => {
 
   it('shows nothing without a notice', () => {
     mount(null)
-    expect(banner()).toBeNull()
+    expect(toast()).toBeNull()
   })
 
-  it('shows the title, what changed and that saved settings are unchanged', () => {
-    mount(NOTICE)
-    const status = banner()!
+  it('shows the title, what changed and that saved settings are unchanged, and takes the notice', () => {
+    const h = mount(NOTICE)
+    const status = screen.getByRole('status')
     expect(status.textContent).toContain(AUTO_GRAPHICS_TITLE)
     expect(status.textContent).toContain('Shadows off · Resolution 70%')
+    expect(status.textContent).not.toContain('Bloom off')
     expect(status.textContent).toContain("Your saved settings haven't changed")
-    expect(status.getAttribute('aria-live')).toBe('polite')
+    expect(h.dismiss).toHaveBeenCalledOnce()
   })
 
-  it('OK dismisses it without opening settings', async () => {
-    const h = mount(NOTICE)
-    await userEvent.click(screen.getByRole('button', { name: 'OK' }))
+  it('drops a notice that arrives outside the world or with the chrome hidden', () => {
+    const h = mount(NOTICE, false)
+    expect(toast()).toBeNull()
     expect(h.dismiss).toHaveBeenCalledOnce()
+    // the notice is gone, so it does not pop up when the chrome returns
+    h.rerender({ notice: null, active: true })
+    expect(toast()).toBeNull()
+  })
+
+  it('takes the toast down when the chrome goes away', () => {
+    const h = mount(NOTICE)
+    expect(toast()).not.toBeNull()
+    h.rerender({ notice: null, active: false })
+    expect(toast()).toBeNull()
+  })
+
+  it('Settings opens the Performance tab and takes the toast down', async () => {
+    const h = mount(NOTICE)
+    await userEvent.click(screen.getByRole('button', { name: 'Open graphics settings' }))
+    expect(h.openSettings).toHaveBeenCalledExactlyOnceWith('Performance')
+    expect(toast()).toBeNull()
+  })
+
+  it('Dismiss takes the toast down without opening settings', async () => {
+    const h = mount(NOTICE)
+    await userEvent.click(screen.getByRole('button', { name: 'Dismiss' }))
+    expect(toast()).toBeNull()
     expect(h.openSettings).not.toHaveBeenCalled()
   })
 
-  it('Settings opens settings and dismisses it', async () => {
-    const h = mount(NOTICE)
-    await userEvent.click(screen.getByRole('button', { name: 'Settings' }))
-    expect(h.openSettings).toHaveBeenCalledOnce()
-    expect(h.dismiss).toHaveBeenCalledOnce()
-  })
-
-  it('Settings does not toggle settings shut when they are already open', async () => {
-    const h = mount(NOTICE, true)
-    await userEvent.click(screen.getByRole('button', { name: 'Settings' }))
-    expect(h.openSettings).not.toHaveBeenCalled()
-    expect(h.dismiss).toHaveBeenCalledOnce()
-  })
-
-  it('dismisses itself after 15 seconds', () => {
+  it('goes after 15 seconds', () => {
     vi.useFakeTimers()
-    const h = mount(NOTICE)
-    act(() => vi.advanceTimersByTime(AUTO_GRAPHICS_DISMISS_MS - 1))
-    expect(h.dismiss).not.toHaveBeenCalled()
+    mount(NOTICE)
+    act(() => vi.advanceTimersByTime(AUTO_GRAPHICS_TOAST_MS - 1))
+    expect(toast()).not.toBeNull()
     act(() => vi.advanceTimersByTime(1))
-    expect(h.dismiss).toHaveBeenCalledOnce()
+    expect(toast()).toBeNull()
   })
 
-  it('a new notice restarts the wait', () => {
+  it('a new notice replaces the toast and restarts the wait', () => {
     vi.useFakeTimers()
     const h = mount(NOTICE)
     act(() => vi.advanceTimersByTime(10_000))
-    h.rerender(<AutoGraphicsBanner notice={withId(NOTICE, 2)} dismiss={h.dismiss} settingsOpen={false} openSettings={h.openSettings} />)
+    h.rerender({ notice: ALL, active: true })
+    expect(screen.getAllByRole('status')).toHaveLength(1)
+    expect(screen.getByRole('status').textContent).toContain('Bloom off')
     act(() => vi.advanceTimersByTime(10_000))
-    expect(h.dismiss).not.toHaveBeenCalled()
+    expect(toast()).not.toBeNull()
     act(() => vi.advanceTimersByTime(5_000))
-    expect(h.dismiss).toHaveBeenCalledOnce()
+    expect(toast()).toBeNull()
   })
 })

@@ -787,18 +787,19 @@ pub async fn op_read_platform_ban_stream(
     ))
 }
 
-#[op2(async)]
+#[op2]
 pub async fn op_get_auto_graphics_stream(state: Rc<RefCell<OpState>>) -> u32 {
     dcl_js::system_api::op_get_auto_graphics_stream(state).await
 }
 
-#[op2(async)]
-#[serde]
+#[op2]
 pub async fn op_read_auto_graphics_stream(
     state: Rc<RefCell<OpState>>,
     rid: u32,
-) -> Result<Option<AutoGraphicsNotice>, deno_core::anyhow::Error> {
-    dcl_js::system_api::op_read_auto_graphics_stream(state, rid).await
+) -> Result<JsPlain<Option<AutoGraphicsNotice>>, OpError> {
+    Ok(JsPlain(
+        dcl_js::system_api::op_read_auto_graphics_stream(state, rid).await?,
+    ))
 }
 
 #[op2]

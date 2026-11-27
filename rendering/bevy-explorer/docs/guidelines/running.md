@@ -460,7 +460,7 @@ On the web only:
 
 - `/auto_graphics_state`: Auto Graphics' reading (enabled, phase, rung, the shadows, render scale and bloom it
   lowered, and the messages raised). `/auto_graphics_notice` raises a sample message (shadows off, 70%)
-  without changing any setting, to check the HUD's `Graphics lowered` banner.
+  without changing any setting, to check the HUD's Auto Graphics toast.
 
 Movement:
 

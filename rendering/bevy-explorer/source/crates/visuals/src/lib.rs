@@ -1,6 +1,7 @@
 #![forbid(unsafe_code)]
 
-pub mod auto_graphics;
+mod auto_graphics;
+mod auto_graphics_stream;
 mod coast;
 mod day_night;
 mod debug_panel;

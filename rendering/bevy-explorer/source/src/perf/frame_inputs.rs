@@ -14,7 +14,7 @@ use bevy::{
 use common::{
     gpu_time::{GpuFrameTimeUnreliable, GPU_FRAME_TIME},
     memory::{MemoryReading, MemoryStatus},
-    perf::{HudMainThreadCostDataPoint, JsHeapDataPoint, SamplingPausedReason},
+    perf::{FocusPause, HudMainThreadCostDataPoint, JsHeapDataPoint, SamplingPausedReason},
     structs::{
         AppConfig, ClientWindowFocus, CurrentRealm, OutOfWorld, PrimaryUser, SessionGraphics,
         WorldHold, UNCAPPED_FPS,
@@ -110,6 +110,7 @@ pub(crate) fn collect_frame_inputs_system(
     player: Query<Has<OutOfWorld>, With<PrimaryUser>>,
     client_window_focus: Res<ClientWindowFocus>,
     scene_loop: Option<Res<SceneLoopTiming>>,
+    mut focus_pause: ResMut<FocusPause>,
 ) {
     #[cfg(target_arch = "wasm32")]
     let viewport_paused =
@@ -120,6 +121,7 @@ pub(crate) fn collect_frame_inputs_system(
         (*client_window_focus == ClientWindowFocus::NoFocus)
             .then_some(SamplingPausedReason::WindowUnfocused)
     });
+    focus_pause.set_if_neq(FocusPause(focus_paused));
     #[cfg(target_arch = "wasm32")]
     let hud_main_thread_cost_window = crate::web::take_hud_main_thread_cost_window();
     #[cfg(not(target_arch = "wasm32"))]

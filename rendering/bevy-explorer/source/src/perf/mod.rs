@@ -161,7 +161,8 @@ pub(crate) struct PerformanceMeasurementPlugin;
 
 impl Plugin for PerformanceMeasurementPlugin {
     fn build(&self, app: &mut App) {
-        app.insert_resource(frame_inputs::FrameInputs::new())
+        app.init_resource::<common::perf::FocusPause>()
+            .insert_resource(frame_inputs::FrameInputs::new())
             .insert_resource(populating_sample::PerformancePopulatingSample::new())
             .insert_resource(frame_time_breakdown::MainWorldFrameTimer::new())
             .insert_resource(FrameTimeBreakdown {
