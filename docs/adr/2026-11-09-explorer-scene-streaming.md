@@ -79,10 +79,13 @@ the GPU.
   the cache when the player turns back. After a move or teleport, those two or more rings nearer
   than a drawn one in view take its place.
   The two-ring margin is the hysteresis: a step across a parcel edge moves each scene's ring by
-  at most one, so it never reverses a swap between stand-ins in view. Lowering the setting stops
-  the farthest over it, those behind the camera first. The cost of a stand-in is not known
-  before its files arrive, and a guess from the download misleads (a scene of flat PNGs takes
-  ten times its download in memory), so the cap counts scenes.
+  at most one, so it never reverses a swap between stand-ins in view. It is against parcel steps
+  only, not facing: when the nearer of two swapped stand-ins goes behind the camera the farther
+  one takes the place back, and gives it up again once the nearer one is in view, each a reload
+  from the cache. Lowering the setting stops the farthest over it, those behind the camera first.
+  The cost of a stand-in is not known before its files arrive, and a guess from the download
+  misleads (a scene of flat PNGs takes ten times its download in memory), so the cap counts
+  scenes.
 - **Definition.** A stand-in starts by loading the scene's entity definition as the live scene
   does, by hash or by the realm's urn, so the live scene gets the same handle and the entity
   file is fetched once. Nothing about a scene is kept before its stand-in starts: until then

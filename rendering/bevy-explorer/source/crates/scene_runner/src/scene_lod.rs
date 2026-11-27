@@ -822,7 +822,9 @@ fn in_draw_band(level: LodLevel, partition: &Partition, near_waiting: bool, ring
 /// How many rings farther than a newcomer a started stand-in in view must be to make way for it
 /// when every place is taken. More than one, so a step across a parcel edge, which moves each
 /// scene's ring by at most one, never reverses a swap: the stand-in that made way is still no
-/// nearer than the one that took its place.
+/// nearer than the one that took its place. The margin is against parcel steps only, not facing:
+/// when the nearer one goes behind the camera the farther one takes the place back, and gives it
+/// up again once the nearer one is in view, each a reload from the cache.
 const IN_VIEW_MAKE_WAY_RINGS: u16 = 2;
 
 /// The visuals of `level` to start and to stop this frame, keeping at most `max` started. Those
@@ -909,8 +911,8 @@ fn visual_changes(
                             .saturating_add(IN_VIEW_MAKE_WAY_RINGS)
             })
         }) {
-            Some((_, behind)) => {
-                stop.push(behind);
+            Some((_, made_way)) => {
+                stop.push(made_way);
                 start.push(entity);
             }
             None => break,
@@ -1875,7 +1877,7 @@ mod tests {
     }
 
     /// With every place taken, one started behind the camera makes way for one in view, the
-    /// farthest first; one in view makes way only for one at least two rings nearer.
+    /// farthest first.
     #[test]
     fn one_behind_makes_way_for_one_in_view() {
         let mut world = World::new();
@@ -1968,6 +1970,39 @@ mod tests {
             far_changes(&mut two_apart, 1),
             (vec![two_apart[1].0], vec![two_apart[0].0])
         );
+    }
+
+    /// The margin does not cover facing: a nearer stand-in that took a place gives it back once
+    /// it is behind the camera, and takes it again when it returns to view.
+    #[test]
+    fn a_swap_in_view_reverses_while_the_nearer_one_is_behind() {
+        let mut world = World::new();
+        let (nearer, farther) = (world.spawn_empty().id(), world.spawn_empty().id());
+        let far = |visuals| {
+            let mut lod = lod(LodState::Ready(Vec::new()), visuals);
+            lod.level = LodLevel::Far;
+            lod
+        };
+        let changes = |nearer_behind, nearer_drawn: bool| {
+            let (near_visuals, far_visuals) = if nearer_drawn {
+                (Visuals::Shown, Visuals::Off)
+            } else {
+                (Visuals::Off, Visuals::Shown)
+            };
+            let mut rows = [
+                (nearer, far(near_visuals), at_ring(8, nearer_behind)),
+                (farther, far(far_visuals), at_ring(10, false)),
+            ];
+            far_changes(&mut rows, 1)
+        };
+        // both in view, the nearer one drawn: nothing changes
+        assert_eq!(changes(false, true), (vec![], vec![]));
+        // the nearer one goes behind the camera: the farther one takes the place
+        assert_eq!(changes(true, true), (vec![farther], vec![nearer]));
+        // while it stays behind, the farther one keeps it
+        assert_eq!(changes(true, false), (vec![], vec![]));
+        // back in view, the nearer one takes it again
+        assert_eq!(changes(false, false), (vec![nearer], vec![farther]));
     }
 
     /// Near LODs follow the same rule: with every place taken by one in view, a near LOD in view at
