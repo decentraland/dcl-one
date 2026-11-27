@@ -561,7 +561,8 @@ fn wei_to_cents(wei: U256, rate_18: U256) -> i64 {
 /// `float / owed`, floored: two decimals below 1×, where the distance to
 /// fully covered matters, one above.
 fn times(float_cents: i64, owed_cents: i64) -> String {
-    let hundredths = (i128::from(float_cents) * 100 / i128::from(owed_cents)) as i64;
+    let hundredths =
+        i64::try_from(i128::from(float_cents) * 100 / i128::from(owed_cents)).unwrap_or(i64::MAX);
     if hundredths < 100 {
         format!("0.{hundredths:02}")
     } else {
@@ -773,8 +774,7 @@ fn float_lines(payload: &Value, lines: &mut Vec<String>, warnings: &mut Vec<Stri
     let per_day = wei(&payload["outflow7dWei"]) / U256::from(PACE_DAYS as u64);
     if per_day > U256::ZERO {
         let days = float / per_day;
-        let days_text =
-            u64::try_from(days).map_or_else(|_| days.to_string(), |d| grouped(d as i64));
+        let days_text = i64::try_from(days).map_or_else(|_| days.to_string(), grouped);
         coverage.push(format!(
             "~{days_text} days at the 7-day pace ({} MANA/day)",
             whole_mana(per_day)

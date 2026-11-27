@@ -2,6 +2,14 @@
 //! claim, the figures of a closed UTC day read from rows on both sides of
 //! its midnights, a chain that cannot be read, and the message.
 
+#![allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    clippy::cast_possible_wrap,
+    clippy::cast_precision_loss,
+    reason = "test fixtures use small literal values"
+)]
+
 use std::sync::Arc;
 
 use alloy_primitives::U256;
