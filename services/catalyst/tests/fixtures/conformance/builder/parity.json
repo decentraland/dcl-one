@@ -757,6 +757,11 @@
       "text": "GET /v1/thirdParties/:id/slots: when the database can't count the provider's submitted items, the node answers 500 {ok:false, data:{}, error:'Internal Server Error'} and logs the failure; upstream answers 200 with 0 free slots for any failure, which reads as a provider with no room left.",
       "captures": [],
       "anchors": []
+    },
+    "item-read-uncurated-third-party": {
+      "text": "GET /v1/items/:id: upstream answers a signer with no role every item of a third-party collection that has an item curation with the item's public body, curated or not (source/340-item-uncurated-in-curated-collection-stranger.json), while GET /v1/collections/:id/items lists only the curated ones to it (source/342-collection-items-curated-stranger.json). The node answers it the curated items and an item an active entity of its content holds at its URN (source/473-item-deployed-uncurated-stranger.json), and refuses any other uncurated draft with 403 Unauthorized (deliberate:denied-signer-forbidden). The captures replay against a seed whose content holds the uncurated item of capture 340, so they all agree; no capture records a refused draft.",
+      "captures": [],
+      "anchors": []
     }
   },
   "operations": [
@@ -908,7 +913,7 @@
       "id": "api_http:GET:/v1/items/:id",
       "owner": "items",
       "status": "reviewed",
-      "result": "Reads by the owner, a stranger, the committee, an on-chain manager and minter, and an admin wallet of draft, unminted, minted, approved, third-party and orphan items, and an unknown and a malformed id, were compared. Each caller is admitted or refused as upstream decides and gets upstream's body for it, the chain's values merged into a minted item and a third-party item's URN and values; the admin wallet gets the public body. The provider's manager reading a curated third-party item gets upstream's body: published, with the mapping flag of the newest curation of the collection's first curated item by id. A signer with no role reading a third-party item of a collection with item curations, curated or not, gets upstream's public body. An on-chain manager of a published collection reads an unminted item in full, a deliberate gap. A signed wallet refused for lack of a role gets 403 where upstream answers 401, a deliberate gap.",
+      "result": "Reads by the owner, a stranger, the committee, an on-chain manager and minter, and an admin wallet of draft, unminted, minted, approved, third-party and orphan items, and an unknown and a malformed id, were compared. Each caller is admitted or refused as upstream decides and gets upstream's body for it, the chain's values merged into a minted item and a third-party item's URN and values; the admin wallet gets the public body. The provider's manager reading a curated third-party item gets upstream's body: published, with the mapping flag of the newest curation of the collection's first curated item by id. A signer with no role reading a curated third-party item, or an uncurated one the node's content holds, gets upstream's public body; any other uncurated draft is refused, a deliberate gap. An on-chain manager of a published collection reads an unminted item in full, a deliberate gap. A signed wallet refused for lack of a role gets 403 where upstream answers 401, a deliberate gap.",
       "evidence": [
         {
           "path": "services/catalyst/tests/fixtures/conformance/builder/source/36-item-published-stranger.json",
@@ -1163,7 +1168,8 @@
         "deliberate:item-read-on-chain-manager",
         "deliberate:item-decided-by-its-collection",
         "deliberate:third-party-registry-read-window",
-        "deliberate:denied-signer-forbidden"
+        "deliberate:denied-signer-forbidden",
+        "deliberate:item-read-uncurated-third-party"
       ],
       "remaining_verification": "None for the catalyst state; the bodies of items the catalyst holds were compared for a third-party item never curated, a curated one and a minted standard one."
     },
