@@ -318,10 +318,15 @@ fn extras_collider_mask(extras: &str) -> Option<u32> {
 #[derive(Component)]
 pub struct GltfHandle(Handle<Gltf>);
 
-/// The glTF assets scenes share, by the url their file's bytes are read from
-/// (`IpfsIo::immutable_source_url`). It holds only assets whose file references no other file.
+/// The url a glTF file's bytes are read from, when every read of it gives the same bytes
+/// (`IpfsIo::immutable_source_url`): two models with the same `GltfUrl` hold the same file.
+#[derive(Clone, PartialEq, Eq, Hash, Debug)]
+struct GltfUrl(String);
+
+/// The glTF assets scenes share, by their [`GltfUrl`]. It holds only assets whose file
+/// references no other file.
 #[derive(Resource, Default)]
-pub(crate) struct SharedGltfs(HashMap<String, AssetId<Gltf>>);
+pub(crate) struct SharedGltfs(HashMap<GltfUrl, AssetId<Gltf>>);
 
 impl SharedGltfs {
     /// The number of models scenes can share.
@@ -335,7 +340,7 @@ impl SharedGltfs {
     fn adopt(
         &mut self,
         asset_server: &AssetServer,
-        url: String,
+        url: GltfUrl,
         h_gltf: &Handle<Gltf>,
         references_no_file: bool,
     ) -> Option<Handle<Gltf>> {
@@ -626,7 +631,7 @@ fn update_gltf(
         let shared = (part != Some(&GltfPart::Colliders) && !shared_gltfs.0.is_empty())
             .then(|| ipfas.content_file_source_url(&gltf.0.src, content_hash))
             .flatten()
-            .and_then(|url| shared_gltfs.0.get(&url).copied())
+            .and_then(|url| shared_gltfs.0.get(&GltfUrl(url)).copied())
             .and_then(|id| ipfas.asset_server().get_id_handle(id));
         let h_gltf = if part == Some(&GltfPart::Colliders) {
             Ok(
@@ -701,7 +706,8 @@ fn update_gltf(
         let url = (part != Some(&GltfPart::Colliders))
             .then(|| ipfas.asset_server().get_path(id))
             .flatten()
-            .and_then(|path| ipfas.ipfs().immutable_source_url(path.path()));
+            .and_then(|path| ipfas.ipfs().immutable_source_url(path.path()))
+            .map(GltfUrl);
         if let Some(url) = url {
             if let Some(h_shared) = shared_gltfs.adopt(
                 ipfas.asset_server(),

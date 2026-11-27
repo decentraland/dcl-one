@@ -940,7 +940,12 @@ fn adopt(app: &mut App, h_gltf: &Handle<Gltf>, references_no_file: bool) -> Opti
     let asset_server = app.world().resource::<AssetServer>().clone();
     app.world_mut()
         .resource_mut::<SharedGltfs>()
-        .adopt(&asset_server, URL.to_owned(), h_gltf, references_no_file)
+        .adopt(
+            &asset_server,
+            GltfUrl(URL.to_owned()),
+            h_gltf,
+            references_no_file,
+        )
         .map(|h_shared| h_shared.id())
 }
 
