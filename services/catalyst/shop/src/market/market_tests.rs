@@ -11020,6 +11020,19 @@ async fn catalog_resales_read_the_published_legacy_book_and_v3_listings() {
     assert_eq!(page["data"][0]["itemId"], "2");
     assert_eq!(page["data"][0]["listings"], 2);
 
+    for version in [1, 2] {
+        let (code, page) = get(
+            app(),
+            &format!(
+                "/v{version}/catalog?contractAddress={contract}&sortBy=newest&first=1&skip=12"
+            ),
+        )
+        .await;
+        assert_eq!(code, StatusCode::OK, "{page}");
+        assert_eq!(page["total"], 4);
+        assert_eq!(page["data"], json!([]));
+    }
+
     // Exact wire id and itemId scope intersect with concrete contracts.
     // A sibling on Ethereum does not introduce an Ethereum readiness dependency.
     let clone_to_eth = |id: i64| {
@@ -11142,6 +11155,24 @@ async fn catalog_resales_read_the_published_legacy_book_and_v3_listings() {
     super::owned_items::test_support::publish(pool, &[ChainNet::Matic], false, Duration::ZERO)
         .await;
 
+    let fold: chrono::NaiveDateTime = sqlx::query_scalar(
+        "UPDATE shop.chain_cursor SET folded_at=timezone('UTC',now()) - interval '2 minutes'
+         WHERE indexer='nft' AND network='matic' RETURNING folded_at",
+    )
+    .fetch_one(pool)
+    .await
+    .unwrap();
+    let stamp_uri = format!("/v1/catalog?network=MATIC&id={contract}-2");
+    for (reader, uri) in [
+        (memo.clone(), stamp_uri.clone()),
+        (app(), stamp_uri),
+        (app(), v2_exact("2")),
+    ] {
+        let (code, page) = get(reader, &uri).await;
+        assert_eq!(code, StatusCode::OK, "{page}");
+        let at = chrono::DateTime::parse_from_rfc3339(page["as_of"].as_str().unwrap()).unwrap();
+        assert_eq!(at.timestamp(), fold.and_utc().timestamp(), "{page}");
+    }
     let mint_path = format!("{}&onlyMinting=true&maxPrice=1", v2_exact("2"));
     sqlx::query("UPDATE shop.mirror_state SET last_complete_pass_at=NULL WHERE mirror='collections' AND network='matic'")
         .execute(pool).await.unwrap();
@@ -11154,6 +11185,8 @@ async fn catalog_resales_read_the_published_legacy_book_and_v3_listings() {
         page["data"][0].get("tradeId").is_none_or(Value::is_null),
         "{page}"
     );
+    assert_eq!(page["data"][0]["listings"], 1, "{page}");
+    assert_eq!(page["data"][0]["minListingPrice"], "10000000000000000000");
     sqlx::query("UPDATE shop.mirror_state SET last_complete_pass_at=timezone('UTC',now()) WHERE mirror='collections' AND network='matic'")
         .execute(pool).await.unwrap();
     let (code, page) = get(app(), &mint_path).await;

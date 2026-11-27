@@ -248,6 +248,11 @@ pub struct Stamp {
 }
 
 impl Stamp {
+    /// Date a fold that supplied fields on this read.
+    pub(super) fn note_fold(&mut self, folded_at: NaiveDateTime) {
+        self.index.push(folded_at);
+    }
+
     /// Records the copies for the answer's `as_of` and staleness.
     pub fn note(&self, state: &MarketplaceState) {
         for (m, at) in &self.mirror {

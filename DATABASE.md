@@ -3965,6 +3965,8 @@ The default cheapest sort uses the admitted listings to order the whole
 candidate set by the same price the page displays.
 V2 combines the legacy counts and prices with backed v3 resales. A v3
 resale needs published NFT ownership even when the legacy book is withheld.
+Polygon mainnet uses the folded item ID without the collection publication.
+Ethereum v1 and testnet attribution also use the served collection copy.
 V3 mint offers need a collection publication for the minter permission.
 Explicit mint-only V2 reads require this proof. Ordinary pages omit an
 unavailable contribution and keep the item page.
@@ -3978,7 +3980,6 @@ shorten the interval and trigger a fresh read. The partial
 `legacy_order_open_expiry_idx (network, expires_at)` supplies the first
 future expiry per network. A request waiting for a fetch of the same key
 releases its database connection.
-
 
 The transaction holds a pooled connection, so a reader never waits on
 anything else while it holds it:
@@ -5689,7 +5690,9 @@ no network), `legacy_order_seller_idx` (an owner's orders newest first),
 `legacy_order_created_idx` and `legacy_order_updated_idx` (the newest-first
 and recently-updated windows with no filter), `legacy_order_open_idx` (a
 contract's open orders by price) and `legacy_order_open_price_idx` (every
-open order by price). `legacy_order_issued_idx` supports unscoped token
+open order by price). `legacy_order_open_expiry_idx` reads the next open
+order expiry on each network for the v1 catalog memo.
+`legacy_order_issued_idx` supports unscoped token
 ID sorts in either direction, with an incremental sort for order ID ties.
 `legacy_order_price_idx` sorts unscoped orders by price and order ID
 when the caller asks for every status. See the

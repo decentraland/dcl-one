@@ -1660,10 +1660,16 @@ async fn catalog_scope(
     if is_v2 {
         scope.v3_mints = collections;
         if !f.only_minting {
-            for &net in &scope.v3_mints {
-                // The legacy book is a stronger check. When only its
-                // publication is unavailable, the v3 leg may still have
-                // current seller ownership on this snapshot.
+            for &net in &scope.nets {
+                // Polygon mainnet resolves the folded item without the
+                // collections copy. Ethereum's wearable URN and either
+                // testnet's catalogue proof still require that copy.
+                if !(scope.catalogue == Catalogue::Mainnet && net == ChainNet::Matic)
+                    && !scope.v3_mints.contains(&net)
+                {
+                    continue;
+                }
+                // A missing legacy book does not withdraw the NFT fold.
                 let published = scope.reads_book
                     || super::chain_walk::rows_published_on(
                         &mut read.tx,
@@ -1688,19 +1694,21 @@ async fn catalog_scope(
 async fn read_book_copy(
     read: &mut CatalogueRead,
     scope: &CatalogScope,
+    with_expiry: bool,
 ) -> Result<BookCopy, sqlx::Error> {
     let networks: Vec<&str> = scope.nets.iter().map(|net| net.db_name()).collect();
     sqlx::query_as(
-        "SELECT c.network, c.folded_block, c.folded_at, (
+        "SELECT c.network, c.folded_block, c.folded_at, CASE WHEN $3 THEN (
              SELECT o.expires_at FROM shop.legacy_order o
              WHERE o.network=c.network AND o.status='open' AND o.expires_at>$2
              ORDER BY o.expires_at LIMIT 1
-         )
+         ) END
          FROM shop.chain_cursor c
          WHERE c.indexer='nft' AND c.network=ANY($1) ORDER BY c.network",
     )
     .bind(&networks)
     .bind(read.now.timestamp_millis())
+    .bind(with_expiry)
     .fetch_all(&mut *read.tx)
     .await
 }
@@ -1743,38 +1751,49 @@ async fn catalog_inner(
             Ok(scope) => scope,
             Err(envelope) => return envelope,
         };
-        if is_v2 && !scope.v3_mints.is_empty() {
-            let now = read.now;
-            if let Err(error) = super::trades::ready_checked_for_networks_on(
-                &state,
-                &mut read.tx,
-                &scope.v3_mints,
-                now,
-            )
-            .await
-            {
-                return error.into_response(super::readers::index_read_error);
-            }
-        }
         if is_v2 {
-            match fetch_page(&state, &mut read, &filters, is_v2, Some(&scope)).await {
-                Ok(page) => {
-                    read.note(&state);
-                    break Arc::new(page);
+            let networks: Vec<_> = scope
+                .nets
+                .iter()
+                .copied()
+                .filter(|net| scope.v3_mints.contains(net) || scope.v3_resales.contains(net))
+                .collect();
+            if !networks.is_empty() {
+                let now = read.now;
+                if let Err(error) = super::trades::ready_checked_for_networks_on(
+                    &state,
+                    &mut read.tx,
+                    &networks,
+                    now,
+                )
+                .await
+                {
+                    return error.into_response(super::readers::index_read_error);
                 }
-                Err(e) => return e,
             }
         }
-        let orders = if scope.reads_book && state.catalog_cache.enabled() {
-            match read_book_copy(&mut read, &scope).await {
+        let orders = if scope.reads_book {
+            match read_book_copy(&mut read, &scope, !is_v2 && state.catalog_cache.enabled()).await {
                 Ok(book) => Some(book),
                 Err(error) => return super::readers::index_read_error(error),
             }
         } else {
             None
         };
-        let stamp = read.stamp();
-        let key = (filters.clone(), read.key(), orders.clone());
+        let mut stamp = read.stamp();
+        for (_, _, folded_at, _) in orders.iter().flatten() {
+            stamp.note_fold(*folded_at);
+        }
+        if is_v2 {
+            match fetch_page(&state, &mut read, &filters, is_v2, Some(&scope)).await {
+                Ok(page) => {
+                    stamp.note(&state);
+                    break Arc::new(page);
+                }
+                Err(e) => return e,
+            }
+        }
+        let key = (filters.clone(), read.key(), orders);
         let mut held = Some(read);
         match state
             .catalog_cache
@@ -1787,9 +1806,6 @@ async fn catalog_inner(
         {
             Ok(Some(page)) => {
                 stamp.note(&state);
-                for (_, _, at, _) in orders.into_iter().flatten() {
-                    super::mirrors::note_index_copy(at);
-                }
                 break page;
             }
             Ok(None) => continue,
@@ -1874,10 +1890,10 @@ mod tests {
         let scope = CatalogScope::new(Catalogue::Mainnet, vec![ChainNet::Matic]);
         let mut read = catalogue::begin_unchecked(&state).await;
         read.now = chrono::DateTime::from_timestamp_millis(2000).unwrap();
-        let first = read_book_copy(&mut read, &scope).await.unwrap();
+        let first = read_book_copy(&mut read, &scope, true).await.unwrap();
         assert_eq!(first[0].3, Some(2001));
         read.now = chrono::DateTime::from_timestamp_millis(2001).unwrap();
-        let next = read_book_copy(&mut read, &scope).await.unwrap();
+        let next = read_book_copy(&mut read, &scope, true).await.unwrap();
         assert_eq!(next[0].3, None);
         assert_eq!(first[0].1, next[0].1);
         assert_eq!(first[0].2, next[0].2);
