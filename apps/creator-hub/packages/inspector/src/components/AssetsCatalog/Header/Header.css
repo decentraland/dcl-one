@@ -24,3 +24,8 @@
   height: 28px;
   border-radius: 8px;
 }
+
+/* The menu is portaled and takes the field's width; the counts make some labels longer than that. */
+.OptionList.assets-catalog-header-category {
+  min-width: max-content;
+}

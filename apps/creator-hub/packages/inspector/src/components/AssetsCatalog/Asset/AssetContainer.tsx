@@ -43,14 +43,16 @@ const NAME_TOOLTIP_HEADROOM = 40;
 
 type NamePosition = 'top center' | 'bottom center' | 'left center';
 
-// A tile scrolled to the top of the list has no room above it inside the list: a tip there would
-// cover the asset pack path. It opens below the tile, or, with no room there either, to its left
-// (the smart item preview takes the right).
+// A tile scrolled to the top of the list has no room above it under the catalog header: a tip
+// there would cover the asset pack path. It opens below the tile, or, with no room there either,
+// to its left (the smart item preview takes the right).
 const getNameTooltipPosition = (tile: HTMLElement | null): NamePosition => {
-  const list = tile?.closest('.assets-catalog-categories');
-  if (!tile || !list) return 'top center';
+  const header = tile?.closest('.assets-catalog')?.querySelector('.assets-catalog-header');
+  if (!tile || !header) return 'top center';
   const box = tile.getBoundingClientRect();
-  if (box.top - list.getBoundingClientRect().top >= NAME_TOOLTIP_HEADROOM) return 'top center';
+  if (box.top - header.getBoundingClientRect().bottom >= NAME_TOOLTIP_HEADROOM) {
+    return 'top center';
+  }
   if (window.innerHeight - box.bottom >= NAME_TOOLTIP_HEADROOM) return 'bottom center';
   return 'left center';
 };
