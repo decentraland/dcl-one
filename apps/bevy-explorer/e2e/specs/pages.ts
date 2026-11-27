@@ -5,7 +5,7 @@
 // the key hints in the top-bar tabs are the engine's default bindings, so a tab is `Places [Z]`:
 // the `[`, the key and the `]` are adjacent text nodes, one run of text as the browser reads it. A panel row's key hint is hidden from the name: the row is
 // `Places`.
-import type { Explorer, Selector } from '../driver/index.ts'
+import { until, type Explorer, type Selector } from '../driver/index.ts'
 
 /** A community card's name without the initial its cover shows for an image that did not load,
  *  which shows only once the image fails: the initial is dropped when the next word starts with it. */
@@ -54,6 +54,23 @@ export const PAGES: Record<PageName, Page> = {
 export const PAGE_OPEN_TIMEOUT_MS = 20_000
 /** The most a rail button's panel is given to put up its rows. */
 export const RAIL_PANEL_TIMEOUT_MS = 10_000
+
+/** The rail button that shows and hides the minimap; pressed while it shows. */
+export const MAP_BUTTON: Selector = { name: 'Map', role: 'button' }
+
+/** Show or hide the minimap with the rail's Map button; answers whether it was shown before. */
+export async function showMinimap(explorer: Explorer, wanted: boolean): Promise<boolean> {
+  await explorer.hud.wait(MAP_BUTTON, { state: 'actionable', timeoutMs: PAGE_OPEN_TIMEOUT_MS })
+  const shown = (await explorer.hud.get(MAP_BUTTON)).checked === true
+  if (shown !== wanted) {
+    await explorer.hud.click(MAP_BUTTON)
+    await until(async () => (await explorer.hud.get(MAP_BUTTON)).checked === true, (now) => now === wanted, {
+      timeoutMs: PAGE_OPEN_TIMEOUT_MS,
+      what: `the rail's Map button to read ${wanted ? 'pressed' : 'not pressed'}`
+    })
+  }
+  return shown
+}
 /** The most an Escape is given to close a page, which takes a third of a second: a ceiling for a
  *  press the page did not take, before the top bar's Close button. */
 const PAGE_CLOSE_TIMEOUT_MS = 10_000

@@ -345,6 +345,25 @@ from HUD-side key matching. The rules:
 - Key **labels** come from `bindingLabels` (`keyHintFor`/`labelForInput`), never hardcoded
   letters — they follow the user's rebinds and keyboard layout.
 
+## Scene ban
+
+A scene or world that refuses the signed-in player as banned leaves its parcel empty and turns
+nearby voice off. The engine says which ban refuses the scene the player stands in
+(`bridge-scene/src/domains/sceneBan.ts`); a platform ban is not one and keeps its own notice.
+Expectations:
+
+- **Stream**: the engine's `sceneBan` message (`getSceneBanStream`), sent on subscribe and on every
+  change, with `scope` `scene`, `world` or null. The bridge sends the last one again on `hello`.
+- **Minimap**: the header shows an image named `Banned from this scene` (or `world`) while the
+  scope is set, beside the `Scene restrictions` image when the scene also turns something off. Its
+  tooltip is the notice below. A scene that only turns nearby voice off shows no ban mark.
+- **Notice**: once the world shows, a toast says why for 10 s, whether or not the minimap is
+  shown: each time the mark appears, not again while it stands (scenes loading nearby raise the
+  loader). An admission, a move to another scene or a sign-out takes the mark and the notice
+  down.
+- Tests: `library/ui/apps/hud/test/hosted/sceneBan.test.tsx`,
+  `library/ui/apps/hud/test/hosted/minimap.render.test.tsx`, `src/test/bridgeSceneBan.test.ts`.
+
 ## Portables
 
 A portable experience runs beside the scene the player stands in: a smart wearable's scene

@@ -4417,6 +4417,10 @@
         {
           "name": "icons.tsx",
           "kind": "regular"
+        },
+        {
+          "name": "sceneBan.ts",
+          "kind": "regular"
         }
       ]
     },
@@ -5664,6 +5668,10 @@
         },
         {
           "name": "rewardPopup.test.tsx",
+          "kind": "regular"
+        },
+        {
+          "name": "sceneBan.test.tsx",
           "kind": "regular"
         },
         {
@@ -9989,7 +9997,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/bevy-api.ts",
-      "sha256": "dde4dc812625670927ce2037d6ca214fa7a5619f3e8fffebb65e7a4ee84bb1c9"
+      "sha256": "08c19fa795d04a7bb2005fa73f4d27b9ab846766b6d3e2124dedbb5759f9698d"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/bridge.ts",
@@ -10114,6 +10122,10 @@
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/reactions.ts",
       "sha256": "8a53a9174dd2c0864b97d0c4c783b0fffc46b27dc5f075227c49d739fe3649b9"
+    },
+    {
+      "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/sceneBan.ts",
+      "sha256": "f4e250b12844cc95efba52800e8b0cc95ecaf4799493fe352350468c6f8e491c"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/session.ts",
@@ -10404,6 +10416,10 @@
       "sha256": "5b5d5405163c10ffe4215a45e8e6f25846bffe6049e0c78629977ae276910be1"
     },
     {
+      "path": "rendering/bevy-explorer/source/react-web/src/test/bridgeSceneBan.test.ts",
+      "sha256": "5ebeebf487ba7e6d9509bd8bcc52d46a20056406361463b19b3a8380f8555ae2"
+    },
+    {
       "path": "rendering/bevy-explorer/source/react-web/src/test/bridgeSceneLookup.test.ts",
       "sha256": "48c81a65c30bd3ef01ac099db7f074a7371964711a001c41adcbfc9e0369a265"
     },
@@ -10565,7 +10581,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/tsconfig.json",
-      "sha256": "a4bfe115cd806aa8e3996d899255d26c5bd1ac8329e13ee9ce2fe2bddb3478d7"
+      "sha256": "aa38042c97a7e29115abcbb5e6668759cf42568c2ec6efd87252e978ff9feb52"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/vite.config.ts",
@@ -10634,6 +10650,7 @@
     "rendering/bevy-explorer/source/react-web/src/test/bridgeReactions.test.ts",
     "rendering/bevy-explorer/source/react-web/src/test/bridgeRelay.test.ts",
     "rendering/bevy-explorer/source/react-web/src/test/bridgeResolveWearables.test.ts",
+    "rendering/bevy-explorer/source/react-web/src/test/bridgeSceneBan.test.ts",
     "rendering/bevy-explorer/source/react-web/src/test/bridgeSceneLookup.test.ts",
     "rendering/bevy-explorer/source/react-web/src/test/bridgeSession.test.ts",
     "rendering/bevy-explorer/source/react-web/src/test/bridgeSettings.test.ts",
@@ -10766,7 +10783,7 @@
     },
     {
       "path": "library/explorer-core/engine/protocol.ts",
-      "sha256": "59266868ee63712f6ede1157c5f6ad4e180dfc946e74666385547e7b68e2554e"
+      "sha256": "98fed5c154693eb7eae3a08b188e6ed502669c849ef0cbd215d3c40401dec22b"
     },
     {
       "path": "library/explorer-core/engine/requestIds.ts",
@@ -13882,7 +13899,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/minimap/Minimap.tsx",
-      "sha256": "8d00a7f7e5ea2ab428af1401b010c2c27f9627cabf926aff1f5d9ce1b272c031"
+      "sha256": "e60df497571e1732d994e6d7c0292821c55bf1548ccea23894fdf01a95838ee6"
     },
     {
       "path": "library/ui/apps/hud/features/minimap/MinimapSettings.module.css",
@@ -13898,15 +13915,19 @@
     },
     {
       "path": "library/ui/apps/hud/features/minimap/SceneRestrictions.module.css",
-      "sha256": "7db8b252b71265bcaeb99c039c2c75a4c9d1f872f9a00ccf619a186910d9ce11"
+      "sha256": "a5d050d1cd84e5ecb6d8dfe25f135b5ec25d927ef063f18f77e31e5dd902162e"
     },
     {
       "path": "library/ui/apps/hud/features/minimap/SceneRestrictions.tsx",
-      "sha256": "d53c1059ffaba9b53786ce8958d56cdec785c8a667a2986483c2096c6a88918b"
+      "sha256": "381501c7e56a68a8760eefc59660e54f82a270b0a0590732f14af4248826c0c1"
     },
     {
       "path": "library/ui/apps/hud/features/minimap/icons.tsx",
       "sha256": "7534eed2a15a7c6d9f66a820b1ac1b2d3ea3a058b3f3b563047bbfc14022bc56"
+    },
+    {
+      "path": "library/ui/apps/hud/features/minimap/sceneBan.ts",
+      "sha256": "6c35f27a0538274044f8c95518893f6cdfc754a41935a563717a4ff415ac2a54"
     },
     {
       "path": "library/ui/apps/hud/features/notifications/NotificationToast.module.css",
@@ -14110,7 +14131,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/session/useEngineSession.ts",
-      "sha256": "d97915bbc7790460de5c03df0b4305a7ccfb6b3b108f1c40f722d2b4c8845293"
+      "sha256": "5eb68f2111c2a152746e1db2de64e2dfb83b6e0e87be7e2ef86a52ec7ace9455"
     },
     {
       "path": "library/ui/apps/hud/features/settings/KeyBindingsTab.module.css",
@@ -14458,7 +14479,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/harness.tsx",
-      "sha256": "d7e4a1ede9f7b0a34007023bee7f0f5429b386f51543f8c8ee745851c0798b8a"
+      "sha256": "046e7b049b640828085dc0df0d1afb995f290e48f6a7a391c9f02656735f410a"
     },
     {
       "path": "library/ui/apps/hud/test/hintsButton.test.tsx",
@@ -14774,7 +14795,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/hosted/minimap.render.test.tsx",
-      "sha256": "233d846818c4f60a2a14c121b6af5f946412965570199717c87fffc3dbce8e97"
+      "sha256": "0c79350c9196498a01466ad1c278251912092c94fe8249472b79ff7f3c6edb49"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/minimapCamera.session.test.tsx",
@@ -14875,6 +14896,10 @@
     {
       "path": "library/ui/apps/hud/test/hosted/rewardPopup.test.tsx",
       "sha256": "2c60eadb5a2aeef9e60f98bb3a7d8b00d4613d6ba7d7e3a3db8cfb16e2e19713"
+    },
+    {
+      "path": "library/ui/apps/hud/test/hosted/sceneBan.test.tsx",
+      "sha256": "fb2c8b21bbb4eee8176ed878f0f28006817d006e3502a9cc41976cb6643b1c18"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/settings.clicks.test.tsx",
@@ -36851,6 +36876,21 @@
     },
     {
       "from": "library/ui/apps/hud/features/minimap/SceneRestrictions.tsx",
+      "to": "library/ui/apps/hud/features/minimap/sceneBan.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/minimap/SceneRestrictions.tsx",
+      "to": "library/ui/apps/hud/features/minimap/sceneBan.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/minimap/SceneRestrictions.tsx",
+      "to": "library/ui/apps/hud/features/minimap/sceneBan.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/minimap/SceneRestrictions.tsx",
       "to": "library/ui/index.ts",
       "kind": "native:runtime"
     },
@@ -40616,6 +40656,21 @@
     },
     {
       "from": "library/ui/apps/hud/features/session/useEngineSession.ts",
+      "to": "library/ui/apps/hud/features/minimap/sceneBan.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/session/useEngineSession.ts",
+      "to": "library/ui/apps/hud/features/minimap/sceneBan.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/session/useEngineSession.ts",
+      "to": "library/ui/apps/hud/features/minimap/sceneBan.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/session/useEngineSession.ts",
       "to": "library/ui/apps/hud/features/notifications/NotificationToast.tsx",
       "kind": "native:runtime"
     },
@@ -49316,6 +49371,21 @@
     },
     {
       "from": "library/ui/apps/hud/test/hosted/minimap.render.test.tsx",
+      "to": "library/ui/apps/hud/features/minimap/sceneBan.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/minimap.render.test.tsx",
+      "to": "library/ui/apps/hud/features/minimap/sceneBan.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/minimap.render.test.tsx",
+      "to": "library/ui/apps/hud/features/minimap/sceneBan.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/minimap.render.test.tsx",
       "to": "library/ui/apps/hud/test/harness.tsx",
       "kind": "native:runtime"
     },
@@ -50557,6 +50627,51 @@
     {
       "from": "library/ui/apps/hud/test/hosted/rewardPopup.test.tsx",
       "to": "library/ui/apps/hud/features/rewards/RewardPopup.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/sceneBan.test.tsx",
+      "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/sceneBan.test.tsx",
+      "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/sceneBan.test.tsx",
+      "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/sceneBan.test.tsx",
+      "to": "library/ui/apps/hud/features/minimap/sceneBan.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/sceneBan.test.tsx",
+      "to": "library/ui/apps/hud/features/minimap/sceneBan.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/sceneBan.test.tsx",
+      "to": "library/ui/apps/hud/features/minimap/sceneBan.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/sceneBan.test.tsx",
+      "to": "library/ui/apps/hud/test/harness.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/sceneBan.test.tsx",
+      "to": "library/ui/apps/hud/test/harness.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/sceneBan.test.tsx",
+      "to": "library/ui/apps/hud/test/harness.tsx",
       "kind": "test:runtime"
     },
     {
@@ -69051,6 +69166,11 @@
     },
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/ui/apps/hud/features/minimap/sceneBan.ts",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/ui/apps/hud/features/notifications/NotificationToast.tsx",
       "kind": "type"
     },
@@ -70052,6 +70172,11 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/ui/apps/hud/test/hosted/rewardPopup.test.tsx",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/ui/apps/hud/test/hosted/sceneBan.test.tsx",
       "kind": "type"
     },
     {

@@ -20,6 +20,7 @@ import type {
   PortableInfo,
   ReactionData,
   SatelliteView,
+  SceneBanNotice,
   SceneLoadingUi,
   TextureOptimizationStatus,
   VoiceChatAction,
@@ -1236,6 +1237,13 @@ export const PLATFORM_BANNED_REFUSAL = 'You are banned from Decentraland'
 export interface PlatformBanMessage {
   kind: 'platformBan'
   ban: PlatformBanNotice
+}
+
+/** The local user's scene or world ban for the scene they stand in, whole on subscribe and on every
+ *  change (scene → page). `scope` is null while the scene's room has not refused them as banned. */
+export interface SceneBanMessage {
+  kind: 'sceneBan'
+  ban: SceneBanNotice
 }
 
 /** The engine no longer needs the password prompt answered (its realm change is over). */
@@ -2781,6 +2789,7 @@ export type SceneToPage =
   | WorldPasswordWithdrawnMessage
   | ItemPurchaseRequestMessage
   | PlatformBanMessage
+  | SceneBanMessage
   | EditorSceneResultMessage
   | PortablesMessage
   | MapPinsMessage

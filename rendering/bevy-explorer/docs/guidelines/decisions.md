@@ -346,6 +346,7 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
     unaffected.
   - Don't offer Speak there: the nearby voice popover still opens, with Speak disabled and the same
     hint, so hearing and volume stay adjustable; the minimap header lists "Nearby voice disabled".
+    A ban that turns it off is marked there too ("The minimap marks a scene or world ban").
   - A scene room that refuses the player as banned (a platform, world or scene ban, as
     `SceneAdmission` reads the refusal) turns nearby voice off the same way. The room asks again
     every 15 s, since an unban reaches only the players inside it; an admission, or a new scene,
@@ -618,10 +619,25 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   requests fresh admission; other room types retain their existing denial behavior. Preview,
   local and headless scene lifecycles are exempt from local-player unloading. Teleport arrival
   onto a refused parcel completes without waiting for the deliberately absent scene root.
-  Unloading is a deliberate divergence from Unity Explorer's minimap ban mark: it prevents
+  Unloading is a deliberate divergence from Unity Explorer, which keeps the scene and only
+  marks the ban on its minimap: it prevents
   refused scene scripts from running while the player is nearby. A later platform refusal is
   reported independently of the retained scene/world ban, so device bans reach platform status
   even while the user stays on a scene that already refused them.
+- **The minimap marks a scene or world ban.** While `SceneAdmission` reads the current scene's
+  refusal as a scene or world ban, `ban_block` streams its scope to the HUD
+  (`GetSceneBanStream`) and the minimap header shows a mark named "Banned from this scene" (or
+  "world") beside the scene restrictions, so a ban reads apart from a scene that turns nearby
+  voice off. The mark follows the current scene: it goes on a neighbouring parcel, returns with
+  the retained refusal and leaves on a fresh admission. Once the world shows, a notice says why
+  for 10 s each time the mark appears, as unity-explorer's tooltip does
+  (`SHOW_BANNED_TOOLTIP_DELAY_SEC`), and not again while it stands.
+  Differences: the notice is a toast, since the minimap here can be hidden and unity-explorer's
+  cannot; its text says the scene stays unloaded, which unity-explorer's does not ("You will not
+  be visible to others in this scene or be able to participate in the Nearby chat"); a world ban
+  has its own wording; the mark needs no `alfa-banned-users-from-scene` flag. A platform ban
+  shows no mark: it has its blocking notice. The text is not adapted for preview and local
+  scenes, which are exempt from unloading.
 - **Realm entry refused during a platform ban.** The realm change reads `PlatformBanStatus`
   (`common::platform_ban`) and, while a platform ban is known, refuses every request ("You are
   banned from Decentraland"), so the lobby's pick, a link held for the

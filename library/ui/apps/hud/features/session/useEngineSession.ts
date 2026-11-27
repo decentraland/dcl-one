@@ -9,7 +9,7 @@ import type { LaunchHostOptions } from '@explorer-core/engine/engineRpc'
 import { fetchCrowd, recordVisit } from '@explorer-core/features/lobby/lobbyApi'
 import { type GotoTarget, randomParcel, worldOfRealm } from '@explorer-core/features/lobby/goto'
 import { answerItemPurchase, type PurchaseSceneItem } from '../itemPurchase/answer'
-import type { PlatformBanNotice, PortableInfo, PortableState, SatelliteView, WorldAccessVerdict } from '@explorer-core/engine/generated'
+import type { PlatformBanNotice, PortableInfo, PortableState, SatelliteView, SceneBanScope, WorldAccessVerdict } from '@explorer-core/engine/generated'
 import type { AvatarLook } from '@explorer-core/engine/avatarEquip'
 import { PLATFORM_BANNED_REFUSAL, type UiSound, type EngineViewportRegion, type GiftingPageMessage, type GiftingQueryRequest, type PhotoModeSnapshot, type PhotoModeSource, type PreviewFocus, type PreviewStageFraming, type SituationalReaction } from '@explorer-core/engine/protocol'
 import { clickButton, screenViewed, sessionId, track } from '@explorer-core/lib/analytics'
@@ -26,7 +26,8 @@ import { provideHudLogin, provideHudLogout, type HudLoginReply, type HudLoginReq
 import { checkRealm, realmCheckMessage } from '@explorer-core/lib/realmCheck'
 import { entryRealm } from '@hud-host'
 import { color3ToHex, hexToColor3 } from '@explorer-core/lib/color'
-import { closeTopPopup, hasOpenPopup, showToast, subscribePopups, topPopupOrder } from '../../design'
+import { closeTopPopup, dismissToast, hasOpenPopup, showToast, subscribePopups, topPopupOrder } from '../../design'
+import { SCENE_BAN_NOTICE, SCENE_BAN_NOTICE_MS, SCENE_BAN_TOAST } from '../minimap/sceneBan'
 import { closeDebugPanel, isDebugPanelOpen, requestDebugPanel } from '../debug/useDebugPanel'
 import { emitFriendEvent } from '@explorer-core/features/friends/friendEvents'
 import { toastFriendOnline, toastFriendResult } from '../friends/friendToasts'
@@ -528,6 +529,9 @@ export interface MinimapState {
   sceneTitle: string
   /** What the scene the player is standing in turns off, for the header's restrictions list. */
   restrictions: string[]
+  /** The ban that refuses the player the scene they stand in (the engine's scene admission), for the
+   *  header's mark; null while admitted, and for a platform ban, which has its own notice. */
+  sceneBan: SceneBanScope | null
   /** The place the player stands in, as Donate names it (a Genesis City parcel or a World); null in a preview,
    *  a local realm or between scenes. */
   donatePlace: DonatePlace | null
@@ -1518,6 +1522,7 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
   const pushSystemMessageRef = useRef<(message: string) => void>(() => undefined)
   const [travelError, setTravelError] = useState<string | null>(null)
   const [platformBan, setPlatformBan] = useState<PlatformBanNotice | null>(null)
+  const [sceneBan, setSceneBan] = useState<SceneBanScope | null>(null)
   const [banRefusedTravel, setBanRefusedTravel] = useState(false)
   const [editorMode, setEditorModeState] = useState<EditorHudMode>('off')
   const [playerReady, setPlayerReady] = useState(false)
@@ -2904,6 +2909,9 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
           break
         case 'platformBan':
           setPlatformBan(msg.ban.banned ? msg.ban : null)
+          break
+        case 'sceneBan':
+          setSceneBan(msg.ban.scope)
           break
         case 'portables': {
           const before = portableStates.current
@@ -4710,6 +4718,7 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
     portableToasts.current = false
     // clears the ban and the refused travel, and retires the travel id and loader in flight
     setPlatformBan(null)
+    setSceneBan(null)
     setBanRefusedTravel(false)
     travelSeq.current++
     setTravellingTo(null)
@@ -5127,6 +5136,20 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
     return () => clearTimeout(t)
   }, [loadingNow])
 
+  // A scene or world ban says why once the world shows, once for as long as it stands: the minimap
+  // that marks it can be hidden, and scenes loading nearby raise the loader again and again.
+  const sceneBanAnnounced = useRef(false)
+  useEffect(() => {
+    if (sceneBan == null) {
+      sceneBanAnnounced.current = false
+      dismissToast(SCENE_BAN_TOAST)
+      return
+    }
+    if (loaderActive || sceneBanAnnounced.current) return
+    sceneBanAnnounced.current = true
+    showToast(SCENE_BAN_NOTICE[sceneBan], { key: SCENE_BAN_TOAST, duration: SCENE_BAN_NOTICE_MS })
+  }, [sceneBan, loaderActive])
+
   const loadingTracker = useRef(createLoadingProgress())
   if (!loaderActive) loadingTracker.current.reset()
   const loadingProgress = loaderActive
@@ -5499,13 +5522,14 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
       satelliteView,
       sceneTitle,
       restrictions: mic.sceneBlocked ? [NEARBY_VOICE_RESTRICTION] : [],
+      sceneBan,
       donatePlace: donatePlaceKey ? (JSON.parse(donatePlaceKey) as DonatePlace) : null,
       linkRealm,
       setConfig: setMinimapConfig,
       cameraReady: minimapCameraReady,
       reloadScene
     }),
-    [satelliteView, sceneTitle, mic.sceneBlocked, donatePlaceKey, linkRealm, setMinimapConfig, minimapCameraReady, reloadScene]
+    [satelliteView, sceneTitle, mic.sceneBlocked, sceneBan, donatePlaceKey, linkRealm, setMinimapConfig, minimapCameraReady, reloadScene]
   )
 
   return {

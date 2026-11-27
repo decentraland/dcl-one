@@ -240,6 +240,9 @@ pub enum SystemApi {
     SetWorldPassword(Option<world_access::WorldPassword>),
     /// The signed-in wallet's platform ban: now, then again on every change.
     GetPlatformBanStream(RpcStreamSender<PlatformBanNotice>),
+    /// The local user's scene or world ban for the current scene: now, then again on every
+    /// change.
+    GetSceneBanStream(RpcStreamSender<SceneBanNotice>),
     SetInteractableArea(Vec4),
     GetMicState(RpcResultSender<MicState>),
     SetMicEnabled(bool),

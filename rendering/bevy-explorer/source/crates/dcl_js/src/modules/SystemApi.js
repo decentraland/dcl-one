@@ -668,6 +668,22 @@ module.exports.getPlatformBanStream = async function() {
   return streamGenerator();
 }
 
+// the local user's scene or world ban for the current scene: now, then again on every change
+// type SceneBanNotice = { scope: "scene" | "world" | null }
+module.exports.getSceneBanStream = async function() {
+  const rid = await Deno.core.ops.op_get_scene_ban_stream();
+
+  async function* streamGenerator() {
+    while (true) {
+      const next = await Deno.core.ops.op_read_scene_ban_stream(rid);
+      if (next === null) break;
+      yield next;
+    }
+  }
+
+  return streamGenerator();
+}
+
 // answer the password prompt; password null = the player gave up
 module.exports.setWorldPassword = function(body) {
     Deno.core.ops.op_set_world_password(body.password ?? null);

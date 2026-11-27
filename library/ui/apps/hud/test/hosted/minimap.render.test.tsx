@@ -9,6 +9,8 @@ import { navigation } from '@explorer-core/features/map/navigation'
 import { mapPins } from '@explorer-core/features/map/mapPins'
 import { MARKER_ART } from '../../features/map/mapArt'
 import { saveOpen } from '@explorer-core/features/minimap/minimapPrefs'
+import { SCENE_BAN_NOTICE } from '../../features/minimap/sceneBan'
+import type { SceneBanScope } from '@explorer-core/engine/generated'
 
 const placeAt = vi.hoisted(() => ({ place: null as unknown }))
 // The layer data is one store for the page, read the first time a map asks: the live event is there
@@ -25,9 +27,9 @@ vi.mock('@explorer-core/features/map/mapApi', async (original) => ({
 
 // The minimap header: the scene name comes from the sceneInfo stream (see world.test.tsx for
 // the wiring); this covers what the header actually renders, including the empty-parcel case.
-async function renderMinimap(sceneTitle: string, restrictions: string[] = []): Promise<void> {
+async function renderMinimap(sceneTitle: string, restrictions: string[] = [], sceneBan: SceneBanScope | null = null): Promise<void> {
   const session = fakeSession()
-  await renderSettled(<Minimap minimap={{ ...session.minimap, restrictions }} map={session.map} sceneTitle={sceneTitle} setEngineViewport={vi.fn()} />)
+  await renderSettled(<Minimap minimap={{ ...session.minimap, restrictions, sceneBan }} map={session.map} sceneTitle={sceneTitle} setEngineViewport={vi.fn()} />)
 }
 
 beforeEach(() => {
@@ -62,6 +64,26 @@ describe('minimap header', () => {
     await renderMinimap('Quiet Scene', ['Nearby voice disabled'])
     expect(screen.getByRole('img', { name: 'Scene restrictions: Nearby voice disabled' })).toBeInTheDocument()
     expect(screen.getByRole('tooltip')).toHaveTextContent('\u2022 Nearby voice disabled')
+    expect(screen.queryByRole('img', { name: /Banned from/ })).toBeNull()
+  })
+
+  it('marks a scene ban and says what it means', async () => {
+    await renderMinimap('', [], 'scene')
+    expect(screen.getByRole('img', { name: 'Banned from this scene' })).toBeInTheDocument()
+    expect(screen.getByRole('tooltip')).toHaveTextContent(SCENE_BAN_NOTICE.scene)
+    expect(screen.queryByRole('img', { name: /Scene restrictions/ })).toBeNull()
+  })
+
+  it('marks a world ban as one', async () => {
+    await renderMinimap('', [], 'world')
+    expect(screen.getByRole('img', { name: 'Banned from this world' })).toBeInTheDocument()
+    expect(screen.getByRole('tooltip')).toHaveTextContent(SCENE_BAN_NOTICE.world)
+  })
+
+  it('lists the voice restriction beside the ban', async () => {
+    await renderMinimap('', ['Nearby voice disabled'], 'scene')
+    expect(screen.getByRole('img', { name: 'Banned from this scene' })).toBeInTheDocument()
+    expect(screen.getByRole('img', { name: 'Scene restrictions: Nearby voice disabled' })).toBeInTheDocument()
   })
 
   it('shows no restrictions icon where the scene turns nothing off', async () => {

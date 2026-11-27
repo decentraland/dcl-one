@@ -1,5 +1,6 @@
 // The scene room reports admission and moderation lists. A scene ban unloads the parcel scene
-// while the player remains in the world. A later successful admission restores the scene.
+// while the player remains in the world, and the minimap marks the ban while the player stands on
+// that parcel. A later successful admission restores the scene and takes the mark down.
 //
 // | Scenario                                                   | Class            |
 // | a scene room reports its admission and moderation lists    | New              |
@@ -10,7 +11,8 @@
 // (`--comms-gatekeeper`); on the web a service override stops the boot at the launch gate.
 import assert from 'node:assert/strict'
 import { before } from 'node:test'
-import { readTarget, refusal, sharedGatekeeperStub, spec, until, type GatekeeperStub } from '../driver/index.ts'
+import { readTarget, refusal, sharedGatekeeperStub, spec, until, type GatekeeperStub, type Selector } from '../driver/index.ts'
+import { showMinimap } from './pages.ts'
 
 const scenario = spec(import.meta.url)
 
@@ -21,6 +23,8 @@ const native = readTarget().transport === 'native'
 const SCENE_PARCEL: [number, number] = [0, 0]
 /** An empty parcel far from any scene room. */
 const EMPTY_PARCEL: [number, number] = [-130, 130]
+/** The minimap header's mark for a scene ban (library/ui/apps/hud/features/minimap/sceneBan.ts). */
+const BAN_MARK: Selector = { name: 'Banned from this scene', role: 'img' }
 
 let stub: GatekeeperStub | undefined
 before(async () => {
@@ -74,6 +78,9 @@ scenario(
     const neighbour = neighbours[0]
     assert.ok(neighbour, 'the scene has a neighbouring parcel')
     await explorer.teleport(...EMPTY_PARCEL)
+    // the mark is in the minimap's header, which the rail's Map button shows; no ban, no mark
+    const minimapWasShown = await showMinimap(explorer, true)
+    await explorer.hud.waitHidden(BAN_MARK, ROOM_TIMEOUT_MS)
     stub.sceneAdapter(refusal(403, 'User is banned from this scene'))
     try {
       await explorer.teleport(...SCENE_PARCEL)
@@ -91,6 +98,7 @@ scenario(
         what: 'the refused scene to unload'
       })
       assert.ok((await explorer.worldState()).inWorld)
+      await explorer.hud.wait(BAN_MARK, { timeoutMs: ROOM_TIMEOUT_MS })
       await explorer.teleport(...neighbour)
       await until(() => explorer.banBlockState(), (s) => s.sceneAdmission.sceneId !== state.sceneAdmission.sceneId, {
         timeoutMs: ROOM_TIMEOUT_MS, what: 'the room target to leave the refused scene'
@@ -104,6 +112,7 @@ scenario(
         })
       assert.equal((await loadingState()).stage, absent)
       assert.ok((await explorer.worldState()).inWorld, 'returning to a banned parcel must finish teleport arrival')
+      await explorer.hud.wait(BAN_MARK, { timeoutMs: ROOM_TIMEOUT_MS })
 
       // Admission succeeds; a loopback endpoint keeps the transport out of this assertion.
       stub.sceneAdapter({ status: 200, body: { adapter: 'livekit:wss://127.0.0.1:9/?access_token=e2e-admission' } })
@@ -111,6 +120,7 @@ scenario(
         timeoutMs: ROOM_TIMEOUT_MS,
         what: 'a fresh admission to lift the scene ban'
       })
+      await explorer.hud.waitHidden(BAN_MARK, ROOM_TIMEOUT_MS)
       await until(loadingState, (s) => s.stage === 'Running', {
         timeoutMs: ROOM_TIMEOUT_MS,
         what: 'the scene to load again on the same parcel'
@@ -118,6 +128,7 @@ scenario(
     } finally {
       stub.sceneAdapter(refusal(503, 'stub has no adapter', { 'retry-after': '1' }))
     }
+    await showMinimap(explorer, minimapWasShown)
   },
   native ? { session: { nativeArgs: ['--comms-gatekeeper', `http://127.0.0.1:${STUB_PORT}`] } } : { todo: 'web: a loopback service override stops at the launch gate' }
 )

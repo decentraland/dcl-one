@@ -293,7 +293,8 @@ stub, a `/changerealm` refused while banned, including for a new sign-in before 
 their absence on an empty parcel, and, on the standalone against the same stub, a refused scene
 adapter unloading its scene, a visit to a neighbouring parcel and return while still refused,
 completion of teleport arrival on return, followed by fresh admission and reloading on that
-parcel. `/ban_block_state` exposes `sceneAdmission.retainedRefusals` (scene id, scope and
+parcel; the minimap's `Banned from this scene` image is absent before the refusal, shows on the
+refused parcel, on arrival and on return, and is gone after the admission. `/ban_block_state` exposes `sceneAdmission.retainedRefusals` (scene id, scope and
 `retryDue` in elapsed engine seconds) for refusals retained while visiting another scene.
 The accepted adapter points at an unused loopback endpoint: this scenario
 checks admission and scene lifetime, not a successful LiveKit connection.
