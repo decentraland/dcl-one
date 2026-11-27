@@ -1472,7 +1472,7 @@ Tables and what they hold:
   (`uploaded_contents_size_check`; step `0091_builder_uploaded_video_size`
   sets it on an applied database). `video` is true only on a record the
   videos route wrote after its MP4 check (step
-  `0094_builder_uploaded_video_checked` adds it, false, to an applied
+  `0097_builder_uploaded_video_checked` adds it, false, to an applied
   database); both publications and the approval's video pin take no other
   record for a `video.mp4` entry.
 
