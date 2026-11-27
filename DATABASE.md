@@ -4010,11 +4010,12 @@ is unavailable. It leaves out the legacy listing contributions until that
 book can answer. When a sort does not depend on listings, the read selects
 the page and its count first and aggregates legacy listings for those items.
 The default cheapest sort orders candidates by the same price the page
-displays. For two-network v1 pages within the first 1,000 results, the
-reader can use a prefix of 2,049 live orders from
+displays. For two-network v1 pages and requests scoped to Polygon within
+the first 1,000 results, the reader can use a prefix of 2,049 live orders from
 `legacy_order_open_price_idx` when membership does not depend on listings
-and the request has no explicit contract or item filter. It ranks those
-orders after the usual ownership proof, together with the mint prices.
+and the request has no explicit contract or item filter. Polygon requests
+limit the prefix to Polygon orders before taking the cheapest rows. The reader
+ranks those orders after the usual ownership proof, together with the mint prices.
 A full prefix proves the page only when every selected price is strictly
 below the highest raw prefix price. The exact total comes from the
 eligible items. The reader then loads all listing details for the selected

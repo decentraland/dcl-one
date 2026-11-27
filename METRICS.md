@@ -375,6 +375,24 @@ modes. The first two offsets used the price prefix. At offset 500
 the prefix could not prove the page, so the reader used the full query.
 Deep offsets such as 15,000 go straight to the full query.
 
+## Scoped Polygon catalogue price ranking
+
+On the same synthetic catalogue, the Polygon-only cheapest page for 24
+items used 69,712 NFT lookups on the full query and 21,190 across the
+price prefix and detail queries. The generic plan's shared blocks read
+fell from 104,910 to 63,708 and temporary writes fell from 3,056 blocks
+to zero. The initial custom EXPLAIN took 6.66 s for the full query and
+0.63 s for the two statements together.
+
+| Prepared Polygon first page | p95 full query | p95 prefix and details |
+| --- | ---: | ---: |
+| Custom plan | 867 ms | 542 ms |
+| Generic plan | 804 ms | 472 ms |
+
+Each p95 uses 20 warmed, alternating executions per variant. Under both
+plan modes, the rows and totals matched at offsets 0, 37, 500, and 15,000.
+The first two offsets used a proved price prefix.
+
 ## Latest sale per token
 
 The fixtures below are synthetic, measured on a laptop with PostgreSQL 17.6 while other builds were running. Treat the ranges as an order of magnitude.
