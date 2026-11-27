@@ -72,7 +72,8 @@ pub(crate) fn too_large() -> ApiError {
 /// The files of `multipart`, read through `place` ([`Admission::read`],
 /// [`Admission::arrived`]), each verified against the hash it was sent
 /// under, within [`MAX_FILES`] and [`MAX_BYTES`]; an empty file (a folder
-/// entry or a 0-byte file, which a save drops from `contents`) is skipped.
+/// entry or a 0-byte file, which a save drops from `contents`) and a file
+/// sent again under a hash already read are skipped.
 pub async fn read(
     mut multipart: Multipart,
     place: &mut Admission,
@@ -113,7 +114,7 @@ pub async fn read(
             return Err(ApiError::bad_request("The file does not match its hash")
                 .with_data(json!({ "hash": hash })));
         }
-        if hash != EMPTY_CONTENT_HASH {
+        if hash != EMPTY_CONTENT_HASH && !files.iter().any(|(read, _)| *read == hash) {
             files.push((hash, bytes));
         }
     }
@@ -124,12 +125,13 @@ impl ItemsComponent {
     /// Stores `files`, each a hash the item names, then records them for the
     /// item `change` was decided for, under the store lock's shared side,
     /// once the decision and the names hold again; a file the collector
-    /// removed in between answers 503 and records nothing.
+    /// removed in between answers 503 and records nothing. Answers the
+    /// bytes and the count of the records it added.
     pub async fn save_item_files(
         &self,
         change: &ItemChange,
         files: Vec<(String, Bytes)>,
-    ) -> Result<(), ApiError> {
+    ) -> Result<(u64, u64), ApiError> {
         let id = change.id();
         {
             let mut conn = self.pool.acquire().await?;
@@ -152,12 +154,13 @@ impl ItemsComponent {
         lock_item(&mut tx, id, None).await?;
         access::confirm_item_change(&mut tx, &view, change).await?;
         lock_store_shared(&mut tx).await?;
+        let (mut added_bytes, mut added) = (0, 0);
         for (hash, size) in sizes {
             named(&mut tx, id, &hash).await?;
             if !self.exists(&hash).await? {
                 return Err(store_collected());
             }
-            sqlx::query(
+            let inserted = sqlx::query(
                 "INSERT INTO builder.uploaded_contents (hash, size, uploaded_by) VALUES ($1, $2, $3) \
                  ON CONFLICT (hash, uploaded_by) DO NOTHING",
             )
@@ -165,10 +168,13 @@ impl ItemsComponent {
             .bind(size)
             .bind(change.signer())
             .execute(&mut *tx)
-            .await?;
+            .await?
+            .rows_affected();
+            added += inserted;
+            added_bytes += inserted * size as u64;
         }
         tx.commit().await?;
-        Ok(())
+        Ok((added_bytes, added))
     }
 
     async fn exists(&self, hash: &str) -> Result<bool, ApiError> {

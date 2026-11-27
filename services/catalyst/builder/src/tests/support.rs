@@ -302,6 +302,7 @@ pub async fn upload(
     store
         .save_item_files(&crate::access::granted::change(signer, id), others)
         .await
+        .map(drop)
 }
 
 /// Undoes [`on_chain`].

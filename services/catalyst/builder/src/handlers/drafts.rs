@@ -193,9 +193,7 @@ pub async fn post_item_files(
         }
         files => files?,
     };
-    let bytes = files.iter().map(|(_, file)| file.len() as u64).sum();
-    let count = files.len() as u64;
-    state.items.save_item_files(&change, files).await?;
+    let (bytes, count) = state.items.save_item_files(&change, files).await?;
     crate::limits::stored(&state, bytes, count);
     Ok(Json(serde_json::json!({ "ok": true })).into_response())
 }
@@ -249,13 +247,15 @@ pub async fn post_item_videos(
     let size = received.size();
     admission.received();
     let stored = state.clone();
-    tokio::spawn(async move {
+    let added = tokio::spawn(async move {
         let _admission = admission;
         stored.items.save_item_video(&change, received).await
     })
     .await
     .map_err(|e| ApiError::internal(e.to_string()))??;
-    crate::limits::stored(&state, size, 1);
+    if added {
+        crate::limits::stored(&state, size, 1);
+    }
     Ok(Json(serde_json::json!({ "ok": true })).into_response())
 }
 
