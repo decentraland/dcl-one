@@ -24,6 +24,7 @@ import { currentLook } from './avatarDraft'
 import type { AvatarLook } from '@explorer-core/engine/avatarEquip'
 import { LOBBY_STAGE_PRESETS } from '@explorer-core/engine/lobbyStage'
 import { BevyApi } from '../bevy-api'
+import { SHOP_FRAMING, SHOP_NAMES_FRAMING, shiftWithin } from './previewView'
 
 type Rect = { x: number; y: number; width: number; height: number }
 
@@ -56,9 +57,7 @@ const FRAMING: Record<PreviewFocus, { range: number; centerY: number }> = {
 }
 // An outfit's picture: the whole body, centred.
 const THUMBNAIL_FRAMING = { range: 6.25, centerY: 1.85 }
-// The Shop's whole body in its 573×942 window, as the design draws it: the avatar ~751px tall, its feet on
-// the stage's floor logo (~970px down the screen). The Shop frames nothing else.
-const SHOP_FRAMING = { range: 4.9, centerY: 1.84 }
+// The Shop frames the whole body only, as its page draws it: ./previewView's SHOP_FRAMING and SHOP_NAMES_FRAMING.
 // The sign-in screens' whole body: the head about 23% down the screen, the feet about 77%, on a podium
 // about a quarter of the screen wide.
 const SIGNIN_FRAMING = { range: 7.3, centerY: 1.95 }
@@ -106,6 +105,9 @@ const SHOP_STAGE = 'images/shop-stage.jpg'
 // and how long to wait for an avatar to load at all.
 const LOBBY_SETTLE_FRAMES = 45
 const LOBBY_LOOK_FRAMES = 600
+// Frames for a loaded avatar's parts to be drawn in: on the web build some were still missing 0.2 s
+// after the engine's report, and all were there by 0.7 s.
+const LOOK_DRAWN_FRAMES = 45
 // The lobby's standby avatar lives on a layer no camera draws: a look loads there out of sight.
 const STANDBY_LAYER = 11
 // A new look's entrance: the avatar on show turns its back, and the new one, loaded, turns to the
@@ -170,6 +172,7 @@ let wanted: { key: string; shape: ShapeData } | null = null
 let showLoad: LoadWatch | null = null
 let standbyLoad: LoadWatch | null = null
 let shownLoaded = false
+let lookLoad: { watch: LoadWatch; done: () => void } | null = null
 
 /** An avatar's load on its entity, from the engine's reports since it was given its look. */
 type LoadWatch = {
@@ -798,6 +801,16 @@ export function registerAvatarPreview(ctx: Ctx): void {
         shownLoaded = true
       }
     }
+    if (lookLoad != null) {
+      // a Backpack closed meanwhile loads nothing more
+      if (stage === 'backpack' && avatarEntity === lookLoad.watch.entity) pollLoad(lookLoad.watch)
+      else lookLoad.watch.done = true
+      if (lookLoad.watch.done) {
+        const { done } = lookLoad
+        lookLoad = null
+        done()
+      }
+    }
   })
   ctx.push((dt) => {
     if (framingT >= 1 || cameraEntity == null || stage !== 'backpack') return
@@ -811,11 +824,24 @@ export function registerAvatarPreview(ctx: Ctx): void {
   })
 
   // The Shop draws its stage around the avatar's window: the same image goes behind the avatar, standing on
-  // the floor the image has, so the Backpack's podium steps aside.
+  // the floor the image has, so the Backpack's podium steps aside. The avatar is framed as the page draws it.
   ctx.on('previewStage', (msg) => {
+    const page = msg.framing === 'names' ? SHOP_NAMES_FRAMING : SHOP_FRAMING
+    // The stage staying up (resized, or another page): its place moves, and the camera eases to the page's framing,
+    // from wherever it is, only when that framing changes. A resize midway leaves the ease running.
+    if (shopStage != null && msg.rect != null) {
+      shopStage = msg.rect
+      if (page !== framingTo) {
+        framingFrom = framing
+        framingTo = page
+        framingT = 0
+      }
+      return
+    }
+    // The stage coming up or going: the page's framing at once.
     shopStage = msg.rect
     showPodium(shopStage == null)
-    framing = framingFrom = framingTo = shopStage != null ? SHOP_FRAMING : FRAMING.body
+    framing = framingFrom = framingTo = shopStage != null ? page : FRAMING.body
     framingT = 1
     applyFraming(framing)
   })
@@ -868,6 +894,23 @@ export function registerAvatarPreview(ctx: Ctx): void {
   })
 }
 
+/** Puts the look on the Backpack's avatar now and resolves once it is drawn: the engine reports it
+ *  loaded (well or not, or after long enough that it never will), then draws its parts in over the
+ *  next frames. At once when the avatar already wears it, when the Backpack's preview isn't open, and
+ *  for an earlier call when a later one changes the look again. */
+export async function lookShown(): Promise<void> {
+  if (stage !== 'backpack' || avatarEntity == null) return
+  const before = lastShapeKey
+  const watch = watchLoad(avatarEntity)
+  syncShape()
+  if (lastShapeKey === before) return
+  lookLoad?.done()
+  await new Promise<void>((resolve) => {
+    lookLoad = { watch, done: resolve }
+  })
+  await waitFrames(LOOK_DRAWN_FRAMES)
+}
+
 export async function waitFrames(frames: number): Promise<void> {
   await new Promise<void>((resolve) => {
     frameWaiters.push({ frames, done: resolve })
@@ -885,12 +928,6 @@ function showPodium(visible: boolean): void {
     const layer = PODIUM_LAYERS[i]
     Transform.getMutable(e).scale = visible ? podiumLayerScale(layer) : Vector3.Zero()
   })
-}
-
-// A zoomed view's centre moves at most as far as keeps it inside the framing it zooms (none at zoom 1).
-function shiftWithin(f: { range: number }, z: number, shift: number): number {
-  const room = (f.range - f.range / z) / 2
-  return Math.max(-room, Math.min(room, shift))
 }
 
 // The framing on the camera, zoomed `z` times with its centre moved `shift` up (the page's zoom unless told

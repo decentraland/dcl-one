@@ -298,6 +298,10 @@
           "kind": "regular"
         },
         {
+          "name": "reactions.ts",
+          "kind": "regular"
+        },
+        {
           "name": "translation.ts",
           "kind": "regular"
         }
@@ -3192,10 +3196,6 @@
           "kind": "regular"
         },
         {
-          "name": "ColorPicker.module.css",
-          "kind": "regular"
-        },
-        {
           "name": "ColorPicker.tsx",
           "kind": "regular"
         },
@@ -3208,23 +3208,7 @@
           "kind": "regular"
         },
         {
-          "name": "DateField.module.css",
-          "kind": "regular"
-        },
-        {
-          "name": "DateField.tsx",
-          "kind": "regular"
-        },
-        {
           "name": "Dropdown.tsx",
-          "kind": "regular"
-        },
-        {
-          "name": "EquippedItemCard.module.css",
-          "kind": "regular"
-        },
-        {
-          "name": "EquippedItemCard.tsx",
           "kind": "regular"
         },
         {
@@ -3240,15 +3224,7 @@
           "kind": "regular"
         },
         {
-          "name": "HintsButton.module.css",
-          "kind": "regular"
-        },
-        {
           "name": "HintsButton.tsx",
-          "kind": "regular"
-        },
-        {
-          "name": "IconButton.module.css",
           "kind": "regular"
         },
         {
@@ -3277,10 +3253,6 @@
         },
         {
           "name": "Pager.tsx",
-          "kind": "regular"
-        },
-        {
-          "name": "Rail.module.css",
           "kind": "regular"
         },
         {
@@ -3332,10 +3304,6 @@
           "kind": "regular"
         },
         {
-          "name": "WearableCard.module.css",
-          "kind": "regular"
-        },
-        {
           "name": "WearableCard.tsx",
           "kind": "regular"
         },
@@ -3345,10 +3313,6 @@
         },
         {
           "name": "index.ts",
-          "kind": "regular"
-        },
-        {
-          "name": "popups.module.css",
           "kind": "regular"
         },
         {
@@ -3615,6 +3579,14 @@
           "kind": "regular"
         },
         {
+          "name": "ReactionLane.module.css",
+          "kind": "regular"
+        },
+        {
+          "name": "ReactionLane.tsx",
+          "kind": "regular"
+        },
+        {
           "name": "buttonSounds.test.ts",
           "kind": "regular"
         },
@@ -3656,6 +3628,14 @@
         },
         {
           "name": "ping.ts",
+          "kind": "regular"
+        },
+        {
+          "name": "reactionMotion.test.ts",
+          "kind": "regular"
+        },
+        {
+          "name": "reactionMotion.ts",
           "kind": "regular"
         },
         {
@@ -5070,10 +5050,6 @@
           "kind": "regular"
         },
         {
-          "name": "dateField.test.tsx",
-          "kind": "regular"
-        },
-        {
           "name": "design.ported.test.tsx",
           "kind": "regular"
         },
@@ -5114,6 +5090,10 @@
           "kind": "regular"
         },
         {
+          "name": "hintsButton.test.tsx",
+          "kind": "regular"
+        },
+        {
           "name": "host.ts",
           "kind": "regular"
         },
@@ -5123,6 +5103,10 @@
         },
         {
           "name": "hudInset.test.tsx",
+          "kind": "regular"
+        },
+        {
+          "name": "iconButton.test.tsx",
           "kind": "regular"
         },
         {
@@ -5166,6 +5150,10 @@
           "kind": "regular"
         },
         {
+          "name": "popupLayers.test.tsx",
+          "kind": "regular"
+        },
+        {
           "name": "popups.test.tsx",
           "kind": "regular"
         },
@@ -5195,6 +5183,10 @@
         },
         {
           "name": "rail.test.tsx",
+          "kind": "regular"
+        },
+        {
+          "name": "rarityTokens.test.tsx",
           "kind": "regular"
         },
         {
@@ -5251,6 +5243,14 @@
         },
         {
           "name": "textureOptimization.test.tsx",
+          "kind": "regular"
+        },
+        {
+          "name": "toastHost.test.tsx",
+          "kind": "regular"
+        },
+        {
+          "name": "wearableCard.test.tsx",
           "kind": "regular"
         }
       ]
@@ -5352,6 +5352,10 @@
         },
         {
           "name": "chatLinkPrompts.test.tsx",
+          "kind": "regular"
+        },
+        {
+          "name": "chatReactionLane.test.tsx",
           "kind": "regular"
         },
         {
@@ -6782,6 +6786,10 @@
           "kind": "regular"
         },
         {
+          "name": "SitesFooter.test.tsx",
+          "kind": "regular"
+        },
+        {
           "name": "SitesFooter.tsx",
           "kind": "regular"
         },
@@ -7054,11 +7062,19 @@
           "kind": "regular"
         },
         {
+          "name": "PermissionsModal.test.tsx",
+          "kind": "regular"
+        },
+        {
           "name": "PermissionsModal.tsx",
           "kind": "regular"
         },
         {
           "name": "Rail.module.css",
+          "kind": "regular"
+        },
+        {
+          "name": "Rail.test.tsx",
           "kind": "regular"
         },
         {
@@ -7091,6 +7107,10 @@
         },
         {
           "name": "UsersTable.module.css",
+          "kind": "regular"
+        },
+        {
+          "name": "UsersTable.test.tsx",
           "kind": "regular"
         },
         {
@@ -7132,6 +7152,10 @@
       "entries": [
         {
           "name": "ExFlowMapPage.tsx",
+          "kind": "regular"
+        },
+        {
+          "name": "FlowMapPage.test.tsx",
           "kind": "regular"
         },
         {
@@ -7184,11 +7208,19 @@
           "kind": "regular"
         },
         {
+          "name": "HelpStatus.test.tsx",
+          "kind": "regular"
+        },
+        {
           "name": "HelpStatus.tsx",
           "kind": "regular"
         },
         {
           "name": "HelpTabs.module.css",
+          "kind": "regular"
+        },
+        {
+          "name": "HelpTabs.test.tsx",
           "kind": "regular"
         },
         {
@@ -7253,10 +7285,6 @@
     {
       "path": "library/ui/apps/sites/jump",
       "entries": [
-        {
-          "name": "JumpButtons.module.css",
-          "kind": "regular"
-        },
         {
           "name": "JumpCard.module.css",
           "kind": "regular"
@@ -7332,11 +7360,19 @@
           "kind": "regular"
         },
         {
+          "name": "ExploreBand.test.tsx",
+          "kind": "regular"
+        },
+        {
           "name": "ExploreBand.tsx",
           "kind": "regular"
         },
         {
           "name": "JumpInModal.module.css",
+          "kind": "regular"
+        },
+        {
+          "name": "JumpInModal.test.tsx",
           "kind": "regular"
         },
         {
@@ -7472,6 +7508,10 @@
         },
         {
           "name": "ProfileBadges.module.css",
+          "kind": "regular"
+        },
+        {
+          "name": "ProfileBadges.test.tsx",
           "kind": "regular"
         },
         {
@@ -7806,6 +7846,10 @@
           "kind": "directory"
         },
         {
+          "name": "ColorPicker",
+          "kind": "directory"
+        },
+        {
           "name": "CommunityCard",
           "kind": "directory"
         },
@@ -7822,6 +7866,10 @@
           "kind": "directory"
         },
         {
+          "name": "DateField",
+          "kind": "directory"
+        },
+        {
           "name": "DclLogo",
           "kind": "directory"
         },
@@ -7834,6 +7882,10 @@
           "kind": "directory"
         },
         {
+          "name": "EquippedItemCard",
+          "kind": "directory"
+        },
+        {
           "name": "EventCard",
           "kind": "directory"
         },
@@ -7843,6 +7895,10 @@
         },
         {
           "name": "FriendCTA",
+          "kind": "directory"
+        },
+        {
+          "name": "HintsButton",
           "kind": "directory"
         },
         {
@@ -7910,6 +7966,10 @@
           "kind": "directory"
         },
         {
+          "name": "PagedRail",
+          "kind": "directory"
+        },
+        {
           "name": "Pager",
           "kind": "directory"
         },
@@ -7927,6 +7987,10 @@
         },
         {
           "name": "ProgressBar",
+          "kind": "directory"
+        },
+        {
+          "name": "RailButton",
           "kind": "directory"
         },
         {
@@ -7991,6 +8055,10 @@
         },
         {
           "name": "VoiceBars",
+          "kind": "directory"
+        },
+        {
+          "name": "WearableCard",
           "kind": "directory"
         },
         {
@@ -8359,6 +8427,27 @@
       ]
     },
     {
+      "path": "library/ui/components/ColorPicker",
+      "entries": [
+        {
+          "name": "ColorPicker.module.css",
+          "kind": "regular"
+        },
+        {
+          "name": "ColorPicker.test.tsx",
+          "kind": "regular"
+        },
+        {
+          "name": "ColorPicker.tsx",
+          "kind": "regular"
+        },
+        {
+          "name": "hsv.ts",
+          "kind": "regular"
+        }
+      ]
+    },
+    {
       "path": "library/ui/components/CommunityCard",
       "entries": [
         {
@@ -8447,6 +8536,23 @@
       ]
     },
     {
+      "path": "library/ui/components/DateField",
+      "entries": [
+        {
+          "name": "DateField.module.css",
+          "kind": "regular"
+        },
+        {
+          "name": "DateField.test.tsx",
+          "kind": "regular"
+        },
+        {
+          "name": "DateField.tsx",
+          "kind": "regular"
+        }
+      ]
+    },
+    {
       "path": "library/ui/components/DclLogo",
       "entries": [
         {
@@ -8514,6 +8620,23 @@
       ]
     },
     {
+      "path": "library/ui/components/EquippedItemCard",
+      "entries": [
+        {
+          "name": "EquippedItemCard.module.css",
+          "kind": "regular"
+        },
+        {
+          "name": "EquippedItemCard.test.tsx",
+          "kind": "regular"
+        },
+        {
+          "name": "EquippedItemCard.tsx",
+          "kind": "regular"
+        }
+      ]
+    },
+    {
       "path": "library/ui/components/EventCard",
       "entries": [
         {
@@ -8564,6 +8687,23 @@
         },
         {
           "name": "FriendCTA.tsx",
+          "kind": "regular"
+        }
+      ]
+    },
+    {
+      "path": "library/ui/components/HintsButton",
+      "entries": [
+        {
+          "name": "HintsButton.module.css",
+          "kind": "regular"
+        },
+        {
+          "name": "HintsButton.test.tsx",
+          "kind": "regular"
+        },
+        {
+          "name": "HintsButton.tsx",
           "kind": "regular"
         }
       ]
@@ -8953,6 +9093,23 @@
       ]
     },
     {
+      "path": "library/ui/components/PagedRail",
+      "entries": [
+        {
+          "name": "PagedRail.module.css",
+          "kind": "regular"
+        },
+        {
+          "name": "PagedRail.test.tsx",
+          "kind": "regular"
+        },
+        {
+          "name": "PagedRail.tsx",
+          "kind": "regular"
+        }
+      ]
+    },
+    {
       "path": "library/ui/components/Pager",
       "entries": [
         {
@@ -9057,6 +9214,23 @@
         },
         {
           "name": "ProgressBar.tsx",
+          "kind": "regular"
+        }
+      ]
+    },
+    {
+      "path": "library/ui/components/RailButton",
+      "entries": [
+        {
+          "name": "RailButton.module.css",
+          "kind": "regular"
+        },
+        {
+          "name": "RailButton.test.tsx",
+          "kind": "regular"
+        },
+        {
+          "name": "RailButton.tsx",
           "kind": "regular"
         }
       ]
@@ -9413,6 +9587,27 @@
         },
         {
           "name": "VoiceBars.tsx",
+          "kind": "regular"
+        }
+      ]
+    },
+    {
+      "path": "library/ui/components/WearableCard",
+      "entries": [
+        {
+          "name": "WearableCard.module.css",
+          "kind": "regular"
+        },
+        {
+          "name": "WearableCard.test.tsx",
+          "kind": "regular"
+        },
+        {
+          "name": "WearableCard.tsx",
+          "kind": "regular"
+        },
+        {
+          "name": "rarity.module.css",
           "kind": "regular"
         }
       ]
@@ -9790,7 +9985,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/bevy-api.ts",
-      "sha256": "240b50656dd9c65a7c99a9ddccc866a4fb35faff06713445c225f4c40040be93"
+      "sha256": "dde4dc812625670927ce2037d6ca214fa7a5619f3e8fffebb65e7a4ee84bb1c9"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/bridge.ts",
@@ -9814,7 +10009,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/avatarPreview.tsx",
-      "sha256": "9e434066424a3c1c13b4aeb99841773c0558316a7b6aeafd205af16c882bd49c"
+      "sha256": "f76aa44d1d2112ddc368b62ad631371279d608c361be7229b52a3cacd3248211"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/chat.ts",
@@ -9890,7 +10085,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/outfits.ts",
-      "sha256": "eb88155d818d0294ed4c000dac1b9d0d6b67052d6c3797b4263151d313a103dc"
+      "sha256": "1115bf2c2a1719c0244bc05c0593798bf7743512fd78e2899606a1bfefbeb526"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/permissions.ts",
@@ -9899,6 +10094,10 @@
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/places.ts",
       "sha256": "d280e0bf5fd6fec2d5f9440d84600aad455c7d63ca40557ea85062c66213096f"
+    },
+    {
+      "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/previewView.ts",
+      "sha256": "ccc20233803c20375533a742c75f92160ba4e08dfd17588e6b2465b65fba4baf"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/profile.ts",
@@ -9910,11 +10109,15 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/reactions.ts",
-      "sha256": "1d37a1a006427a8994325acc7dbea74349187f0144fd1cde6009fd357dae60db"
+      "sha256": "8a53a9174dd2c0864b97d0c4c783b0fffc46b27dc5f075227c49d739fe3649b9"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/session.ts",
       "sha256": "e1158dd00b70e175d36fd759f40719e5a8c0313315dbaf1efbc4649fd08e5922"
+    },
+    {
+      "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/settings.ts",
+      "sha256": "8267e44b7a2b5fff33aa4ba6a1f077c9c9ecca513d053868ec6692bd90b9415b"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/skyTime.ts",
@@ -10093,6 +10296,10 @@
       "sha256": "4377aea1a5e3763e78ddcfe16cb43b6153effd85c19a91e572ca81a78837e995"
     },
     {
+      "path": "rendering/bevy-explorer/source/react-web/src/test/bridgeAvatarPreviewShop.test.ts",
+      "sha256": "02dcfe540c8660c5df3ad5ea189a2e2b8723dc4957ea6a066f2b6da89e01e251"
+    },
+    {
       "path": "rendering/bevy-explorer/source/react-web/src/test/bridgeChat.test.ts",
       "sha256": "5341f5caf1386ca26a83ff84943370e26b68df28dcd224b9f39da13567b4511a"
     },
@@ -10154,7 +10361,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/bridgeOutfits.test.ts",
-      "sha256": "71c8f97ff73b964a513b6c084b631ef2c4da4127c189a0058ced0248232dac3e"
+      "sha256": "23b37387d6f49cd7da7ed80e61472c1962d2560e0548b3c98960685e55a220c1"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/bridgePermissionsInForce.test.ts",
@@ -10163,6 +10370,10 @@
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/bridgePlaces.test.ts",
       "sha256": "5b6206d2f815a52a02054dd682e877e4853b27c2a61049d3f37980942a7b3d0e"
+    },
+    {
+      "path": "rendering/bevy-explorer/source/react-web/src/test/bridgePreviewView.test.ts",
+      "sha256": "35f4f4e6ad44138e42d3ad7144f95c76504400f2ef3e42f43b7c9f1bcc022955"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/bridgeProfileReads.test.ts",
@@ -10178,7 +10389,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/bridgeReactions.test.ts",
-      "sha256": "8daa45ac77a078e8e551356eda336ff003ce9fa8073b408453cd5f0ba5b4665a"
+      "sha256": "ae8cf3d8dc0b4e791fb14fc578e32422329959ed3df74a3a714ca84ec8ea8016"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/bridgeRelay.test.ts",
@@ -10199,6 +10410,10 @@
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/bridgeSettings.test.ts",
       "sha256": "52fb1ecea238351094d405eea69a39b6772fa319cd8ff4cbe30a1211e641a5ed"
+    },
+    {
+      "path": "rendering/bevy-explorer/source/react-web/src/test/bridgeSettingsStream.test.ts",
+      "sha256": "7e684d1f9ea577e9ebb34be92dc1ee57a47eb988e932ef790009e9ca59a7b362"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/bridgeSkyTime.test.ts",
@@ -10234,7 +10449,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/editorHostSigning.test.tsx",
-      "sha256": "3b6fbac384934739c105c45fff4080025921043db32c53cabbc43e5972b0a381"
+      "sha256": "4586a4c39bdc87a369ffc0dfc196b4a87748c9e6c3edfd6b38fe1bc5b00cd9a5"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/editorScene.test.ts",
@@ -10346,7 +10561,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/tsconfig.json",
-      "sha256": "5e0f28877f27e864ad1a0a9e5c056aeaf65e1afe47e66e8a845dbfa716f9975c"
+      "sha256": "a4bfe115cd806aa8e3996d899255d26c5bd1ac8329e13ee9ce2fe2bddb3478d7"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/vite.config.ts",
@@ -10389,6 +10604,7 @@
     "rendering/bevy-explorer/source/react-web/src/test/benchmarkSwitches.test.tsx",
     "rendering/bevy-explorer/source/react-web/src/test/bootWatchdog.test.ts",
     "rendering/bevy-explorer/source/react-web/src/test/bridgeAvatarDraft.test.ts",
+    "rendering/bevy-explorer/source/react-web/src/test/bridgeAvatarPreviewShop.test.ts",
     "rendering/bevy-explorer/source/react-web/src/test/bridgeChat.test.ts",
     "rendering/bevy-explorer/source/react-web/src/test/bridgeCommunities.test.ts",
     "rendering/bevy-explorer/source/react-web/src/test/bridgeConnectivity.test.tsx",
@@ -10407,6 +10623,7 @@
     "rendering/bevy-explorer/source/react-web/src/test/bridgeOutfits.test.ts",
     "rendering/bevy-explorer/source/react-web/src/test/bridgePermissionsInForce.test.ts",
     "rendering/bevy-explorer/source/react-web/src/test/bridgePlaces.test.ts",
+    "rendering/bevy-explorer/source/react-web/src/test/bridgePreviewView.test.ts",
     "rendering/bevy-explorer/source/react-web/src/test/bridgeProfileReads.test.ts",
     "rendering/bevy-explorer/source/react-web/src/test/bridgeRandomizer.test.ts",
     "rendering/bevy-explorer/source/react-web/src/test/bridgeRandomizerTokens.test.ts",
@@ -10416,6 +10633,7 @@
     "rendering/bevy-explorer/source/react-web/src/test/bridgeSceneLookup.test.ts",
     "rendering/bevy-explorer/source/react-web/src/test/bridgeSession.test.ts",
     "rendering/bevy-explorer/source/react-web/src/test/bridgeSettings.test.ts",
+    "rendering/bevy-explorer/source/react-web/src/test/bridgeSettingsStream.test.ts",
     "rendering/bevy-explorer/source/react-web/src/test/bridgeSkyTime.test.ts",
     "rendering/bevy-explorer/source/react-web/src/test/bridgeTextureOptimization.test.ts",
     "rendering/bevy-explorer/source/react-web/src/test/bridgeTravel.test.ts",
@@ -10504,7 +10722,7 @@
     },
     {
       "path": "library/explorer-core/engine/mockBridge.ts",
-      "sha256": "9ec57f756e8b92ed11e4ea7fa3ba728f2639636582845c23611348f585a6b3ce"
+      "sha256": "7235798e906885a41151ab0849deab702316d64b4c11ef514649be202286e92a"
     },
     {
       "path": "library/explorer-core/engine/mockEvents.ts",
@@ -10516,7 +10734,7 @@
     },
     {
       "path": "library/explorer-core/engine/mockSwitches.ts",
-      "sha256": "61689481212b3b84e6ccf25b1621158b52de2fbb47ac86211d39c3aef233d5d0"
+      "sha256": "96bb86db27731b6b2518c405d04c41ae822e829ab4b2f61b65eacc858a5cf7fb"
     },
     {
       "path": "library/explorer-core/engine/nameColor.test.ts",
@@ -10544,7 +10762,7 @@
     },
     {
       "path": "library/explorer-core/engine/protocol.ts",
-      "sha256": "6244c3703725d0bdfb5be225b0b5894455fb4fafb4443b1f09c5a69a7f17febb"
+      "sha256": "59266868ee63712f6ede1157c5f6ad4e180dfc946e74666385547e7b68e2554e"
     },
     {
       "path": "library/explorer-core/engine/requestIds.ts",
@@ -10607,6 +10825,10 @@
       "sha256": "31502b61e77c57b3817207d2434ef2a78a639f4542bce72614e6d17e72276580"
     },
     {
+      "path": "library/explorer-core/features/chat/reactions.ts",
+      "sha256": "31f780cd451782248105a6517283ca7bdf1602f7816d66a8dfb13030f8126109"
+    },
+    {
       "path": "library/explorer-core/features/chat/translation.ts",
       "sha256": "f7f05666183b6fbc2c5fea7a1344928256d6ddcff3795b8ffb7c9a0620c250aa"
     },
@@ -10644,11 +10866,11 @@
     },
     {
       "path": "library/explorer-core/features/editorHost/host/host.ts",
-      "sha256": "21316003c0a94979682a6f3842c68784fb015052da0e8bd313406a5185261b6d"
+      "sha256": "f06bc3f922b3f4e89da6b51fb9856056d1a337be29aa1161f1f28cd61637ae81"
     },
     {
       "path": "library/explorer-core/features/editorHost/host/sign.ts",
-      "sha256": "53adf293a81d06a1a53c15edb4bbfb2924d24890b4ccdda2badff7358a59f42f"
+      "sha256": "54b24738878a4fef016caf5abfec87a9881239d73ecb0f4392380b6bcbf75677"
     },
     {
       "path": "library/explorer-core/features/editorHost/host/signer.ts",
@@ -10864,7 +11086,7 @@
     },
     {
       "path": "library/explorer-core/lib/color.ts",
-      "sha256": "2d6fdf87314ce3c3bedbdb79d1c659c14f554fb9bfbdd3118dc3ef93be34bdf0"
+      "sha256": "abfe73e801efb8283049e19718522b71dbcc0fe92eafa71326c62f02dc4c6f61"
     },
     {
       "path": "library/explorer-core/lib/debugPanelLauncher.ts",
@@ -12716,7 +12938,7 @@
     },
     {
       "path": "library/ui/apps/hud/components/WorldVisitModal.module.css",
-      "sha256": "1222ec6570ec2f35b439bd69b96965e8c30cffe122107eebb2b2eaf0211bdf7e"
+      "sha256": "2075bb4260f2ad89b9400c3550176336626217c49908406408b5893d580e722e"
     },
     {
       "path": "library/ui/apps/hud/components/WorldVisitModal.tsx",
@@ -12739,12 +12961,8 @@
       "sha256": "e6ab86b20be1428cfca802486f6486af3a99084155c04f0471e6273506c762af"
     },
     {
-      "path": "library/ui/apps/hud/design/ColorPicker.module.css",
-      "sha256": "fb067cc491322700937c01e9b33ca2640c7383033a83d1b7db00a8171b3ca1af"
-    },
-    {
       "path": "library/ui/apps/hud/design/ColorPicker.tsx",
-      "sha256": "0fa508cfb404d26cfbe15ef8b93e1210ef3b3f00f98f0d2c23b78661f825602c"
+      "sha256": "b7f3264f5785e31d00fa4f827572cd37ec8d032531140dc6ec36e21a00403d58"
     },
     {
       "path": "library/ui/apps/hud/design/ContextMenu.tsx",
@@ -12755,24 +12973,8 @@
       "sha256": "0eb195108e6a51c5683749569ebe8863fd8e1af5d6f6bcad3415765ab88da09a"
     },
     {
-      "path": "library/ui/apps/hud/design/DateField.module.css",
-      "sha256": "f5867dc1b22e1e2775777507bd991a5e5ea92339d5752c061a09f4bd6cac83a8"
-    },
-    {
-      "path": "library/ui/apps/hud/design/DateField.tsx",
-      "sha256": "d42d29a06f815ff0d83e007587581469fe79069969a61e94a822460b4ac3c467"
-    },
-    {
       "path": "library/ui/apps/hud/design/Dropdown.tsx",
       "sha256": "29068b4d1444369e159b99c8510ce4714ff04df342d8c40db9b8491c48ef7390"
-    },
-    {
-      "path": "library/ui/apps/hud/design/EquippedItemCard.module.css",
-      "sha256": "3ead15b4724af85ed04da2c6ffa569eca55f553ad092f560b91fccfc20f8d282"
-    },
-    {
-      "path": "library/ui/apps/hud/design/EquippedItemCard.tsx",
-      "sha256": "0f5dde2054d0298545de346a0a93cade3cce45f9586e7c44259d02fc2025684d"
     },
     {
       "path": "library/ui/apps/hud/design/Glyphs.module.css",
@@ -12787,20 +12989,12 @@
       "sha256": "d9c24c0b7d680277ff0648a2cde8907a18d3f5835ea0422c63ee33e3e3fa1340"
     },
     {
-      "path": "library/ui/apps/hud/design/HintsButton.module.css",
-      "sha256": "86dbd7300b98fb2a5c3a0141751df84afe068b2f1367d241e241fd09ed6e5d05"
-    },
-    {
       "path": "library/ui/apps/hud/design/HintsButton.tsx",
-      "sha256": "a1c55c349045f70ff29daba707d991cc6f175ee325a60986a70b06e0682135cd"
-    },
-    {
-      "path": "library/ui/apps/hud/design/IconButton.module.css",
-      "sha256": "29f7a5a13a4b15af7fdf9a8d7b460d2c981cadf346412700f8d491f1a454df9e"
+      "sha256": "43319d315358e92faddc2f9cde31f40c0215758e8f95463fa4b554b2a80db4a3"
     },
     {
       "path": "library/ui/apps/hud/design/IconButton.tsx",
-      "sha256": "b2132503059f044d134ba07e81e30dba77a3f53accc212787f2f323be83717f1"
+      "sha256": "91a86bb31bc6bd69536b4ee50295cc93fc0c8481ff48b9b1d42ce00ea976dd39"
     },
     {
       "path": "library/ui/apps/hud/design/KebabMenu.tsx",
@@ -12816,7 +13010,7 @@
     },
     {
       "path": "library/ui/apps/hud/design/Modal.tsx",
-      "sha256": "da49b763ba49acfc8d0ea1207308a623d9f0189ab66ebc3402a2bad5651310cf"
+      "sha256": "d90d94d479f6624a31399a8b0e620b8a82eaeb55b65cb6de965c33b226b89446"
     },
     {
       "path": "library/ui/apps/hud/design/OptionMenu.tsx",
@@ -12827,12 +13021,8 @@
       "sha256": "3e71317234cdfc2681e4e8bf91169ec3adcd8c891181ff1f70755b0b03f2af08"
     },
     {
-      "path": "library/ui/apps/hud/design/Rail.module.css",
-      "sha256": "ea6c9f22fd7b540ffe679ed16768a611b9c0c36988bb068232cc5291aa5e2e2d"
-    },
-    {
       "path": "library/ui/apps/hud/design/Rail.tsx",
-      "sha256": "238fbb050a0e931ac9b14b4e6b43776d62a796de256ec006d964d06611d6a51d"
+      "sha256": "e00a872343fbc15750d9f94ebaed26b1a166e10eb1d9822df4e8517987f6fbbd"
     },
     {
       "path": "library/ui/apps/hud/design/SearchField.tsx",
@@ -12844,11 +13034,11 @@
     },
     {
       "path": "library/ui/apps/hud/design/Showcase.tsx",
-      "sha256": "757442a5281631fa95903c18ea9f842284964761e105187bf0cc8fda885ad953"
+      "sha256": "0be03b233e50b54c3b00ce728685ccfa454bfad0367730c7bc820fecf6cbd348"
     },
     {
       "path": "library/ui/apps/hud/design/ShowcaseIndex.ts",
-      "sha256": "90289eb64131ef17a629589ab14d99fc87c17abf0e92320052f8d75eb4101f62"
+      "sha256": "16e474884dfda787a84dfab9c40d69dd1c8b9eabd15d7aadb28592ec48d0ed8f"
     },
     {
       "path": "library/ui/apps/hud/design/Submenu.tsx",
@@ -12879,12 +13069,8 @@
       "sha256": "3c310608bd13b418e80addb99f18f70e937f83b41c98417ad146456766377675"
     },
     {
-      "path": "library/ui/apps/hud/design/WearableCard.module.css",
-      "sha256": "e60d013e883af9620898bf8bde4d6c444cccbd4b079e5d37794587e2c1cf81a7"
-    },
-    {
       "path": "library/ui/apps/hud/design/WearableCard.tsx",
-      "sha256": "1a344c9d193c5ad78f185132f703830301df58a555fa9469b30b79369a4f019f"
+      "sha256": "ae909ad8a2a5d3c38ae5fbd8dee64cd72949b30c4d1b4d2140158610c8b8eeab"
     },
     {
       "path": "library/ui/apps/hud/design/icons.tsx",
@@ -12892,19 +13078,15 @@
     },
     {
       "path": "library/ui/apps/hud/design/index.ts",
-      "sha256": "b252235909076545707e1133786effd771fd367325d19fb9de8704248a944abe"
-    },
-    {
-      "path": "library/ui/apps/hud/design/popups.module.css",
-      "sha256": "9c6733f0c550db0e27896609f81a0b78faf684d5249f5da883f98e52c55dcef6"
+      "sha256": "1af0520d3a19f61206085c095a11894c442c20e787d81247ac62707dcdd8b94c"
     },
     {
       "path": "library/ui/apps/hud/design/popups.tsx",
-      "sha256": "30a6320cfcef660711fb43dda43dc2b1004e023adc56e507d785d2b20fec67ae"
+      "sha256": "fa13439be7066534b69fecbc8fe379ebcf9b7e8ea951be785385d8461ca81027"
     },
     {
       "path": "library/ui/apps/hud/design/rarityArt.ts",
-      "sha256": "cae16f1ce1c61943c5ab8fa5f1db5fca2d926a65a5a736117f0cfd0b3de131ab"
+      "sha256": "aa055200b6c83567a8274b7a17e7e4ffb0b877f0e14cba5b45e5d886006ee4a7"
     },
     {
       "path": "library/ui/apps/hud/features/backpack/BackpackModal.module.css",
@@ -12916,11 +13098,11 @@
     },
     {
       "path": "library/ui/apps/hud/features/backpack/BackpackPage.module.css",
-      "sha256": "4571edd7c5f653cdd35e7fa654dbcdec5d85eecdd409f1bbe9ceddcf2ccc0864"
+      "sha256": "8e4b6d9e40dcb256d08e41a6ae9fa4b2ab7a4b6b34e1cfcaefd35498bb54f60d"
     },
     {
       "path": "library/ui/apps/hud/features/backpack/BackpackPage.tsx",
-      "sha256": "cfa2e110323f15d1fd4f0debf757836293776220ffb88341b4ce6e12f392f804"
+      "sha256": "e43613e70de2a12e90541996dff3d603135d60b00f303abcd86b0c459519ce2f"
     },
     {
       "path": "library/ui/apps/hud/features/backpack/categoryIcons.tsx",
@@ -12928,11 +13110,11 @@
     },
     {
       "path": "library/ui/apps/hud/features/chat/Chat.module.css",
-      "sha256": "7871105ed11e93516485410afaccf2db78b03054becae038b97e4946731c8229"
+      "sha256": "0c4c44e2a765418d7a288d39f22e929ad6264fa3dc4c4de0b2cb044055058c8a"
     },
     {
       "path": "library/ui/apps/hud/features/chat/Chat.tsx",
-      "sha256": "3ae0b00d5e70b575891bc221c4f2b21dacec64d619a1e8027b2692558f4578b4"
+      "sha256": "f13e8dd576bbe03d66bcdadb4703c95c1fe3790ff91a739ce2fd1938c4f504cf"
     },
     {
       "path": "library/ui/apps/hud/features/chat/ChatIcons.tsx",
@@ -12964,7 +13146,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/chat/EmojiPicker.module.css",
-      "sha256": "31ed0f3db143363f878c21dbaba53bab26f029c6695bfa318ab6fdd4b6db195b"
+      "sha256": "cdfd6c41cb647877999a67c8bf86f9d6dbe690811bb6c4ef1a8e6bd52fcd8f0c"
     },
     {
       "path": "library/ui/apps/hud/features/chat/EmojiPicker.tsx",
@@ -12985,6 +13167,14 @@
     {
       "path": "library/ui/apps/hud/features/chat/ProfileCardPresentation.tsx",
       "sha256": "89cbd403389f952c9582228a0425b2c117d77778b082bf1b29b142d6b6d008ba"
+    },
+    {
+      "path": "library/ui/apps/hud/features/chat/ReactionLane.module.css",
+      "sha256": "6e33bb5327e23daef7d760b92154df0da58b3321c91a95e941125260a32af3b7"
+    },
+    {
+      "path": "library/ui/apps/hud/features/chat/ReactionLane.tsx",
+      "sha256": "dc782b4cf635087872b4972456228286157d0166a653b13a44f8c72b9d95d9ae"
     },
     {
       "path": "library/ui/apps/hud/features/chat/buttonSounds.test.ts",
@@ -13031,6 +13221,14 @@
       "sha256": "b895a3f2021e03e12f6d8b109e661744a900303fd0d34b7554c698649eed4fd9"
     },
     {
+      "path": "library/ui/apps/hud/features/chat/reactionMotion.test.ts",
+      "sha256": "c325330c30eae53393ba348c2f7bb79f5eba9c8d7ceeb22bded26c93d7a4da96"
+    },
+    {
+      "path": "library/ui/apps/hud/features/chat/reactionMotion.ts",
+      "sha256": "f970ddef12cacc83d2f760bbc4364178abd6793ff71e0df67249551870710a29"
+    },
+    {
       "path": "library/ui/apps/hud/features/chat/useTranslation.ts",
       "sha256": "44cfe567f172cb23867002aa774e10ae9a73ad4208d198ea19cd5939091861f9"
     },
@@ -13052,19 +13250,19 @@
     },
     {
       "path": "library/ui/apps/hud/features/communities/CommunityCreateModal.module.css",
-      "sha256": "1ecf2f34ccf6919c5522cf6753ed896a534fed75cbac0cc36a0dd4e33fc452a6"
+      "sha256": "4dbd14d75e8d036a665fc1165f759797b04a353304b30e7d483c4ac0584bac29"
     },
     {
       "path": "library/ui/apps/hud/features/communities/CommunityCreateModal.tsx",
-      "sha256": "accc3580fa8cbf3ef6fed4b2e2f93376557ec748e783db53ee84dffdc8e06744"
+      "sha256": "fb2dfe560e04894cb7497f2c84eca98d2da7edf36e67aa29c487ba914f5385cc"
     },
     {
       "path": "library/ui/apps/hud/features/communities/CommunityModal.module.css",
-      "sha256": "1fb6e94ac751e7b94761e6fa340eb8f16c709bdedfd76243bcd935340c01b30f"
+      "sha256": "b4c5d78b9e230f5c18f2f097079e54bf1a8439b111acb64fb6b7c55beddcf832"
     },
     {
       "path": "library/ui/apps/hud/features/communities/CommunityModal.tsx",
-      "sha256": "da3c3ed5fe57bb626f319cdb2d45c10875cbe013c98e6c81a317560ccc81d47d"
+      "sha256": "1f41c7a26009b06c8844d824c6859ae98641fa4d675524df349df21201a11fcc"
     },
     {
       "path": "library/ui/apps/hud/features/communities/InviteToCommunity.tsx",
@@ -13148,7 +13346,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/emotes/EmoteSlot.tsx",
-      "sha256": "0c40c917ed10f4848e7c1860827627f683aac859f35d22bf17b1d90ab739f582"
+      "sha256": "44752518f2ca170542e0f622787fcc3a919b29b4ae3c33b77084730a832a1496"
     },
     {
       "path": "library/ui/apps/hud/features/emotes/EmotesWheel.module.css",
@@ -13196,11 +13394,11 @@
     },
     {
       "path": "library/ui/apps/hud/features/error/CrashModal.module.css",
-      "sha256": "4a8690c2e42af3dc708cb04d8b38d5b227021cdc75938a198393fb9bf578b970"
+      "sha256": "ef48fc06a48c6976aea27a5aa490b5febb1c744e44aae1ba3a0d1bd301e4f321"
     },
     {
       "path": "library/ui/apps/hud/features/error/CrashModal.tsx",
-      "sha256": "d3d3a0ce4cb76920351cf4afafb661c6569d5bcbe3ecbf59c322c0fc01ba2f79"
+      "sha256": "f9ccb7f5c907bc1b569a12ee6cec86160074a125bc9daa1c417d2b86709b20e4"
     },
     {
       "path": "library/ui/apps/hud/features/error/ErrorBoundary.tsx",
@@ -13464,7 +13662,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/hideUi/hideUiToast.tsx",
-      "sha256": "633a9e0b4fb254821b7be266abe8a4912cc45c360efc5f8926e1639ed6d4d65e"
+      "sha256": "4873bbf05d89ce0f22b3dee9d25edc482dcfc559084751889093788a3a5c4bae"
     },
     {
       "path": "library/ui/apps/hud/features/itemPurchase/answer.ts",
@@ -13728,7 +13926,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/permissions/PermissionDialog.module.css",
-      "sha256": "9eb3c426c7698fc40b5551a61683b9a161af243a8388a02267f8ae2a6596aa77"
+      "sha256": "6c52260ebed08142aa95464e704ff023efbcc435a53e76fb127b845f67c20bee"
     },
     {
       "path": "library/ui/apps/hud/features/permissions/PermissionDialog.tsx",
@@ -13844,7 +14042,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/profile/ProfileEditForm.tsx",
-      "sha256": "10f4cb425fe904701be9db04363746212f4446fca96fc711a4cc383a2c3111f1"
+      "sha256": "308072e5686cd439803c3dd676ba8c2ca3a0f5608dead8d3509731a7b801b76d"
     },
     {
       "path": "library/ui/apps/hud/features/profile/ProfilePanel.module.css",
@@ -13856,11 +14054,11 @@
     },
     {
       "path": "library/ui/apps/hud/features/profile/ProfilePassport.module.css",
-      "sha256": "0b456427d00b4fc0ddb9776c9c278eda97787d3c67ea00e46b7374b41aba91d7"
+      "sha256": "c2519e89544e327acf4a2e671c6232950142042ea9380c6b43a498c5ff509a2a"
     },
     {
       "path": "library/ui/apps/hud/features/profile/ProfilePassport.tsx",
-      "sha256": "f6bce0b313dd433f59f5f957c0a87499175732d241c6da1260ca5fa802460ded"
+      "sha256": "3a8350ca3379753109315441ff3aefbd50a55ff57b8723535efe3198702f1ee3"
     },
     {
       "path": "library/ui/apps/hud/features/profileCard/ProfileCard.tsx",
@@ -13908,7 +14106,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/session/useEngineSession.ts",
-      "sha256": "11afe9fd7c150fa8f29c375d2d3194fce6683b0bb7c81d1e9b106c1ece672579"
+      "sha256": "d97915bbc7790460de5c03df0b4305a7ccfb6b3b108f1c40f722d2b4c8845293"
     },
     {
       "path": "library/ui/apps/hud/features/settings/KeyBindingsTab.module.css",
@@ -13916,7 +14114,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/settings/KeyBindingsTab.tsx",
-      "sha256": "07972ca071bc1099772562f8e19114977413e67b22c21f83e54da30a3d9fc4da"
+      "sha256": "e9b9135c6407b3821d4a85de3d319230375aad6a9093c43dbdc9018d2d606a94"
     },
     {
       "path": "library/ui/apps/hud/features/settings/LobbyStageTab.module.css",
@@ -13932,7 +14130,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/settings/SettingsPanel.tsx",
-      "sha256": "cf5f4332d320fe914b7539571bf5c399939388438648a0a6dd249c139d627e07"
+      "sha256": "5ea03b84115f8488a8bf84b79022b73849032baf623d1e018692e92c21e8734b"
     },
     {
       "path": "library/ui/apps/hud/features/settings/askBeforeLeaving.ts",
@@ -13944,7 +14142,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/shop/ShopPage.tsx",
-      "sha256": "d6e0df0b2329b9a6bd9fab5c19cf9e5640c8329e739b4f0700b9dee6c2bda285"
+      "sha256": "b66c24ffc63c199194323b663f22dc068a94e3d364ad93e1bf0188a0c2ca5f89"
     },
     {
       "path": "library/ui/apps/hud/features/sidebar/Sidebar.module.css",
@@ -14148,7 +14346,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/worldAccess/WorldPasswordDialog.module.css",
-      "sha256": "0716c43b894bf2846e9a7336a526984a1fbfbbf06eef9a170d3fe2b2cc422d14"
+      "sha256": "556d143f7d27786408ce7742b572e3e014a01915cdeaa36b6cfa2ecfca2147b9"
     },
     {
       "path": "library/ui/apps/hud/features/worldAccess/WorldPasswordDialog.tsx",
@@ -14184,7 +14382,7 @@
     },
     {
       "path": "library/ui/apps/hud/styles/tokens.css",
-      "sha256": "64775a6ee7450b7bbf0c79192da0d570591a6c832530efce3b021bd96e5b5a62"
+      "sha256": "7b86409442e05e1a3799b2afeef176019cf41071507d5670c6d3dae498b9bc2a"
     },
     {
       "path": "library/ui/apps/hud/test/armedButton.test.tsx",
@@ -14216,11 +14414,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/colorPicker.test.tsx",
-      "sha256": "464d231453e4cb2de75adde0c9e43fb62e0018fac4e7648754210bd97ebde00c"
-    },
-    {
-      "path": "library/ui/apps/hud/test/dateField.test.tsx",
-      "sha256": "42f067e0a690a0144289cc9298bfff715a9d627ec48960180aa31be030e4ab67"
+      "sha256": "d6cb03702c9a08534e76f40d4b0f27c6fdeaf4737c4f530896c22183d1852391"
     },
     {
       "path": "library/ui/apps/hud/test/design.ported.test.tsx",
@@ -14260,7 +14454,11 @@
     },
     {
       "path": "library/ui/apps/hud/test/harness.tsx",
-      "sha256": "18a3415f095a329832179f3298202e86893cb4d81a68d89bc87cf3ad1595dc59"
+      "sha256": "d7e4a1ede9f7b0a34007023bee7f0f5429b386f51543f8c8ee745851c0798b8a"
+    },
+    {
+      "path": "library/ui/apps/hud/test/hintsButton.test.tsx",
+      "sha256": "de3f5ed9a4b4e98e3ed53ab25f7e2ddfe56d228f9d594364daf6dd3cb8ddb621"
     },
     {
       "path": "library/ui/apps/hud/test/host.ts",
@@ -14276,7 +14474,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/hosted/backpack.clicks.test.tsx",
-      "sha256": "7b9d08bc8ff7466a73d19baea08823dbcef59e2a52f7ff9d31adf18d962e0193"
+      "sha256": "d100f100e889c291fb91af354605c7d82aa3c287ed50f54ef3270f795ea42ad8"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/backpackColors.test.tsx",
@@ -14300,7 +14498,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/hosted/backpackOutfitBusy.test.tsx",
-      "sha256": "c2ee5a09fcaee43702a3a77e3ee521d9b47f84e3ae277b33392e2c02a771883d"
+      "sha256": "5aef7f06407cfda95141b672b6243fd415054de509cfff970cc34a761bc739fa"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/backpackOutfitErrors.test.tsx",
@@ -14363,12 +14561,16 @@
       "sha256": "c3c3c2996587f9a125a58fce83af95022729aca12e1cc7ec4ed1cb12ee97f109"
     },
     {
+      "path": "library/ui/apps/hud/test/hosted/chatReactionLane.test.tsx",
+      "sha256": "6aefb7e650f47ec79028a82ff9d7013dc0eb214800f6e005e008a26babc16639"
+    },
+    {
       "path": "library/ui/apps/hud/test/hosted/chatReactions.clicks.test.tsx",
-      "sha256": "853e546189e112159b21fae12a3a406da34b7591c31e527df605192a798aa0e3"
+      "sha256": "081f66a0b74eaab97d0ccb9999a4af157c427a6d2c67c58923940ea1b70a4ec8"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/chatReactions.test.tsx",
-      "sha256": "f5ebff22516fd21a95270acfd73ebf09a254b342c88b60f31e704a6c8607a59f"
+      "sha256": "e16331fcdfca8bf118a0c5596d7a6017dd295f047b1cc4a3bf546cd9e9f40d91"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/chatTranslation.test.tsx",
@@ -14436,7 +14638,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/hosted/editorHostShellSigning.test.tsx",
-      "sha256": "14fee73fa9917714a440de8d9b1284633c1416b3c95ec2677312913613c48b39"
+      "sha256": "9667f77e1b0babc5775cc3df3287dbb8c38a36dcc3459edac57c42cad42a31de"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/emailSession.test.tsx",
@@ -14672,7 +14874,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/hosted/settings.clicks.test.tsx",
-      "sha256": "1ccbf22c8d138116dd72039a50241c0aa33cca38b697a740b88d7258361be1ed"
+      "sha256": "63c223c25671f190bf6233b1b4adba22cad1d885ef428456b1277524dc3cfad5"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/settings.test.tsx",
@@ -14735,6 +14937,10 @@
       "sha256": "4c42a2f79f9a2ed4194120812359015a60e9a9f9971f1675e85299379dc66d9a"
     },
     {
+      "path": "library/ui/apps/hud/test/iconButton.test.tsx",
+      "sha256": "1d0e2b6851b2e5ca13e6068cc35a06c5e5e87f28ab5565f242c46cd3fd59b256"
+    },
+    {
       "path": "library/ui/apps/hud/test/integratedGpuGuide.test.tsx",
       "sha256": "b3ab483d912470c4f60c17d9c7bc9c492e10c911140a77b299fbc49859fca07b"
     },
@@ -14775,6 +14981,10 @@
       "sha256": "02b3fe51643472ea054ff62d9e5d84f78612b63d62b0d352733834ccd9706732"
     },
     {
+      "path": "library/ui/apps/hud/test/popupLayers.test.tsx",
+      "sha256": "3fd090276dbf9caa83aaa63a0d968cdb84353930810781ec4f5101ddd366e168"
+    },
+    {
       "path": "library/ui/apps/hud/test/popups.test.tsx",
       "sha256": "44008aa82288968d5f84c7d11f1c30ce38ce865383cdb3f9b8da72fafbd5ee04"
     },
@@ -14804,7 +15014,11 @@
     },
     {
       "path": "library/ui/apps/hud/test/rail.test.tsx",
-      "sha256": "c11b80d25b1efcb2ab186025c3f7ab71c1a668ff31180ce8a5545c47752e25ea"
+      "sha256": "b6a16aca739cd9189c91adb9966bb25cde9cd6fa2c2a6ceb00ca13a6cc13d82a"
+    },
+    {
+      "path": "library/ui/apps/hud/test/rarityTokens.test.tsx",
+      "sha256": "1a63192ac34599fa19b3ffc38c6f2fe4c470df01a2aa3e6124ddae1ab37e6977"
     },
     {
       "path": "library/ui/apps/hud/test/reelActions.test.ts",
@@ -14861,6 +15075,14 @@
     {
       "path": "library/ui/apps/hud/test/textureOptimization.test.tsx",
       "sha256": "97048bb11827e332f4bbf987f7380d5227412789a10e54da40d910faadbef8f3"
+    },
+    {
+      "path": "library/ui/apps/hud/test/toastHost.test.tsx",
+      "sha256": "b5d4a928a43dd9b7f7223ccce000314fb68faca3dbc1cc1745edab253ff42963"
+    },
+    {
+      "path": "library/ui/apps/hud/test/wearableCard.test.tsx",
+      "sha256": "db01b590c166c08b4010b068b024b5e3501d02abf60d71efb27bf64f65410557"
     },
     {
       "path": "library/ui/apps/shop/ShopCartDrawer.module.css",
@@ -15760,19 +15982,19 @@
     },
     {
       "path": "library/ui/apps/sites/chrome/SitesFooter.module.css",
-      "sha256": "7be3156370fcab091cb39f27edf14744ee993b15dd55354a8a568e395e876bb8"
+      "sha256": "d51d86ea3d7c73dfb59d068891ca15b18b46ad7f184fa1874962b0da28948e98"
     },
     {
       "path": "library/ui/apps/sites/chrome/SitesFooter.tsx",
-      "sha256": "7717280ef53824addaa93b13b169a0f539af382a41c7cd1ca1ba7911a6c90b0a"
+      "sha256": "96272fb88771a373565af1f7818d5c8cb9fce918acf31bc5133d39436905e2af"
     },
     {
       "path": "library/ui/apps/sites/chrome/SitesNotificationsDialog.module.css",
-      "sha256": "8afb60fca121159dcda590caf08740167eedc31ab345de3ffab984aefa28b644"
+      "sha256": "c6a09a7a4ac1184efaeaeb6c8ed10f64478c95ac53277f25476d7c6365bc045b"
     },
     {
       "path": "library/ui/apps/sites/chrome/SitesNotificationsDialog.tsx",
-      "sha256": "f3e2f5274a5253824a2a183e944ed9e4cb2c88889bc7174835d4fa8c3244e58b"
+      "sha256": "50a2147c38dfbaffeba8afdfc877b261889c7a52c4fc7e71d5165effa6dfe947"
     },
     {
       "path": "library/ui/apps/sites/chrome/SitesSectionNavigation.module.css",
@@ -15884,7 +16106,7 @@
     },
     {
       "path": "library/ui/apps/sites/events/AdminModal.module.css",
-      "sha256": "8fdaebee904d1dad3751eb1ece328aa9c7f9f144ff3253607db0f0ce9794efbe"
+      "sha256": "3342ee1f032faa54a1f940bdb40c027d5918efca73ead022053c6f1186ba8d0e"
     },
     {
       "path": "library/ui/apps/sites/events/AdminPage.module.css",
@@ -15904,11 +16126,11 @@
     },
     {
       "path": "library/ui/apps/sites/events/AllEvents.module.css",
-      "sha256": "1d0501a3ddbfd2329897d919cd63efe3603b6186a36690a24bcc6eb1e71dbe61"
+      "sha256": "7e80888ea7a346a4eb2bd0594373d37b5aed722e9d965064a77f95574b1731f6"
     },
     {
       "path": "library/ui/apps/sites/events/AllEvents.tsx",
-      "sha256": "d65466b372ef011fb21b8198d2977d96725549008baa3a36edd89d20bf66fc39"
+      "sha256": "a94452bd7574966ec02208ba506cbfa8e545d62554ea1781b05060dad161005a"
     },
     {
       "path": "library/ui/apps/sites/events/Busy.module.css",
@@ -15920,11 +16142,11 @@
     },
     {
       "path": "library/ui/apps/sites/events/DetailModal.module.css",
-      "sha256": "d1058bdac7f96cdbbb6808fb9c097747b33252ed8bd759584e413a463ce51a3a"
+      "sha256": "f43cbbc6b224f92895f59c9430991d9307e4765216421cd8161af194bcaa9926"
     },
     {
       "path": "library/ui/apps/sites/events/DetailModal.tsx",
-      "sha256": "78336b7ec7515355ab1317843df18fc672013bdd7221ec8e293fd5ed989a23fc"
+      "sha256": "aa398d25534f89e906151a1660496bab11c7269d1eaa955a0e2ad6d85b9b1b99"
     },
     {
       "path": "library/ui/apps/sites/events/Dialog.module.css",
@@ -15984,19 +16206,19 @@
     },
     {
       "path": "library/ui/apps/sites/events/PermissionsModal.tsx",
-      "sha256": "9d4c63d592b17485bc21660d0be4ea3f2e6f16ff42f9e78af3c47e87e148203f"
+      "sha256": "44a646fd32c60fac562234bf34e8804ad09cda5045d7010238ea58d962637bab"
     },
     {
       "path": "library/ui/apps/sites/events/Rail.module.css",
-      "sha256": "e57b44e159e130533f36b16fd5aef1fd712360de49e91e6bd1ef8f04c387f04e"
+      "sha256": "773f54b93a11e18169aa8bade8b01ce07c24db4200908488ffdbd1436cd32be5"
     },
     {
       "path": "library/ui/apps/sites/events/Rail.tsx",
-      "sha256": "0e2d20b985d8c86cb4a6e596f6d069636b6efb5b58f3656b2309ea2bf5a4c55b"
+      "sha256": "13b36666d9583a6537d88bbd586eb0a09f8f33e4d55c55c46ebb674c98e28000"
     },
     {
       "path": "library/ui/apps/sites/events/RejectEventModal.tsx",
-      "sha256": "8fcb25f5ccfbd4d14b8728618e7254ee3ef1c7705db7f56452f886bf585bebbe"
+      "sha256": "2bf7e0d8a9dd8b4fd50f8e48ba3326c109ce2113212a4319d57cc70ab51aa654"
     },
     {
       "path": "library/ui/apps/sites/events/SubmitHangoutView.tsx",
@@ -16012,11 +16234,11 @@
     },
     {
       "path": "library/ui/apps/sites/events/UsersTable.module.css",
-      "sha256": "865dbf7dc79c450ce4760c8cb617a66c93216e7275f1c24cf8f625a6e0da3a01"
+      "sha256": "7a44c1cbc08e987c37ed1c3848ef2714d598af4cb7a56c4b03e8b9d94419dfad"
     },
     {
       "path": "library/ui/apps/sites/events/UsersTable.tsx",
-      "sha256": "2edd0a6c180b14f5766466ced7c0ae152498334c7542c1fb9ba9b786a2ee8919"
+      "sha256": "5412b5dd053ec5fdb0669b661424914b1432253cec4062a487508f6cdfd23a10"
     },
     {
       "path": "library/ui/apps/sites/events/admin-copy.ts",
@@ -16032,7 +16254,7 @@
     },
     {
       "path": "library/ui/apps/sites/events/ldsubmithangoutview.css",
-      "sha256": "51d47e3ac51b4b6af16b29ca7d28ba48c26b8af0ca2f489c1b9b43d7eed3c97c"
+      "sha256": "7d6c1ad5a01edec31fe4ab6365a3599e33ca35b2c18113c729ae8eb6332a4da6"
     },
     {
       "path": "library/ui/apps/sites/events/locale.ts",
@@ -16052,11 +16274,11 @@
     },
     {
       "path": "library/ui/apps/sites/flow-map/FlowMapPage.tsx",
-      "sha256": "2d95c7d8c7060acfb7e16c2c3bea894cd804e3102e7042fcb050ba302db271e3"
+      "sha256": "4920607efe68202586a6c5f257c667b555e0baf1c9572eb22f39bb766a074369"
     },
     {
       "path": "library/ui/apps/sites/flow-map/flowmappage.css",
-      "sha256": "cd714aaf87d2be7d587b1123790e16493925f0d2aa6bb0f14809b2448e7ae354"
+      "sha256": "6bcfd932c5eb7dafc099d2f601d49cc5d2c97f4cab472196bd964e2865196302"
     },
     {
       "path": "library/ui/apps/sites/help/HelpAccordion.module.css",
@@ -16076,7 +16298,7 @@
     },
     {
       "path": "library/ui/apps/sites/help/HelpPage.module.css",
-      "sha256": "2d2722c0571f51d36481e7b1c33f3e7c7c56963c80d31bc38d294838371f816b"
+      "sha256": "dcd906fe90ea8d075172e411ab428b391a74c9b04da22ff28ce7dc800b703455"
     },
     {
       "path": "library/ui/apps/sites/help/HelpPage.tsx",
@@ -16092,19 +16314,19 @@
     },
     {
       "path": "library/ui/apps/sites/help/HelpStatus.module.css",
-      "sha256": "91aa2d6655d0d93ff2289d433b043346cb1823ee1208d2c5f4d0df864fd9551b"
+      "sha256": "2b1cd5d71859bace7f305ea6d9c7486a409ce2e83098feb98ae61785ee4315fe"
     },
     {
       "path": "library/ui/apps/sites/help/HelpStatus.tsx",
-      "sha256": "95562fe2cec88e5bc6b43d66ea37182addf2d48dab282dc540b7a357392daae0"
+      "sha256": "2a693276f03c813f19494f08cd3886b05f58924281e17152f59ce4862c58efa9"
     },
     {
       "path": "library/ui/apps/sites/help/HelpTabs.module.css",
-      "sha256": "bda408fd976b460a475f2cbb252f924abc23ac8b8d4f7696c59cd70607c8a443"
+      "sha256": "0ccb1220bb19672196fa413340aec2fcaa22a98caebac89f16fae7bec603be96"
     },
     {
       "path": "library/ui/apps/sites/help/HelpTabs.tsx",
-      "sha256": "0fb6e28bc620dbb8d7ce47d36d63086f3a20d056c149dc2a91a68da92301c4bc"
+      "sha256": "242373be0225d9481f3074165d3a96e69e71a67465282979e3b7d2c4725cb8bf"
     },
     {
       "path": "library/ui/apps/sites/home/CatchTheVibe.module.css",
@@ -16151,24 +16373,20 @@
       "sha256": "dc7b29dfe8cc3c8ab21a75fd3709c540e6a53df862f782718e8326e579fc2580"
     },
     {
-      "path": "library/ui/apps/sites/jump/JumpButtons.module.css",
-      "sha256": "ef2a11e010c87d9d1d06d6ef4a0fe58718bfcc296591a55f4689965147fdc3e0"
-    },
-    {
       "path": "library/ui/apps/sites/jump/JumpCard.module.css",
-      "sha256": "4d75bddf9d8de2d0d58003c5dae34c7ecb89ffe8c04d420c7aafb8a4ec009718"
+      "sha256": "9b52a7126529a2d6e14a8fd4768837354146576fe3d272586df3f7c2004c7b3e"
     },
     {
       "path": "library/ui/apps/sites/jump/JumpCard.tsx",
-      "sha256": "f80266271f67be617c459bb8128f7a943e608afb49b6b5f1026139e96245b42a"
+      "sha256": "b88131f2932754d1ddad72b79591027e5876c82f39f52aa2bd1b19c26aeda62d"
     },
     {
       "path": "library/ui/apps/sites/jump/JumpEventActions.module.css",
-      "sha256": "e8fb964bf4e308455421ae520fcc1e3147aa62fe5f6598e8b7701789ce01e52e"
+      "sha256": "d27c6cd77458be59ed6cbf5659eee61d37936b30aa4540631ea1a6ef496eea9b"
     },
     {
       "path": "library/ui/apps/sites/jump/JumpEventActions.tsx",
-      "sha256": "6d85e9a26c5116182c7641c4c124a2b8702e2646ce952302a28e650bf0292f4d"
+      "sha256": "9a25a8098b6525e8f32f853aa72a1282d3cd55cc6ff02526b458c291a7d5c1e3"
     },
     {
       "path": "library/ui/apps/sites/jump/JumpIcons.tsx",
@@ -16176,11 +16394,11 @@
     },
     {
       "path": "library/ui/apps/sites/jump/JumpInvalid.module.css",
-      "sha256": "f441c68144b826ff74185c36a565dbdcc469fa074d12998417bd46d1557fc756"
+      "sha256": "b35fc3f79b1d97ab2d6e2a5386c46338a672c17a128a2934a5e8b907d885139a"
     },
     {
       "path": "library/ui/apps/sites/jump/JumpInvalid.tsx",
-      "sha256": "02e6313b4b42f15bc54ff4854081d04fc8b0fcfff685e8ce0e333bdc237c8354"
+      "sha256": "7ae2b2537ff34b0b35015b840029d695458b65035b435276ae14d1d8c1f61c38"
     },
     {
       "path": "library/ui/apps/sites/jump/JumpPage.module.css",
@@ -16212,35 +16430,35 @@
     },
     {
       "path": "library/ui/apps/sites/places/ExploreBand.module.css",
-      "sha256": "a53becfc1a4faafc2abde2cc7ac68558152ddd49b95b7c1355a6138970c197b9"
+      "sha256": "4940bab9ec7a0e7bfdd95241b3bf77d471cb0e8d6900ff8caef5726a87548d9c"
     },
     {
       "path": "library/ui/apps/sites/places/ExploreBand.tsx",
-      "sha256": "37cff3d6dda77e39f6bc831314e460e3cea74d680cb360bd9625306279c0125b"
+      "sha256": "d5aaa5b87b731ed09d2fe61f78cf9f40d91e3a47a97672cb112c0218128baab3"
     },
     {
       "path": "library/ui/apps/sites/places/JumpInModal.module.css",
-      "sha256": "8411857b81f72dac2935a0f57bf96d738a76c9afa6823d3024e9b1534759902a"
+      "sha256": "0df13ed1839c75d38277eb5e1d5459cc3bd4fae2ec0dc588c7ff2d9c565ba9a3"
     },
     {
       "path": "library/ui/apps/sites/places/JumpInModal.tsx",
-      "sha256": "896e49836c5924785d6246198d5dc102c0060e6e2db0e9e6d4c5f3417ff43ba1"
+      "sha256": "792281322c253b083e6331c516d2940e66427cde79cd479ad0084dcff58109c7"
     },
     {
       "path": "library/ui/apps/sites/places/LiveNow.module.css",
-      "sha256": "0710198f47e4e691f879253030e9daa3238ff4d3b8fb192b1b4678c98085af6a"
+      "sha256": "9dc68104ed645fd38bb8b1ede289eccfb0a1b514309c2a4157f82daf66ccb169"
     },
     {
       "path": "library/ui/apps/sites/places/LiveNow.tsx",
-      "sha256": "03be874199854181ac7d675eddc9d24c75cc1dc2fa35fd0fb1f7f6a1a2939eec"
+      "sha256": "1f3cc82b5e164184498e0b8125bc2a4118d412a30ae89f01ccbdc396234dbad8"
     },
     {
       "path": "library/ui/apps/sites/places/PlaceDetail.module.css",
-      "sha256": "61416fed6ddb52a1594c3434d3369200727a0987e1c41267953556663eeff4f5"
+      "sha256": "8005e2991750902a24354f4a377f7e71c8eb3a1d41227545f9341c7188f18328"
     },
     {
       "path": "library/ui/apps/sites/places/PlaceDetail.tsx",
-      "sha256": "09666fd8073c461f24ad8807abd94ddb443008a401258c34fac413ce02018afa"
+      "sha256": "3f79e91251f6d91d891ef41ba737378141f1b30452b1a949200b57c1ddfff1f8"
     },
     {
       "path": "library/ui/apps/sites/places/PlaceGrid.module.css",
@@ -16248,7 +16466,7 @@
     },
     {
       "path": "library/ui/apps/sites/places/PlaceGrid.tsx",
-      "sha256": "e6afc6a2d5c841a4e7be8a611f5eb5037b0b44d9e9f93288455a91e8463239b8"
+      "sha256": "d330f88ebb7fdca4593adba9902b941c32518b28e683c252845ab862040a615c"
     },
     {
       "path": "library/ui/apps/sites/places/PlacesPage.module.css",
@@ -16328,11 +16546,11 @@
     },
     {
       "path": "library/ui/apps/sites/profile/ProfileBadges.module.css",
-      "sha256": "2bc61dfd4c4a796d5ddcad20057262a3cb72e398ad5c773b39c4f031429b0b4e"
+      "sha256": "d740bd54ee4e67cf9e5a2fa29f5a24b97e6135fdffc552f7d4e21650de17aa30"
     },
     {
       "path": "library/ui/apps/sites/profile/ProfileBadges.tsx",
-      "sha256": "5f79700e5ad21d0c21baa12a792bd0b8c2077df6fb4f1bfa70ddd67ed169b2ec"
+      "sha256": "725d94c9bfcf86b05fba7989700df9be722cfde85e6a9194c684b754b09720a1"
     },
     {
       "path": "library/ui/apps/sites/profile/ProfileCommunities.module.css",
@@ -16380,7 +16598,7 @@
     },
     {
       "path": "library/ui/apps/sites/profile/ProfileOverview.module.css",
-      "sha256": "8f871c1ab08a6e0622fe5a596b00380e0c5760a0dd2278fde9f22ad2879f8495"
+      "sha256": "5ff0511fa6edd93a4178c0262245c41464e3458a576e599c72af5eddd104e1aa"
     },
     {
       "path": "library/ui/apps/sites/profile/ProfileOverview.tsx",
@@ -16440,11 +16658,11 @@
     },
     {
       "path": "library/ui/apps/sites/shared/Carousel.module.css",
-      "sha256": "7cdee69774ad0ca46d6834174bb4e86b82efff83917dd9de553ff5da8f39cf61"
+      "sha256": "b8aed4447fcda89b7043e744b752c6df122c06b34523266c260485e9a474d04c"
     },
     {
       "path": "library/ui/apps/sites/shared/Carousel.tsx",
-      "sha256": "494be4df52153109aebc0b4138cfe938ae73dbe77712b1dec66f932caf34a5d7"
+      "sha256": "22ec6e90537059209e41f6903bdcd3d35b2f2cc721feba632e1c36b2cb5f9219"
     },
     {
       "path": "library/ui/apps/sites/shared/a11y.module.css",
@@ -16456,11 +16674,11 @@
     },
     {
       "path": "library/ui/apps/sites/social/CommunityCreate.module.css",
-      "sha256": "d1c0c75d1ec1bd73c6cf6b43198a92f241517b000ba6876acdcf6d7f5bc47418"
+      "sha256": "73984b00d968403223a07fc3ac8aed303d0a291c7aa6934e285bceed1246aa8b"
     },
     {
       "path": "library/ui/apps/sites/social/CommunityCreate.tsx",
-      "sha256": "9f81ab210c30da8074af1b2c2701b6ddd9e04109c99e239f77d0179fdd30a854"
+      "sha256": "be2afc26772ed837aa75f5832e7043a68807f6f191a3e7214f80831d69ccda86"
     },
     {
       "path": "library/ui/apps/sites/social/CommunityDetail.module.css",
@@ -16707,6 +16925,18 @@
       "sha256": "ee6bc3230966414ffb062abaa0936d5c88e2f7c2e8ca0418860afd4fed299945"
     },
     {
+      "path": "library/ui/components/ColorPicker/ColorPicker.module.css",
+      "sha256": "e07e65b2baa47565a6dbf29a35f147eb01c0c115346a1149b708e5fb7a66d7b4"
+    },
+    {
+      "path": "library/ui/components/ColorPicker/ColorPicker.tsx",
+      "sha256": "bed1e4fe91b8b5e4362ce0b2bbcb265c43776eda0a36494bc3ce43d96a8616a1"
+    },
+    {
+      "path": "library/ui/components/ColorPicker/hsv.ts",
+      "sha256": "a24e521215a0203ce93ce15b5d1b7200672c6b8a07cb717a51bde326f6c56ae9"
+    },
+    {
       "path": "library/ui/components/CommunityCard/CommunityCard.module.css",
       "sha256": "b0708d055279c62bd8192473130f472ead1dd26ceec5074845e35508df9da3e4"
     },
@@ -16747,6 +16977,14 @@
       "sha256": "e4d4e419272750efa3ccecbf741599a644772f1cefeca3dea8fc742bd3c0ba03"
     },
     {
+      "path": "library/ui/components/DateField/DateField.module.css",
+      "sha256": "a29ae9079a132c16a2392d5fb475c9079622e71ea757d850bc3f2ee422585773"
+    },
+    {
+      "path": "library/ui/components/DateField/DateField.tsx",
+      "sha256": "a148bf9b7b8b0febfb7ccb32b935317b7d8023863bed4df78edd589e3c5ad099"
+    },
+    {
       "path": "library/ui/components/DclLogo/DclLogo.tsx",
       "sha256": "4bb8a97ae4dc5c22c749cfdbe20d1c07778a7eb93d985e0c27b10f9c8c907424"
     },
@@ -16771,6 +17009,14 @@
       "sha256": "52cf2909d71c593be3ac30df6fd64aa1cbf8bb63911b39430b996c125dedf6dd"
     },
     {
+      "path": "library/ui/components/EquippedItemCard/EquippedItemCard.module.css",
+      "sha256": "4d6e94b92da217846f4299fa1bec66898bde149ecfeba90526ba0a9c8d95c7a4"
+    },
+    {
+      "path": "library/ui/components/EquippedItemCard/EquippedItemCard.tsx",
+      "sha256": "c851f40ae865e7046f7f2a08bac7a7f361dfdf9f604977accdbcd8c825901059"
+    },
+    {
       "path": "library/ui/components/EventCard/EventCard.module.css",
       "sha256": "3f6275161cbcbd8b9075a0f9364b1f209b70714d15b38bec6134d921660e4c19"
     },
@@ -16793,6 +17039,14 @@
     {
       "path": "library/ui/components/FriendCTA/FriendCTA.tsx",
       "sha256": "3d2c544bd8fc90b34bbac62646194d174fedcee8402597b1bc6332a14770b0d8"
+    },
+    {
+      "path": "library/ui/components/HintsButton/HintsButton.module.css",
+      "sha256": "ed8fa245c74d518ebaf12d966daf43f0d73fdedc85d4838d159c2ed3546b7be5"
+    },
+    {
+      "path": "library/ui/components/HintsButton/HintsButton.tsx",
+      "sha256": "dafaa046751f33a5ef93439bfa58586ca968b543979e9b0f69dd01ab9aed850c"
     },
     {
       "path": "library/ui/components/InputExplorerNames/InputExplorerNames.module.css",
@@ -16836,7 +17090,7 @@
     },
     {
       "path": "library/ui/components/JumpInCTA/JumpInCTA.module.css",
-      "sha256": "6357cd27a0234065caad508828832dd60de2e8355844a0c573ddeba1c792ed78"
+      "sha256": "be34bb94d120621def9789318f4d9e68776132676835932531bdb8f58355de95"
     },
     {
       "path": "library/ui/components/JumpInCTA/JumpInCTA.tsx",
@@ -16868,11 +17122,11 @@
     },
     {
       "path": "library/ui/components/ModalCard/ModalCard.module.css",
-      "sha256": "a50100596f6b21933e0a4072025445cf6608acae2aaebcbd308a21d331dae6a9"
+      "sha256": "e07b16e7ba7f4c20df8c083074fc7c865bea30ddf7c13460ca66790d0932283c"
     },
     {
       "path": "library/ui/components/ModalCard/ModalCard.tsx",
-      "sha256": "ccdfd4075b5091b94799a5723620f0d865ac69be58e4487ee0a0f35bc54d7a55"
+      "sha256": "f8691f28743b60fb918cb4d89608b941afb967164661001efa16867ca2c69fa5"
     },
     {
       "path": "library/ui/components/NavBar/NavBar.module.css",
@@ -16932,11 +17186,19 @@
     },
     {
       "path": "library/ui/components/OptionMenu/OptionMenu.module.css",
-      "sha256": "bdf0dcf7fc5e378c1e0560d10cf74ed7313745ef8b9ba33a58312425bd22bf10"
+      "sha256": "912a1520933eaf2fd62ba09521b0092dcc832c029ade067327fdb530dd022c80"
     },
     {
       "path": "library/ui/components/OptionMenu/OptionMenu.tsx",
       "sha256": "72511c90955ab032853d3942b815750e36cbfb03bf25cc66a3be425d7f6d24f0"
+    },
+    {
+      "path": "library/ui/components/PagedRail/PagedRail.module.css",
+      "sha256": "91e07fff9680decf31ddad69feccad40b5c1ddbc210ce4dee0281df3149a68a6"
+    },
+    {
+      "path": "library/ui/components/PagedRail/PagedRail.tsx",
+      "sha256": "a2ae00277cc19951b9218dffe628001f0d232f6b74addd4aab332a1d9021aed5"
     },
     {
       "path": "library/ui/components/Pager/Pager.module.css",
@@ -16985,6 +17247,14 @@
     {
       "path": "library/ui/components/ProgressBar/ProgressBar.tsx",
       "sha256": "73a805fe83953b2352af7351760bd1a9fdbd22bf323ac6cb70725b586b68d799"
+    },
+    {
+      "path": "library/ui/components/RailButton/RailButton.module.css",
+      "sha256": "0d9b5ba3d50ce410006a1005c987b7a380a28bb83b64235764d39936104651bc"
+    },
+    {
+      "path": "library/ui/components/RailButton/RailButton.tsx",
+      "sha256": "ee49ec87cb55224a021e24dbe164b3352113d8b42cf1387f45fc57d196c541e8"
     },
     {
       "path": "library/ui/components/ScrollThumb/ScrollThumb.module.css",
@@ -17072,7 +17342,7 @@
     },
     {
       "path": "library/ui/components/TabsBar/TabsBar.module.css",
-      "sha256": "7ecef8cdcc9eaebbf44a5253247949527a415071a884016915af2c319c0fc8d6"
+      "sha256": "f37be88aca6407349dc2bc531ee52e7b2843c0352698e1a63e207e99b0827061"
     },
     {
       "path": "library/ui/components/TabsBar/TabsBar.module.css.d.ts",
@@ -17125,6 +17395,18 @@
     {
       "path": "library/ui/components/VoiceBars/VoiceBars.tsx",
       "sha256": "02489972dc8194968f5c97eb70b0c478563cc0422451ba8ea21523db48832f47"
+    },
+    {
+      "path": "library/ui/components/WearableCard/WearableCard.module.css",
+      "sha256": "70296d3a8824ac112905e126d40e6fd97e4e01e208647e0bdc1acdc44bcf9da7"
+    },
+    {
+      "path": "library/ui/components/WearableCard/WearableCard.tsx",
+      "sha256": "b5f4b6951e91167103cc7653e71db437ae6058b5862954e2f5850205f6069cad"
+    },
+    {
+      "path": "library/ui/components/WearableCard/rarity.module.css",
+      "sha256": "14bda73a31d5b5e71f14754ebe26a4fdc610df0f15105d615c5389831adf3fbd"
     },
     {
       "path": "library/ui/content.helpers.ts",
@@ -17248,7 +17530,7 @@
     },
     {
       "path": "library/ui/index.ts",
-      "sha256": "df59a855c878d2b8fd47fddd7cc003a5213ed527106fecdf4be1a2f66b5dc4d0"
+      "sha256": "488221341fd8f86bd5fffcb3ae056a13ab15f3e8d41c26ca0f2a0948ddc5cc8f"
     },
     {
       "path": "library/ui/link.helpers.ts",
@@ -17556,6 +17838,21 @@
     },
     {
       "from": "library/explorer-core/engine/mockBridge.ts",
+      "to": "library/explorer-core/features/chat/reactions.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/explorer-core/engine/mockBridge.ts",
+      "to": "library/explorer-core/features/chat/reactions.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/explorer-core/engine/mockBridge.ts",
+      "to": "library/explorer-core/features/chat/reactions.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/explorer-core/engine/mockBridge.ts",
       "to": "library/explorer-core/features/map/atlas.ts",
       "kind": "native:runtime"
     },
@@ -21306,32 +21603,17 @@
     },
     {
       "from": "library/ui/apps/hud/design/ColorPicker.tsx",
-      "to": "library/explorer-core/lib/color.ts",
+      "to": "library/ui/index.ts",
       "kind": "native:runtime"
     },
     {
       "from": "library/ui/apps/hud/design/ColorPicker.tsx",
-      "to": "library/explorer-core/lib/color.ts",
+      "to": "library/ui/index.ts",
       "kind": "production:runtime"
     },
     {
       "from": "library/ui/apps/hud/design/ColorPicker.tsx",
-      "to": "library/explorer-core/lib/color.ts",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/ColorPicker.tsx",
-      "to": "library/ui/apps/hud/design/ColorPicker.module.css",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/ColorPicker.tsx",
-      "to": "library/ui/apps/hud/design/ColorPicker.module.css",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/ColorPicker.tsx",
-      "to": "library/ui/apps/hud/design/ColorPicker.module.css",
+      "to": "library/ui/index.ts",
       "kind": "test:runtime"
     },
     {
@@ -21380,36 +21662,6 @@
       "kind": "test:runtime"
     },
     {
-      "from": "library/ui/apps/hud/design/DateField.tsx",
-      "to": "library/ui/apps/hud/design/DateField.module.css",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/DateField.tsx",
-      "to": "library/ui/apps/hud/design/DateField.module.css",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/DateField.tsx",
-      "to": "library/ui/apps/hud/design/DateField.module.css",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/DateField.tsx",
-      "to": "library/ui/apps/hud/design/Select.tsx",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/DateField.tsx",
-      "to": "library/ui/apps/hud/design/Select.tsx",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/DateField.tsx",
-      "to": "library/ui/apps/hud/design/Select.tsx",
-      "kind": "test:runtime"
-    },
-    {
       "from": "library/ui/apps/hud/design/Dropdown.tsx",
       "to": "library/explorer-core/lib/cancelLayers.ts",
       "kind": "native:runtime"
@@ -21436,36 +21688,6 @@
     },
     {
       "from": "library/ui/apps/hud/design/Dropdown.tsx",
-      "to": "library/ui/index.ts",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/EquippedItemCard.tsx",
-      "to": "library/ui/apps/hud/design/EquippedItemCard.module.css",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/EquippedItemCard.tsx",
-      "to": "library/ui/apps/hud/design/EquippedItemCard.module.css",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/EquippedItemCard.tsx",
-      "to": "library/ui/apps/hud/design/EquippedItemCard.module.css",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/EquippedItemCard.tsx",
-      "to": "library/ui/index.ts",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/EquippedItemCard.tsx",
-      "to": "library/ui/index.ts",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/EquippedItemCard.tsx",
       "to": "library/ui/index.ts",
       "kind": "test:runtime"
     },
@@ -21531,21 +21753,6 @@
     },
     {
       "from": "library/ui/apps/hud/design/HintsButton.tsx",
-      "to": "library/ui/apps/hud/design/HintsButton.module.css",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/HintsButton.tsx",
-      "to": "library/ui/apps/hud/design/HintsButton.module.css",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/HintsButton.tsx",
-      "to": "library/ui/apps/hud/design/HintsButton.module.css",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/HintsButton.tsx",
       "to": "library/ui/index.ts",
       "kind": "native:runtime"
     },
@@ -21572,21 +21779,6 @@
     {
       "from": "library/ui/apps/hud/design/IconButton.tsx",
       "to": "library/ui/apps/hud/design/Avatar.tsx",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/IconButton.tsx",
-      "to": "library/ui/apps/hud/design/IconButton.module.css",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/IconButton.tsx",
-      "to": "library/ui/apps/hud/design/IconButton.module.css",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/IconButton.tsx",
-      "to": "library/ui/apps/hud/design/IconButton.module.css",
       "kind": "test:runtime"
     },
     {
@@ -21782,21 +21974,6 @@
     {
       "from": "library/ui/apps/hud/design/Rail.tsx",
       "to": "library/ui/apps/hud/assets/rail/arrow-right.png",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Rail.tsx",
-      "to": "library/ui/apps/hud/design/Rail.module.css",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Rail.tsx",
-      "to": "library/ui/apps/hud/design/Rail.module.css",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Rail.tsx",
-      "to": "library/ui/apps/hud/design/Rail.module.css",
       "kind": "test:runtime"
     },
     {
@@ -22236,17 +22413,47 @@
     },
     {
       "from": "library/ui/apps/hud/design/WearableCard.tsx",
-      "to": "library/ui/apps/hud/design/WearableCard.module.css",
+      "to": "library/ui/apps/hud/assets/backpack/corner-flap.webp",
       "kind": "native:runtime"
     },
     {
       "from": "library/ui/apps/hud/design/WearableCard.tsx",
-      "to": "library/ui/apps/hud/design/WearableCard.module.css",
+      "to": "library/ui/apps/hud/assets/backpack/corner-flap.webp",
       "kind": "production:runtime"
     },
     {
       "from": "library/ui/apps/hud/design/WearableCard.tsx",
-      "to": "library/ui/apps/hud/design/WearableCard.module.css",
+      "to": "library/ui/apps/hud/assets/backpack/corner-flap.webp",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/design/WearableCard.tsx",
+      "to": "library/ui/apps/hud/assets/backpack/equipped-outline.webp",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/design/WearableCard.tsx",
+      "to": "library/ui/apps/hud/assets/backpack/equipped-outline.webp",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/design/WearableCard.tsx",
+      "to": "library/ui/apps/hud/assets/backpack/equipped-outline.webp",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/design/WearableCard.tsx",
+      "to": "library/ui/apps/hud/assets/backpack/hover-bg.webp",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/design/WearableCard.tsx",
+      "to": "library/ui/apps/hud/assets/backpack/hover-bg.webp",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/design/WearableCard.tsx",
+      "to": "library/ui/apps/hud/assets/backpack/hover-bg.webp",
       "kind": "test:runtime"
     },
     {
@@ -22262,6 +22469,21 @@
     {
       "from": "library/ui/apps/hud/design/WearableCard.tsx",
       "to": "library/ui/apps/hud/design/rarityArt.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/design/WearableCard.tsx",
+      "to": "library/ui/index.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/design/WearableCard.tsx",
+      "to": "library/ui/index.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/design/WearableCard.tsx",
+      "to": "library/ui/index.ts",
       "kind": "test:runtime"
     },
     {
@@ -22686,21 +22908,6 @@
     },
     {
       "from": "library/ui/apps/hud/design/index.ts",
-      "to": "library/ui/apps/hud/design/DateField.tsx",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/index.ts",
-      "to": "library/ui/apps/hud/design/DateField.tsx",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/index.ts",
-      "to": "library/ui/apps/hud/design/DateField.tsx",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/index.ts",
       "to": "library/ui/apps/hud/design/Dropdown.tsx",
       "kind": "native:runtime"
     },
@@ -22712,21 +22919,6 @@
     {
       "from": "library/ui/apps/hud/design/index.ts",
       "to": "library/ui/apps/hud/design/Dropdown.tsx",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/index.ts",
-      "to": "library/ui/apps/hud/design/EquippedItemCard.tsx",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/index.ts",
-      "to": "library/ui/apps/hud/design/EquippedItemCard.tsx",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/index.ts",
-      "to": "library/ui/apps/hud/design/EquippedItemCard.tsx",
       "kind": "test:runtime"
     },
     {
@@ -23087,21 +23279,6 @@
     {
       "from": "library/ui/apps/hud/design/popups.tsx",
       "to": "library/ui/apps/hud/design/Modal.tsx",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/popups.tsx",
-      "to": "library/ui/apps/hud/design/popups.module.css",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/popups.tsx",
-      "to": "library/ui/apps/hud/design/popups.module.css",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/popups.tsx",
-      "to": "library/ui/apps/hud/design/popups.module.css",
       "kind": "test:runtime"
     },
     {
@@ -24471,6 +24648,21 @@
     },
     {
       "from": "library/ui/apps/hud/features/chat/Chat.tsx",
+      "to": "library/explorer-core/features/chat/reactions.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/chat/Chat.tsx",
+      "to": "library/explorer-core/features/chat/reactions.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/chat/Chat.tsx",
+      "to": "library/explorer-core/features/chat/reactions.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/chat/Chat.tsx",
       "to": "library/explorer-core/features/chat/translation.ts",
       "kind": "native:runtime"
     },
@@ -24752,6 +24944,21 @@
     {
       "from": "library/ui/apps/hud/features/chat/Chat.tsx",
       "to": "library/ui/apps/hud/features/chat/EmojiSuggestList.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/chat/Chat.tsx",
+      "to": "library/ui/apps/hud/features/chat/ReactionLane.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/chat/Chat.tsx",
+      "to": "library/ui/apps/hud/features/chat/ReactionLane.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/chat/Chat.tsx",
+      "to": "library/ui/apps/hud/features/chat/ReactionLane.tsx",
       "kind": "test:runtime"
     },
     {
@@ -25835,6 +26042,51 @@
       "kind": "test:runtime"
     },
     {
+      "from": "library/ui/apps/hud/features/chat/ReactionLane.tsx",
+      "to": "library/explorer-core/lib/hudScale.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/chat/ReactionLane.tsx",
+      "to": "library/explorer-core/lib/hudScale.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/chat/ReactionLane.tsx",
+      "to": "library/explorer-core/lib/hudScale.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/chat/ReactionLane.tsx",
+      "to": "library/ui/apps/hud/features/chat/ReactionLane.module.css",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/chat/ReactionLane.tsx",
+      "to": "library/ui/apps/hud/features/chat/ReactionLane.module.css",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/chat/ReactionLane.tsx",
+      "to": "library/ui/apps/hud/features/chat/ReactionLane.module.css",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/chat/ReactionLane.tsx",
+      "to": "library/ui/apps/hud/features/chat/reactionMotion.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/chat/ReactionLane.tsx",
+      "to": "library/ui/apps/hud/features/chat/reactionMotion.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/chat/ReactionLane.tsx",
+      "to": "library/ui/apps/hud/features/chat/reactionMotion.ts",
+      "kind": "test:runtime"
+    },
+    {
       "from": "library/ui/apps/hud/features/chat/buttonSounds.test.ts",
       "to": "library/ui/apps/hud/features/chat/buttonSounds.ts",
       "kind": "native:runtime"
@@ -26012,6 +26264,21 @@
     {
       "from": "library/ui/apps/hud/features/chat/ping.ts",
       "to": "library/explorer-core/lib/prefs.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/chat/reactionMotion.test.ts",
+      "to": "library/ui/apps/hud/features/chat/reactionMotion.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/chat/reactionMotion.test.ts",
+      "to": "library/ui/apps/hud/features/chat/reactionMotion.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/chat/reactionMotion.test.ts",
+      "to": "library/ui/apps/hud/features/chat/reactionMotion.ts",
       "kind": "test:runtime"
     },
     {
@@ -30947,6 +31214,21 @@
     {
       "from": "library/ui/apps/hud/features/hideUi/hideUiToast.tsx",
       "to": "library/ui/apps/hud/features/hideUi/hideUiToast.module.css",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/hideUi/hideUiToast.tsx",
+      "to": "library/ui/index.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/hideUi/hideUiToast.tsx",
+      "to": "library/ui/index.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/hideUi/hideUiToast.tsx",
+      "to": "library/ui/index.ts",
       "kind": "test:runtime"
     },
     {
@@ -44615,21 +44897,6 @@
       "kind": "test:runtime"
     },
     {
-      "from": "library/ui/apps/hud/test/dateField.test.tsx",
-      "to": "library/ui/apps/hud/design/DateField.tsx",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/test/dateField.test.tsx",
-      "to": "library/ui/apps/hud/design/DateField.tsx",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/test/dateField.test.tsx",
-      "to": "library/ui/apps/hud/design/DateField.tsx",
-      "kind": "test:runtime"
-    },
-    {
       "from": "library/ui/apps/hud/test/design.ported.test.tsx",
       "to": "library/explorer-core/lib/cancelLayers.ts",
       "kind": "native:runtime"
@@ -44930,6 +45197,51 @@
       "kind": "test:runtime"
     },
     {
+      "from": "library/ui/apps/hud/test/hintsButton.test.tsx",
+      "to": "library/explorer-core/lib/cancelLayers.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hintsButton.test.tsx",
+      "to": "library/explorer-core/lib/cancelLayers.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hintsButton.test.tsx",
+      "to": "library/explorer-core/lib/cancelLayers.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hintsButton.test.tsx",
+      "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hintsButton.test.tsx",
+      "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hintsButton.test.tsx",
+      "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hintsButton.test.tsx",
+      "to": "library/ui/index.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hintsButton.test.tsx",
+      "to": "library/ui/index.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hintsButton.test.tsx",
+      "to": "library/ui/index.ts",
+      "kind": "test:runtime"
+    },
+    {
       "from": "library/ui/apps/hud/test/hosted/analytics.session.test.tsx",
       "to": "library/explorer-core/lib/analytics.ts",
       "kind": "native:runtime"
@@ -45860,6 +46172,51 @@
       "kind": "test:runtime"
     },
     {
+      "from": "library/ui/apps/hud/test/hosted/chatReactionLane.test.tsx",
+      "to": "library/ui/apps/hud/features/chat/ReactionLane.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/chatReactionLane.test.tsx",
+      "to": "library/ui/apps/hud/features/chat/ReactionLane.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/chatReactionLane.test.tsx",
+      "to": "library/ui/apps/hud/features/chat/ReactionLane.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/chatReactionLane.test.tsx",
+      "to": "library/ui/apps/hud/features/chat/reactionMotion.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/chatReactionLane.test.tsx",
+      "to": "library/ui/apps/hud/features/chat/reactionMotion.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/chatReactionLane.test.tsx",
+      "to": "library/ui/apps/hud/features/chat/reactionMotion.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/chatReactions.clicks.test.tsx",
+      "to": "library/explorer-core/features/chat/reactions.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/chatReactions.clicks.test.tsx",
+      "to": "library/explorer-core/features/chat/reactions.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/chatReactions.clicks.test.tsx",
+      "to": "library/explorer-core/features/chat/reactions.ts",
+      "kind": "test:runtime"
+    },
+    {
       "from": "library/ui/apps/hud/test/hosted/chatReactions.clicks.test.tsx",
       "to": "library/explorer-core/lib/cancelLayers.ts",
       "kind": "native:runtime"
@@ -45917,6 +46274,21 @@
     {
       "from": "library/ui/apps/hud/test/hosted/chatReactions.clicks.test.tsx",
       "to": "library/ui/apps/hud/features/chat/emojiData.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/chatReactions.clicks.test.tsx",
+      "to": "library/ui/apps/hud/features/session/SessionContext.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/chatReactions.clicks.test.tsx",
+      "to": "library/ui/apps/hud/features/session/SessionContext.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/chatReactions.clicks.test.tsx",
+      "to": "library/ui/apps/hud/features/session/SessionContext.tsx",
       "kind": "test:runtime"
     },
     {
@@ -50915,6 +51287,21 @@
       "kind": "test:runtime"
     },
     {
+      "from": "library/ui/apps/hud/test/iconButton.test.tsx",
+      "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/iconButton.test.tsx",
+      "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/iconButton.test.tsx",
+      "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "test:runtime"
+    },
+    {
       "from": "library/ui/apps/hud/test/integratedGpuGuide.test.tsx",
       "to": "library/explorer-core/lib/inputLock.ts",
       "kind": "native:runtime"
@@ -51290,6 +51677,21 @@
       "kind": "test:runtime"
     },
     {
+      "from": "library/ui/apps/hud/test/popupLayers.test.tsx",
+      "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/popupLayers.test.tsx",
+      "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/popupLayers.test.tsx",
+      "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "test:runtime"
+    },
+    {
       "from": "library/ui/apps/hud/test/popups.test.tsx",
       "to": "library/ui/apps/hud/design/index.ts",
       "kind": "native:runtime"
@@ -51561,6 +51963,36 @@
     },
     {
       "from": "library/ui/apps/hud/test/rail.test.tsx",
+      "to": "library/ui/apps/hud/assets/rail/arrow-left.png",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/rail.test.tsx",
+      "to": "library/ui/apps/hud/assets/rail/arrow-left.png",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/rail.test.tsx",
+      "to": "library/ui/apps/hud/assets/rail/arrow-left.png",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/rail.test.tsx",
+      "to": "library/ui/apps/hud/assets/rail/arrow-right.png",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/rail.test.tsx",
+      "to": "library/ui/apps/hud/assets/rail/arrow-right.png",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/rail.test.tsx",
+      "to": "library/ui/apps/hud/assets/rail/arrow-right.png",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/rail.test.tsx",
       "to": "library/ui/apps/hud/design/Rail.tsx",
       "kind": "native:runtime"
     },
@@ -51572,6 +52004,36 @@
     {
       "from": "library/ui/apps/hud/test/rail.test.tsx",
       "to": "library/ui/apps/hud/design/Rail.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/rarityTokens.test.tsx",
+      "to": "library/ui/apps/hud/design/WearableCard.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/rarityTokens.test.tsx",
+      "to": "library/ui/apps/hud/design/WearableCard.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/rarityTokens.test.tsx",
+      "to": "library/ui/apps/hud/design/WearableCard.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/rarityTokens.test.tsx",
+      "to": "library/ui/apps/hud/features/emotes/EmoteSlot.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/rarityTokens.test.tsx",
+      "to": "library/ui/apps/hud/features/emotes/EmoteSlot.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/rarityTokens.test.tsx",
+      "to": "library/ui/apps/hud/features/emotes/EmoteSlot.tsx",
       "kind": "test:runtime"
     },
     {
@@ -51917,6 +52379,81 @@
     {
       "from": "library/ui/apps/hud/test/textureOptimization.test.tsx",
       "to": "library/ui/apps/hud/test/harness.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/toastHost.test.tsx",
+      "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/toastHost.test.tsx",
+      "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/toastHost.test.tsx",
+      "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/wearableCard.test.tsx",
+      "to": "library/ui/apps/hud/assets/backpack/corner-flap.webp",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/wearableCard.test.tsx",
+      "to": "library/ui/apps/hud/assets/backpack/corner-flap.webp",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/wearableCard.test.tsx",
+      "to": "library/ui/apps/hud/assets/backpack/corner-flap.webp",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/wearableCard.test.tsx",
+      "to": "library/ui/apps/hud/assets/backpack/equipped-outline.webp",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/wearableCard.test.tsx",
+      "to": "library/ui/apps/hud/assets/backpack/equipped-outline.webp",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/wearableCard.test.tsx",
+      "to": "library/ui/apps/hud/assets/backpack/equipped-outline.webp",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/wearableCard.test.tsx",
+      "to": "library/ui/apps/hud/assets/backpack/hover-bg.webp",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/wearableCard.test.tsx",
+      "to": "library/ui/apps/hud/assets/backpack/hover-bg.webp",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/wearableCard.test.tsx",
+      "to": "library/ui/apps/hud/assets/backpack/hover-bg.webp",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/wearableCard.test.tsx",
+      "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/wearableCard.test.tsx",
+      "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/wearableCard.test.tsx",
+      "to": "library/ui/apps/hud/design/index.ts",
       "kind": "test:runtime"
     },
     {
@@ -53705,6 +54242,36 @@
       "kind": "test:runtime"
     },
     {
+      "from": "library/ui/apps/sites/chrome/SitesFooter.tsx",
+      "to": "library/ui/components/Button/Button.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/sites/chrome/SitesFooter.tsx",
+      "to": "library/ui/components/Button/Button.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/sites/chrome/SitesFooter.tsx",
+      "to": "library/ui/components/Button/Button.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/sites/chrome/SitesFooter.tsx",
+      "to": "library/ui/components/InputWebCreatorTools/InputWebCreatorTools.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/sites/chrome/SitesFooter.tsx",
+      "to": "library/ui/components/InputWebCreatorTools/InputWebCreatorTools.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/sites/chrome/SitesFooter.tsx",
+      "to": "library/ui/components/InputWebCreatorTools/InputWebCreatorTools.tsx",
+      "kind": "test:runtime"
+    },
+    {
       "from": "library/ui/apps/sites/chrome/SitesNotificationsDialog.tsx",
       "to": "library/ui/apps/sites/assets/dcl-logo.svg",
       "kind": "native:runtime"
@@ -53762,6 +54329,21 @@
     {
       "from": "library/ui/apps/sites/chrome/SitesNotificationsDialog.tsx",
       "to": "library/ui/apps/sites/chrome/notification-media.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/sites/chrome/SitesNotificationsDialog.tsx",
+      "to": "library/ui/components/CloseButton/CloseButton.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/sites/chrome/SitesNotificationsDialog.tsx",
+      "to": "library/ui/components/CloseButton/CloseButton.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/sites/chrome/SitesNotificationsDialog.tsx",
+      "to": "library/ui/components/CloseButton/CloseButton.tsx",
       "kind": "test:runtime"
     },
     {
@@ -55371,6 +55953,21 @@
     },
     {
       "from": "library/ui/apps/sites/events/DetailModal.tsx",
+      "to": "library/ui/components/CloseButton/CloseButton.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/sites/events/DetailModal.tsx",
+      "to": "library/ui/components/CloseButton/CloseButton.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/sites/events/DetailModal.tsx",
+      "to": "library/ui/components/CloseButton/CloseButton.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/sites/events/DetailModal.tsx",
       "to": "library/ui/components/EventCard/EventCard.tsx",
       "kind": "native:runtime"
     },
@@ -55866,21 +56463,6 @@
     },
     {
       "from": "library/ui/apps/sites/events/PermissionsModal.tsx",
-      "to": "library/ui/apps/sites/events/Dialog.tsx",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/sites/events/PermissionsModal.tsx",
-      "to": "library/ui/apps/sites/events/Dialog.tsx",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/sites/events/PermissionsModal.tsx",
-      "to": "library/ui/apps/sites/events/Dialog.tsx",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/sites/events/PermissionsModal.tsx",
       "to": "library/ui/apps/sites/events/admin-copy.ts",
       "kind": "native:runtime"
     },
@@ -55926,32 +56508,32 @@
     },
     {
       "from": "library/ui/apps/sites/events/PermissionsModal.tsx",
-      "to": "library/ui/components/Switch/Switch.tsx",
+      "to": "library/ui/components/Modal/Modal.tsx",
       "kind": "native:runtime"
     },
     {
       "from": "library/ui/apps/sites/events/PermissionsModal.tsx",
-      "to": "library/ui/components/Switch/Switch.tsx",
+      "to": "library/ui/components/Modal/Modal.tsx",
       "kind": "production:runtime"
     },
     {
       "from": "library/ui/apps/sites/events/PermissionsModal.tsx",
-      "to": "library/ui/components/Switch/Switch.tsx",
+      "to": "library/ui/components/Modal/Modal.tsx",
       "kind": "test:runtime"
     },
     {
       "from": "library/ui/apps/sites/events/PermissionsModal.tsx",
-      "to": "library/ui/foundations/icons/index.ts",
+      "to": "library/ui/components/Switch/Switch.tsx",
       "kind": "native:runtime"
     },
     {
       "from": "library/ui/apps/sites/events/PermissionsModal.tsx",
-      "to": "library/ui/foundations/icons/index.ts",
+      "to": "library/ui/components/Switch/Switch.tsx",
       "kind": "production:runtime"
     },
     {
       "from": "library/ui/apps/sites/events/PermissionsModal.tsx",
-      "to": "library/ui/foundations/icons/index.ts",
+      "to": "library/ui/components/Switch/Switch.tsx",
       "kind": "test:runtime"
     },
     {
@@ -55986,6 +56568,21 @@
     },
     {
       "from": "library/ui/apps/sites/events/Rail.tsx",
+      "to": "library/ui/components/Button/Button.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/sites/events/Rail.tsx",
+      "to": "library/ui/components/Button/Button.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/sites/events/Rail.tsx",
+      "to": "library/ui/components/Button/Button.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/sites/events/Rail.tsx",
       "to": "library/ui/foundations/icons/index.ts",
       "kind": "native:runtime"
     },
@@ -56012,21 +56609,6 @@
     {
       "from": "library/ui/apps/sites/events/RejectEventModal.tsx",
       "to": "library/ui/apps/sites/events/AdminModal.module.css",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/sites/events/RejectEventModal.tsx",
-      "to": "library/ui/apps/sites/events/Dialog.tsx",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/sites/events/RejectEventModal.tsx",
-      "to": "library/ui/apps/sites/events/Dialog.tsx",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/sites/events/RejectEventModal.tsx",
-      "to": "library/ui/apps/sites/events/Dialog.tsx",
       "kind": "test:runtime"
     },
     {
@@ -56087,6 +56669,36 @@
     {
       "from": "library/ui/apps/sites/events/RejectEventModal.tsx",
       "to": "library/ui/components/CheckboxLabel/CheckboxLabel.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/sites/events/RejectEventModal.tsx",
+      "to": "library/ui/components/InputField/InputFieldWebControls.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/sites/events/RejectEventModal.tsx",
+      "to": "library/ui/components/InputField/InputFieldWebControls.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/sites/events/RejectEventModal.tsx",
+      "to": "library/ui/components/InputField/InputFieldWebControls.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/sites/events/RejectEventModal.tsx",
+      "to": "library/ui/components/Modal/Modal.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/sites/events/RejectEventModal.tsx",
+      "to": "library/ui/components/Modal/Modal.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/sites/events/RejectEventModal.tsx",
+      "to": "library/ui/components/Modal/Modal.tsx",
       "kind": "test:runtime"
     },
     {
@@ -56241,6 +56853,21 @@
     },
     {
       "from": "library/ui/apps/sites/events/UsersTable.tsx",
+      "to": "library/ui/components/InputField/InputFieldWebControls.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/sites/events/UsersTable.tsx",
+      "to": "library/ui/components/InputField/InputFieldWebControls.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/sites/events/UsersTable.tsx",
+      "to": "library/ui/components/InputField/InputFieldWebControls.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/sites/events/UsersTable.tsx",
       "to": "library/ui/foundations/icons/index.ts",
       "kind": "native:runtime"
     },
@@ -56432,6 +57059,21 @@
     {
       "from": "library/ui/apps/sites/flow-map/FlowMapPage.tsx",
       "to": "library/ui/apps/sites/flow-map/flowmappage.css",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/sites/flow-map/FlowMapPage.tsx",
+      "to": "library/ui/components/Button/Button.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/sites/flow-map/FlowMapPage.tsx",
+      "to": "library/ui/components/Button/Button.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/sites/flow-map/FlowMapPage.tsx",
+      "to": "library/ui/components/Button/Button.tsx",
       "kind": "test:runtime"
     },
     {
@@ -56676,6 +57318,21 @@
     },
     {
       "from": "library/ui/apps/sites/help/HelpStatus.tsx",
+      "to": "library/ui/components/Button/Button.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/sites/help/HelpStatus.tsx",
+      "to": "library/ui/components/Button/Button.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/sites/help/HelpStatus.tsx",
+      "to": "library/ui/components/Button/Button.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/sites/help/HelpStatus.tsx",
       "to": "library/ui/foundations/icons/index.ts",
       "kind": "native:runtime"
     },
@@ -56690,21 +57347,6 @@
       "kind": "test:runtime"
     },
     {
-      "from": "library/ui/apps/sites/help/HelpTabs.module.css",
-      "to": "library/ui/foundations/typography/text-styles.module.css",
-      "kind": "native:composes"
-    },
-    {
-      "from": "library/ui/apps/sites/help/HelpTabs.module.css",
-      "to": "library/ui/foundations/typography/text-styles.module.css",
-      "kind": "production:composes"
-    },
-    {
-      "from": "library/ui/apps/sites/help/HelpTabs.module.css",
-      "to": "library/ui/foundations/typography/text-styles.module.css",
-      "kind": "test:composes"
-    },
-    {
       "from": "library/ui/apps/sites/help/HelpTabs.tsx",
       "to": "library/ui/apps/sites/help/HelpTabs.module.css",
       "kind": "native:runtime"
@@ -56717,6 +57359,36 @@
     {
       "from": "library/ui/apps/sites/help/HelpTabs.tsx",
       "to": "library/ui/apps/sites/help/HelpTabs.module.css",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/sites/help/HelpTabs.tsx",
+      "to": "library/ui/components/Tabs/Tabs.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/sites/help/HelpTabs.tsx",
+      "to": "library/ui/components/Tabs/Tabs.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/sites/help/HelpTabs.tsx",
+      "to": "library/ui/components/Tabs/Tabs.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/sites/help/HelpTabs.tsx",
+      "to": "library/ui/components/TabsBar/TabsBar.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/sites/help/HelpTabs.tsx",
+      "to": "library/ui/components/TabsBar/TabsBar.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/sites/help/HelpTabs.tsx",
+      "to": "library/ui/components/TabsBar/TabsBar.tsx",
       "kind": "test:runtime"
     },
     {
@@ -59060,21 +59732,6 @@
       "kind": "test:runtime"
     },
     {
-      "from": "library/ui/apps/sites/jump/JumpCard.module.css",
-      "to": "library/ui/apps/sites/jump/JumpButtons.module.css",
-      "kind": "native:composes"
-    },
-    {
-      "from": "library/ui/apps/sites/jump/JumpCard.module.css",
-      "to": "library/ui/apps/sites/jump/JumpButtons.module.css",
-      "kind": "production:composes"
-    },
-    {
-      "from": "library/ui/apps/sites/jump/JumpCard.module.css",
-      "to": "library/ui/apps/sites/jump/JumpButtons.module.css",
-      "kind": "test:composes"
-    },
-    {
       "from": "library/ui/apps/sites/jump/JumpCard.tsx",
       "to": "library/ui/apps/sites/assets/dcl-logo.svg",
       "kind": "native:runtime"
@@ -59166,17 +59823,17 @@
     },
     {
       "from": "library/ui/apps/sites/jump/JumpCard.tsx",
-      "to": "library/ui/apps/sites/shared/Button/Button.tsx",
+      "to": "library/ui/components/Button/Button.tsx",
       "kind": "native:runtime"
     },
     {
       "from": "library/ui/apps/sites/jump/JumpCard.tsx",
-      "to": "library/ui/apps/sites/shared/Button/Button.tsx",
+      "to": "library/ui/components/Button/Button.tsx",
       "kind": "production:runtime"
     },
     {
       "from": "library/ui/apps/sites/jump/JumpCard.tsx",
-      "to": "library/ui/apps/sites/shared/Button/Button.tsx",
+      "to": "library/ui/components/Button/Button.tsx",
       "kind": "test:runtime"
     },
     {
@@ -59193,21 +59850,6 @@
       "from": "library/ui/apps/sites/jump/JumpCard.tsx",
       "to": "library/ui/components/JumpInCTA/JumpInCTA.tsx",
       "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/sites/jump/JumpEventActions.module.css",
-      "to": "library/ui/apps/sites/jump/JumpButtons.module.css",
-      "kind": "native:composes"
-    },
-    {
-      "from": "library/ui/apps/sites/jump/JumpEventActions.module.css",
-      "to": "library/ui/apps/sites/jump/JumpButtons.module.css",
-      "kind": "production:composes"
-    },
-    {
-      "from": "library/ui/apps/sites/jump/JumpEventActions.module.css",
-      "to": "library/ui/apps/sites/jump/JumpButtons.module.css",
-      "kind": "test:composes"
     },
     {
       "from": "library/ui/apps/sites/jump/JumpEventActions.module.css",
@@ -59256,33 +59898,18 @@
     },
     {
       "from": "library/ui/apps/sites/jump/JumpEventActions.tsx",
-      "to": "library/ui/apps/sites/shared/Button/Button.tsx",
+      "to": "library/ui/components/Button/Button.tsx",
       "kind": "native:runtime"
     },
     {
       "from": "library/ui/apps/sites/jump/JumpEventActions.tsx",
-      "to": "library/ui/apps/sites/shared/Button/Button.tsx",
+      "to": "library/ui/components/Button/Button.tsx",
       "kind": "production:runtime"
     },
     {
       "from": "library/ui/apps/sites/jump/JumpEventActions.tsx",
-      "to": "library/ui/apps/sites/shared/Button/Button.tsx",
+      "to": "library/ui/components/Button/Button.tsx",
       "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/sites/jump/JumpInvalid.module.css",
-      "to": "library/ui/apps/sites/jump/JumpButtons.module.css",
-      "kind": "native:composes"
-    },
-    {
-      "from": "library/ui/apps/sites/jump/JumpInvalid.module.css",
-      "to": "library/ui/apps/sites/jump/JumpButtons.module.css",
-      "kind": "production:composes"
-    },
-    {
-      "from": "library/ui/apps/sites/jump/JumpInvalid.module.css",
-      "to": "library/ui/apps/sites/jump/JumpButtons.module.css",
-      "kind": "test:composes"
     },
     {
       "from": "library/ui/apps/sites/jump/JumpInvalid.tsx",
@@ -59316,17 +59943,17 @@
     },
     {
       "from": "library/ui/apps/sites/jump/JumpInvalid.tsx",
-      "to": "library/ui/apps/sites/shared/Button/Button.tsx",
+      "to": "library/ui/components/Button/Button.tsx",
       "kind": "native:runtime"
     },
     {
       "from": "library/ui/apps/sites/jump/JumpInvalid.tsx",
-      "to": "library/ui/apps/sites/shared/Button/Button.tsx",
+      "to": "library/ui/components/Button/Button.tsx",
       "kind": "production:runtime"
     },
     {
       "from": "library/ui/apps/sites/jump/JumpInvalid.tsx",
-      "to": "library/ui/apps/sites/shared/Button/Button.tsx",
+      "to": "library/ui/components/Button/Button.tsx",
       "kind": "test:runtime"
     },
     {
@@ -59496,6 +60123,66 @@
     },
     {
       "from": "library/ui/apps/sites/places/ExploreBand.tsx",
+      "to": "library/ui/components/Button/Button.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/sites/places/ExploreBand.tsx",
+      "to": "library/ui/components/Button/Button.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/sites/places/ExploreBand.tsx",
+      "to": "library/ui/components/Button/Button.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/sites/places/ExploreBand.tsx",
+      "to": "library/ui/components/CloseButton/CloseButton.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/sites/places/ExploreBand.tsx",
+      "to": "library/ui/components/CloseButton/CloseButton.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/sites/places/ExploreBand.tsx",
+      "to": "library/ui/components/CloseButton/CloseButton.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/sites/places/ExploreBand.tsx",
+      "to": "library/ui/components/InputField/InputFieldWebControls.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/sites/places/ExploreBand.tsx",
+      "to": "library/ui/components/InputField/InputFieldWebControls.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/sites/places/ExploreBand.tsx",
+      "to": "library/ui/components/InputField/InputFieldWebControls.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/sites/places/ExploreBand.tsx",
+      "to": "library/ui/components/InputWebCreatorTools/InputWebCreatorTools.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/sites/places/ExploreBand.tsx",
+      "to": "library/ui/components/InputWebCreatorTools/InputWebCreatorTools.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/sites/places/ExploreBand.tsx",
+      "to": "library/ui/components/InputWebCreatorTools/InputWebCreatorTools.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/sites/places/ExploreBand.tsx",
       "to": "library/ui/foundations/icons/index.ts",
       "kind": "native:runtime"
     },
@@ -59571,6 +60258,51 @@
     },
     {
       "from": "library/ui/apps/sites/places/JumpInModal.tsx",
+      "to": "library/ui/components/Button/Button.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/sites/places/JumpInModal.tsx",
+      "to": "library/ui/components/Button/Button.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/sites/places/JumpInModal.tsx",
+      "to": "library/ui/components/Button/Button.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/sites/places/JumpInModal.tsx",
+      "to": "library/ui/components/CloseButton/CloseButton.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/sites/places/JumpInModal.tsx",
+      "to": "library/ui/components/CloseButton/CloseButton.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/sites/places/JumpInModal.tsx",
+      "to": "library/ui/components/CloseButton/CloseButton.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/sites/places/JumpInModal.tsx",
+      "to": "library/ui/components/JumpInCTA/JumpInCTA.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/sites/places/JumpInModal.tsx",
+      "to": "library/ui/components/JumpInCTA/JumpInCTA.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/sites/places/JumpInModal.tsx",
+      "to": "library/ui/components/JumpInCTA/JumpInCTA.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/sites/places/JumpInModal.tsx",
       "to": "library/ui/foundations/icons/index.ts",
       "kind": "native:runtime"
     },
@@ -59631,17 +60363,17 @@
     },
     {
       "from": "library/ui/apps/sites/places/LiveNow.tsx",
-      "to": "library/ui/apps/sites/shared/Button/Button.tsx",
+      "to": "library/ui/components/Button/Button.tsx",
       "kind": "native:runtime"
     },
     {
       "from": "library/ui/apps/sites/places/LiveNow.tsx",
-      "to": "library/ui/apps/sites/shared/Button/Button.tsx",
+      "to": "library/ui/components/Button/Button.tsx",
       "kind": "production:runtime"
     },
     {
       "from": "library/ui/apps/sites/places/LiveNow.tsx",
-      "to": "library/ui/apps/sites/shared/Button/Button.tsx",
+      "to": "library/ui/components/Button/Button.tsx",
       "kind": "test:runtime"
     },
     {
@@ -59658,6 +60390,21 @@
       "from": "library/ui/apps/sites/places/LiveNow.tsx",
       "to": "library/ui/foundations/icons/index.ts",
       "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/sites/places/PlaceDetail.module.css",
+      "to": "library/ui/foundations/typography/text-styles.module.css",
+      "kind": "native:composes"
+    },
+    {
+      "from": "library/ui/apps/sites/places/PlaceDetail.module.css",
+      "to": "library/ui/foundations/typography/text-styles.module.css",
+      "kind": "production:composes"
+    },
+    {
+      "from": "library/ui/apps/sites/places/PlaceDetail.module.css",
+      "to": "library/ui/foundations/typography/text-styles.module.css",
+      "kind": "test:composes"
     },
     {
       "from": "library/ui/apps/sites/places/PlaceDetail.tsx",
@@ -59691,6 +60438,21 @@
     },
     {
       "from": "library/ui/apps/sites/places/PlaceDetail.tsx",
+      "to": "library/ui/components/Button/Button.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/sites/places/PlaceDetail.tsx",
+      "to": "library/ui/components/Button/Button.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/sites/places/PlaceDetail.tsx",
+      "to": "library/ui/components/Button/Button.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/sites/places/PlaceDetail.tsx",
       "to": "library/ui/components/CardActionButton/CardActionButton.tsx",
       "kind": "native:runtime"
     },
@@ -59702,6 +60464,51 @@
     {
       "from": "library/ui/apps/sites/places/PlaceDetail.tsx",
       "to": "library/ui/components/CardActionButton/CardActionButton.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/sites/places/PlaceDetail.tsx",
+      "to": "library/ui/components/CloseButton/CloseButton.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/sites/places/PlaceDetail.tsx",
+      "to": "library/ui/components/CloseButton/CloseButton.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/sites/places/PlaceDetail.tsx",
+      "to": "library/ui/components/CloseButton/CloseButton.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/sites/places/PlaceDetail.tsx",
+      "to": "library/ui/components/InputField/InputFieldWebControls.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/sites/places/PlaceDetail.tsx",
+      "to": "library/ui/components/InputField/InputFieldWebControls.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/sites/places/PlaceDetail.tsx",
+      "to": "library/ui/components/InputField/InputFieldWebControls.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/sites/places/PlaceDetail.tsx",
+      "to": "library/ui/components/JumpInCTA/JumpInCTA.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/sites/places/PlaceDetail.tsx",
+      "to": "library/ui/components/JumpInCTA/JumpInCTA.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/sites/places/PlaceDetail.tsx",
+      "to": "library/ui/components/JumpInCTA/JumpInCTA.tsx",
       "kind": "test:runtime"
     },
     {
@@ -59781,17 +60588,17 @@
     },
     {
       "from": "library/ui/apps/sites/places/PlaceGrid.tsx",
-      "to": "library/ui/apps/sites/shared/Button/Button.tsx",
+      "to": "library/ui/components/Button/Button.tsx",
       "kind": "native:runtime"
     },
     {
       "from": "library/ui/apps/sites/places/PlaceGrid.tsx",
-      "to": "library/ui/apps/sites/shared/Button/Button.tsx",
+      "to": "library/ui/components/Button/Button.tsx",
       "kind": "production:runtime"
     },
     {
       "from": "library/ui/apps/sites/places/PlaceGrid.tsx",
-      "to": "library/ui/apps/sites/shared/Button/Button.tsx",
+      "to": "library/ui/components/Button/Button.tsx",
       "kind": "test:runtime"
     },
     {
@@ -60272,6 +61079,21 @@
     {
       "from": "library/ui/apps/sites/profile/ProfileBadges.tsx",
       "to": "library/ui/apps/sites/profile/ProfileBadges.module.css",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/sites/profile/ProfileBadges.tsx",
+      "to": "library/ui/components/Tooltip/Tooltip.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/sites/profile/ProfileBadges.tsx",
+      "to": "library/ui/components/Tooltip/Tooltip.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/sites/profile/ProfileBadges.tsx",
+      "to": "library/ui/components/Tooltip/Tooltip.tsx",
       "kind": "test:runtime"
     },
     {
@@ -61206,32 +62028,32 @@
     },
     {
       "from": "library/ui/apps/sites/shared/Carousel.tsx",
-      "to": "library/ui/apps/sites/shared/Button/Button.tsx",
+      "to": "library/ui/apps/sites/shared/Carousel.module.css",
       "kind": "native:runtime"
     },
     {
       "from": "library/ui/apps/sites/shared/Carousel.tsx",
-      "to": "library/ui/apps/sites/shared/Button/Button.tsx",
+      "to": "library/ui/apps/sites/shared/Carousel.module.css",
       "kind": "production:runtime"
     },
     {
       "from": "library/ui/apps/sites/shared/Carousel.tsx",
-      "to": "library/ui/apps/sites/shared/Button/Button.tsx",
+      "to": "library/ui/apps/sites/shared/Carousel.module.css",
       "kind": "test:runtime"
     },
     {
       "from": "library/ui/apps/sites/shared/Carousel.tsx",
-      "to": "library/ui/apps/sites/shared/Carousel.module.css",
+      "to": "library/ui/components/Button/Button.tsx",
       "kind": "native:runtime"
     },
     {
       "from": "library/ui/apps/sites/shared/Carousel.tsx",
-      "to": "library/ui/apps/sites/shared/Carousel.module.css",
+      "to": "library/ui/components/Button/Button.tsx",
       "kind": "production:runtime"
     },
     {
       "from": "library/ui/apps/sites/shared/Carousel.tsx",
-      "to": "library/ui/apps/sites/shared/Carousel.module.css",
+      "to": "library/ui/components/Button/Button.tsx",
       "kind": "test:runtime"
     },
     {
@@ -61292,6 +62114,21 @@
     {
       "from": "library/ui/apps/sites/social/CommunityCreate.tsx",
       "to": "library/ui/components/Dropdown/Dropdown.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/sites/social/CommunityCreate.tsx",
+      "to": "library/ui/components/InputWebCreatorTools/InputWebCreatorTools.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/sites/social/CommunityCreate.tsx",
+      "to": "library/ui/components/InputWebCreatorTools/InputWebCreatorTools.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/sites/social/CommunityCreate.tsx",
+      "to": "library/ui/components/InputWebCreatorTools/InputWebCreatorTools.tsx",
       "kind": "test:runtime"
     },
     {
@@ -62180,6 +63017,36 @@
       "kind": "test:runtime"
     },
     {
+      "from": "library/ui/components/ColorPicker/ColorPicker.tsx",
+      "to": "library/ui/components/ColorPicker/ColorPicker.module.css",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/components/ColorPicker/ColorPicker.tsx",
+      "to": "library/ui/components/ColorPicker/ColorPicker.module.css",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/components/ColorPicker/ColorPicker.tsx",
+      "to": "library/ui/components/ColorPicker/ColorPicker.module.css",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/components/ColorPicker/ColorPicker.tsx",
+      "to": "library/ui/components/ColorPicker/hsv.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/components/ColorPicker/ColorPicker.tsx",
+      "to": "library/ui/components/ColorPicker/hsv.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/components/ColorPicker/ColorPicker.tsx",
+      "to": "library/ui/components/ColorPicker/hsv.ts",
+      "kind": "test:runtime"
+    },
+    {
       "from": "library/ui/components/CommunityCard/CommunityCard.module.css",
       "to": "library/ui/foundations/typography/text-styles.module.css",
       "kind": "native:composes"
@@ -62405,6 +63272,36 @@
       "kind": "test:runtime"
     },
     {
+      "from": "library/ui/components/DateField/DateField.tsx",
+      "to": "library/ui/components/DateField/DateField.module.css",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/components/DateField/DateField.tsx",
+      "to": "library/ui/components/DateField/DateField.module.css",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/components/DateField/DateField.tsx",
+      "to": "library/ui/components/DateField/DateField.module.css",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/components/DateField/DateField.tsx",
+      "to": "library/ui/components/Dropdown/Dropdown.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/components/DateField/DateField.tsx",
+      "to": "library/ui/components/Dropdown/Dropdown.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/components/DateField/DateField.tsx",
+      "to": "library/ui/components/Dropdown/Dropdown.tsx",
+      "kind": "test:runtime"
+    },
+    {
       "from": "library/ui/components/Dropdown/Dropdown.module.css",
       "to": "library/ui/foundations/typography/text-styles.module.css",
       "kind": "native:composes"
@@ -62492,6 +63389,51 @@
     {
       "from": "library/ui/components/EmptyState/EmptyState.tsx",
       "to": "library/ui/components/EmptyState/EmptyState.module.css",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/components/EquippedItemCard/EquippedItemCard.tsx",
+      "to": "library/ui/components/Button/Button.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/components/EquippedItemCard/EquippedItemCard.tsx",
+      "to": "library/ui/components/Button/Button.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/components/EquippedItemCard/EquippedItemCard.tsx",
+      "to": "library/ui/components/Button/Button.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/components/EquippedItemCard/EquippedItemCard.tsx",
+      "to": "library/ui/components/EquippedItemCard/EquippedItemCard.module.css",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/components/EquippedItemCard/EquippedItemCard.tsx",
+      "to": "library/ui/components/EquippedItemCard/EquippedItemCard.module.css",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/components/EquippedItemCard/EquippedItemCard.tsx",
+      "to": "library/ui/components/EquippedItemCard/EquippedItemCard.module.css",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/components/EquippedItemCard/EquippedItemCard.tsx",
+      "to": "library/ui/components/WearableCard/rarity.module.css",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/components/EquippedItemCard/EquippedItemCard.tsx",
+      "to": "library/ui/components/WearableCard/rarity.module.css",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/components/EquippedItemCard/EquippedItemCard.tsx",
+      "to": "library/ui/components/WearableCard/rarity.module.css",
       "kind": "test:runtime"
     },
     {
@@ -62612,6 +63554,36 @@
     {
       "from": "library/ui/components/FriendCTA/FriendCTA.tsx",
       "to": "library/ui/foundations/icons/menus.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/components/HintsButton/HintsButton.tsx",
+      "to": "library/ui/components/HintsButton/HintsButton.module.css",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/components/HintsButton/HintsButton.tsx",
+      "to": "library/ui/components/HintsButton/HintsButton.module.css",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/components/HintsButton/HintsButton.tsx",
+      "to": "library/ui/components/HintsButton/HintsButton.module.css",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/components/HintsButton/HintsButton.tsx",
+      "to": "library/ui/foundations/icons/general.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/components/HintsButton/HintsButton.tsx",
+      "to": "library/ui/foundations/icons/general.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/components/HintsButton/HintsButton.tsx",
+      "to": "library/ui/foundations/icons/general.tsx",
       "kind": "test:runtime"
     },
     {
@@ -63155,6 +64127,36 @@
       "kind": "test:runtime"
     },
     {
+      "from": "library/ui/components/PagedRail/PagedRail.tsx",
+      "to": "library/ui/components/PagedRail/PagedRail.module.css",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/components/PagedRail/PagedRail.tsx",
+      "to": "library/ui/components/PagedRail/PagedRail.module.css",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/components/PagedRail/PagedRail.tsx",
+      "to": "library/ui/components/PagedRail/PagedRail.module.css",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/components/PagedRail/PagedRail.tsx",
+      "to": "library/ui/foundations/icons/general.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/components/PagedRail/PagedRail.tsx",
+      "to": "library/ui/foundations/icons/general.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/components/PagedRail/PagedRail.tsx",
+      "to": "library/ui/foundations/icons/general.tsx",
+      "kind": "test:runtime"
+    },
+    {
       "from": "library/ui/components/Pager/Pager.tsx",
       "to": "library/ui/components/Pager/Pager.module.css",
       "kind": "native:runtime"
@@ -63287,6 +64289,36 @@
     {
       "from": "library/ui/components/ProgressBar/ProgressBar.tsx",
       "to": "library/ui/components/ProgressBar/ProgressBar.module.css",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/components/RailButton/RailButton.tsx",
+      "to": "library/ui/components/RailButton/RailButton.module.css",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/components/RailButton/RailButton.tsx",
+      "to": "library/ui/components/RailButton/RailButton.module.css",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/components/RailButton/RailButton.tsx",
+      "to": "library/ui/components/RailButton/RailButton.module.css",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/components/RailButton/RailButton.tsx",
+      "to": "library/ui/components/Tooltip/Tooltip.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/components/RailButton/RailButton.tsx",
+      "to": "library/ui/components/Tooltip/Tooltip.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/components/RailButton/RailButton.tsx",
+      "to": "library/ui/components/Tooltip/Tooltip.tsx",
       "kind": "test:runtime"
     },
     {
@@ -63812,6 +64844,36 @@
     {
       "from": "library/ui/components/VoiceBars/VoiceBars.tsx",
       "to": "library/ui/components/VoiceBars/VoiceBars.module.css",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/components/WearableCard/WearableCard.tsx",
+      "to": "library/ui/components/WearableCard/WearableCard.module.css",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/components/WearableCard/WearableCard.tsx",
+      "to": "library/ui/components/WearableCard/WearableCard.module.css",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/components/WearableCard/WearableCard.tsx",
+      "to": "library/ui/components/WearableCard/WearableCard.module.css",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/components/WearableCard/WearableCard.tsx",
+      "to": "library/ui/components/WearableCard/rarity.module.css",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/components/WearableCard/WearableCard.tsx",
+      "to": "library/ui/components/WearableCard/rarity.module.css",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/components/WearableCard/WearableCard.tsx",
+      "to": "library/ui/components/WearableCard/rarity.module.css",
       "kind": "test:runtime"
     },
     {
@@ -64486,6 +65548,21 @@
     },
     {
       "from": "library/ui/index.ts",
+      "to": "library/ui/components/ColorPicker/ColorPicker.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/index.ts",
+      "to": "library/ui/components/ColorPicker/ColorPicker.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/index.ts",
+      "to": "library/ui/components/ColorPicker/ColorPicker.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/index.ts",
       "to": "library/ui/components/CommunityCard/CommunityCard.tsx",
       "kind": "native:runtime"
     },
@@ -64576,6 +65653,21 @@
     },
     {
       "from": "library/ui/index.ts",
+      "to": "library/ui/components/DateField/DateField.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/index.ts",
+      "to": "library/ui/components/DateField/DateField.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/index.ts",
+      "to": "library/ui/components/DateField/DateField.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/index.ts",
       "to": "library/ui/components/DclLogo/DclLogo.tsx",
       "kind": "native:runtime"
     },
@@ -64621,6 +65713,21 @@
     },
     {
       "from": "library/ui/index.ts",
+      "to": "library/ui/components/EquippedItemCard/EquippedItemCard.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/index.ts",
+      "to": "library/ui/components/EquippedItemCard/EquippedItemCard.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/index.ts",
+      "to": "library/ui/components/EquippedItemCard/EquippedItemCard.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/index.ts",
       "to": "library/ui/components/EventCard/EventCard.tsx",
       "kind": "native:runtime"
     },
@@ -64662,6 +65769,21 @@
     {
       "from": "library/ui/index.ts",
       "to": "library/ui/components/FriendCTA/FriendCTA.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/index.ts",
+      "to": "library/ui/components/HintsButton/HintsButton.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/index.ts",
+      "to": "library/ui/components/HintsButton/HintsButton.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/index.ts",
+      "to": "library/ui/components/HintsButton/HintsButton.tsx",
       "kind": "test:runtime"
     },
     {
@@ -64921,6 +66043,21 @@
     },
     {
       "from": "library/ui/index.ts",
+      "to": "library/ui/components/PagedRail/PagedRail.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/index.ts",
+      "to": "library/ui/components/PagedRail/PagedRail.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/index.ts",
+      "to": "library/ui/components/PagedRail/PagedRail.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/index.ts",
       "to": "library/ui/components/Pager/Pager.tsx",
       "kind": "native:runtime"
     },
@@ -65007,6 +66144,21 @@
     {
       "from": "library/ui/index.ts",
       "to": "library/ui/components/ProgressBar/ProgressBar.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/index.ts",
+      "to": "library/ui/components/RailButton/RailButton.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/index.ts",
+      "to": "library/ui/components/RailButton/RailButton.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/index.ts",
+      "to": "library/ui/components/RailButton/RailButton.tsx",
       "kind": "test:runtime"
     },
     {
@@ -65247,6 +66399,21 @@
     {
       "from": "library/ui/index.ts",
       "to": "library/ui/components/VoiceBars/VoiceBars.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/index.ts",
+      "to": "library/ui/components/WearableCard/WearableCard.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/index.ts",
+      "to": "library/ui/components/WearableCard/WearableCard.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/index.ts",
+      "to": "library/ui/components/WearableCard/WearableCard.tsx",
       "kind": "test:runtime"
     },
     {
@@ -66296,6 +67463,11 @@
     },
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/explorer-core/features/chat/reactions.ts",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/explorer-core/features/chat/translation.ts",
       "kind": "type"
     },
@@ -67021,17 +68193,7 @@
     },
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
-      "to": "library/ui/apps/hud/design/DateField.tsx",
-      "kind": "type"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/ui/apps/hud/design/Dropdown.tsx",
-      "kind": "type"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
-      "to": "library/ui/apps/hud/design/EquippedItemCard.tsx",
       "kind": "type"
     },
     {
@@ -67221,6 +68383,11 @@
     },
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/ui/apps/hud/features/chat/ReactionLane.tsx",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/ui/apps/hud/features/chat/buttonSounds.test.ts",
       "kind": "type"
     },
@@ -67267,6 +68434,16 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/ui/apps/hud/features/chat/ping.ts",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/ui/apps/hud/features/chat/reactionMotion.test.ts",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/ui/apps/hud/features/chat/reactionMotion.ts",
       "kind": "type"
     },
     {
@@ -68256,11 +69433,6 @@
     },
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
-      "to": "library/ui/apps/hud/test/dateField.test.tsx",
-      "kind": "type"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/ui/apps/hud/test/design.ported.test.tsx",
       "kind": "type"
     },
@@ -68307,6 +69479,11 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/ui/apps/hud/test/harness.tsx",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/ui/apps/hud/test/hintsButton.test.tsx",
       "kind": "type"
     },
     {
@@ -68432,6 +69609,11 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/ui/apps/hud/test/hosted/chatLinkPrompts.test.tsx",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/ui/apps/hud/test/hosted/chatReactionLane.test.tsx",
       "kind": "type"
     },
     {
@@ -68901,6 +70083,11 @@
     },
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/ui/apps/hud/test/iconButton.test.tsx",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/ui/apps/hud/test/integratedGpuGuide.test.tsx",
       "kind": "type"
     },
@@ -68951,6 +70138,11 @@
     },
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/ui/apps/hud/test/popupLayers.test.tsx",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/ui/apps/hud/test/popups.test.tsx",
       "kind": "type"
     },
@@ -68987,6 +70179,11 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/ui/apps/hud/test/rail.test.tsx",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/ui/apps/hud/test/rarityTokens.test.tsx",
       "kind": "type"
     },
     {
@@ -69057,6 +70254,16 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/ui/apps/hud/test/textureOptimization.test.tsx",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/ui/apps/hud/test/toastHost.test.tsx",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/ui/apps/hud/test/wearableCard.test.tsx",
       "kind": "type"
     },
     {
@@ -69871,6 +71078,16 @@
     },
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/ui/components/ColorPicker/ColorPicker.tsx",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/ui/components/ColorPicker/hsv.ts",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/ui/components/CommunityCard/CommunityCard.tsx",
       "kind": "type"
     },
@@ -69901,6 +71118,11 @@
     },
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/ui/components/DateField/DateField.tsx",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/ui/components/DclLogo/DclLogo.tsx",
       "kind": "type"
     },
@@ -69921,6 +71143,11 @@
     },
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/ui/components/EquippedItemCard/EquippedItemCard.tsx",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/ui/components/EventCard/EventCard.tsx",
       "kind": "type"
     },
@@ -69932,6 +71159,11 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/ui/components/FriendCTA/FriendCTA.tsx",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/ui/components/HintsButton/HintsButton.tsx",
       "kind": "type"
     },
     {
@@ -70036,6 +71268,11 @@
     },
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/ui/components/PagedRail/PagedRail.tsx",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/ui/components/Pager/Pager.tsx",
       "kind": "type"
     },
@@ -70062,6 +71299,11 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/ui/components/ProgressBar/ProgressBar.tsx",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/ui/components/RailButton/RailButton.tsx",
       "kind": "type"
     },
     {
@@ -70157,6 +71399,11 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/ui/components/VoiceBars/VoiceBars.tsx",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/ui/components/WearableCard/WearableCard.tsx",
       "kind": "type"
     },
     {

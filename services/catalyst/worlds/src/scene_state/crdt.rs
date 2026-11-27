@@ -42,6 +42,9 @@
 //! Routing is decided by the message type alone, so no per-cell "kind" flag
 //! exists to be order-dependent.
 
+// Decodes untrusted input: malformed bytes must not panic.
+#![deny(clippy::indexing_slicing, clippy::expect_used)]
+
 use std::collections::{BTreeMap, VecDeque};
 
 pub mod msg_type {
@@ -150,7 +153,12 @@ pub fn decode_batch(buf: &[u8]) -> Vec<CrdtMessage> {
             None => break,
         };
 
-        if len < HEADER_LEN || off + len > buf.len() {
+        let body = if len < HEADER_LEN {
+            None
+        } else {
+            buf.get(off + HEADER_LEN..off + len)
+        };
+        let Some(body) = body else {
             tracing::warn!(
                 offset = off,
                 declared_len = len,
@@ -158,22 +166,14 @@ pub fn decode_batch(buf: &[u8]) -> Vec<CrdtMessage> {
                 "CRDT framing error: unframeable record; discarding rest of batch"
             );
             break;
-        }
-        let body = &buf[off + HEADER_LEN..off + len];
+        };
         match ty {
             msg_type::PUT_COMPONENT | msg_type::APPEND_VALUE => {
                 if let Some([entity, component_id, timestamp, data_len]) = read_u32s(body) {
                     let data_len = data_len as usize;
-                    if 16 + data_len != body.len() {
-                        tracing::warn!(
-                            offset = off,
-                            declared_data_len = data_len,
-                            body_len = body.len(),
-                            "CRDT framing error: record does not carry exactly the payload \
-                             it declares; dropping the record"
-                        );
-                    } else {
-                        let data = body[16..16 + data_len].to_vec();
+                    let payload = body.get(16..).filter(|d| d.len() == data_len);
+                    if let Some(payload) = payload {
+                        let data = payload.to_vec();
                         out.push(if ty == msg_type::PUT_COMPONENT {
                             CrdtMessage::Put {
                                 entity,
@@ -189,6 +189,14 @@ pub fn decode_batch(buf: &[u8]) -> Vec<CrdtMessage> {
                                 data,
                             }
                         });
+                    } else {
+                        tracing::warn!(
+                            offset = off,
+                            declared_data_len = data_len,
+                            body_len = body.len(),
+                            "CRDT framing error: record does not carry exactly the payload \
+                             it declares; dropping the record"
+                        );
                     }
                 }
             }
@@ -719,6 +727,7 @@ impl CrdtEngine {
     }
 }
 
+#[allow(clippy::indexing_slicing, clippy::expect_used, reason = "test support")]
 #[cfg(test)]
 mod tests {
     use super::*;

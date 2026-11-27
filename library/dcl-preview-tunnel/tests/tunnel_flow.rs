@@ -1,3 +1,5 @@
+#![allow(clippy::unwrap_used, reason = "test support")]
+
 use dcl_preview_tunnel::protocol::{ChannelKind, Control, decode_data, encode_data};
 use dcl_preview_tunnel::{AppState, Config, router};
 use futures::{SinkExt, StreamExt};

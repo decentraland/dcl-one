@@ -1,7 +1,8 @@
 // The Explorer HUD's dialog card and its parts: ModalCard (the card), ModalTitle (its header), ModalActions (its
-// footer) and ModalShell (the three laid out). Modal is the dialog itself, with its own backdrop and focus.
+// footer), ModalShell (the three laid out) and ModalBackdrop (the layer that centres a card over the screen). Modal
+// is the dialog itself, with its own backdrop and focus.
 
-import { Children, Fragment, isValidElement, type ReactNode } from 'react'
+import { Children, Fragment, isValidElement, type HTMLAttributes, type ReactNode, type Ref } from 'react'
 import styles from './ModalCard.module.css'
 
 export interface ModalCardProps {
@@ -308,5 +309,41 @@ export function ModalShell({
       {body}
       {footerNode}
     </ModalCard>
+  )
+}
+
+export interface ModalBackdropProps extends Omit<HTMLAttributes<HTMLDivElement>, 'children'> {
+  children?: ReactNode
+  /**
+   * `dim` (default) is the blurred purple scrim with the content centred on it; `deep` is darker and not blurred,
+   * for a panel that stands alone over a busy page; `clear` draws nothing and only covers the screen, for content
+   * the host places itself.
+   */
+  tone?: 'dim' | 'deep' | 'clear'
+  /** Draws a `dim` or `deep` scrim at device pixels, and its content at a scale of 1, whatever the host's scale. */
+  fixed?: boolean
+  ref?: Ref<HTMLDivElement>
+}
+
+/**
+ * Not in Figma: the layer the Explorer HUD's dialog cards open on. It covers the screen at the host's `--ui-scale`
+ * (1 without one), so content sized in reference pixels is centred and scaled with the rest of the HUD. It is
+ * presentational: its host owns the stack, the focus trap, Escape and what a click on it does.
+ *
+ * Any host's `--ui-scale` applies, not only the HUD's: `apps/ui3`'s `primitives.css` sets 0.85 on `:root`, so a page
+ * under it that wants the scrim and its content unscaled passes `fixed`.
+ */
+export function ModalBackdrop({ children, tone = 'dim', fixed = false, className = '', ref, ...rest }: ModalBackdropProps) {
+  const scrim = tone !== 'clear'
+  return (
+    <div
+      {...rest}
+      ref={ref}
+      className={`${styles.backdrop} ${className}`.trim()}
+      data-tone={scrim ? tone : undefined}
+      data-fixed={scrim && fixed ? true : undefined}
+    >
+      {scrim ? <div className={styles.pop}>{children}</div> : children}
+    </div>
   )
 }

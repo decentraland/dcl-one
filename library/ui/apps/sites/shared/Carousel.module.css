@@ -85,6 +85,11 @@
   background: var(--dcl-transparencies-black-60);
 }
 
+/* The arrow is the button's only content: as a block it sits in the middle, not on a text baseline. */
+.arrow svg {
+  display: block;
+}
+
 .arrowStart {
   left: var(--dcl-space-24);
 }

@@ -1,3 +1,6 @@
+// Decodes untrusted input: malformed bytes must not panic.
+#![deny(clippy::indexing_slicing, clippy::expect_used)]
+
 use crate::archipelago::feed::FeedCache;
 use crate::archipelago::registry::{
     OutputBudget, OutputCredit, PeerLink, ReceivedSocketEvent, SocketEvent, SocketEvents,
@@ -34,6 +37,7 @@ async fn write<S: Sink<Message> + Unpin>(
     }
 }
 
+#[allow(clippy::indexing_slicing, clippy::expect_used, reason = "test support")]
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -300,7 +304,10 @@ impl Pending {
         self.frames.pop_front()
     }
     // A full queue hands the frame back; boxing it would allocate on the send path.
-    #[allow(clippy::result_large_err)]
+    #[allow(
+        clippy::result_large_err,
+        reason = "a full queue hands the frame back unboxed"
+    )]
     fn push(&mut self, mut frame: Frame, budget: &Arc<OutputBudget>) -> Result<(), Frame> {
         if frame.credit.is_none() {
             frame.credit = budget.reserve();
@@ -744,7 +751,7 @@ impl WebSocket {
                 } => {
                     let message = match input {
                         SocketInput::Assignment(Some(received)) => {
-                            if !self.assignments.as_mut().expect("assignment events come only from present assignments").accept(received, &self.queue, &self.state) { return None; }
+                            if let Some(assignments) = self.assignments.as_mut() && !assignments.accept(received, &self.queue, &self.state) { return None; }
                             tokio::task::yield_now().await;
                             continue;
                         }
@@ -1365,6 +1372,7 @@ fn kick_message() -> Message {
     Message::Binary(super::craft(super::kicked_packet()).into())
 }
 
+#[allow(clippy::indexing_slicing, clippy::expect_used, reason = "test support")]
 #[cfg(test)]
 mod bounds_tests {
     use super::*;

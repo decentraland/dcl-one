@@ -235,6 +235,7 @@ pub async fn spawn(first_port: u16) -> Option<Running> {
 /// its preview holding the port trio. Elsewhere `kill_on_drop` and the
 /// process group are all there is.
 #[cfg(target_os = "linux")]
+#[allow(unsafe_code, reason = "sets the parent-death signal before exec")]
 fn die_with_parent(cmd: &mut tokio::process::Command) {
     // SAFETY: prctl is async-signal-safe and touches no state of ours.
     unsafe {

@@ -1,4 +1,5 @@
 //! The fault link on its own, and a Pulse bot through it.
+#![allow(clippy::unwrap_used, reason = "test support")]
 
 mod support;
 

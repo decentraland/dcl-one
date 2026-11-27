@@ -63,5 +63,5 @@
   position: absolute;
   left: 197px;
   display: flex;
-  color: #ff743a; /* = HUD --accent */
+  color: var(--dcl-primary-alt-primary-alt);
 }

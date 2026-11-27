@@ -80,6 +80,7 @@ fn registry() -> anyhow::Result<dcl_metrics::Registry> {
         crate::chain_index::graph::FAMILIES,
         crate::shop::market::SALES_REPAIR_METRICS,
         crate::shop::market::mirrors::FAMILIES,
+        crate::shop::market::collections_v1::FAMILIES,
         metrics::FAMILIES,
     ])
 }

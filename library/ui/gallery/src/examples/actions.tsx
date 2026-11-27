@@ -10,13 +10,21 @@ import {
   GeneralBell,
   GeneralCopy,
   GeneralRightArrow,
+  HintsButton,
+  KeyCap,
+  MenusNotifications,
+  MenusPlayers,
+  MenusSettings,
   MenusShare,
   GeneralStar,
   JumpInCTA,
   JumpInIcon,
+  ProfilePic,
+  RailButton,
   type FriendCTAStatus
 } from '@dcl/one-ui'
 import type { GalleryEntry } from '../registry'
+import { people } from './data'
 import layout from './layout.module.css'
 
 const variants = [
@@ -360,6 +368,101 @@ export const actionEntries: GalleryEntry[] = [
             </BarButton>
             <BarButton disabled>Places</BarButton>
           </div>
+        )
+      }
+    ]
+  },
+  {
+    name: 'RailButton',
+    group: 'Actions',
+    summary:
+      'A round button of the Explorer HUD navigation rail, with a selected ring, a count, a status dot and a tip.',
+    components: ['RailButton'],
+    examples: [
+      {
+        id: 'states',
+        title:
+          'Rest with a shortcut, a count, a lavender count above its maximum, selected, a status dot, a corner picture, a portrait and disabled',
+        note: 'Point at a button for its tip. The selected one is quiet: its panel would stand where the tip does.',
+        render: () => (
+          <div
+            className={`${layout.row} ${layout.tooltipHost} ${layout.tooltipRoom} ${layout.tooltipClip}`}
+          >
+            <RailButton icon={<MenusPlayers size={24} />} label="Friends" shortcut="L" />
+            <RailButton icon={<MenusNotifications size={24} />} label="Notifications" badge={3} />
+            <RailButton
+              icon={<MenusShare size={24} />}
+              label="Hangouts"
+              badge={12}
+              badgeMax={9}
+              badgeTone="lavender"
+            />
+            <RailButton icon={<MenusSettings size={24} />} label="Settings" active quiet />
+            <RailButton
+              icon={<MenusPlayers size={24} />}
+              label="Nearby voice"
+              tooltip="Connected, 3 people nearby"
+              indicator
+            />
+            <RailButton
+              icon={<MenusShare size={24} />}
+              label="Communities"
+              cornerArt={{ src: people.grace.picture, label: 'A community stream is live' }}
+            />
+            <RailButton
+              portrait
+              icon={
+                <ProfilePic
+                  appearance="hud"
+                  name={people.ada.name}
+                  src={people.ada.picture}
+                  nameColor={people.ada.color}
+                  size={42}
+                  framed
+                />
+              }
+              label="Me"
+            />
+            <RailButton icon={<MenusSettings size={24} />} label="Shop" disabled />
+          </div>
+        )
+      }
+    ]
+  },
+  {
+    name: 'HintsButton',
+    group: 'Actions',
+    summary:
+      'A dark square button that opens a list of control hints above it, and the key outline its rows show.',
+    components: ['HintsButton', 'KeyCap'],
+    minHeight: 320,
+    examples: [
+      {
+        id: 'hints',
+        title: 'Press it for its hints; a press outside closes them',
+        render: () => (
+          <div className={layout.row} style={{ paddingTop: 140 }}>
+            <HintsButton
+              hints={[
+                { icon: <KeyCap label="1" />, text: 'Press a number key to pick a slot.' },
+                { icon: <KeyCap label="E" />, text: 'Press E to open the emote wheel.' }
+              ]}
+            />
+            <HintsButton
+              label="Camera hints"
+              icon={<GeneralStar size={22} aria-hidden="true" />}
+              hints={[{ icon: <KeyCap label="V" />, text: 'Press V to change the camera.' }]}
+            />
+          </div>
+        )
+      },
+      {
+        id: 'keycap',
+        title: 'KeyCap alone, in a line of text',
+        render: () => (
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+            Press <KeyCap label="U" /> to hide the interface.
+          </span>
         )
       }
     ]

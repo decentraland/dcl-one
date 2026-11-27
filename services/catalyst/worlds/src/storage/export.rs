@@ -616,7 +616,7 @@ pub(super) fn body(
     ns: SceneNamespace,
     selection: Selection,
     format: Format,
-    #[allow(unused_mut)] mut slot: Slot,
+    #[allow(unused_mut, reason = "only the test hooks take from the slot")] mut slot: Slot,
     settings: ExportSettings,
 ) -> Body {
     // A timeout past what an Instant can hold sets no deadline.

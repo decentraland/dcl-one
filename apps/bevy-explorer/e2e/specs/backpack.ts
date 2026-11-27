@@ -1,7 +1,7 @@
 // Shared by the Backpack specs (wearables, emotes, outfits, visibility): open the Backpack on a
 // view, find the item cards and the emote and outfit slots by their accessible names, equip, and
 // take the look to the engine. Names are the HUD's (library/ui/apps/hud/features/backpack/BackpackPage.tsx,
-// design/WearableCard.tsx, design/Pager.tsx).
+// design/Pager.tsx) and the shared card's (library/ui/components/WearableCard/WearableCard.tsx).
 //
 // Two facts about the HUD shape every equip check:
 // - A card's EQUIP and UNEQUIP buttons are nested in the card and exist (non-empty box) only while

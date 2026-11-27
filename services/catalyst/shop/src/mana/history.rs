@@ -273,7 +273,7 @@ async fn fill(pool: &PgPool, rpc: &Rpc, today: NaiveDate) -> anyhow::Result<usiz
         }
         // An RPC error or the job deadline can interrupt a later day's
         // search. The next pass starts after the last complete UTC day.
-        recorded += sqlx::query(
+        let inserted = sqlx::query(
             "INSERT INTO shop.mana_usd_daily (day,usd,round_id)
              VALUES ($1,$2::text::numeric,$3::text::numeric) ON CONFLICT (day) DO NOTHING",
         )
@@ -282,7 +282,8 @@ async fn fill(pool: &PgPool, rpc: &Rpc, today: NaiveDate) -> anyhow::Result<usiz
         .bind(round_id)
         .execute(pool)
         .await?
-        .rows_affected() as usize;
+        .rows_affected();
+        recorded += usize::try_from(inserted)?;
     }
     Ok(recorded)
 }
@@ -324,6 +325,12 @@ pub(crate) fn spawn(state: &Arc<MarketplaceState>, jobs: &Jobs) {
     );
 }
 
+#[allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    clippy::cast_possible_wrap,
+    reason = "test support"
+)]
 #[cfg(test)]
 #[path = "history_tests.rs"]
 mod tests;
