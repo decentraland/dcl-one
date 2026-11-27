@@ -35,8 +35,7 @@ const RICH: Profile = {
   picture: 'a.png',
   hasClaimedName: true,
   isGuest: false,
-  description: 'gm from the plaza',
-  mutuals: 5
+  description: 'gm from the plaza'
 }
 
 describe('Passport container', () => {
@@ -45,7 +44,26 @@ describe('Passport container', () => {
     await renderWithSession(<Passport userId="0xabc" onClose={vi.fn()} />)
     expect(request).toHaveBeenCalledWith('0xabc', true, expect.any(Number))
     expect(screen.getByText('gm from the plaza')).toBeTruthy() // rich field from the fetched profile
-    expect(screen.getByText('5 Mutual')).toBeTruthy()
+  })
+
+  it("asks for another user's mutual friends and shows them from the session", async () => {
+    receiveProfile('0xabc', RICH)
+    const s = await renderWithSession(<Passport userId="0xABC" onClose={vi.fn()} />, (s) => {
+      s.profile = fakeProfileState({ data: { ...RICH, address: '0xme', name: 'Me' } })
+      s.friends.mutuals = { '0xabc': [{ address: '0x1', name: 'Mojito' }, { address: '0x2', name: 'Sharknado' }] }
+    })
+    expect(s.friends.loadMutuals).toHaveBeenCalledWith('0xABC')
+    expect(screen.getByText('2 Mutual')).toBeTruthy()
+  })
+
+  it('asks for no mutual friends on your own passport', async () => {
+    receiveProfile('0xme', { ...RICH, address: '0xme', name: 'Me' })
+    const s = await renderWithSession(<Passport userId="0xme" onClose={vi.fn()} />, (s) => {
+      s.profile = fakeProfileState({ data: { ...RICH, address: '0xme', name: 'Me' } })
+      s.friends.mutuals = { '0xme': [{ address: '0x1', name: 'Mojito' }] }
+    })
+    expect(s.friends.loadMutuals).not.toHaveBeenCalled()
+    expect(screen.queryByText(/Mutual/)).toBeNull()
   })
 
   it('renders identity-only from a roster seed while the fetch is in flight', async () => {
@@ -217,19 +235,20 @@ describe('Passport block & report', () => {
     expect(s.friends.act).toHaveBeenCalledWith('block', '0xabc')
   })
 
-  it('reads blocked-by from the session: no CHAT for a user who blocked you', async () => {
+  it('reads blocked-by from the session: no Chat or Call for a user who blocked you', async () => {
     receiveProfile('0xabc', RICH)
     await renderWithSession(<Passport userId="0xabc" onClose={vi.fn()} />, (s) => {
       s.friends.blockedBy = ['0xabc']
     })
-    expect(screen.queryByRole('button', { name: 'CHAT' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Chat' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Call' })).toBeNull()
     expect(screen.queryByRole('button', { name: 'ADD FRIEND' })).toBeNull()
   })
 
-  it('shows CHAT and ADD FRIEND for anyone else', async () => {
+  it('shows Chat and ADD FRIEND for anyone else', async () => {
     receiveProfile('0xabc', RICH)
     await renderWithSession(<Passport userId="0xabc" onClose={vi.fn()} />)
-    expect(screen.getByRole('button', { name: 'CHAT' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Chat' })).toBeTruthy()
     expect(screen.getByRole('button', { name: 'ADD FRIEND' })).toBeTruthy()
   })
 })

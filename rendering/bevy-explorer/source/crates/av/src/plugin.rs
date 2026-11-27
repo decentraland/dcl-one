@@ -99,11 +99,6 @@ impl Plugin for AVPlayerPlugin {
     }
 }
 
-// Retain the raw optional position and the whole request: configuration changes can carry
-// a previous seek, while an identical explicit replacement requests that seek again.
-#[derive(Component)]
-struct LastAVPlayer<T: AVPlayer>(T);
-
 fn av_player_on_insert<T: AVPlayer>(
     trigger: Trigger<OnInsert, T>,
     mut commands: Commands,
@@ -112,12 +107,11 @@ fn av_player_on_insert<T: AVPlayer>(
         Option<&T::Source>,
         Option<&T::Config>,
         Option<&T::Position>,
-        Option<&LastAVPlayer<T>>,
     )>,
 ) {
     let entity = trigger.target();
     debug!("{} {} updated.", disqualified::ShortName::of::<T>(), entity);
-    let Ok((av_player, maybe_source, mut maybe_config, mut maybe_position, previous)) =
+    let Ok((av_player, maybe_source, mut maybe_config, mut maybe_position)) =
         av_players.get_mut(entity)
     else {
         return;
@@ -150,12 +144,7 @@ fn av_player_on_insert<T: AVPlayer>(
     }
 
     let new_position = av_player.position();
-    let requested_position = av_player.requested_position();
-    let seek_requested = requested_position.is_some()
-        && previous.is_none_or(|previous| {
-            requested_position != previous.0.requested_position() || *av_player == previous.0
-        });
-    if seek_requested || maybe_position.is_none() {
+    if maybe_position.is_none_or(|position| ((**position) - *new_position).abs() >= 0.5) {
         debug!(
             "{}'s {} updated",
             entity,
@@ -163,9 +152,6 @@ fn av_player_on_insert<T: AVPlayer>(
         );
         commands.entity(entity).try_insert(new_position);
     }
-    commands
-        .entity(entity)
-        .try_insert(LastAVPlayer(av_player.clone()));
 }
 
 fn av_player_on_remove<T: AVPlayer>(
@@ -182,7 +168,6 @@ fn av_player_on_remove<T: AVPlayer>(
         T::Source,
         T::Config,
         T::Position,
-        LastAVPlayer<T>,
         InScene,
         ShouldBePlaying<T>,
         Stream,
@@ -1009,7 +994,7 @@ mod tests {
         assert_eq!(set.get(&entity_3).unwrap(), &entity_3);
     }
     #[test]
-    fn published_toolkit_retained_position_does_not_rewind_configuration_changes() {
+    fn toolkit_two_stage_restarts_seek_but_repeated_state_and_controls_do_not() {
         #[derive(Resource, Default)]
         struct Seeks(usize);
         let mut app = App::new();
@@ -1028,110 +1013,32 @@ mod tests {
         };
         let player = app.world_mut().spawn(VideoPlayer(data.clone())).id();
         let initial = app.world().resource::<Seeks>().0;
-        data.position = Some(0.);
-        app.world_mut()
-            .entity_mut(player)
-            .insert(VideoPlayer(data.clone()));
-        assert_eq!(app.world().resource::<Seeks>().0, initial + 1);
-        data.playing = Some(false);
-        app.world_mut()
-            .entity_mut(player)
-            .insert(VideoPlayer(data.clone()));
-        data.volume = Some(0.5);
-        app.world_mut()
-            .entity_mut(player)
-            .insert(VideoPlayer(data.clone()));
-        data.playing = Some(true);
-        app.world_mut()
-            .entity_mut(player)
-            .insert(VideoPlayer(data.clone()));
-        data.r#loop = Some(true);
-        app.world_mut()
-            .entity_mut(player)
-            .insert(VideoPlayer(data.clone()));
-        data.spatial = Some(true);
-        app.world_mut().entity_mut(player).insert(VideoPlayer(data));
-        assert_eq!(app.world().resource::<Seeks>().0, initial + 1);
-    }
-
-    #[test]
-    fn explicit_seek_to_zero_is_forwarded_each_time_without_seeking_on_config_changes() {
-        #[derive(Resource, Default)]
-        struct Seeks(usize);
-        let mut app = App::new();
-        app.init_resource::<Seeks>();
-        app.add_observer(av_player_on_insert::<VideoPlayer>);
-        app.add_observer(
-            |_: Trigger<OnInsert, crate::VideoPlayerPosition>, mut seeks: ResMut<Seeks>| {
-                seeks.0 += 1;
-            },
-        );
-        let player = app
-            .world_mut()
-            .spawn(VideoPlayer(PbVideoPlayer {
-                src: "video.mp4".to_owned(),
-                playing: Some(true),
-                ..Default::default()
-            }))
-            .id();
-        let initial = app.world().resource::<Seeks>().0;
-        let restart = PbVideoPlayer {
-            src: "video.mp4".to_owned(),
-            playing: Some(true),
-            position: Some(0.),
-            ..Default::default()
-        };
-        app.world_mut()
-            .entity_mut(player)
-            .insert(VideoPlayer(restart.clone()));
-        assert_eq!(app.world().resource::<Seeks>().0, initial + 1);
-        app.world_mut()
-            .entity_mut(player)
-            .insert(VideoPlayer(restart));
-        assert_eq!(app.world().resource::<Seeks>().0, initial + 2);
-        for playing in [false, true] {
-            app.world_mut()
-                .entity_mut(player)
-                .insert(VideoPlayer(PbVideoPlayer {
-                    src: "video.mp4".to_owned(),
-                    playing: Some(playing),
-                    volume: Some(0.5),
-                    ..Default::default()
-                }));
+        for restart in 1..=3 {
+            for (playing, position) in [(false, -1.), (true, 0.)] {
+                data.playing = Some(playing);
+                data.position = Some(position);
+                app.world_mut()
+                    .entity_mut(player)
+                    .insert(VideoPlayer(data.clone()));
+                app.update();
+            }
+            assert_eq!(app.world().resource::<Seeks>().0, initial + 2 * restart);
+            for _ in 0..60 {
+                app.world_mut()
+                    .entity_mut(player)
+                    .insert(VideoPlayer(data.clone()));
+                app.update();
+                assert_eq!(app.world().resource::<Seeks>().0, initial + 2 * restart);
+            }
+            for playing in [false, true] {
+                data.position = None;
+                data.playing = Some(playing);
+                data.volume = Some(0.5);
+                app.world_mut()
+                    .entity_mut(player)
+                    .insert(VideoPlayer(data.clone()));
+                assert_eq!(app.world().resource::<Seeks>().0, initial + 2 * restart);
+            }
         }
-        assert_eq!(app.world().resource::<Seeks>().0, initial + 2);
-    }
-    #[test]
-    fn changing_video_source_without_a_seek_resets_its_position() {
-        let mut app = App::new();
-        app.add_observer(av_player_on_insert::<VideoPlayer>);
-        let player = app
-            .world_mut()
-            .spawn(VideoPlayer(PbVideoPlayer {
-                src: "first.mp4".to_owned(),
-                position: Some(12.),
-                ..Default::default()
-            }))
-            .id();
-        assert_eq!(
-            app.world()
-                .get::<crate::VideoPlayerPosition>(player)
-                .unwrap()
-                .0,
-            12.
-        );
-        app.world_mut()
-            .entity_mut(player)
-            .insert(VideoPlayer(PbVideoPlayer {
-                src: "second.mp4".to_owned(),
-                ..Default::default()
-            }));
-        assert_eq!(
-            app.world()
-                .get::<crate::VideoPlayerPosition>(player)
-                .unwrap()
-                .0,
-            0.
-        );
     }
 }
