@@ -22,8 +22,7 @@ const WRITES: &[(&str, &str)] = &[
     ("PUT", "/v1/collections/{id}/publication"),
     ("PATCH", "/v1/collections/{id}/publication"),
     ("DELETE", "/v1/collections/{id}/publication"),
-    ("PATCH", "/v1/collections/{id}/items/{id}/status"),
-    ("PATCH", "/v1/collections/{id}/items/status"),
+    ("POST", "/v1/items/{id}/videos"),
 ];
 
 async fn send(app: &Router, method: &str, path: &str) -> (StatusCode, Option<String>, String) {

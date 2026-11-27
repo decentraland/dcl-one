@@ -16,7 +16,7 @@
 //! every answer varies by `Origin`; no answer allows credentials, since
 //! signatures, not cookies, authorize. A preflight is answered here, before
 //! the request budgets, the signature and the database, allowing the
-//! signed-fetch and validator headers the routes read. `GET` and `HEAD`
+//! signed-fetch headers the routes read. `GET` and `HEAD`
 //! of `/v1/storage/contents/:hash` and `GET /v1/info` answer every origin,
 //! as builder-server's permissive routes do.
 
@@ -35,7 +35,7 @@ const ROUTE_METHODS: [Method; 6] = [
     Method::DELETE,
 ];
 
-const ALLOWED_HEADERS: [&str; 17] = [
+const ALLOWED_HEADERS: [&str; 14] = [
     "content-type",
     "range",
     "x-identity-timestamp",
@@ -50,9 +50,6 @@ const ALLOWED_HEADERS: [&str; 17] = [
     "x-identity-auth-chain-7",
     "x-identity-auth-chain-8",
     "x-identity-auth-chain-9",
-    "x-wearable-validator-signature",
-    "x-wearable-validator-timestamp",
-    "authorization",
 ];
 
 const EXPOSED_HEADERS: [&str; 8] = [

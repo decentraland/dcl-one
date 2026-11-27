@@ -110,7 +110,7 @@ fn listed_routes(id: Uuid) -> Vec<(&'static str, String)> {
     vec![
         ("GET", format!("/v1/collections/{id}")),
         ("PUT", format!("/v1/items/{id}")),
-        ("POST", "/v1/validator/claims".to_string()),
+        ("POST", format!("/v1/collections/{id}/publication")),
         ("GET", format!("/v1/storage/contents/{HASH}/exists")),
         ("POST", "/v1/newsletter".to_string()),
     ]
@@ -185,17 +185,15 @@ async fn a_preflight_is_answered_before_authentication_the_database_and_any_budg
     .await;
     let id = Uuid::new_v4();
     let signed = "content-type,x-identity-auth-chain-0,x-identity-auth-chain-1,x-identity-auth-chain-9,x-identity-timestamp,x-identity-metadata";
-    let validator = "content-type,x-wearable-validator-signature,x-wearable-validator-timestamp";
     for mount in ["", "/builder-api"] {
         for (path, method, headers) in [
             (format!("{mount}/v1/items/{id}"), "PUT", signed),
             (format!("{mount}/v1/collections/{id}"), "GET", signed),
             (format!("{mount}/v1/items/{id}/files"), "POST", signed),
-            (format!("{mount}/v1/validator/claims"), "POST", validator),
             (
-                format!("{mount}/v1/collections/{id}/validation-result"),
-                "POST",
-                validator,
+                format!("{mount}/v1/collections/{id}/publication"),
+                "PATCH",
+                signed,
             ),
         ] {
             for _ in 0..3 {
