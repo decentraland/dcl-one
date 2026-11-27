@@ -1,3 +1,5 @@
+// Source: decentraland/unity-explorer at 6ec741fc72,
+// Explorer/Assets/DCL/AvatarRendering/AvatarShape/Assets/Animator/CharacterAnimator.controller (line numbers below).
 // The reference client's avatar animator, its base layer, as data for animator.ts: the states and transitions with the
 // values its asset has, each with the line of its entry in that asset. The parameters come from the movement model
 // (index.ts), set as the reference client sets them.
