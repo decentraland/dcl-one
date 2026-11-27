@@ -193,7 +193,7 @@ def client(args):
                  "/places", "/places.data", "/places/place/1,2", "/places/place/1,2.data",
                  "/places/world/sample.dcl.eth", "/places/world/sample.dcl.eth.data", "/_root.data", "/internal/auth-config",
                  "/internal/thirdweb-sign", "/api/screens/v1/play",
-                 "/profile/alice", "/cast", "/press", "/press/", "/assets/example.js", "/docs/index.md", "/download", "/download_success"]:
+                 "/profile/alice", "/cast", "/press", "/press/", "/assets/example.js", "/avatar-preview/", "/assets/avatar-preview/pkg.0123456789abcdef/dcl_avatar_preview_bg.wasm", "/docs/index.md", "/download", "/download_success"]:
         hit(path, "sites")
     for path in ["/about", "/press-release", "/content/contents/blob", "/lambdas/profiles", "/api/status",
                  "/places/api/status", "/places/api/status.data", "/places/place?position=1,2",

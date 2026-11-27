@@ -48,6 +48,24 @@ pub use crate::chain_index::catalogue::{
     Waited, index_verdict, read_snapshot,
 };
 
+/// Whether collection row `c` belongs to the served network and chain.
+pub(super) fn collection_membership_sql(net: ChainNet, chain: i64) -> String {
+    membership_sql("c", net, chain)
+}
+
+/// The served chain and any testnet row proof for a catalogue alias.
+pub(super) fn membership_sql(alias: &str, net: ChainNet, chain: i64) -> String {
+    let proof = if chain == net.chain_id() {
+        String::new()
+    } else {
+        format!(" AND {alias}.testnet_verified")
+    };
+    format!(
+        "({alias}.network = '{}' AND {alias}.chain_id = {chain}{proof})",
+        net.db_name()
+    )
+}
+
 /// Whether the read's transaction may write (a campaign whose approval
 /// check and tag write share one snapshot).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -97,6 +115,24 @@ impl CatalogueRead {
     /// Whether the index owns `network` in this read's snapshot.
     pub fn owns(&self, network: Network) -> bool {
         self.owned.iter().any(|(n, _)| *n == network)
+    }
+
+    /// Whether this read admitted item metadata on this network.
+    pub(super) fn covers_items(&self, net: ChainNet) -> bool {
+        self.owned.iter().any(|(n, _)| n.db_name() == net.db_name())
+            || self.mirror.as_ref().is_some_and(|copy| {
+                copy.passes.iter().any(|(mirror, network, _)| {
+                    *mirror == Mirror::Items && network == net.db_name()
+                })
+            })
+    }
+
+    /// Include the collection copy the order leg uses in the answer's stamp.
+    pub(super) fn note_collection_copy(&mut self, net: ChainNet, at: NaiveDateTime) {
+        self.mirror
+            .get_or_insert_with(MirrorCopy::default)
+            .passes
+            .push((Mirror::Collections, net.db_name().to_string(), at));
     }
 
     /// The identity of what was read, for a memo key: every mirror pass on
@@ -200,6 +236,7 @@ impl CatalogueRead {
         super::trades::ready_checked_on(state, &mut self.tx, self.now)
             .await
             .map(|_| ())
+            .map_err(super::trades::CheckError::refusal)
     }
 }
 
@@ -211,6 +248,11 @@ pub struct Stamp {
 }
 
 impl Stamp {
+    /// Date a fold that supplied fields on this read.
+    pub(super) fn note_fold(&mut self, folded_at: NaiveDateTime) {
+        self.index.push(folded_at);
+    }
+
     /// Records the copies for the answer's `as_of` and staleness.
     pub fn note(&self, state: &MarketplaceState) {
         for (m, at) in &self.mirror {
@@ -444,6 +486,54 @@ async fn read_states(conn: &mut PgConnection) -> Result<Vec<NetworkState>, sqlx:
     .fetch_all(conn)
     .await?;
     rows.iter().map(NetworkState::from_row).collect()
+}
+
+/// Require the collection membership of one network in the route's existing
+/// snapshot. The native catalogue must hold its published fold. The mirror
+/// must have published a complete pass even when its current copy is empty.
+pub(super) async fn require_collections_on(
+    tx: &mut Transaction<'static, Postgres>,
+    state: &MarketplaceState,
+    net: ChainNet,
+    now: DateTime<Utc>,
+) -> Result<Option<NaiveDateTime>, super::owned_items::ReadError> {
+    let states = read_states(tx).await?;
+    let catalogue = states
+        .iter()
+        .find(|s| s.network == net.db_name())
+        .expect("every catalogue network has a state");
+    if catalogue.owned {
+        return index_verdict(
+            catalogue,
+            state.settings.catalogue_chain(net),
+            Purpose::Describe,
+            now,
+        )
+        .map(|_| None)
+        .map_err(|why| super::owned_items::ReadError::NotReady(Source::CollectionsIndex, why));
+    }
+    let network = match net {
+        ChainNet::Ethereum => Network::Ethereum,
+        ChainNet::Matic => Network::Matic,
+    };
+    let configured = state.settings.collection_networks().contains(&network);
+    let served = if configured { &[network][..] } else { &[] };
+    mirror_verdict(
+        state,
+        &MirrorScope {
+            unowned: &[catalogue],
+            returnable: &[network],
+            served,
+            configured,
+            owned: &[],
+            asked: Some(network),
+        },
+        &[Mirror::Collections],
+        Purpose::Describe,
+        now,
+    )
+    .map(|copy| copy.oldest(Some(Mirror::Collections)))
+    .map_err(|(source, why)| super::owned_items::ReadError::NotReady(source, why))
 }
 
 /// [`begin_checked`], answering a refusal with its envelope.

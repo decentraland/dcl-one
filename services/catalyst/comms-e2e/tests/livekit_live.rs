@@ -3,6 +3,7 @@
 //! Run with `CE2E_STACK` naming the stack file, `CE2E_LIVEKIT_CLIENT` naming the `harness-util`
 //! binary, and the key and secret variables the stack file names set:
 //! `cargo test -p catalyst-comms-e2e --test livekit_live -- --ignored --nocapture`
+#![allow(clippy::unwrap_used, reason = "test support")]
 
 mod support;
 

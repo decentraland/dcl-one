@@ -839,6 +839,13 @@ CREATE INDEX legacy_order_updated_idx ON shop.legacy_order (updated_at DESC);
 -- (/v1/orders?status=open&sortBy=cheapest).
 CREATE INDEX legacy_order_open_idx ON shop.legacy_order (contract_address, price) WHERE status = 'open';
 CREATE INDEX legacy_order_open_price_idx ON shop.legacy_order (price) WHERE status = 'open';
+-- The next expiry in the catalogue's memo key, read on its publication snapshot.
+CREATE INDEX legacy_order_open_expiry_idx ON shop.legacy_order (network, expires_at) WHERE status = 'open';
+-- Unscoped token ID sorts walk this index in either direction.
+-- PostgreSQL sorts the equal-token ties by order ID.
+CREATE INDEX legacy_order_issued_idx ON shop.legacy_order (token_id);
+-- Cheapest without an open status filter includes all unexpired orders.
+CREATE INDEX legacy_order_price_idx ON shop.legacy_order (price, order_id);
 
 -- LAND and estate names and descriptions from Update and CreateEstate.
 -- The latest parcel Update or the latest valid estate document supplies both fields.
@@ -17472,6 +17479,7 @@ CREATE INDEX sale_event_bidder_idx ON shop.sale_event (network, contract_address
 -- transfer before it, filled on a later fold when the nft walk had not
 -- reached it yet) or the acceptance's seller. Bounded by the distinct
 -- (token, bidder) pairs ever bid; rewritten for the keys a fold touches.
+-- Read by the bid book of /v1/bids (services/catalyst/shop/src/market/bids.rs).
 CREATE TABLE shop.nft_bid (
     network text NOT NULL,
     contract_address varchar(42) NOT NULL,
@@ -17497,7 +17505,8 @@ CREATE TABLE shop.nft_bid (
     CONSTRAINT nft_bid_lowercase CHECK (contract_address = lower(contract_address) AND bidder = lower(bidder))
 );
 
--- The fold's "bids whose seller the nft walk had not reached yet".
+-- The fold's "bids whose seller the nft walk had not reached yet", and the
+-- bid book's check that every bid it serves has a seller.
 CREATE INDEX nft_bid_seller_unknown_idx ON shop.nft_bid (network) WHERE seller IS NULL;
 
 -- The fold's "open bids a later acceptance invalidated".

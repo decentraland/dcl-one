@@ -5,10 +5,11 @@
 // Upstream's disclaimer ("Only accounts with more than 1 VP are counted") is left out: the Shop's picks route has no
 // voting table and lists every account that saved the item, the same set its counter counts.
 
+import type { RefObject } from "react";
+import { Modal } from "@dcl/one-ui";
 import { useInfiniteQuery } from "@tanstack/react-query";
 import { Link } from "react-router";
 
-import Modal from "../../../components/Modal";
 import { pdpText } from "../../detail/copy";
 import LoadMore from "../../discovery/components/LoadMore";
 import { useProfiles } from "../../discovery/hooks";
@@ -21,7 +22,7 @@ import styles from "./SavedBy.module.css";
 
 export const SAVED_BY_PAGE = 50;
 
-type Props = { itemKey: string; name: string; onClose: () => void };
+type Props = { itemKey: string; name: string; onClose: () => void; returnFocusRef: RefObject<HTMLButtonElement | null> };
 
 export default function SavedBy(props: Props) {
   return (
@@ -31,7 +32,7 @@ export default function SavedBy(props: Props) {
   );
 }
 
-function SavedByDialog({ itemKey, name, onClose }: Props) {
+function SavedByDialog({ itemKey, name, onClose, returnFocusRef }: Props) {
   // An account's page is the Marketplace's (market/access.tsx): without it the names are not links.
   const marketplace = useMarketplace();
   const q = useInfiniteQuery({
@@ -51,9 +52,7 @@ function SavedByDialog({ itemKey, name, onClose }: Props) {
   const addresses = [...new Set(q.data?.pages.flatMap((p) => p.addresses) ?? [])];
   const profiles = useProfiles(addresses);
   return (
-    <Modal onClose={onClose} width={440} className={styles.modal}>
-      <h2>{pdpText("savedBy.title")}</h2>
-      <p className={styles.item}>{name}</p>
+    <Modal title={pdpText("savedBy.title")} description={name} onClose={onClose} returnFocusRef={returnFocusRef}>
       {q.isPending ? (
         <Loading label={pdpText("savedBy.loading")} />
       ) : q.isError && addresses.length === 0 ? (

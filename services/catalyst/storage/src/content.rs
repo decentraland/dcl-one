@@ -470,6 +470,7 @@ impl OpenedContent {
 }
 
 #[cfg(unix)]
+#[allow(unsafe_code, reason = "sets file times by path through libc")]
 fn set_times_to_now(path: &Path) -> std::io::Result<()> {
     use std::os::unix::ffi::OsStrExt;
 

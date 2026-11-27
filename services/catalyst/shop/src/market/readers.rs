@@ -22,6 +22,56 @@ use crate::shared::cache::TtlMap;
 use super::graph::{self, Network};
 use super::{MarketplaceState, Source, unavailable};
 
+/// Index snapshot SQL errors use the statement-bound 503 or a sanitized 500.
+pub(super) fn index_read_error(e: sqlx::Error) -> Response {
+    if super::nft_reads::cancelled(&e) {
+        super::nft_reads::timed_out()
+    } else {
+        super::wire::ApiError::from(e).into_response()
+    }
+}
+
+pub(super) fn index_source_error(e: super::owned_items::ReadError) -> Response {
+    match e {
+        super::owned_items::ReadError::Db(e) => index_read_error(e),
+        super::owned_items::ReadError::NotReady(source, why) => unavailable(source, &why),
+    }
+}
+
+/// Require the LAND publication for the served registries on the book's snapshot.
+pub(super) async fn require_land_on(
+    conn: &mut sqlx::PgConnection,
+    state: &MarketplaceState,
+    chain_id: i64,
+) -> Result<crate::land_authz::indexer::Cursor, Response> {
+    let unavailable = super::nft_reads::land_unavailable;
+    let served = super::nft_index::deployments::Deployments::for_chain(
+        super::chain_walk::ChainNet::Ethereum,
+        chain_id,
+    )
+    .and_then(|deployments| deployments.land);
+    let land = state
+        .land_network()
+        .filter(|land| Some(*land) == served)
+        .ok_or_else(unavailable)?;
+    let observed = crate::land_authz::indexer::cursor_observed(conn, land.network)
+        .await
+        .map_err(|error| {
+            tracing::warn!(%error, "cannot read the land-authz index for the marketplace book");
+            unavailable()
+        })?;
+    observed
+        .filter(|observed| {
+            crate::land_authz::indexer::observation_ready(
+                observed,
+                land.land_registry,
+                land.estate_registry,
+            )
+        })
+        .map(|observed| observed.cursor)
+        .ok_or_else(unavailable)
+}
+
 /// The freshness budgets the route table names.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Ttl {

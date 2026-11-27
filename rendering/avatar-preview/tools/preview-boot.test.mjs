@@ -7,7 +7,10 @@ import { createContext, SourceTextModule, SyntheticModule } from 'node:vm';
 const previewSource = await readFile(new URL('../web/preview.js', import.meta.url), 'utf8');
 const cacheSource = await readFile(new URL('../../bevy-explorer/source/deploy/web/engine/content_cache.js', import.meta.url), 'utf8');
 
-async function preview(backend, missingCache = false) {
+// tools/package.py writes the published build's content-hashed names into FILES.
+const PACKAGED = { 'pkg/': './pkg.0123456789abcdef/', 'pkg-gl/': './pkg-gl.fedcba9876543210/' };
+
+async function preview(backend, missingCache = false, files = null) {
   const messages = [];
   const imports = [];
   const trims = [];
@@ -27,19 +30,20 @@ async function preview(backend, missingCache = false) {
       getElementById() { return null; },
     },
     console: { log() {}, warn() {}, error() {} },
-    fetch: async () => ({ ok: true, json: async () => ({ build: 'fake-build' }) }),
   });
-  const module = new SourceTextModule(previewSource, {
+  const source = files ? previewSource.replace('const FILES = null;', `const FILES = ${JSON.stringify(files)};`) : previewSource;
+  assert.notEqual(source.includes('const FILES = null;'), Boolean(files));
+  const module = new SourceTextModule(source, {
     context,
     initializeImportMeta(meta) { meta.url = 'https://preview.invalid/preview.js'; },
     async importModuleDynamically(url) {
       imports.push(url);
       let dependency;
-      if (url.includes('/content_cache.js?')) {
+      if (url.endsWith('/content_cache.js')) {
         if (missingCache) throw new Error('cache helper unavailable');
         dependency = new SourceTextModule(cacheSource, { context });
       } else {
-        assert.match(url, /dcl_avatar_preview\.js\?v=fake-build$/);
+        assert.match(url, /\/dcl_avatar_preview\.js$/);
         dependency = new SyntheticModule(['default', 'start', 'preview_command'], function () {
           this.setExport('default', async () => {});
           this.setExport('start', () => {
@@ -68,7 +72,21 @@ for (const backend of ['webgpu', 'webgl2']) {
     assert.equal(page.started(), true);
     assert.equal(await page.trims[0], null);
     const directory = backend === 'webgpu' ? 'pkg' : 'pkg-gl';
-    assert.equal(page.imports[0], `https://preview.invalid/${directory}/content_cache.js?v=fake-build`);
+    assert.deepEqual(page.imports, [
+      `https://preview.invalid/${directory}/content_cache.js`,
+      `https://preview.invalid/${directory}/dcl_avatar_preview.js`,
+    ]);
+  });
+
+  test(`${backend} loads the published build's content-hashed module`, async () => {
+    const page = await preview(backend, false, PACKAGED);
+    await page.boot();
+    assert.equal(page.started(), true);
+    const directory = PACKAGED[backend === 'webgpu' ? 'pkg/' : 'pkg-gl/'].slice(2);
+    assert.deepEqual(page.imports, [
+      `https://preview.invalid/${directory}content_cache.js`,
+      `https://preview.invalid/${directory}dcl_avatar_preview.js`,
+    ]);
   });
 }
 

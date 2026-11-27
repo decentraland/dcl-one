@@ -409,7 +409,10 @@ async fn world_key_context(
 /// saved or recovered scene place decides its scene admins, so they survive
 /// the scene's retirement; a definitively unresolvable binding tells none;
 /// with neither, the room's live scene does.
-#[allow(clippy::too_many_arguments)]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the recipients depend on the place, binding, room and grants"
+)]
 async fn key_recipients(
     state: &CommsState,
     context: &PlaceContext,

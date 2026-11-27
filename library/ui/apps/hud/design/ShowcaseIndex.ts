@@ -26,7 +26,7 @@ export const SHOWCASE_INDEX = [
   { name: 'Modal', title: 'Modal (the dialog card: ModalShell, or Modal with ModalTitle and ModalActions)', components: ['Modal', 'ModalTitle', 'ModalActions', 'ModalShell'] },
   { name: 'ControlButton', title: 'ControlButton', components: ['ControlButton'] },
   { name: 'Tabs', title: 'Tabs (pill · underline — arrows/Home/End move the selection)', components: ['Tabs'] },
-  { name: 'FormControls', title: 'Form controls', components: ['TextInput', 'TextArea', 'DateField', 'Select'] },
+  { name: 'FormControls', title: 'Form controls', components: ['TextInput', 'TextArea', 'Select'] },
   { name: 'FieldLabel', title: 'FieldLabel and CharCounter (a labelled field and its count)', components: ['TextInput'] },
   { name: 'SearchField', title: 'SearchField (dark · light · small, clearable)', components: ['SearchField'] },
   { name: 'Dropdown', title: 'Dropdown (a sort or filter list)', components: ['Dropdown'] },
@@ -40,7 +40,7 @@ export const SHOWCASE_INDEX = [
   { name: 'Submenu', title: 'Submenu (a menu row that opens a list beside it: hover or press it)', components: ['Submenu'] },
   { name: 'AnchoredMenu', title: 'AnchoredMenu (a ContextMenu opened from a button, as the photo options use it)', components: ['AnchoredMenu'] },
   { name: 'KebabMenu', title: 'KebabMenu (md · sm)', components: ['KebabMenu'] },
-  { name: 'HintsButton', title: 'HintsButton (opens upward) and KeyCap', components: ['HintsButton', 'KeyCap'] },
+  { name: 'HintsButton', title: 'HintsButton (opens upward) and KeyCap', components: ['HintsButton'] },
   { name: 'Rail', title: 'Rail', components: ['Rail'] },
   { name: 'HeaderButton', title: 'HeaderButton', components: ['HeaderButton'] },
   { name: 'VerifiedBadge', title: 'VerifiedBadge', components: [] },
@@ -52,7 +52,7 @@ export const SHOWCASE_INDEX = [
   { name: 'Avatar', title: 'Avatar', components: ['Avatar'] },
   { name: 'WearableCard', title: 'WearableCard (backpack)', components: ['WearableCard'] },
   { name: 'WearableCardPick', title: 'WearableCard pick (gift picker)', components: ['WearableCard'] },
-  { name: 'EquippedItemCard', title: 'EquippedItemCard (passport)', components: ['EquippedItemCard', 'Icon'] },
+  { name: 'EquippedItemCard', title: 'EquippedItemCard (passport)', components: ['Icon'] },
   { name: 'Toast', title: 'Toast (plain · error · keyed progress · action + dismiss)', components: ['ToastHost'] },
   { name: 'Chat', title: 'Chat components', components: [] }
 ] as const satisfies readonly ShowcaseEntry[]
