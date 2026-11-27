@@ -225,21 +225,18 @@ The published cursor hash matched the Sepolia header at 12,217,105
 (`0x3b4a18568ecdfb3989f148294617774906ae5db307118e560094b173b9f45e53`).
 Separate measurements depend on RPC range limits and latency.
 
-## Default Marketplace browse reads (2026-11-27)
+## Default Marketplace catalog reads (2026-11-27)
 
 The baseline is `de3fb2cd3`. A disposable PostgreSQL 17.6 database on
 Apple Silicon used 128 MiB shared buffers and 4 MiB work memory. The
-synthetic fixture held 3.5M NFTs, 102,000 items, 5,100 collections, 92,000
-LAND and estate rights, 368,000 LAND authorization events, and 1M legacy
-orders. Of 130,435 stored open orders, 10,032 were unexpired at the query
-clock. The 25,300 v3 trades included 5,060 active listings.
+synthetic fixture held 3.5M NFTs, 102,000 items, 5,100 collections, and 1M
+legacy orders. Of 130,435 stored open orders, 10,032 were unexpired at the
+query clock.
 
-The table gives milliseconds for the prepared database statements, before
-and after, over 20 warmed repetitions with one client and forced generic
-plans. Every request has `first=24`. The NFT figures sum the page and
-capped count. The order figures sum the legacy page, both capped counts
-and the v3 leg. The first execution follows statement preparation, with
-the database buffer state carried over from setup and other queries.
+The table gives milliseconds for the prepared SQL, before and after,
+over 20 warmed repetitions with one client and forced generic plans.
+Every request has `first=24`. The first execution follows statement
+preparation, with buffers carried over from setup and earlier reads.
 
 | Read | First before / after | p50 before / after | p95 before / after | Max before / after |
 | --- | ---: | ---: | ---: | ---: |
@@ -247,33 +244,17 @@ the database buffer state carried over from setup and other queries.
 | Catalog, Polygon | 1,766 / 370 | 2,344 / 313 | 3,511 / 443 | 3,633 / 456 |
 | Catalog, Polygon wearables on sale | 2,038 / 216 | 1,533 / 201 | 1,956 / 245 | 2,346 / 254 |
 | Catalog, newest | 1,489 / 170 | 2,361 / 142 | 4,022 / 190 | 4,375 / 190 |
-| NFTs, Ethereum | 698 / 346 | 685 / 261 | 1,157 / 302 | 1,198 / 304 |
-| NFTs, Polygon | 189 / 125 | 168 / 117 | 211 / 155 | 297 / 182 |
-| Orders, unfiltered | 813 / 144 | 787 / 119 | 1,973 / 160 | 1,978 / 160 |
 
-`EXPLAIN (ANALYZE, BUFFERS, SETTINGS)` of custom and generic plans showed
-three different costs. The catalogue's combined aggregation could scan
-the NFT table and evaluate Ethereum wearable joins for Polygon orders.
-Each network now resolves its own item key and probes the NFT primary key.
-Ethereum resolves the wearable by URN once the token is known. The
-Ethereum NFT page still ranks LAND by each token's first transfer, then
-joins documents, membership, and sales for its top window. Its capped
-unfiltered count reads NAMEs first and can reach the cap without visiting
-the collection or LAND leg. The unfiltered v3 orders leg walks the
-creation-time index and checks publication, cancellation and ownership
-before applying its cap. The legacy count probes the open-expiry index
-first and reads unexpired terminal orders for any unfilled part of the cap.
+`EXPLAIN (ANALYZE, BUFFERS, SETTINGS)` of custom and generic plans
+showed that the combined legacy aggregation could scan the NFT table and
+evaluate Ethereum wearable joins for Polygon orders. Each network now
+resolves its own item key and probes the NFT primary key. Ethereum
+resolves the wearable by URN once it knows the token. All four paired
+prepared statements returned identical rows and counts. The queries use
+existing indexes and add no storage or write work.
 
-A separate run started one client each for default catalogue, Polygon
-catalogue, Ethereum NFTs and unfiltered orders. Over eight repetitions per
-client, their medians were 468, 372, 362 and 200 ms. The slowest repetitions
-were 605, 426, 399 and 228 ms, respectively.
-
-All 12 paired prepared statements returned byte-identical rows and counts.
-The separate 24-token NFT order enrichment took 0.2–0.8 ms for Ethereum and
-2.4–12.4 ms for Polygon in this fixture. These are SQL timings on the local
-fixture. End-to-end latency after deployment has yet to be measured.
-The changes use existing indexes and add no storage or write work.
+These measurements cover SQL on the local fixture. End-to-end latency
+after deployment has yet to be measured.
 
 ## Latest sale per token
 
