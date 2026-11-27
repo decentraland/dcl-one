@@ -17,6 +17,7 @@ mod newsletter;
 mod publication_preparation;
 mod publication_transactions;
 mod small_reads;
+mod third_parties;
 mod upstream_routes;
 mod validator;
 mod wire_contract;

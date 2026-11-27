@@ -6,15 +6,17 @@
 
 use crate::kept::Since;
 use axum::Json;
+use axum::body::Bytes;
 use axum::extract::{Path, State};
-use serde_json::{Map, Value, json};
+use serde_json::{Value, json};
 
 use crate::SharedState;
 use crate::access;
 use crate::auth::Signed;
 use crate::http::{ApiData, ApiError};
 use crate::third_parties::{
-    has_manager, lock_provider, managed_by, provider, provider_view, virtual_by_id, virtual_view,
+    Virtual, has_manager, lock_provider, managed_by, provider, provider_view, virtual_by_id,
+    virtual_view,
 };
 
 pub(crate) const ID_MAX: usize = 512;
@@ -26,6 +28,15 @@ fn missing(id: &str) -> ApiError {
 fn not_its_manager(id: &str) -> ApiError {
     ApiError::unauthorized("You are not the manager of this Third Party.")
         .with_data(json!({ "id": id }))
+}
+
+/// The virtual third party `id`, read with no registry read and no
+/// transaction; 404 when there is none.
+async fn listed(state: &SharedState, id: &str) -> Result<Virtual, ApiError> {
+    let mut conn = state.items.pool().acquire().await?;
+    virtual_by_id(&mut conn, id)
+        .await?
+        .ok_or_else(|| missing(id))
 }
 
 /// `GET /v1/thirdParties` (`getThirdParties`): the providers the signer
@@ -93,6 +104,9 @@ pub async fn slots(
     .bind(grant.id())
     .fetch_one(state.items.pool())
     .await
+    .inspect_err(|error| {
+        tracing::warn!(error = %error, provider = grant.id(), "builder third-party slot count failed; answering 0 free slots");
+    })
     .ok();
     let free = match (max_items, submitted) {
         (Some(max), Some(submitted)) => max - i128::from(submitted),
@@ -104,12 +118,11 @@ pub async fn slots(
     })))
 }
 
-/// `DELETE /v1/thirdParties/:id` (`removeVirtualThirdParty`): a manager of
-/// the virtual third party that also manages the provider
-/// ([`access::changes_virtual_third_party`]) removes it once the registry
-/// has the provider;
-/// a missing one is 404, another signer 401, a provider the registry
-/// doesn't have yet 400.
+/// `DELETE /v1/thirdParties/:id` (`removeVirtualThirdParty`): once the
+/// registry has the provider, a manager the registry lists removes it
+/// ([`access::removes_virtual_third_party`]); a missing one is 404 before
+/// the registry is read, another signer 401, and a wallet it lists 400
+/// while the registry doesn't have the provider.
 pub async fn delete(
     State(state): State<SharedState>,
     Signed(signer): Signed,
@@ -119,34 +132,24 @@ pub async fn delete(
         return Err(missing(&id));
     }
     let since = Since::write();
-    {
-        let mut conn = state.items.pool().acquire().await?;
-        match virtual_by_id(&mut conn, &id).await? {
-            None => return Err(missing(&id)),
-            Some(v) if !has_manager(&v.managers, signer.as_str()) => {
-                return Err(not_its_manager(&id));
-            }
-            Some(_) => {}
-        }
-    }
+    listed(&state, &id).await?;
     let registry = state.third_parties.registry(&state, since).await?;
-    let decide = |found: Option<crate::third_parties::Virtual>| match found {
-        None => Err(missing(&id)),
+    let mut tx = state.items.pool().begin().await?;
+    lock_provider(&mut tx, &id).await?;
+    match virtual_by_id(&mut tx, &id).await? {
+        None => return Err(missing(&id)),
         Some(v)
-            if !access::changes_virtual_third_party(
+            if !access::removes_virtual_third_party(
                 &registry,
                 &id,
                 &v.managers,
                 signer.as_str(),
             ) =>
         {
-            Err(not_its_manager(&id))
+            return Err(not_its_manager(&id));
         }
-        Some(_) => Ok(()),
-    };
-    let mut tx = state.items.pool().begin().await?;
-    lock_provider(&mut tx, &id).await?;
-    decide(virtual_by_id(&mut tx, &id).await?)?;
+        Some(_) => {}
+    }
     if provider(&registry, &id).is_none() {
         return Err(ApiError::bad_request(
             "The Third Party can only be deleted if it's already on the graph.",
@@ -161,25 +164,30 @@ pub async fn delete(
     Ok(Json(json!({ "ok": true })))
 }
 
-/// `PATCH /v1/thirdParties/:id` (`updateThirdParty`): the body holds
-/// `isProgrammatic`, a boolean (400 otherwise), and anything else is ignored; a manager of the virtual
-/// third party that also manages the provider
-/// ([`access::changes_virtual_third_party`]) sets it; a missing one is 404,
-/// another signer 401, 503 while the registry can't be read.
+/// `PATCH /v1/thirdParties/:id` (`updateThirdParty`): the body is JSON
+/// holding `isProgrammatic`, a boolean (400 otherwise), and anything else is
+/// ignored; a manager of the virtual third party that also manages the
+/// provider ([`access::changes_virtual_third_party`]) sets it. A missing one
+/// is 404 and a wallet it doesn't list 401 before the registry is read;
+/// then another signer is 401, and 503 while the registry can't be read.
 pub async fn update(
     State(state): State<SharedState>,
     Signed(signer): Signed,
     Path(id): Path<String>,
-    body: Option<Json<Value>>,
+    body: Bytes,
 ) -> Result<Json<Value>, ApiError> {
-    let programmatic = body
+    let programmatic = serde_json::from_slice::<Value>(&body)
+        .ok()
         .as_ref()
-        .and_then(|Json(body)| body.as_object())
-        .and_then(|fields: &Map<String, Value>| fields.get("isProgrammatic"))
+        .and_then(Value::as_object)
+        .and_then(|fields| fields.get("isProgrammatic"))
         .and_then(Value::as_bool)
         .ok_or_else(|| ApiError::bad_request("Invalid request body"))?;
     if id.len() > ID_MAX {
         return Err(missing(&id));
+    }
+    if !has_manager(&listed(&state, &id).await?.managers, signer.as_str()) {
+        return Err(not_its_manager(&id));
     }
     let registry = state.third_parties.registry(&state, Since::write()).await?;
     let mut tx = state.items.pool().begin().await?;

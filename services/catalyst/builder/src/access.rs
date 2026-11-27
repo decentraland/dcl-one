@@ -378,6 +378,21 @@ pub(crate) fn changes_virtual_third_party(
         && has_manager(&provider_managers(Some(registry), id, Some(listed)), signer)
 }
 
+/// Whether `signer` may remove the virtual third party `id` listing
+/// `listed`: once the registry has the provider, a manager the registry
+/// lists, whether `listed` holds it or not; before, a wallet `listed` holds.
+pub(crate) fn removes_virtual_third_party(
+    registry: &[Provider],
+    id: &str,
+    listed: &[String],
+    signer: &str,
+) -> bool {
+    match third_parties::provider(registry, id) {
+        Some(record) => has_manager(&record.managers, signer),
+        None => has_manager(listed, signer),
+    }
+}
+
 /// The wallets that manage the provider `id`, as builder-server's
 /// `ThirdPartyService.isManager` orders its sources: the registry's managers
 /// once it approved the provider; before approval, its managers that the

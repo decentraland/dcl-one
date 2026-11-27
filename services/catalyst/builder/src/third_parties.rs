@@ -174,7 +174,7 @@ fn contracts_json(contracts: &[LinkedContract]) -> Value {
 pub fn provider_view(p: &Provider) -> Value {
     json!({
         "id": p.id,
-        "root": p.root,
+        "root": p.root.as_deref().unwrap_or_default(),
         "managers": p.managers,
         "maxItems": p.max_items,
         "isApproved": p.is_approved,

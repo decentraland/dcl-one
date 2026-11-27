@@ -1907,7 +1907,8 @@ Tables and what they hold:
   the signer as its only manager; a save of a collection with a linked
   contract lists that contract in the row; `PATCH /v1/thirdParties/{id}`
   sets `is_programmatic`; `DELETE /v1/thirdParties/{id}` removes the row
-  once the registry has the provider; the delete of a provider's last
+  once the registry has the provider, for a manager the registry lists
+  whether the row lists it or not; the delete of a provider's last
   collection removes it. No foreign key: a row outlives its registry
   record until one of those deletes.
 
