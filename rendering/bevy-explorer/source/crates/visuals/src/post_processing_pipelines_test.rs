@@ -220,7 +220,9 @@ fn brightness(app: &mut App, target: &Handle<Image>) -> f32 {
     app.world_mut().despawn(entity);
     // 64 texels of 4 bytes fill each 256-byte row; the alpha byte is left out
     let colour: Vec<f32> = bytes
-        .chunks_exact(4)
+        .as_chunks::<4>()
+        .0
+        .iter()
         .flat_map(|texel| texel[..3].iter().map(|&byte| f32::from(byte)))
         .collect();
     colour.iter().sum::<f32>() / colour.len() as f32

@@ -314,8 +314,12 @@ fn lerp_output(from: &Output, to: &Output, base: &CameraLook, lens: &Lens, t: f3
 /// What a camera with `base` as its own look shows for `output`.
 fn shown(output: &Output, base: &CameraLook, lens: &Lens) -> CameraLook {
     let mut grading = output.grading.clone();
-    let tonemapping = if grading.global.untonemapped_mix >= 1.0 {
-        grading.global.untonemapped_mix = 0.0;
+    let mut plain = grading.clone();
+    plain.global.untonemapped_mix = 0.0;
+    // with no grading bevy skips the pass, so no curve waits on no pipeline; with grading the
+    // curve stays, faded out, since its pipeline is the one the fade used
+    let tonemapping = if grading.global.untonemapped_mix >= 1.0 && plain.is_identity() {
+        grading = plain;
         Tonemapping::None
     } else {
         output.curve
@@ -858,6 +862,21 @@ mod tests {
         let end = shown(&to, &base, &lens);
         assert_eq!(end.tonemapping, Tonemapping::None);
         assert_eq!(end.grading.global.untonemapped_mix, 0.0);
+
+        // with grading, the fade's pipeline stays, with the curve faded out
+        let graded = compose(
+            &PostProcessing {
+                tonemapping: Some(ProtoTonemapping::TonemapNone),
+                exposure: Some(1.0),
+                ..default()
+            },
+            &base,
+            &lens,
+            false,
+        );
+        let end = shown(&graded, &base, &lens);
+        assert_eq!(end.tonemapping, Tonemapping::AcesFitted);
+        assert_eq!(end.grading.global.untonemapped_mix, 1.0);
     }
 }
 
