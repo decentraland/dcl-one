@@ -821,6 +821,46 @@ async fn concurrent_publishes_spend_each_slot_once() {
     let _ = &w.state;
 }
 
+/// A publish locks its collection, then the provider, then only its own
+/// items: one naming another collection's item is refused without waiting
+/// on that item, so it never holds locks in an order a delete of the other
+/// collection reverses.
+#[tokio::test]
+async fn a_publish_naming_another_collections_item_never_waits_on_it() {
+    let Some(w) = world().await else {
+        return;
+    };
+    let manager = address(MANAGER_KEY);
+    let provider = listed(&w, &[&manager], "10");
+    let (id, items) = collection(&w, &provider, 1).await;
+    let (_, others) = collection(&w, &provider, 1).await;
+    let mut held = w.pool.begin().await.unwrap();
+    sqlx::query("SELECT id FROM builder.items WHERE id = $1 FOR UPDATE")
+        .bind(others[0])
+        .execute(&mut *held)
+        .await
+        .unwrap();
+    let answer = tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        call(
+            &w.app,
+            Some(MANAGER_KEY),
+            publish(id),
+            Some(json!({ "itemIds": [items[0], others[0]], "cheque": cheque(MANAGER_KEY, &provider, 2, &salt()) })),
+        ),
+    )
+    .await;
+    held.rollback().await.unwrap();
+    let answer = answer.expect("the publish waited on another collection's item");
+    assert_eq!(
+        error(answer),
+        (
+            400,
+            "Cannot publish items that belong to different collections".into()
+        )
+    );
+}
+
 #[derive(Clone, Default)]
 struct Slack(Arc<std::sync::Mutex<Vec<String>>>);
 

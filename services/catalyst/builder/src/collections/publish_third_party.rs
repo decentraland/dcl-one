@@ -2,7 +2,8 @@
 //! builder-server publishes one: a manager of the provider submits the items
 //! the body names for curation with a slot cheque it signed. One transaction
 //! locks the collection, then the provider (the order every write of a
-//! collection and its provider takes), decides again, counts the provider's
+//! collection and its provider takes), then the named items of this
+//! collection, never another's, decides again, counts the provider's
 //! free slots, checks the items and the cheque in builder-server's order, and
 //! writes the cheque, a pending curation for each item and a new pending
 //! curation of the collection; a refusal writes nothing. As the standard
@@ -142,13 +143,20 @@ pub async fn publish(
             id,
         ));
     }
+    sqlx::query(
+        "SELECT id FROM builder.items WHERE id = ANY($1) AND collection_id = $2 ORDER BY id FOR UPDATE",
+    )
+    .bind(&request.items)
+    .bind(id)
+    .fetch_all(&mut *tx)
+    .await?;
     let named: Vec<Named> = sqlx::query_as(
         "SELECT i.id, i.name, i.collection_id, i.local_content_hash, i.mappings IS NOT NULL AS mapped, \
            EXISTS (SELECT 1 FROM builder.item_contents ic WHERE ic.item_id = i.id AND NOT EXISTS ( \
              SELECT 1 FROM builder.uploaded_contents u WHERE u.hash = ic.hash AND u.uploaded_by = ic.named_by \
              AND (u.video OR ic.file <> 'video.mp4'))) \
            AS missing_content \
-         FROM builder.items i WHERE i.id = ANY($1) ORDER BY i.created_at, i.id FOR UPDATE OF i",
+         FROM builder.items i WHERE i.id = ANY($1) ORDER BY i.created_at, i.id",
     )
     .bind(&request.items)
     .fetch_all(&mut *tx)
@@ -203,26 +211,19 @@ pub async fn publish(
             .bind(&request.items)
             .fetch_all(&mut *tx)
             .await?;
-    let mut held = std::collections::HashMap::new();
-    let mut lost = std::collections::HashSet::new();
-    for (item, hash) in named_hashes {
-        let stored = match held.get(&hash) {
-            Some(stored) => *stored,
-            None => {
-                let stored = state
-                    .items
-                    .blobs
-                    .exist(&hash)
-                    .await
-                    .map_err(|e| ApiError::internal(e.to_string()))?;
-                held.insert(hash, stored);
-                stored
-            }
-        };
-        if !stored {
-            lost.insert(item);
-        }
-    }
+    let hashes: std::collections::BTreeSet<&str> =
+        named_hashes.iter().map(|(_, hash)| hash.as_str()).collect();
+    let held = state
+        .items
+        .blobs
+        .exist_multiple(&hashes.into_iter().collect::<Vec<_>>())
+        .await
+        .map_err(|e| ApiError::internal(e.to_string()))?;
+    let lost: std::collections::HashSet<Uuid> = named_hashes
+        .iter()
+        .filter(|(_, hash)| !held.get(hash).copied().unwrap_or(false))
+        .map(|(item, _)| *item)
+        .collect();
     let mut submitted = Vec::with_capacity(named.len());
     for item in &named {
         match item
