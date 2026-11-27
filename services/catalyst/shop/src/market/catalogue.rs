@@ -50,13 +50,18 @@ pub use crate::chain_index::catalogue::{
 
 /// Whether collection row `c` belongs to the served network and chain.
 pub(super) fn collection_membership_sql(net: ChainNet, chain: i64) -> String {
+    membership_sql("c", net, chain)
+}
+
+/// The served chain and any testnet row proof for a catalogue alias.
+pub(super) fn membership_sql(alias: &str, net: ChainNet, chain: i64) -> String {
     let proof = if chain == net.chain_id() {
-        ""
+        String::new()
     } else {
-        " AND c.testnet_verified"
+        format!(" AND {alias}.testnet_verified")
     };
     format!(
-        "(c.network = '{}' AND c.chain_id = {chain}{proof})",
+        "({alias}.network = '{}' AND {alias}.chain_id = {chain}{proof})",
         net.db_name()
     )
 }
@@ -110,6 +115,24 @@ impl CatalogueRead {
     /// Whether the index owns `network` in this read's snapshot.
     pub fn owns(&self, network: Network) -> bool {
         self.owned.iter().any(|(n, _)| *n == network)
+    }
+
+    /// Whether this read admitted item metadata on this network.
+    pub(super) fn covers_items(&self, net: ChainNet) -> bool {
+        self.owned.iter().any(|(n, _)| n.db_name() == net.db_name())
+            || self.mirror.as_ref().is_some_and(|copy| {
+                copy.passes.iter().any(|(mirror, network, _)| {
+                    *mirror == Mirror::Items && network == net.db_name()
+                })
+            })
+    }
+
+    /// Include the collection copy the order leg uses in the answer's stamp.
+    pub(super) fn note_collection_copy(&mut self, net: ChainNet, at: NaiveDateTime) {
+        self.mirror
+            .get_or_insert_with(MirrorCopy::default)
+            .passes
+            .push((Mirror::Collections, net.db_name().to_string(), at));
     }
 
     /// The identity of what was read, for a memo key: every mirror pass on
@@ -170,7 +193,7 @@ impl CatalogueRead {
     pub async fn trades_ready(&mut self, state: &MarketplaceState) -> Result<(), Response> {
         super::nft_reads::set_read_timeout(&mut self.tx)
             .await
-            .map_err(super::nft_reads::read_error)?;
+            .map_err(super::readers::index_read_error)?;
         super::trades::ready_on(state, &mut self.tx, self.now)
             .await
             .map(|_| ())
@@ -225,6 +248,11 @@ pub struct Stamp {
 }
 
 impl Stamp {
+    /// Date a fold that supplied fields on this read.
+    pub(super) fn note_fold(&mut self, folded_at: NaiveDateTime) {
+        self.index.push(folded_at);
+    }
+
     /// Records the copies for the answer's `as_of` and staleness.
     pub fn note(&self, state: &MarketplaceState) {
         for (m, at) in &self.mirror {
@@ -468,7 +496,7 @@ pub(super) async fn require_collections_on(
     state: &MarketplaceState,
     net: ChainNet,
     now: DateTime<Utc>,
-) -> Result<(), super::owned_items::ReadError> {
+) -> Result<Option<NaiveDateTime>, super::owned_items::ReadError> {
     let states = read_states(tx).await?;
     let catalogue = states
         .iter()
@@ -481,7 +509,7 @@ pub(super) async fn require_collections_on(
             Purpose::Describe,
             now,
         )
-        .map(|_| ())
+        .map(|_| None)
         .map_err(|why| super::owned_items::ReadError::NotReady(Source::CollectionsIndex, why));
     }
     let network = match net {
@@ -504,7 +532,7 @@ pub(super) async fn require_collections_on(
         Purpose::Describe,
         now,
     )
-    .map(|_| ())
+    .map(|copy| copy.oldest(Some(Mirror::Collections)))
     .map_err(|(source, why)| super::owned_items::ReadError::NotReady(source, why))
 }
 

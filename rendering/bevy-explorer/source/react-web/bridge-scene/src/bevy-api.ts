@@ -171,6 +171,9 @@ export type BevyApiInterface = {
   acceptTerms?: () => Promise<void>
   getSettings: () => Promise<Setting[]>
   setSetting: (name: string, value: number) => Promise<void>
+  /** The settings list now, then again whenever a value or choice changes (a microphone plugged in
+   *  or out). Optional: absent on runtimes whose SystemApi predates it. */
+  getSettingsStream?: () => Promise<AsyncIterable<Setting[]>>
   /** Full binding table: [Action, InputIdentifier[]] pairs, e.g. [{System:'Map'}, ['KeyM','Tab']].
    *  Shapes pinned to crates/common/src/inputs.rs (see protocol.ts wire types). */
   getInputBindings: () => Promise<{ bindings: Array<[ActionWire, string[]]> }>

@@ -19,6 +19,7 @@ import {
   decentralandPublicNavSections,
   type TitleBarProps,
   type TitleBarSection,
+  PagedRail,
   Pager,
   BrowseControl,
   BrowseLoading,
@@ -683,6 +684,52 @@ export const navigationEntries: GalleryEntry[] = [
     ]
   },
   {
+    name: 'PagedRail',
+    group: 'Navigation',
+    summary:
+      'A row of cards paged a whole page at a time, with arrows on hover or focus and a dot per page.',
+    components: ['PagedRail'],
+    examples: [
+      {
+        id: 'pages',
+        title: 'Eight cards, three to a page',
+        note: 'Point at the row, or move the focus into it, for its arrows. The last page ends on the last card.',
+        render: () => (
+          <div className={layout.railRoom}>
+            <PagedRail perPage={3} gap={8}>
+              {railCards(8)}
+            </PagedRail>
+          </div>
+        )
+      },
+      {
+        id: 'shop',
+        title: 'The shop variant, with room for a card that grows, and a row without dots',
+        render: () => (
+          <div className={`${layout.railRoom} ${layout.rows}`}>
+            <PagedRail variant="shop" perPage={3} gap={8} bleed={12}>
+              {railCards(7)}
+            </PagedRail>
+            <PagedRail perPage={3} gap={8} dots={false}>
+              {railCards(5)}
+            </PagedRail>
+          </div>
+        )
+      },
+      {
+        id: 'fits',
+        title: 'Every card fits: no arrows and no dots',
+        render: () => (
+          <div className={layout.railRoom}>
+            <PagedRail perPage={3} gap={8}>
+              {railCards(2)}
+            </PagedRail>
+          </div>
+        )
+      }
+    ]
+  },
+  {
     name: 'Pager',
     group: 'Navigation',
     summary: 'Previous and next arrows around a window of page numbers.',
@@ -696,6 +743,14 @@ export const navigationEntries: GalleryEntry[] = [
     ]
   }
 ]
+
+function railCards(count: number) {
+  return Array.from({ length: count }, (_, index) => (
+    <div key={index} className={layout.railCard}>
+      Card {index + 1}
+    </div>
+  ))
+}
 
 function PagerExample() {
   const [page, setPage] = useState(2)

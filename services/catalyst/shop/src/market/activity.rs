@@ -84,8 +84,8 @@ fn network_name<T: Serialize>(network: &T) -> String {
 }
 
 /// Collect the paged bid and order legs up to the internal cap, one page
-/// after another, and the source an unavailable envelope named when a page
-/// failed with one.
+/// after another. On failure, keep the pages already read and report the
+/// source from the error envelope or the leg label if it has no source.
 async fn pages<T, F, Fut>(fallback: &'static str, fetch: F) -> (Vec<T>, Option<String>)
 where
     F: Fn(i64) -> Fut,

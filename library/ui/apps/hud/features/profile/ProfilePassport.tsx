@@ -7,9 +7,9 @@
 // NOTE: backend follow-up for OTHER users — the bridge must fetch their rich profile
 // (badges/info/mutuals) by address; the 2D picture is the fallback meanwhile.
 
-import { Button, EmptyState, MaskIcon, ScrollThumb, Spinner, Tooltip } from '@dcl/one-ui'
+import { Button, EmptyState, EquippedItemCard, MaskIcon, ScrollThumb, Spinner, Tooltip, type EquippedItemCardProps } from '@dcl/one-ui'
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Avatar, BlockUserIcon, Close, ColorPicker, ContextMenu, ControlButton, EquippedItemCard, Icon, Kebab, Pencil, ReportFlag, Search, Tabs, showConfirm, type ContextMenuItem, type EquippedItemCardProps, type TabItem, NameSeal } from '../../design'
+import { Avatar, BlockUserIcon, Close, ColorPicker, ContextMenu, ControlButton, Icon, Kebab, Pencil, ReportFlag, Search, Tabs, showConfirm, type ContextMenuItem, type TabItem, NameSeal } from '../../design'
 import giftIcon from '../../assets/gifting/gift.png'
 import jumpInIcon from '../../assets/friends/jump-in.png'
 import { registerCancelLayer } from '@explorer-core/lib/cancelLayers'
@@ -528,7 +528,7 @@ export function ProfilePassport({
           <div className={styles.main}>
         {/* --- header --- */}
         <header className={styles.head}>
-          <div className={styles.idblock}>
+          <div>
             <div className={styles.nameRow}>
               <span className={styles.name} style={{ '--name-color': nameColor } as React.CSSProperties}>{base}</span>
               {claimed && <Verified />}

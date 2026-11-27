@@ -3212,14 +3212,6 @@
           "kind": "regular"
         },
         {
-          "name": "EquippedItemCard.module.css",
-          "kind": "regular"
-        },
-        {
-          "name": "EquippedItemCard.tsx",
-          "kind": "regular"
-        },
-        {
           "name": "Glyphs.module.css",
           "kind": "regular"
         },
@@ -3261,10 +3253,6 @@
         },
         {
           "name": "Pager.tsx",
-          "kind": "regular"
-        },
-        {
-          "name": "Rail.module.css",
           "kind": "regular"
         },
         {
@@ -3313,10 +3301,6 @@
         },
         {
           "name": "Toast.tsx",
-          "kind": "regular"
-        },
-        {
-          "name": "WearableCard.module.css",
           "kind": "regular"
         },
         {
@@ -5264,6 +5248,10 @@
         {
           "name": "toastHost.test.tsx",
           "kind": "regular"
+        },
+        {
+          "name": "wearableCard.test.tsx",
+          "kind": "regular"
         }
       ]
     },
@@ -7155,6 +7143,10 @@
           "kind": "regular"
         },
         {
+          "name": "FlowMapPage.test.tsx",
+          "kind": "regular"
+        },
+        {
           "name": "FlowMapPage.tsx",
           "kind": "regular"
         },
@@ -7204,11 +7196,19 @@
           "kind": "regular"
         },
         {
+          "name": "HelpStatus.test.tsx",
+          "kind": "regular"
+        },
+        {
           "name": "HelpStatus.tsx",
           "kind": "regular"
         },
         {
           "name": "HelpTabs.module.css",
+          "kind": "regular"
+        },
+        {
+          "name": "HelpTabs.test.tsx",
           "kind": "regular"
         },
         {
@@ -7862,6 +7862,10 @@
           "kind": "directory"
         },
         {
+          "name": "EquippedItemCard",
+          "kind": "directory"
+        },
+        {
           "name": "EventCard",
           "kind": "directory"
         },
@@ -7939,6 +7943,10 @@
         },
         {
           "name": "OptionMenu",
+          "kind": "directory"
+        },
+        {
+          "name": "PagedRail",
           "kind": "directory"
         },
         {
@@ -8027,6 +8035,10 @@
         },
         {
           "name": "VoiceBars",
+          "kind": "directory"
+        },
+        {
+          "name": "WearableCard",
           "kind": "directory"
         },
         {
@@ -8588,6 +8600,23 @@
       ]
     },
     {
+      "path": "library/ui/components/EquippedItemCard",
+      "entries": [
+        {
+          "name": "EquippedItemCard.module.css",
+          "kind": "regular"
+        },
+        {
+          "name": "EquippedItemCard.test.tsx",
+          "kind": "regular"
+        },
+        {
+          "name": "EquippedItemCard.tsx",
+          "kind": "regular"
+        }
+      ]
+    },
+    {
       "path": "library/ui/components/EventCard",
       "entries": [
         {
@@ -9039,6 +9068,23 @@
         },
         {
           "name": "OptionMenu.tsx",
+          "kind": "regular"
+        }
+      ]
+    },
+    {
+      "path": "library/ui/components/PagedRail",
+      "entries": [
+        {
+          "name": "PagedRail.module.css",
+          "kind": "regular"
+        },
+        {
+          "name": "PagedRail.test.tsx",
+          "kind": "regular"
+        },
+        {
+          "name": "PagedRail.tsx",
           "kind": "regular"
         }
       ]
@@ -9526,6 +9572,27 @@
       ]
     },
     {
+      "path": "library/ui/components/WearableCard",
+      "entries": [
+        {
+          "name": "WearableCard.module.css",
+          "kind": "regular"
+        },
+        {
+          "name": "WearableCard.test.tsx",
+          "kind": "regular"
+        },
+        {
+          "name": "WearableCard.tsx",
+          "kind": "regular"
+        },
+        {
+          "name": "rarity.module.css",
+          "kind": "regular"
+        }
+      ]
+    },
+    {
       "path": "library/ui/foundations",
       "entries": [
         {
@@ -9898,7 +9965,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/bevy-api.ts",
-      "sha256": "be34df8fd437d99cd57a64c7dfad7573619f474377268b97b8f77460e119989b"
+      "sha256": "dde4dc812625670927ce2037d6ca214fa7a5619f3e8fffebb65e7a4ee84bb1c9"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/bridge.ts",
@@ -10027,6 +10094,10 @@
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/session.ts",
       "sha256": "e1158dd00b70e175d36fd759f40719e5a8c0313315dbaf1efbc4649fd08e5922"
+    },
+    {
+      "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/settings.ts",
+      "sha256": "8267e44b7a2b5fff33aa4ba6a1f077c9c9ecca513d053868ec6692bd90b9415b"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/skyTime.ts",
@@ -10321,6 +10392,10 @@
       "sha256": "52fb1ecea238351094d405eea69a39b6772fa319cd8ff4cbe30a1211e641a5ed"
     },
     {
+      "path": "rendering/bevy-explorer/source/react-web/src/test/bridgeSettingsStream.test.ts",
+      "sha256": "7e684d1f9ea577e9ebb34be92dc1ee57a47eb988e932ef790009e9ca59a7b362"
+    },
+    {
       "path": "rendering/bevy-explorer/source/react-web/src/test/bridgeSkyTime.test.ts",
       "sha256": "1ceb411fa61c5e8b7d56c2ad561d8692561a5c7b85c92f666bfc3ebe41819719"
     },
@@ -10466,7 +10541,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/tsconfig.json",
-      "sha256": "21ef0328da9b00b6a64f62389866007b9a28dba21dfee75468039812d661ce2b"
+      "sha256": "a4bfe115cd806aa8e3996d899255d26c5bd1ac8329e13ee9ce2fe2bddb3478d7"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/vite.config.ts",
@@ -10538,6 +10613,7 @@
     "rendering/bevy-explorer/source/react-web/src/test/bridgeSceneLookup.test.ts",
     "rendering/bevy-explorer/source/react-web/src/test/bridgeSession.test.ts",
     "rendering/bevy-explorer/source/react-web/src/test/bridgeSettings.test.ts",
+    "rendering/bevy-explorer/source/react-web/src/test/bridgeSettingsStream.test.ts",
     "rendering/bevy-explorer/source/react-web/src/test/bridgeSkyTime.test.ts",
     "rendering/bevy-explorer/source/react-web/src/test/bridgeTextureOptimization.test.ts",
     "rendering/bevy-explorer/source/react-web/src/test/bridgeTravel.test.ts",
@@ -10626,7 +10702,7 @@
     },
     {
       "path": "library/explorer-core/engine/mockBridge.ts",
-      "sha256": "06d77f68efeec37bbf0e2e7e6841ba5bc3558f1b4875d64e87e538bf8525dd2e"
+      "sha256": "26cdc10c48663680f47dad11d73a4a1c297bc1d82e33394b7c8eae85a5ac43c5"
     },
     {
       "path": "library/explorer-core/engine/mockEvents.ts",
@@ -12881,14 +12957,6 @@
       "sha256": "29068b4d1444369e159b99c8510ce4714ff04df342d8c40db9b8491c48ef7390"
     },
     {
-      "path": "library/ui/apps/hud/design/EquippedItemCard.module.css",
-      "sha256": "3ead15b4724af85ed04da2c6ffa569eca55f553ad092f560b91fccfc20f8d282"
-    },
-    {
-      "path": "library/ui/apps/hud/design/EquippedItemCard.tsx",
-      "sha256": "0f5dde2054d0298545de346a0a93cade3cce45f9586e7c44259d02fc2025684d"
-    },
-    {
       "path": "library/ui/apps/hud/design/Glyphs.module.css",
       "sha256": "249d9a1879c4d0543078440336ae65cd47ed3cf87fec432ddf17b18fd67d8011"
     },
@@ -12933,12 +13001,8 @@
       "sha256": "3e71317234cdfc2681e4e8bf91169ec3adcd8c891181ff1f70755b0b03f2af08"
     },
     {
-      "path": "library/ui/apps/hud/design/Rail.module.css",
-      "sha256": "ea6c9f22fd7b540ffe679ed16768a611b9c0c36988bb068232cc5291aa5e2e2d"
-    },
-    {
       "path": "library/ui/apps/hud/design/Rail.tsx",
-      "sha256": "238fbb050a0e931ac9b14b4e6b43776d62a796de256ec006d964d06611d6a51d"
+      "sha256": "e00a872343fbc15750d9f94ebaed26b1a166e10eb1d9822df4e8517987f6fbbd"
     },
     {
       "path": "library/ui/apps/hud/design/SearchField.tsx",
@@ -12950,11 +13014,11 @@
     },
     {
       "path": "library/ui/apps/hud/design/Showcase.tsx",
-      "sha256": "2dfcd25adb92d32ccbd5ebcecb32a1463e72953c68bf766ee702242c55411f62"
+      "sha256": "0be03b233e50b54c3b00ce728685ccfa454bfad0367730c7bc820fecf6cbd348"
     },
     {
       "path": "library/ui/apps/hud/design/ShowcaseIndex.ts",
-      "sha256": "af8ef3c2cc26e111557f4842ec8df41a269b8f0e00bd5b164022f83e0bc660e4"
+      "sha256": "16e474884dfda787a84dfab9c40d69dd1c8b9eabd15d7aadb28592ec48d0ed8f"
     },
     {
       "path": "library/ui/apps/hud/design/Submenu.tsx",
@@ -12985,12 +13049,8 @@
       "sha256": "3c310608bd13b418e80addb99f18f70e937f83b41c98417ad146456766377675"
     },
     {
-      "path": "library/ui/apps/hud/design/WearableCard.module.css",
-      "sha256": "e60d013e883af9620898bf8bde4d6c444cccbd4b079e5d37794587e2c1cf81a7"
-    },
-    {
       "path": "library/ui/apps/hud/design/WearableCard.tsx",
-      "sha256": "1a344c9d193c5ad78f185132f703830301df58a555fa9469b30b79369a4f019f"
+      "sha256": "ae909ad8a2a5d3c38ae5fbd8dee64cd72949b30c4d1b4d2140158610c8b8eeab"
     },
     {
       "path": "library/ui/apps/hud/design/icons.tsx",
@@ -12998,7 +13058,7 @@
     },
     {
       "path": "library/ui/apps/hud/design/index.ts",
-      "sha256": "dec9d930ce63eaa3d1546930e068813c067d739371d3e83f8da6aeebad196a3a"
+      "sha256": "1af0520d3a19f61206085c095a11894c442c20e787d81247ac62707dcdd8b94c"
     },
     {
       "path": "library/ui/apps/hud/design/popups.tsx",
@@ -13006,7 +13066,7 @@
     },
     {
       "path": "library/ui/apps/hud/design/rarityArt.ts",
-      "sha256": "cae16f1ce1c61943c5ab8fa5f1db5fca2d926a65a5a736117f0cfd0b3de131ab"
+      "sha256": "aa055200b6c83567a8274b7a17e7e4ffb0b877f0e14cba5b45e5d886006ee4a7"
     },
     {
       "path": "library/ui/apps/hud/features/backpack/BackpackModal.module.css",
@@ -13974,11 +14034,11 @@
     },
     {
       "path": "library/ui/apps/hud/features/profile/ProfilePassport.module.css",
-      "sha256": "0b456427d00b4fc0ddb9776c9c278eda97787d3c67ea00e46b7374b41aba91d7"
+      "sha256": "c2519e89544e327acf4a2e671c6232950142042ea9380c6b43a498c5ff509a2a"
     },
     {
       "path": "library/ui/apps/hud/features/profile/ProfilePassport.tsx",
-      "sha256": "f6bce0b313dd433f59f5f957c0a87499175732d241c6da1260ca5fa802460ded"
+      "sha256": "3a8350ca3379753109315441ff3aefbd50a55ff57b8723535efe3198702f1ee3"
     },
     {
       "path": "library/ui/apps/hud/features/profileCard/ProfileCard.tsx",
@@ -14050,7 +14110,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/settings/SettingsPanel.tsx",
-      "sha256": "cf5f4332d320fe914b7539571bf5c399939388438648a0a6dd249c139d627e07"
+      "sha256": "5ea03b84115f8488a8bf84b79022b73849032baf623d1e018692e92c21e8734b"
     },
     {
       "path": "library/ui/apps/hud/features/settings/askBeforeLeaving.ts",
@@ -14062,7 +14122,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/shop/ShopPage.tsx",
-      "sha256": "d6e0df0b2329b9a6bd9fab5c19cf9e5640c8329e739b4f0700b9dee6c2bda285"
+      "sha256": "b66c24ffc63c199194323b663f22dc068a94e3d364ad93e1bf0188a0c2ca5f89"
     },
     {
       "path": "library/ui/apps/hud/features/sidebar/Sidebar.module.css",
@@ -14302,7 +14362,7 @@
     },
     {
       "path": "library/ui/apps/hud/styles/tokens.css",
-      "sha256": "3082591cabe5afe37c4ea8868d4d4a5d0efb126e2d85acd7a51b136e5c05a010"
+      "sha256": "7b86409442e05e1a3799b2afeef176019cf41071507d5670c6d3dae498b9bc2a"
     },
     {
       "path": "library/ui/apps/hud/test/armedButton.test.tsx",
@@ -14794,7 +14854,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/hosted/settings.clicks.test.tsx",
-      "sha256": "1ccbf22c8d138116dd72039a50241c0aa33cca38b697a740b88d7258361be1ed"
+      "sha256": "63c223c25671f190bf6233b1b4adba22cad1d885ef428456b1277524dc3cfad5"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/settings.test.tsx",
@@ -14934,11 +14994,11 @@
     },
     {
       "path": "library/ui/apps/hud/test/rail.test.tsx",
-      "sha256": "c11b80d25b1efcb2ab186025c3f7ab71c1a668ff31180ce8a5545c47752e25ea"
+      "sha256": "b6a16aca739cd9189c91adb9966bb25cde9cd6fa2c2a6ceb00ca13a6cc13d82a"
     },
     {
       "path": "library/ui/apps/hud/test/rarityTokens.test.tsx",
-      "sha256": "52bbf6b118a3971255dbfee2d023221d6536880255e1e735ec5f0e7fc03714c7"
+      "sha256": "1a63192ac34599fa19b3ffc38c6f2fe4c470df01a2aa3e6124ddae1ab37e6977"
     },
     {
       "path": "library/ui/apps/hud/test/reelActions.test.ts",
@@ -14999,6 +15059,10 @@
     {
       "path": "library/ui/apps/hud/test/toastHost.test.tsx",
       "sha256": "b5d4a928a43dd9b7f7223ccce000314fb68faca3dbc1cc1745edab253ff42963"
+    },
+    {
+      "path": "library/ui/apps/hud/test/wearableCard.test.tsx",
+      "sha256": "db01b590c166c08b4010b068b024b5e3501d02abf60d71efb27bf64f65410557"
     },
     {
       "path": "library/ui/apps/shop/ShopCartDrawer.module.css",
@@ -16190,11 +16254,11 @@
     },
     {
       "path": "library/ui/apps/sites/flow-map/FlowMapPage.tsx",
-      "sha256": "2d95c7d8c7060acfb7e16c2c3bea894cd804e3102e7042fcb050ba302db271e3"
+      "sha256": "4920607efe68202586a6c5f257c667b555e0baf1c9572eb22f39bb766a074369"
     },
     {
       "path": "library/ui/apps/sites/flow-map/flowmappage.css",
-      "sha256": "cd714aaf87d2be7d587b1123790e16493925f0d2aa6bb0f14809b2448e7ae354"
+      "sha256": "6bcfd932c5eb7dafc099d2f601d49cc5d2c97f4cab472196bd964e2865196302"
     },
     {
       "path": "library/ui/apps/sites/help/HelpAccordion.module.css",
@@ -16214,7 +16278,7 @@
     },
     {
       "path": "library/ui/apps/sites/help/HelpPage.module.css",
-      "sha256": "2d2722c0571f51d36481e7b1c33f3e7c7c56963c80d31bc38d294838371f816b"
+      "sha256": "dcd906fe90ea8d075172e411ab428b391a74c9b04da22ff28ce7dc800b703455"
     },
     {
       "path": "library/ui/apps/sites/help/HelpPage.tsx",
@@ -16230,19 +16294,19 @@
     },
     {
       "path": "library/ui/apps/sites/help/HelpStatus.module.css",
-      "sha256": "91aa2d6655d0d93ff2289d433b043346cb1823ee1208d2c5f4d0df864fd9551b"
+      "sha256": "2b1cd5d71859bace7f305ea6d9c7486a409ce2e83098feb98ae61785ee4315fe"
     },
     {
       "path": "library/ui/apps/sites/help/HelpStatus.tsx",
-      "sha256": "95562fe2cec88e5bc6b43d66ea37182addf2d48dab282dc540b7a357392daae0"
+      "sha256": "2a693276f03c813f19494f08cd3886b05f58924281e17152f59ce4862c58efa9"
     },
     {
       "path": "library/ui/apps/sites/help/HelpTabs.module.css",
-      "sha256": "bda408fd976b460a475f2cbb252f924abc23ac8b8d4f7696c59cd70607c8a443"
+      "sha256": "0ccb1220bb19672196fa413340aec2fcaa22a98caebac89f16fae7bec603be96"
     },
     {
       "path": "library/ui/apps/sites/help/HelpTabs.tsx",
-      "sha256": "0fb6e28bc620dbb8d7ce47d36d63086f3a20d056c149dc2a91a68da92301c4bc"
+      "sha256": "242373be0225d9481f3074165d3a96e69e71a67465282979e3b7d2c4725cb8bf"
     },
     {
       "path": "library/ui/apps/sites/home/CatchTheVibe.module.css",
@@ -16594,11 +16658,11 @@
     },
     {
       "path": "library/ui/apps/sites/social/CommunityCreate.module.css",
-      "sha256": "d1c0c75d1ec1bd73c6cf6b43198a92f241517b000ba6876acdcf6d7f5bc47418"
+      "sha256": "73984b00d968403223a07fc3ac8aed303d0a291c7aa6934e285bceed1246aa8b"
     },
     {
       "path": "library/ui/apps/sites/social/CommunityCreate.tsx",
-      "sha256": "9f81ab210c30da8074af1b2c2701b6ddd9e04109c99e239f77d0179fdd30a854"
+      "sha256": "be2afc26772ed837aa75f5832e7043a68807f6f191a3e7214f80831d69ccda86"
     },
     {
       "path": "library/ui/apps/sites/social/CommunityDetail.module.css",
@@ -16929,6 +16993,14 @@
       "sha256": "52cf2909d71c593be3ac30df6fd64aa1cbf8bb63911b39430b996c125dedf6dd"
     },
     {
+      "path": "library/ui/components/EquippedItemCard/EquippedItemCard.module.css",
+      "sha256": "4d6e94b92da217846f4299fa1bec66898bde149ecfeba90526ba0a9c8d95c7a4"
+    },
+    {
+      "path": "library/ui/components/EquippedItemCard/EquippedItemCard.tsx",
+      "sha256": "c851f40ae865e7046f7f2a08bac7a7f361dfdf9f604977accdbcd8c825901059"
+    },
+    {
       "path": "library/ui/components/EventCard/EventCard.module.css",
       "sha256": "3f6275161cbcbd8b9075a0f9364b1f209b70714d15b38bec6134d921660e4c19"
     },
@@ -17103,6 +17175,14 @@
     {
       "path": "library/ui/components/OptionMenu/OptionMenu.tsx",
       "sha256": "72511c90955ab032853d3942b815750e36cbfb03bf25cc66a3be425d7f6d24f0"
+    },
+    {
+      "path": "library/ui/components/PagedRail/PagedRail.module.css",
+      "sha256": "91e07fff9680decf31ddad69feccad40b5c1ddbc210ce4dee0281df3149a68a6"
+    },
+    {
+      "path": "library/ui/components/PagedRail/PagedRail.tsx",
+      "sha256": "a2ae00277cc19951b9218dffe628001f0d232f6b74addd4aab332a1d9021aed5"
     },
     {
       "path": "library/ui/components/Pager/Pager.module.css",
@@ -17301,6 +17381,18 @@
       "sha256": "02489972dc8194968f5c97eb70b0c478563cc0422451ba8ea21523db48832f47"
     },
     {
+      "path": "library/ui/components/WearableCard/WearableCard.module.css",
+      "sha256": "70296d3a8824ac112905e126d40e6fd97e4e01e208647e0bdc1acdc44bcf9da7"
+    },
+    {
+      "path": "library/ui/components/WearableCard/WearableCard.tsx",
+      "sha256": "b5f4b6951e91167103cc7653e71db437ae6058b5862954e2f5850205f6069cad"
+    },
+    {
+      "path": "library/ui/components/WearableCard/rarity.module.css",
+      "sha256": "14bda73a31d5b5e71f14754ebe26a4fdc610df0f15105d615c5389831adf3fbd"
+    },
+    {
       "path": "library/ui/content.helpers.ts",
       "sha256": "e7e550df14b707ba0d83001f5c9b2e62df200bf7f35da24215292d8731bbe214"
     },
@@ -17422,7 +17514,7 @@
     },
     {
       "path": "library/ui/index.ts",
-      "sha256": "ea67dc2712d8c33de625b63d25d2999eee34506ea11bc4f62e4d3da081b85a97"
+      "sha256": "488221341fd8f86bd5fffcb3ae056a13ab15f3e8d41c26ca0f2a0948ddc5cc8f"
     },
     {
       "path": "library/ui/link.helpers.ts",
@@ -21584,36 +21676,6 @@
       "kind": "test:runtime"
     },
     {
-      "from": "library/ui/apps/hud/design/EquippedItemCard.tsx",
-      "to": "library/ui/apps/hud/design/EquippedItemCard.module.css",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/EquippedItemCard.tsx",
-      "to": "library/ui/apps/hud/design/EquippedItemCard.module.css",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/EquippedItemCard.tsx",
-      "to": "library/ui/apps/hud/design/EquippedItemCard.module.css",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/EquippedItemCard.tsx",
-      "to": "library/ui/index.ts",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/EquippedItemCard.tsx",
-      "to": "library/ui/index.ts",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/EquippedItemCard.tsx",
-      "to": "library/ui/index.ts",
-      "kind": "test:runtime"
-    },
-    {
       "from": "library/ui/apps/hud/design/Glyphs.tsx",
       "to": "library/ui/apps/hud/design/Glyphs.module.css",
       "kind": "native:runtime"
@@ -21896,21 +21958,6 @@
     {
       "from": "library/ui/apps/hud/design/Rail.tsx",
       "to": "library/ui/apps/hud/assets/rail/arrow-right.png",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Rail.tsx",
-      "to": "library/ui/apps/hud/design/Rail.module.css",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Rail.tsx",
-      "to": "library/ui/apps/hud/design/Rail.module.css",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Rail.tsx",
-      "to": "library/ui/apps/hud/design/Rail.module.css",
       "kind": "test:runtime"
     },
     {
@@ -22350,17 +22397,47 @@
     },
     {
       "from": "library/ui/apps/hud/design/WearableCard.tsx",
-      "to": "library/ui/apps/hud/design/WearableCard.module.css",
+      "to": "library/ui/apps/hud/assets/backpack/corner-flap.webp",
       "kind": "native:runtime"
     },
     {
       "from": "library/ui/apps/hud/design/WearableCard.tsx",
-      "to": "library/ui/apps/hud/design/WearableCard.module.css",
+      "to": "library/ui/apps/hud/assets/backpack/corner-flap.webp",
       "kind": "production:runtime"
     },
     {
       "from": "library/ui/apps/hud/design/WearableCard.tsx",
-      "to": "library/ui/apps/hud/design/WearableCard.module.css",
+      "to": "library/ui/apps/hud/assets/backpack/corner-flap.webp",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/design/WearableCard.tsx",
+      "to": "library/ui/apps/hud/assets/backpack/equipped-outline.webp",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/design/WearableCard.tsx",
+      "to": "library/ui/apps/hud/assets/backpack/equipped-outline.webp",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/design/WearableCard.tsx",
+      "to": "library/ui/apps/hud/assets/backpack/equipped-outline.webp",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/design/WearableCard.tsx",
+      "to": "library/ui/apps/hud/assets/backpack/hover-bg.webp",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/design/WearableCard.tsx",
+      "to": "library/ui/apps/hud/assets/backpack/hover-bg.webp",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/design/WearableCard.tsx",
+      "to": "library/ui/apps/hud/assets/backpack/hover-bg.webp",
       "kind": "test:runtime"
     },
     {
@@ -22376,6 +22453,21 @@
     {
       "from": "library/ui/apps/hud/design/WearableCard.tsx",
       "to": "library/ui/apps/hud/design/rarityArt.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/design/WearableCard.tsx",
+      "to": "library/ui/index.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/design/WearableCard.tsx",
+      "to": "library/ui/index.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/design/WearableCard.tsx",
+      "to": "library/ui/index.ts",
       "kind": "test:runtime"
     },
     {
@@ -22811,21 +22903,6 @@
     {
       "from": "library/ui/apps/hud/design/index.ts",
       "to": "library/ui/apps/hud/design/Dropdown.tsx",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/index.ts",
-      "to": "library/ui/apps/hud/design/EquippedItemCard.tsx",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/index.ts",
-      "to": "library/ui/apps/hud/design/EquippedItemCard.tsx",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/index.ts",
-      "to": "library/ui/apps/hud/design/EquippedItemCard.tsx",
       "kind": "test:runtime"
     },
     {
@@ -51870,6 +51947,36 @@
     },
     {
       "from": "library/ui/apps/hud/test/rail.test.tsx",
+      "to": "library/ui/apps/hud/assets/rail/arrow-left.png",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/rail.test.tsx",
+      "to": "library/ui/apps/hud/assets/rail/arrow-left.png",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/rail.test.tsx",
+      "to": "library/ui/apps/hud/assets/rail/arrow-left.png",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/rail.test.tsx",
+      "to": "library/ui/apps/hud/assets/rail/arrow-right.png",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/rail.test.tsx",
+      "to": "library/ui/apps/hud/assets/rail/arrow-right.png",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/rail.test.tsx",
+      "to": "library/ui/apps/hud/assets/rail/arrow-right.png",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/rail.test.tsx",
       "to": "library/ui/apps/hud/design/Rail.tsx",
       "kind": "native:runtime"
     },
@@ -52274,6 +52381,66 @@
       "kind": "test:runtime"
     },
     {
+      "from": "library/ui/apps/hud/test/wearableCard.test.tsx",
+      "to": "library/ui/apps/hud/assets/backpack/corner-flap.webp",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/wearableCard.test.tsx",
+      "to": "library/ui/apps/hud/assets/backpack/corner-flap.webp",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/wearableCard.test.tsx",
+      "to": "library/ui/apps/hud/assets/backpack/corner-flap.webp",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/wearableCard.test.tsx",
+      "to": "library/ui/apps/hud/assets/backpack/equipped-outline.webp",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/wearableCard.test.tsx",
+      "to": "library/ui/apps/hud/assets/backpack/equipped-outline.webp",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/wearableCard.test.tsx",
+      "to": "library/ui/apps/hud/assets/backpack/equipped-outline.webp",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/wearableCard.test.tsx",
+      "to": "library/ui/apps/hud/assets/backpack/hover-bg.webp",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/wearableCard.test.tsx",
+      "to": "library/ui/apps/hud/assets/backpack/hover-bg.webp",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/wearableCard.test.tsx",
+      "to": "library/ui/apps/hud/assets/backpack/hover-bg.webp",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/wearableCard.test.tsx",
+      "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/wearableCard.test.tsx",
+      "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/wearableCard.test.tsx",
+      "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "test:runtime"
+    },
+    {
       "from": "library/ui/apps/shop/ShopCartDrawer.tsx",
       "to": "library/shop/discovery/lib/rarity.ts",
       "kind": "native:runtime"
@@ -56819,6 +56986,21 @@
       "kind": "test:runtime"
     },
     {
+      "from": "library/ui/apps/sites/flow-map/FlowMapPage.tsx",
+      "to": "library/ui/components/Button/Button.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/sites/flow-map/FlowMapPage.tsx",
+      "to": "library/ui/components/Button/Button.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/sites/flow-map/FlowMapPage.tsx",
+      "to": "library/ui/components/Button/Button.tsx",
+      "kind": "test:runtime"
+    },
+    {
       "from": "library/ui/apps/sites/help/HelpAccordion.module.css",
       "to": "library/ui/foundations/typography/text-styles.module.css",
       "kind": "native:composes"
@@ -57060,6 +57242,21 @@
     },
     {
       "from": "library/ui/apps/sites/help/HelpStatus.tsx",
+      "to": "library/ui/components/Button/Button.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/sites/help/HelpStatus.tsx",
+      "to": "library/ui/components/Button/Button.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/sites/help/HelpStatus.tsx",
+      "to": "library/ui/components/Button/Button.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/sites/help/HelpStatus.tsx",
       "to": "library/ui/foundations/icons/index.ts",
       "kind": "native:runtime"
     },
@@ -57074,21 +57271,6 @@
       "kind": "test:runtime"
     },
     {
-      "from": "library/ui/apps/sites/help/HelpTabs.module.css",
-      "to": "library/ui/foundations/typography/text-styles.module.css",
-      "kind": "native:composes"
-    },
-    {
-      "from": "library/ui/apps/sites/help/HelpTabs.module.css",
-      "to": "library/ui/foundations/typography/text-styles.module.css",
-      "kind": "production:composes"
-    },
-    {
-      "from": "library/ui/apps/sites/help/HelpTabs.module.css",
-      "to": "library/ui/foundations/typography/text-styles.module.css",
-      "kind": "test:composes"
-    },
-    {
       "from": "library/ui/apps/sites/help/HelpTabs.tsx",
       "to": "library/ui/apps/sites/help/HelpTabs.module.css",
       "kind": "native:runtime"
@@ -57101,6 +57283,36 @@
     {
       "from": "library/ui/apps/sites/help/HelpTabs.tsx",
       "to": "library/ui/apps/sites/help/HelpTabs.module.css",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/sites/help/HelpTabs.tsx",
+      "to": "library/ui/components/Tabs/Tabs.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/sites/help/HelpTabs.tsx",
+      "to": "library/ui/components/Tabs/Tabs.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/sites/help/HelpTabs.tsx",
+      "to": "library/ui/components/Tabs/Tabs.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/sites/help/HelpTabs.tsx",
+      "to": "library/ui/components/TabsBar/TabsBar.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/sites/help/HelpTabs.tsx",
+      "to": "library/ui/components/TabsBar/TabsBar.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/sites/help/HelpTabs.tsx",
+      "to": "library/ui/components/TabsBar/TabsBar.tsx",
       "kind": "test:runtime"
     },
     {
@@ -61680,6 +61892,21 @@
     },
     {
       "from": "library/ui/apps/sites/social/CommunityCreate.tsx",
+      "to": "library/ui/components/InputWebCreatorTools/InputWebCreatorTools.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/sites/social/CommunityCreate.tsx",
+      "to": "library/ui/components/InputWebCreatorTools/InputWebCreatorTools.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/sites/social/CommunityCreate.tsx",
+      "to": "library/ui/components/InputWebCreatorTools/InputWebCreatorTools.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/sites/social/CommunityCreate.tsx",
       "to": "library/ui/components/Modal/Modal.tsx",
       "kind": "native:runtime"
     },
@@ -62939,6 +63166,51 @@
       "kind": "test:runtime"
     },
     {
+      "from": "library/ui/components/EquippedItemCard/EquippedItemCard.tsx",
+      "to": "library/ui/components/Button/Button.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/components/EquippedItemCard/EquippedItemCard.tsx",
+      "to": "library/ui/components/Button/Button.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/components/EquippedItemCard/EquippedItemCard.tsx",
+      "to": "library/ui/components/Button/Button.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/components/EquippedItemCard/EquippedItemCard.tsx",
+      "to": "library/ui/components/EquippedItemCard/EquippedItemCard.module.css",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/components/EquippedItemCard/EquippedItemCard.tsx",
+      "to": "library/ui/components/EquippedItemCard/EquippedItemCard.module.css",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/components/EquippedItemCard/EquippedItemCard.tsx",
+      "to": "library/ui/components/EquippedItemCard/EquippedItemCard.module.css",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/components/EquippedItemCard/EquippedItemCard.tsx",
+      "to": "library/ui/components/WearableCard/rarity.module.css",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/components/EquippedItemCard/EquippedItemCard.tsx",
+      "to": "library/ui/components/WearableCard/rarity.module.css",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/components/EquippedItemCard/EquippedItemCard.tsx",
+      "to": "library/ui/components/WearableCard/rarity.module.css",
+      "kind": "test:runtime"
+    },
+    {
       "from": "library/ui/components/EventCard/EventCard.module.css",
       "to": "library/ui/foundations/typography/text-styles.module.css",
       "kind": "native:composes"
@@ -63629,6 +63901,36 @@
       "kind": "test:runtime"
     },
     {
+      "from": "library/ui/components/PagedRail/PagedRail.tsx",
+      "to": "library/ui/components/PagedRail/PagedRail.module.css",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/components/PagedRail/PagedRail.tsx",
+      "to": "library/ui/components/PagedRail/PagedRail.module.css",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/components/PagedRail/PagedRail.tsx",
+      "to": "library/ui/components/PagedRail/PagedRail.module.css",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/components/PagedRail/PagedRail.tsx",
+      "to": "library/ui/foundations/icons/general.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/components/PagedRail/PagedRail.tsx",
+      "to": "library/ui/foundations/icons/general.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/components/PagedRail/PagedRail.tsx",
+      "to": "library/ui/foundations/icons/general.tsx",
+      "kind": "test:runtime"
+    },
+    {
       "from": "library/ui/components/Pager/Pager.tsx",
       "to": "library/ui/components/Pager/Pager.module.css",
       "kind": "native:runtime"
@@ -64316,6 +64618,36 @@
     {
       "from": "library/ui/components/VoiceBars/VoiceBars.tsx",
       "to": "library/ui/components/VoiceBars/VoiceBars.module.css",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/components/WearableCard/WearableCard.tsx",
+      "to": "library/ui/components/WearableCard/WearableCard.module.css",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/components/WearableCard/WearableCard.tsx",
+      "to": "library/ui/components/WearableCard/WearableCard.module.css",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/components/WearableCard/WearableCard.tsx",
+      "to": "library/ui/components/WearableCard/WearableCard.module.css",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/components/WearableCard/WearableCard.tsx",
+      "to": "library/ui/components/WearableCard/rarity.module.css",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/components/WearableCard/WearableCard.tsx",
+      "to": "library/ui/components/WearableCard/rarity.module.css",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/components/WearableCard/WearableCard.tsx",
+      "to": "library/ui/components/WearableCard/rarity.module.css",
       "kind": "test:runtime"
     },
     {
@@ -65155,6 +65487,21 @@
     },
     {
       "from": "library/ui/index.ts",
+      "to": "library/ui/components/EquippedItemCard/EquippedItemCard.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/index.ts",
+      "to": "library/ui/components/EquippedItemCard/EquippedItemCard.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/index.ts",
+      "to": "library/ui/components/EquippedItemCard/EquippedItemCard.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/index.ts",
       "to": "library/ui/components/EventCard/EventCard.tsx",
       "kind": "native:runtime"
     },
@@ -65466,6 +65813,21 @@
     {
       "from": "library/ui/index.ts",
       "to": "library/ui/components/OptionMenu/OptionMenu.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/index.ts",
+      "to": "library/ui/components/PagedRail/PagedRail.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/index.ts",
+      "to": "library/ui/components/PagedRail/PagedRail.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/index.ts",
+      "to": "library/ui/components/PagedRail/PagedRail.tsx",
       "kind": "test:runtime"
     },
     {
@@ -65811,6 +66173,21 @@
     {
       "from": "library/ui/index.ts",
       "to": "library/ui/components/VoiceBars/VoiceBars.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/index.ts",
+      "to": "library/ui/components/WearableCard/WearableCard.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/index.ts",
+      "to": "library/ui/components/WearableCard/WearableCard.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/index.ts",
+      "to": "library/ui/components/WearableCard/WearableCard.tsx",
       "kind": "test:runtime"
     },
     {
@@ -67591,11 +67968,6 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/ui/apps/hud/design/Dropdown.tsx",
-      "kind": "type"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
-      "to": "library/ui/apps/hud/design/EquippedItemCard.tsx",
       "kind": "type"
     },
     {
@@ -69665,6 +70037,11 @@
     },
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/ui/apps/hud/test/wearableCard.test.tsx",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/ui/apps/shop/ShopCartDrawer.tsx",
       "kind": "type"
     },
@@ -70540,6 +70917,11 @@
     },
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/ui/components/EquippedItemCard/EquippedItemCard.tsx",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/ui/components/EventCard/EventCard.tsx",
       "kind": "type"
     },
@@ -70656,6 +71038,11 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/ui/components/OptionMenu/OptionMenu.tsx",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/ui/components/PagedRail/PagedRail.tsx",
       "kind": "type"
     },
     {
@@ -70786,6 +71173,11 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/ui/components/VoiceBars/VoiceBars.tsx",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/ui/components/WearableCard/WearableCard.tsx",
       "kind": "type"
     },
     {
