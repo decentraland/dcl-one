@@ -244,7 +244,8 @@ function clipEdges(element: HTMLElement): { right: number; bottom: number } {
 export function Submenu({ label, icon, children, className, whileOpen }: SubmenuProps) {
   const inMenu = useContext(InMenu)
   const [open, setOpen] = useState(false)
-  const [flip, setFlip] = useState({ left: false, up: false })
+  // Null until the open list is measured.
+  const [flip, setFlip] = useState<{ left: boolean; up: boolean } | null>(null)
   const [focusFirst, setFocusFirst] = useState(false)
   const flyout = useRef<HTMLDivElement>(null)
   const row = useRef<HTMLButtonElement>(null)
@@ -253,9 +254,10 @@ export function Submenu({ label, icon, children, className, whileOpen }: Submenu
   useEffect(() => {
     opened.current = whileOpen
   })
+  // Measured once per opening: measured again once flipped, the list would find room and flip back.
   useLayoutEffect(() => {
     if (!open) {
-      setFlip({ left: false, up: false })
+      setFlip(null)
       return
     }
     const element = flyout.current
@@ -263,13 +265,15 @@ export function Submenu({ label, icon, children, className, whileOpen }: Submenu
     const rect = element.getBoundingClientRect()
     const edges = clipEdges(element)
     setFlip({ left: rect.right > edges.right, up: rect.bottom > edges.bottom })
-    if (focusFirst) {
-      element
-        .querySelector<HTMLElement>('[role^="menuitem"]:not([aria-disabled="true"]):not(:disabled)')
-        ?.focus()
-      setFocusFirst(false)
-    }
-  }, [open, focusFirst])
+  }, [open])
+  // Once the list is placed, so the focus does not scroll a clipping ancestor towards where it would have been.
+  useLayoutEffect(() => {
+    if (flip == null || !focusFirst) return
+    flyout.current
+      ?.querySelector<HTMLElement>('[role^="menuitem"]:not([aria-disabled="true"]):not(:disabled)')
+      ?.focus()
+    setFocusFirst(false)
+  }, [flip, focusFirst])
   // The host's close (Cancel) shuts the list first and returns the focus to the row.
   useEffect(() => {
     if (!open) return
@@ -315,7 +319,7 @@ export function Submenu({ label, icon, children, className, whileOpen }: Submenu
         <div
           id={listId}
           ref={flyout}
-          className={classes(styles.flyout, flip.left && styles.flyoutLeft, flip.up && styles.flyoutUp)}
+          className={classes(styles.flyout, flip?.left && styles.flyoutLeft, flip?.up && styles.flyoutUp)}
         >
           {children}
         </div>
