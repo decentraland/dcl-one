@@ -165,6 +165,7 @@ const LAND_MOVE_BLEND_OF = 0.358; // of End
 const LAND_MOVE_FROM = 0.0259; // of the locomotion clip
 const LAND_EXIT = 0.4778; // of End: locomotion
 const LAND_EXIT_BLEND_OF = 0.3982; // of End
+const EMOTE_MOVE_BLEND = 0.1; // movement blend above which a requested emote waits
 const GLIDE_START_BLEND = 0.05; // into the glide's Start, from any state
 const GLIDE_LOOP_BLEND = 0.05; // Start to the glide loop, at the end of Start
 const GLIDE_END_BLEND = 0.1; // Start or the loop to the glide's End, when the glide ends in the air
@@ -297,6 +298,8 @@ var animJumps = 0;
 type AnimState = 'Movement' | 'Jump' | 'Up' | 'UpToDown' | 'Down' | 'LongFall' | 'Grounded' | 'HardLanding'
   | 'DoubleJump' | 'Gliding';
 var animState: AnimState = 'Movement';
+// The state before it.
+var animPrev: AnimState = 'Movement';
 // Scene time and tick the state started.
 var animFrom = 0;
 var animTick = 0;
@@ -397,6 +400,7 @@ function updateAnimationParameters(horizontalSpeed: number) {
 // Starts a state on this tick: its clip blends in over `blend` (s) from `offset` of its length. Up keeps Jump's clip.
 function enterState(state: AnimState, blend?: number, offset?: number) {
   if (state !== 'Up') animTier = tierFor(moveBlend, state === 'Down' ? JOG_FALL_FROM : JOG_TIER_FROM);
+  animPrev = animState;
   animState = state;
   animFrom = time;
   animTick = tick;
@@ -574,7 +578,7 @@ function stateAnimation(
     case 'UpToDown': return clip(set.mid, false);
     case 'Down': return clip(set.fall, true);
     case 'LongFall': return clip(CLIP_LONG_FALL, true);
-    case 'Grounded': return clip(glideLanding ? GLIDE_LANDING[animTier] : set.end, false, true);
+    case 'Grounded': return clip(glideLanding ? GLIDE_LANDING[animTier] : set.end, false);
     case 'DoubleJump': return { ...clip(doubleJumpClip, false), speed: DOUBLE_JUMP_SPEED };
     case 'HardLanding': return hardLandingAnimation();
     default: return null;
@@ -603,7 +607,8 @@ function hardLandingAnimation(): MovementAnimation | null {
     src: HARD_LANDING[hardLanding as 'enter' | 'loop' | 'exit'],
     speed: exit ? HARD_LANDING_EXIT_SPEED : 1,
     loop: hardLanding === 'loop',
-    idle: true,
+    // Enter, until Loop has blended in, holds a requested emote back as the landing does (selectAnimation)
+    idle: hardLanding !== 'enter' && !(hardLanding === 'loop' && time - hardLandingFrom < HARD_LANDING_LOOP_BLEND),
     transitionSeconds: hardLanding === 'enter' ? animBlend ?? HARD_LANDING_ENTER_BLEND : exit ? HARD_LANDING_EXIT_BLEND : HARD_LANDING_LOOP_BLEND,
     playbackTime: changed ? 0 : undefined,
     sounds: [],
@@ -683,6 +688,11 @@ function selectAnimation(): MovementAnimation {
       animation.playbackTime = animOffset * CLIP_LENGTH[animation.src];
     }
   }
+  // A requested emote waits, as in the reference client, until the avatar stands: grounded, out of the landing until its
+  // blend into locomotion is over, and with the movement blend at most EMOTE_MOVE_BLEND. A published animation that is
+  // not idle holds the request back.
+  const landingBlendsOut = animState === 'Movement' && animPrev === 'Grounded' && time - animFrom + 1e-6 < (animBlend ?? 0);
+  if (moveBlend > EMOTE_MOVE_BLEND || landingBlendsOut) animation.idle = false;
   const sounds = [
     ...(newJump ? [pickRandom(JUMP_SOUNDS)] : []),
     ...(justLanded && drop > 0.5 ? [pickRandom(LAND_SOUNDS)] : []),
