@@ -695,6 +695,37 @@ async fn addresses_list_only_published_standard_contracts() {
     }
 }
 
+/// Without pages, the addresses read answers every published standard
+/// collection, as builder-server does, past the cap a page's limit has.
+#[tokio::test]
+async fn addresses_without_pages_list_every_published_collection() {
+    let Some(d) = db().await else {
+        return;
+    };
+    let published = crate::collections::listing::COMMITTEE_CAP + 1;
+    sqlx::query(
+        "WITH c AS (INSERT INTO builder.collections (id, name, eth_address, contract_address) \
+           SELECT gen_random_uuid(), 'Every address ' || g, $2, '0x' || lpad(to_hex(g), 40, '0') \
+           FROM generate_series(1, $1) g RETURNING id) \
+         INSERT INTO builder.items (id, collection_id, eth_address, name, type, blockchain_item_id, data) \
+         SELECT gen_random_uuid(), c.id, $2, 'Every address item', 'wearable', '0', '{}'::json FROM c",
+    )
+    .bind(published)
+    .bind(OWNER)
+    .execute(&d.pool)
+    .await
+    .unwrap();
+    for mount in MOUNTS {
+        let (status, _, body) = get(&d.app, &format!("{mount}/v1/addresses")).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(
+            body["data"].as_array().map(Vec::len),
+            Some(published as usize),
+            "{mount}"
+        );
+    }
+}
+
 fn hash_of(bytes: &[u8]) -> String {
     dcl_auth::hash_bytes_v1(bytes)
 }
