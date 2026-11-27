@@ -4313,6 +4313,27 @@ async fn the_nft_walk_folds_owners_orders_and_resumes_a_kill_backfills_a_late_co
         Some(Some(ALICE.to_string())),
         "the backfilled token is folded"
     );
+    // The comparison tool asks for a historical window before this
+    // collection's forward admission. Its completed backfill covers it.
+    let comparison = super::compare_sources::index_for(INDEXER_NFT, ChainNet::Matic).unwrap();
+    let transfer_block = s + 1_500;
+    let anchor = (head + 100, time_of(head + 100));
+    let groups = comparison
+        .groups(&db.pool, transfer_block, transfer_block, anchor)
+        .await
+        .unwrap();
+    assert!(groups.iter().any(|g| g.addresses.iter().any(|a| a == late)));
+    sqlx::query("DELETE FROM shop.collections WHERE network='matic' AND contract_address=$1")
+        .bind(late)
+        .execute(&db.pool)
+        .await
+        .unwrap();
+    comparison.begin_pass();
+    let groups = comparison
+        .groups(&db.pool, transfer_block, transfer_block, anchor)
+        .await
+        .unwrap();
+    assert!(groups.iter().any(|g| g.addresses.iter().any(|a| a == late)));
     db.drop().await;
 }
 

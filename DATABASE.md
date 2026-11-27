@@ -4137,8 +4137,10 @@ the collections mirror's first complete pass, with testnet verification.
 Each load checks the gate on the snapshot that supplies its addresses, so
 a hand-back between the job gate and that load waits for the mirror. The
 NFT walk keeps contracts recorded in `shop.nft_contract` if a replacement
-catalogue omits them. Newly discovered contracts still enter through the
-existing backfill lane when they predate the live window.
+catalogue omits them. Historical source comparisons also include a
+registered address when the requested window overlaps its recorded backfill.
+Newly discovered contracts enter through the existing backfill lane when
+they predate the live window.
 
 **Switching a network from the mirror.** Run this only once two things
 hold:

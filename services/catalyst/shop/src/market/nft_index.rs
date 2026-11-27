@@ -786,6 +786,14 @@ pub struct WalkedContract {
 }
 
 impl WalkedContract {
+    fn overlaps(&self, from: u64, to: u64) -> bool {
+        self.walked_from_block <= to as i64
+            || self
+                .backfill_from_block
+                .zip(self.backfilled_to_block)
+                .is_some_and(|(first, last)| first <= to as i64 && last >= from as i64)
+    }
+
     /// The range the backfill lane still owes, if any.
     pub fn owed(&self) -> Option<(i64, i64)> {
         let from = self.backfill_from_block?;
@@ -803,7 +811,7 @@ pub struct NftIndex {
     check_catalogue: bool,
     pending: Mutex<Vec<(String, i64, Option<i64>)>>,
     collections: Mutex<Option<Vec<Collection>>>,
-    walked: Mutex<Option<HashMap<String, i64>>>,
+    walked: Mutex<Option<HashMap<String, WalkedContract>>>,
     /// The cursor's start: nothing before it is the walk's (a bounded
     /// window's history, or none at all for a full one).
     walk_start: Mutex<Option<u64>>,
@@ -841,7 +849,10 @@ impl NftIndex {
 
     /// The catalogue rows and previously walked contracts of this network
     /// on one checked snapshot, read once per pass.
-    async fn load(&self, pool: &PgPool) -> anyhow::Result<(Vec<Collection>, HashMap<String, i64>)> {
+    async fn load(
+        &self,
+        pool: &PgPool,
+    ) -> anyhow::Result<(Vec<Collection>, HashMap<String, WalkedContract>)> {
         if let (Some(c), Some(w)) = (self.collections.lock().clone(), self.walked.lock().clone()) {
             return Ok((c, w));
         }
@@ -860,14 +871,16 @@ impl NftIndex {
                 created_at: r.get("created_at"),
             })
             .collect();
-        let walked: HashMap<String, i64> = sqlx::query_as::<_, (String, i64)>(
-            "SELECT contract_address, walked_from_block FROM shop.nft_contract WHERE network = $1",
+        let walked = sqlx::query_as::<_, WalkedContract>(
+            "SELECT contract_address, walked_from_block, backfill_from_block, backfilled_to_block
+             FROM shop.nft_contract WHERE network = $1",
         )
         .bind(self.net.db_name())
         .fetch_all(&mut *tx)
         .await?
         .into_iter()
-        .collect();
+        .map(|row| (row.contract_address.clone(), row))
+        .collect::<HashMap<_, _>>();
         let start = chain_walk::cursor(&mut *tx, INDEXER_NFT, self.net)
             .await?
             .map_or(self.deployments.start, |c| c.start_block.max(0) as u64);
@@ -995,16 +1008,19 @@ impl ChainIndex for NftIndex {
             .collect();
         // The catalogue may shrink during a rebuild or hand-back. Once
         // the walk records a contract, keep reading it until the NFT walk
-        // itself rewinds past its admission.
+        // itself rewinds past its admission. Historical source comparisons
+        // also need the backfill prefix that the walk read before admission.
         addresses.extend(
             walked
-                .iter()
-                .filter(|(_, walked_from)| **walked_from <= to as i64)
-                .map(|(address, _)| address.clone()),
+                .values()
+                .filter(|row| row.overlaps(from, to))
+                .map(|row| row.contract_address.clone()),
         );
         let mut pending = Vec::new();
         for c in &collections {
-            if !walked.contains_key(&c.address) && c.created_at <= bound {
+            if walked.contains_key(&c.address) {
+                addresses.push(c.address.clone());
+            } else if c.created_at <= bound {
                 addresses.push(c.address.clone());
                 // Taken in only now: when it may predate this window, the
                 // blocks since the walk's start before it are owed by the
@@ -1081,8 +1097,14 @@ impl ChainIndex for NftIndex {
             .execute(&mut *conn)
             .await?;
             if let Some(w) = self.walked.lock().as_mut() {
-                for (a, f, _) in pending {
-                    w.entry(a).or_insert(f);
+                for (address, walked_from_block, backfill_from_block) in pending {
+                    let key = address.clone();
+                    w.entry(key).or_insert(WalkedContract {
+                        contract_address: address,
+                        walked_from_block,
+                        backfill_from_block,
+                        backfilled_to_block: None,
+                    });
                 }
             }
         }
