@@ -132,7 +132,7 @@ export function ContextMenu({
                 <span className={styles.icon} aria-hidden="true">
                   {item.checked ? <GeneralCheck size={20} /> : null}
                 </span>
-                {item.icon != null && <span className={styles.icon}>{item.icon}</span>}
+                {item.icon != null && <span className={styles.icon} aria-hidden="true">{item.icon}</span>}
                 <span className={styles.label}>{item.label}</span>
               </button>
             )
@@ -160,7 +160,7 @@ export function ContextMenu({
               key={index}
               onClick={item.onClick}
             >
-              {item.icon != null && <span className={styles.icon}>{item.icon}</span>}
+              {item.icon != null && <span className={styles.icon} aria-hidden="true">{item.icon}</span>}
               <span className={styles.label}>{item.label}</span>
               {item.kind === 'submenu' && <Chevron />}
             </button>
@@ -203,7 +203,7 @@ function ToggleItem({ item }: { item: Extract<ContextMenuItem, { kind: 'toggle' 
         if (!label || !event.currentTarget.contains(label)) change(!on)
       }}
     >
-      {item.icon != null && <span className={styles.icon}>{item.icon}</span>}
+      {item.icon != null && <span className={styles.icon} aria-hidden="true">{item.icon}</span>}
       <span className={styles.label}>{item.label}</span>
       {/* The Switch is a label of its own, so the row is not one: a click beside the switch toggles it. */}
       <Switch appearance="hud" checked={on} onCheckedChange={change} label={name ?? 'Toggle'} labelHidden />
@@ -301,7 +301,11 @@ export function Submenu({ label, icon, children, className, whileOpen }: Submenu
           setOpen(true)
         }}
       >
-        {icon != null && <span className={inMenu ? styles.icon : styles.subIcon}>{icon}</span>}
+        {icon != null && (
+          <span className={inMenu ? styles.icon : styles.subIcon} aria-hidden="true">
+            {icon}
+          </span>
+        )}
         <span className={styles.label}>{label}</span>
         {inMenu ? (
           <Chevron />
