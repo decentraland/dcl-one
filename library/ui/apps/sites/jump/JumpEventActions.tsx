@@ -1,4 +1,4 @@
-import { Button } from '../shared/Button/Button'
+import { Button } from '../../../components/Button/Button'
 import { CalendarAddIcon, REMIND_BELL, ShareIcon } from './JumpIcons'
 import styles from './JumpEventActions.module.css'
 
@@ -53,7 +53,7 @@ function JumpEventActions(props: JumpEventActionsProps) {
   if (props.state === 'ended') {
     return (
       <div className={styles.root}>
-        <Button href={props.eventsHref} variant="secondary" className={styles.explore}>
+        <Button href={props.eventsHref} variant="secondary" size="md" className={styles.explore}>
           Explore events
         </Button>
       </div>
@@ -66,26 +66,33 @@ function JumpEventActions(props: JumpEventActionsProps) {
         <Button
           href={calendarHref}
           target="_blank"
-          variant="tertiary"
-          aria-label="Add to calendar"
-          className={styles.calendar}
+          variant="outline"
+          size="md"
+          leadingIcon={<CalendarAddIcon />}
         >
-          <CalendarAddIcon />
           Add to calendar
         </Button>
       ) : null}
+      {/* As the events dialog's Remind me: secondaryLight until set, then primary. */}
       <Button
-        variant="tertiary"
+        variant={remind.active ? 'primary' : 'secondaryLight'}
+        size="md"
         aria-pressed={remind.active}
         disabled={remind.pending}
         onClick={remind.onToggle}
-        className={styles.remind}
+        leadingIcon={<RemindBell active={remind.active} />}
       >
-        <RemindBell active={remind.active} />
-        <span className={styles.label}>Remind me</span>
+        Remind me
       </Button>
-      <Button variant="tertiary" aria-label="Share" onClick={onShare} className={styles.share}>
-        <ShareIcon />
+      <Button
+        variant="outline"
+        size="md"
+        iconOnly
+        aria-label="Share"
+        onClick={onShare}
+        className={styles.share}
+      >
+        <ShareIcon className={styles.shareIcon} />
       </Button>
       <span className={styles.status} role="status">
         {shareNotice}
