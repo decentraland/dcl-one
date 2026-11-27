@@ -216,6 +216,39 @@ export {
   type CommunityListStatus,
   CommunityMembersList
 } from './social/CommunityLists'
+export {
+  CommunityAnnouncements,
+  type CommunityAnnouncementsProps,
+  PostMessage
+} from './social/CommunityAnnouncements'
+export {
+  CommunityDirectory,
+  CommunityHangouts,
+  CommunityLockedChannel,
+  CommunityOverview,
+  type CommunityOverviewProps,
+  CommunityUnavailable,
+  type HubMemberView,
+  type HubPlaceView
+} from './social/CommunityChannels'
+export { CommunityMemberActions, type MemberChange } from './social/CommunityMemberActions'
+export type { HubPostView } from './social/hub-format'
+export {
+  CommunityThumb,
+  HubConfirm,
+  type HubCommunityView,
+  type HubDecision,
+  type HubLinkComponent,
+  type HubRequestView,
+  NavLabel,
+  SocialExplore,
+  type SocialExploreProps,
+  SocialHome,
+  type SocialHomeProps,
+  SocialPanel,
+  SocialRequests,
+  type SocialRequestsProps
+} from './social/SocialHub'
 export { StatusPage } from './status/StatusPage'
 export {
   ART_FILES,

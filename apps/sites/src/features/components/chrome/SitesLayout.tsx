@@ -22,6 +22,14 @@ import { sitesShopClient } from "@/data/lib/auth/shop-client";
 import SitesTopBar from "./SitesTopBar";
 import styles from "./SitesLayout.module.css";
 
+/** One group of the sidebar (the menu on a phone): a titled list of links or buttons. */
+export type SecondaryNavigation = {
+  title: string;
+  active?: string | null;
+  items: readonly SitesSectionItem[];
+  onSelect?: (id: string) => void;
+};
+
 type SitesLayoutProps = {
   children?: ReactNode;
   active?: SitesNavId;
@@ -32,7 +40,7 @@ type SitesLayoutProps = {
   headerSurface?: "solid" | "overlay";
   hideNav?: boolean;
   footerCopy?: FooterCopy;
-  secondaryNavigation?: { title: string; active?: string; items: readonly SitesSectionItem[] };
+  secondaryNavigation?: SecondaryNavigation | readonly SecondaryNavigation[];
 };
 
 function SitesCreditsChip({ account }: { account: string }) {
@@ -60,9 +68,11 @@ export default function SitesLayout({
   const isIn = signedIn ?? auth.signedIn;
   const address = account ?? auth.account;
   const layoutClass = overlayNav === "mobile" ? styles.mobileOverlay : overlayNav ? styles.overlay : undefined;
-  const section = profile
-    ? { title: "Profile", items: profile.tabs, active: profile.active, onSelect: profile.onTab }
-    : secondaryNavigation;
+  const sections: readonly SecondaryNavigation[] = profile
+    ? [{ title: "Profile", items: profile.tabs, active: profile.active, onSelect: profile.onTab }]
+    : secondaryNavigation
+      ? ([] as SecondaryNavigation[]).concat(secondaryNavigation)
+      : [];
 
   return (
     <SiteLayout
@@ -80,7 +90,19 @@ export default function SitesLayout({
           balances={isIn && address ? <SitesCreditsChip account={address} /> : undefined}
         />
       )}
-      sections={section ? (closeMenu) => <SitesSectionNavigation {...section} closeMenu={closeMenu} /> : undefined}
+      sections={
+        sections.length
+          ? (closeMenu) =>
+              sections.map((section, index) => (
+                <SitesSectionNavigation
+                  key={index}
+                  {...section}
+                  active={section.active ?? undefined}
+                  closeMenu={closeMenu}
+                />
+              ))
+          : undefined
+      }
     >
       <div className={styles.body}>
         <a className={styles.skip} href={`#${pageId}`}>Skip to content</a>

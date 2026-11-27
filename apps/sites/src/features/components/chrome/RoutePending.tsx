@@ -3,7 +3,7 @@ import { Spinner } from "@dcl/one-ui";
 import "./routepending.css";
 
 /**
- * Inline in <head>: a click that leaves the app (/social, /play, /docs, or any
+ * Inline in <head>: a click that leaves the app (/play, /docs, or any
  * link the router did not take) loads a whole document, which useNavigation
  * never sees, so the old page sat unchanged for seconds. Marks <html> as
  * loading once the click has bubbled past React unhandled; pageshow clears it

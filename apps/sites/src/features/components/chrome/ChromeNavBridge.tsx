@@ -8,7 +8,7 @@ import SitesTopBar from "./SitesTopBar";
 
 import { legacyShopTarget } from "@/core/lib/shop/redirects";
 
-const SERVED_OUTSIDE_THE_APP = ["/docs", "/play", "/social"] as const;
+const SERVED_OUTSIDE_THE_APP = ["/docs", "/play"] as const;
 
 type ChromeHrefTarget = { kind: "app"; to: string } | { kind: "document" };
 
