@@ -283,7 +283,7 @@ impl ParcelReloadTarget<'_, '_> {
 
     /// The hash of the parcel scene under the player while its worker runs: what
     /// `/reload --current` and the rapid reload restart. This is not the readiness the settling
-    /// waits reply on (`debug_panel::Stage::is_ready`): a scene that is still starting, blocked on
+    /// waits reply on ([`crate::stage::Stage::is_ready`]): a scene that is still starting, blocked on
     /// its glTFs or frozen can be reloaded, and the rapid reload reads a live worker as its
     /// target running, so a scene that blocks again on a model it loads later is not taken for
     /// one that stopped.
