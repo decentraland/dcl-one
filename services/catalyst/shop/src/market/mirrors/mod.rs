@@ -332,14 +332,21 @@ pub(super) async fn catalogue_pass_hash(
     let hash = block_hash(&block["hash"]).ok_or_else(|| {
         GraphUnavailable("collections graph has no block hash or returned an invalid hash".into())
     })?;
+    let disagreement = || {
+        Disagreement(format!(
+            "collections graph block {number} differs from the configured chain"
+        ))
+    };
+    // A valid hash that contradicts the RPC rejects whatever height comes with it.
+    if !header.hash.eq_ignore_ascii_case(hash) {
+        return Err(disagreement());
+    }
     // A missing height is incomplete graph data; only a different one disagrees.
     let height = block["number"]
         .as_u64()
         .ok_or_else(|| GraphUnavailable("collections graph has no block number".into()))?;
-    if height != number || !header.hash.eq_ignore_ascii_case(hash) {
-        return Err(Disagreement(format!(
-            "collections graph block {number} differs from the configured chain"
-        )));
+    if height != number {
+        return Err(disagreement());
     }
     Ok(header.hash)
 }

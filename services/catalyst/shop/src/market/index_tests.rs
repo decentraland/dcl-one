@@ -2111,6 +2111,11 @@ async fn a_testnet_graph_page_proves_its_block_even_when_the_page_is_empty() {
         let meta = meta.lock().clone();
         let vars = &body["variables"];
         if vars["hash"].is_string() {
+            if meta["answersAnyHash"] == true {
+                // A misbehaving graph: it answers a hash pin with its own block.
+                let block = json!({"number":meta["number"],"hash":meta["hash"]});
+                return axum::Json(json!({"data":{"_meta":{"block":block}}}));
+            }
             return axum::Json(graph_node_block_by_hash(&meta, &vars["hash"]));
         }
         let block = if vars["number"].is_u64() {
@@ -2178,6 +2183,15 @@ async fn a_testnet_graph_page_proves_its_block_even_when_the_page_is_empty() {
         prove().await.unwrap_err(),
         super::mirrors::CatalogueProofError::GraphUnavailable(_)
     ));
+    // A valid hash that contradicts the chain is a rejection, with or without a height.
+    for number in [Value::Null, json!(90)] {
+        *meta.lock() = json!({"answersAnyHash":true,"number":number,"hash":chain.hash_of(89)});
+        let error = prove().await.unwrap_err();
+        assert!(
+            matches!(error, super::mirrors::CatalogueProofError::Disagreement(_)),
+            "{error}"
+        );
+    }
     *meta.lock() = json!({"number":90,"hash":good});
     chain.fail_chain_id.store(true, Ordering::SeqCst);
     assert!(prove().await.is_err());
