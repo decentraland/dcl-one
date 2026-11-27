@@ -66,6 +66,8 @@ const MAX_FAILED_PIN_AGE: chrono::Duration = chrono::Duration::hours(1);
 const PAGE_FETCH_FAILURE: &str = "page fetch failed: ";
 const PROOF_UNAVAILABLE: &str = "catalogue proof unavailable: ";
 const PROOF_REJECTED: &str = "catalogue proof rejected: ";
+/// graph-node's error for a `block: {hash}` constraint it has not indexed.
+const GRAPH_UNKNOWN_BLOCK_HASH: &str = "no block with that hash found";
 const MAINNET_PROOF_RETRY_WINDOW: chrono::Duration = chrono::Duration::minutes(10);
 const MAINNET_MIRROR_BACKOFF: Duration = Duration::from_secs(5 * 60);
 
@@ -310,20 +312,27 @@ pub(super) async fn catalogue_pass_hash(
         graph_head
     };
     let number = head.saturating_sub(net.confirmations());
-    let data = super::readers::query(state, url,
-        "query CatalogueBlock($number: Int!) { _meta(block: {number: $number}) { block { number hash } } }",
-        json!({"number":number})).await.map_err(GraphUnavailable)?;
+    // graph-node answers `hash: null` to a `_meta` pinned by block number, so
+    // the graph is asked for the configured chain's block at that height by
+    // hash: a graph on another chain has no such block, or places it elsewhere.
+    let header = source.header(number).await?.value;
+    let data = match super::readers::query(state, url,
+        "query CatalogueBlock($hash: Bytes!) { _meta(block: {hash: $hash}) { block { number hash } } }",
+        json!({"hash":header.hash})).await
+    {
+        Ok(data) => data,
+        Err(error) if error.contains(GRAPH_UNKNOWN_BLOCK_HASH) => {
+            return Err(Disagreement(format!(
+                "collections graph block {number} differs from the configured chain"
+            )));
+        }
+        Err(error) => return Err(GraphUnavailable(error)),
+    };
     let block = &data["_meta"]["block"];
-    if block["number"].as_u64() != Some(number) {
-        return Err(GraphUnavailable(format!(
-            "collections graph did not return block {number}"
-        )));
-    }
     let hash = block_hash(&block["hash"]).ok_or_else(|| {
         GraphUnavailable("collections graph has no block hash or returned an invalid hash".into())
     })?;
-    let header = source.header(number).await?.value;
-    if !header.hash.eq_ignore_ascii_case(hash) {
+    if block["number"].as_u64() != Some(number) || !header.hash.eq_ignore_ascii_case(hash) {
         return Err(Disagreement(format!(
             "collections graph block {number} differs from the configured chain"
         )));
