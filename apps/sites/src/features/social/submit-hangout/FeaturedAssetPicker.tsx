@@ -27,7 +27,7 @@ export default function FeaturedAssetPicker({ value, onChange }: { value: string
   const selected = current?.assets?.find((asset) => asset.urn === value);
   return <fieldset className={`${styles.root} ${form.picker}`}>
     <legend>{text("Featured wearable, emote or collection")}</legend>
-    {value && <p className="submit-hangout__hint">{text("Selected: {asset}", { asset: label ?? selected?.name ?? value })} <Button variant="tertiary" size="md" onClick={() => { onChange(""); setQuery(""); setLabel(null); }}>{text("Remove featured asset")}</Button></p>}
+    {value && <p className={`submit-hangout__hint ${styles.selected}`}>{text("Selected: {asset}", { asset: label ?? selected?.name ?? value })} <Button variant="tertiary" size="md" onClick={() => { onChange(""); setQuery(""); setLabel(null); }}>{text("Remove featured asset")}</Button></p>}
     <label className={`submit-hangout__fieldlabel ${form.fieldLabel}`}>{text("Search featured items or collections")}<input className={`submit-hangout__field ${form.field}`} value={query} onChange={(event) => setQuery(event.target.value)} placeholder={text("Search the catalogue or paste an asset URN")} /></label>
     {search.length > 0 && search.length < 3 && <p className="submit-hangout__hint">{text("Enter at least three characters.")}</p>}
     {search.length >= 3 && !current && <p role="status">{text("Searching the catalogue…")}</p>}
