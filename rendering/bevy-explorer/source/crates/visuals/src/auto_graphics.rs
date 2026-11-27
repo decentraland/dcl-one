@@ -605,8 +605,15 @@ mod tests {
         let mut now = 0.0;
         run(&mut controller, &mut now, 40.0, cost);
         assert_eq!((controller.steps(), controller.phase()), (5, Phase::Steady));
-        run(&mut controller, &mut now, 70.0, cost);
-        assert_eq!((controller.steps(), controller.phase()), (5, Phase::Steady));
+        // the rungs below 50% do not shorten the frame either: trials of them are undone, so
+        // whenever the controller is steady it is back at 50%
+        while now < 300.0 {
+            let until = now + 0.1;
+            run(&mut controller, &mut now, until, cost);
+            if controller.phase() == Phase::Steady {
+                assert_eq!(controller.steps(), 5, "steady at {now:.1} s");
+            }
+        }
     }
 
     #[test]
