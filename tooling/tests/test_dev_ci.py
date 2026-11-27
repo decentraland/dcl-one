@@ -253,7 +253,7 @@ class DevCiTest(unittest.TestCase):
     def test_every_rust_input_is_a_path_the_workflow_watches(self):
         # The Rust job needs both answers of the plan. An input outside the workflow's paths gives run=false,
         # and the tests that read it do not run. Documentation is the workflow's own exclusion.
-        tracked = subprocess.check_output(['git', 'ls-files', '-z'], cwd=dev.ROOT, text=True).split('\0')
+        tracked = subprocess.check_output(['git', 'ls-files', '-z'], cwd=dev.ROOT, encoding='utf-8').split('\0')
         tracked = [path for path in tracked if path]
         for pattern in dev.RUST_INPUTS:
             inputs = self.dev.non_documentation(self.dev.matching_paths(tracked, (pattern,)))
@@ -299,7 +299,7 @@ class DevCiTest(unittest.TestCase):
     def test_the_rust_inputs_cover_what_the_rust_job_reads(self):
         root = dev.ROOT
         # Every crate a listed manifest depends on by path.
-        tracked = subprocess.check_output(['git', 'ls-files', '-z', '*Cargo.toml'], cwd=root, text=True).split('\0')
+        tracked = subprocess.check_output(['git', 'ls-files', '-z', '*Cargo.toml'], cwd=root, encoding='utf-8').split('\0')
         manifests = self.dev.matching_paths([path for path in tracked if path], dev.RUST_INPUTS)
         self.assertIn('services/catalyst/Cargo.toml', manifests)
         for manifest in manifests:
@@ -326,11 +326,11 @@ class DevCiTest(unittest.TestCase):
     def test_one_name_joined_to_a_path_is_a_rust_input_or_a_scene_folder(self):
         # The scan reads one name alone as a word. A Rust source that joins a top-level folder of this
         # repository to a path must find that folder in RUST_INPUTS; the rest are scene project names.
-        top = subprocess.check_output(['git', 'ls-tree', '--name-only', 'HEAD'], cwd=dev.ROOT, text=True).split()
+        top = subprocess.check_output(['git', 'ls-tree', '--name-only', 'HEAD'], cwd=dev.ROOT, encoding='utf-8').split()
         names = '|'.join(re.escape(name) for name in top)
         found = subprocess.run(['git', 'grep', '-I', '-h', '-o', '-E', rf'join\("({names})/?"\)', 'HEAD', '--',
                                 *(f':(glob){root}/**/*.rs' for root in dev.RUST_ROOTS)],
-                               cwd=dev.ROOT, capture_output=True, text=True, check=True).stdout
+                               cwd=dev.ROOT, capture_output=True, encoding='utf-8', check=True).stdout
         joined = {line.split('"')[1].rstrip('/') for line in found.splitlines()}
         self.assertIn('schemas', joined)
         scene_project = {'.claude', '.gitignore', 'AGENTS.md', 'README.md', 'docs'}

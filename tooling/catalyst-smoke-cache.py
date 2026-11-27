@@ -62,6 +62,6 @@ if __name__ == "__main__":
     target = workspace / "target"
     result = subprocess.check_output(
         ["cargo", "build", "--locked", "--bin", "catalyst", "--target-dir", str(target),
-         "--message-format=json-render-diagnostics"], cwd=workspace, text=True)
+         "--message-format=json-render-diagnostics"], cwd=workspace, encoding="utf-8")
     removed = prune(target / "debug/deps", result)
     print(f"Removed {removed:,} bytes of superseded Rust build artifacts from the smoke snapshot.")

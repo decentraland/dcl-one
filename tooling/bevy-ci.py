@@ -151,7 +151,7 @@ APP_INPUTS = {
 
 
 def git(*args):
-    return subprocess.check_output(['git', *args], cwd=ROOT, text=True, env={**os.environ, 'GIT_GLOB_PATHSPECS': '1'})
+    return subprocess.check_output(['git', *args], cwd=ROOT, encoding='utf-8', env={**os.environ, 'GIT_GLOB_PATHSPECS': '1'})
 
 
 def tested_base(merge, pr_head, fallback):

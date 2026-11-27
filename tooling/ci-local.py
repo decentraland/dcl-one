@@ -47,7 +47,7 @@ non_documentation = paths.non_documentation
 
 
 def git(*args, cwd=None, env=None, check=True, input=None):
-    result = subprocess.run(['git', *args], cwd=cwd or ROOT, env=env, input=input, capture_output=True, text=True)
+    result = subprocess.run(['git', *args], cwd=cwd or ROOT, env=env, input=input, capture_output=True, encoding='utf-8')
     if check and result.returncode:
         sys.exit(f'git {" ".join(args)} failed:\n{result.stderr}')
     return result.stdout.strip()

@@ -88,7 +88,7 @@ def tools(env):
 def workspace(source=SOURCE):
     """The manifests of the workspace members."""
     metadata = json.loads(subprocess.check_output(
-        ['cargo', 'metadata', '--no-deps', '--format-version', '1'], cwd=source, text=True))
+        ['cargo', 'metadata', '--no-deps', '--format-version', '1'], cwd=source, encoding='utf-8'))
     return sorted(Path(package['manifest_path']) for package in metadata['packages'])
 
 

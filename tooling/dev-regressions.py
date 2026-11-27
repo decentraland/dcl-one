@@ -490,7 +490,7 @@ def validate_bevy_workflow(workflow):
 
 
 def run(command, cwd=ROOT):
-    result = subprocess.run(command, cwd=cwd, text=True, stdout=subprocess.PIPE, check=True)
+    result = subprocess.run(command, cwd=cwd, encoding="utf-8", stdout=subprocess.PIPE, check=True)
     return result.stdout
 
 

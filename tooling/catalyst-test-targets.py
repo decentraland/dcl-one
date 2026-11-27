@@ -18,7 +18,7 @@ def candidates(arguments):
         ["cargo", "metadata", "--locked", "--no-deps", "--format-version", "1"]))
     tree = subprocess.check_output(
         ["cargo", "tree", "--locked", *arguments, "--depth", "0", "--prefix", "none", "--color", "never",
-         "--format", "{p}|{f}"], text=True)
+         "--format", "{p}|{f}"], encoding="utf-8")
     active = {}
     for line in tree.splitlines():
         if line.strip():

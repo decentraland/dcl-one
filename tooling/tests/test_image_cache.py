@@ -132,7 +132,7 @@ class CatalystSourceTest(unittest.TestCase):
         self.assertIn('file.hasExt "json") (library + /catalyst-api/openapi)', nix)
         self.assertIn('lib.hasPrefix "dcl-" name', nix)
         tracked = subprocess.run(['git', 'ls-files', '-z', '--', 'services/catalyst', 'library/dcl-*',
-                                  'library/vendor/rusty_enet'], cwd=root, capture_output=True, text=True, check=True)
+                                  'library/vendor/rusty_enet'], cwd=root, capture_output=True, encoding='utf-8', check=True)
         named = set()
         for name in tracked.stdout.split('\0'):
             if name.endswith('.rs'):

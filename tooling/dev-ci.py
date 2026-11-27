@@ -78,7 +78,7 @@ def rust_source_references(head):
     Two plain names in running text are prose (`apps/ui3`): they count when they end a string or a path is
     built on them. One name alone is a word (`"docs"`): it counts only when a format string builds on it.
     """
-    top = subprocess.run(['git', 'ls-tree', '--name-only', '-z', head], cwd=ROOT, capture_output=True, text=True,
+    top = subprocess.run(['git', 'ls-tree', '--name-only', '-z', head], cwd=ROOT, capture_output=True, encoding='utf-8',
                          timeout=60, check=True).stdout.split('\0')
     names = '|'.join(re.escape(name) for name in top if name)
     if not names:
@@ -86,7 +86,7 @@ def rust_source_references(head):
     found = subprocess.run(['git', 'grep', '-I', '-h', '-o', '-E',
                             f'(^|[^{PATH_NAME[1:]})({names})(/{PATH_NAME}+)*(/?["\'`]|/[{{]|/)?', head, '--',
                             *(f':(glob){root}/**/*.rs' for root in RUST_ROOTS)],
-                           cwd=ROOT, capture_output=True, text=True, timeout=120)
+                           cwd=ROOT, capture_output=True, encoding='utf-8', timeout=120)
     if found.returncode not in (0, 1):
         raise ValueError('Rust source scan failed')
     token = re.compile(f'(?:{names})(?:/{PATH_NAME}+)*')
@@ -145,7 +145,7 @@ def plan(event, base, head):
             base = subprocess.check_output(['git', 'merge-base', base, head], cwd=ROOT, text=True,
                                            stderr=subprocess.PIPE, timeout=60).strip()
         changed = subprocess.check_output(['git', 'diff', '--name-only', '--no-renames', '-z', base, head],
-                                          cwd=ROOT, text=True, stderr=subprocess.PIPE, timeout=60).split('\0')
+                                          cwd=ROOT, encoding='utf-8', stderr=subprocess.PIPE, timeout=60).split('\0')
         changed = [path for path in changed if path]
         ci = load_ci_local()
         relevant = watched_changes(changed, ci)
@@ -205,13 +205,13 @@ def frontend_backend_references(head):
                 for root in FRONTEND_ROOTS for extension in SOURCE_EXTENSIONS]
     matches = subprocess.run(
         ['git', 'grep', '-a', '-l', '-z', '-F', '-e', 'services', head, '--', *patterns],
-        cwd=ROOT, capture_output=True, text=True, timeout=60,
+        cwd=ROOT, capture_output=True, encoding='utf-8', timeout=60,
     )
     if matches.returncode not in (0, 1):
         raise ValueError('Frontend dependency scan failed')
     references = set()
     for blob in filter(None, matches.stdout.split('\0')):
-        text = subprocess.check_output(['git', 'show', blob], cwd=ROOT, text=True, timeout=60)
+        text = subprocess.check_output(['git', 'show', blob], cwd=ROOT, encoding='utf-8', timeout=60)
         # join(root, "services", "catalyst", ...) and string concatenation do
         # not give us a complete literal path. Keep the full frontend suites.
         if (re.search(r'''services/?["'`]''', text)
@@ -239,7 +239,7 @@ def web_plan(event, base, head):
         # exposes both paths of a rename, including a removed frontend input.
         changed = subprocess.check_output(
             ['git', 'diff', '--name-only', '--no-renames', '-z', base, head, '--'],
-            cwd=ROOT, text=True, timeout=60,
+            cwd=ROOT, encoding='utf-8', timeout=60,
         )
         changed = set(filter(None, changed.split('\0')))
         paths = set(load_ci_local().non_documentation(changed))

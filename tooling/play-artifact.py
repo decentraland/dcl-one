@@ -105,7 +105,7 @@ def input_files(root=ROOT, revision=None, engine_only=False, preview=False):
                                         or path == 'tooling/check-local-hashing.mjs'))
                 or path in TOOLCHAINS)
     if revision:
-        tree = subprocess.check_output(['git', 'ls-tree', '-rz', revision], cwd=root, text=True)
+        tree = subprocess.check_output(['git', 'ls-tree', '-rz', revision], cwd=root, encoding='utf-8')
         entries = []
         for row in tree.split('\0'):
             if not row:
@@ -136,7 +136,7 @@ def input_files(root=ROOT, revision=None, engine_only=False, preview=False):
                 raise ValueError(f'Invalid Explorer source blob framing: {path}')
     else:
         if (root / '.git').exists():
-            tracked = subprocess.check_output(['git', 'ls-files', '-z'], cwd=root, text=True).split('\0')
+            tracked = subprocess.check_output(['git', 'ls-files', '-z'], cwd=root, encoding='utf-8').split('\0')
         else:
             # Nix's filtered contract has no .git and contains only tracked inputs.
             tracked = [p.relative_to(root).as_posix() for base in (SOURCE, VENDOR, PROTO, '.cargo')
