@@ -14,11 +14,6 @@ pub fn micros(d: Duration) -> u64 {
     u64::try_from(d.as_micros()).unwrap_or(u64::MAX)
 }
 
-/// Whole nanoseconds, saturated at `u64::MAX` (about 584 years).
-pub fn nanos(d: Duration) -> u64 {
-    u64::try_from(d.as_nanos()).unwrap_or(u64::MAX)
-}
-
 /// A length or count as a `bigint`, saturated (lossless where `usize` is 64 bits).
 pub fn len_i64(n: usize) -> i64 {
     i64::try_from(n).unwrap_or(i64::MAX)
@@ -69,16 +64,11 @@ pub fn sat_i32(n: u32) -> i32 {
 /// A statement's row count, saturated.
 pub trait RowCount {
     fn rows_usize(&self) -> usize;
-    fn rows_i64(&self) -> i64;
 }
 
 impl RowCount for sqlx::postgres::PgQueryResult {
     fn rows_usize(&self) -> usize {
         to_usize(self.rows_affected())
-    }
-
-    fn rows_i64(&self) -> i64 {
-        saturating_i64(self.rows_affected())
     }
 }
 
@@ -110,25 +100,6 @@ pub fn f64_to_i64(v: f64) -> i64 {
 )]
 pub fn f64_to_usize(v: f64) -> usize {
     v as usize
-}
-
-/// A float as `u32` the way `as` converts it (see [`f64_to_u64`]).
-#[allow(
-    clippy::cast_possible_truncation,
-    clippy::cast_sign_loss,
-    reason = "float-to-int `as` saturates; that is the conversion wanted"
-)]
-pub fn f64_to_u32(v: f64) -> u32 {
-    v as u32
-}
-
-/// A float as `i32` the way `as` converts it (see [`f64_to_u64`]).
-#[allow(
-    clippy::cast_possible_truncation,
-    reason = "float-to-int `as` saturates; that is the conversion wanted"
-)]
-pub fn f64_to_i32(v: f64) -> i32 {
-    v as i32
 }
 
 /// An integer as the nearest `f64`, for metrics, ratios and JSON numbers:
