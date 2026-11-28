@@ -112,6 +112,9 @@ struct Landing {
     elapsed: f32,
     /// What the reply's `requested` says: `on` when this command opened photo mode.
     requested: Option<bool>,
+    /// The id of the enable request the pose sent: a disable sent after it closes photo mode, or
+    /// keeps it from opening, before the camera is placed.
+    enable: usize,
     reply: RpcResultSender<Result<String, String>>,
 }
 
@@ -318,15 +321,16 @@ fn photo_mode_command(
             return;
         }
         let opens = photo.is_none();
-        if opens {
-            requests.write(PhotoModeRequest::Enable(source));
-        }
+        // sent while photo mode is open too, where it changes nothing, so a disable that comes
+        // later can be told from one that came before
+        let enable = requests.write(PhotoModeRequest::Enable(source)).id;
         let (reply, rx) = RpcResultSender::channel();
         landing.0 = Some(Landing {
             pose,
             timeout,
             elapsed: 0.0,
             requested: if opens { Some(true) } else { requested },
+            enable,
             reply,
         });
         pending.push_receiver(rx, |reply| reply, cmd.take_responder());
@@ -415,11 +419,12 @@ fn place_refusal(
 
 /// Places the pose `/photo_mode` asked for the frame photo mode is open, and replies the state
 /// with where the camera landed (`placed`, Decentraland world coordinates) and `settled`. One
-/// that photo mode does not open for in time, or at all, replies `settled: false` with a
-/// `warning`.
+/// that photo mode does not open for in time, or at all, or that a disable request closes it
+/// first, replies `settled: false` with a `warning`.
 #[allow(clippy::too_many_arguments)]
 fn land_photo_pose(
     mut landing: ResMut<PhotoLanding>,
+    mut requests: EventReader<PhotoModeRequest>,
     time: Res<Time>,
     mut cameras: ParamSet<(
         PhotoCameraPlacer,
@@ -438,13 +443,21 @@ fn land_photo_pose(
     stats: Res<PhotoStats>,
     settings: Res<PhotoCameraSettings>,
 ) {
+    // read every frame, so no request is left over for a later pose
+    let last_disable = requests
+        .read_with_id()
+        .filter(|(request, _)| matches!(request, PhotoModeRequest::Disable))
+        .map(|(_, id)| id.id)
+        .max();
     let Some(current) = landing.0.as_mut() else {
         return;
     };
     current.elapsed += time.delta_secs();
     let placed = cameras.p0().place(&current.pose);
     let mut warning = None;
-    if placed.is_none() {
+    if placed.is_none() && last_disable.is_some_and(|disable| disable > current.enable) {
+        warning = Some("photo mode was closed before the camera was placed".to_owned());
+    } else if placed.is_none() {
         let out_of_world = player.single().unwrap_or(false);
         let blocked = cameras
             .p1()
@@ -722,5 +735,45 @@ mod tests {
         let refused = json_of(&photo_mode(&mut app, "--position 1 2 3").unwrap_err());
         assert_eq!(refused["cause"]["holder"], "scene");
         assert!(app.world().get::<PhotoCamera>(camera).is_none());
+    }
+
+    /// Set to send a disable request between `/photo_mode` and photo mode's opening.
+    #[derive(Resource, Default)]
+    struct DisableNext(bool);
+
+    fn disable_next(mut next: ResMut<DisableNext>, mut requests: EventWriter<PhotoModeRequest>) {
+        if std::mem::take(&mut next.0) {
+            requests.write(PhotoModeRequest::Disable);
+        }
+    }
+
+    #[test]
+    fn a_pose_answers_at_once_when_a_later_disable_keeps_photo_mode_closed() {
+        let (mut app, camera) = app();
+        app.init_resource::<DisableNext>().add_systems(
+            Update,
+            disable_next
+                .after(photo_mode_command)
+                .before(apply_photo_mode_requests),
+        );
+        // a disable from before the pose does not cancel it
+        app.world_mut().send_event(PhotoModeRequest::Disable);
+        let state = json_of(&photo_mode(&mut app, "--position 8 4 8").unwrap());
+        assert_eq!(state["settled"], true);
+        photo_mode(&mut app, "off").unwrap();
+        assert!(app.world().get::<PhotoCamera>(camera).is_none());
+
+        // one sent in the same frame, after the pose's enable, wins: photo mode stays closed
+        app.world_mut().resource_mut::<DisableNext>().0 = true;
+        let state = json_of(&photo_mode(&mut app, "--position 8 4 8").unwrap());
+        assert_eq!(state["active"], false);
+        assert_eq!(state["settled"], false);
+        assert_eq!(
+            state["warning"],
+            "photo mode was closed before the camera was placed"
+        );
+        // and it holds nothing back
+        let state = json_of(&photo_mode(&mut app, "--position 8 4 8").unwrap());
+        assert_eq!(state["settled"], true);
     }
 }

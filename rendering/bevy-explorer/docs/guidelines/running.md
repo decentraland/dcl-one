@@ -515,8 +515,8 @@ State, in every build:
   (where it landed, Decentraland world coordinates, where `position` is the engine's), `settled`
   and `settleMs`. A part not given stays as it is; aiming levels the roll. `--timeout-seconds S`
   (5 by default, at most 300, only with a pose flag) bounds the landing: when photo mode has not
-  opened by then, or a scene camera or leaving the world keeps it closed, `settled` is `false`
-  and `warning` says why. Refused, `{"refused", "cause"}`, before anything opens: a position
+  opened by then, a scene camera or leaving the world keeps it closed, or a later request closes
+  it first (`/photo_mode off`, the photo mode key), `settled` is `false` and `warning` says why. Refused, `{"refused", "cause"}`, before anything opens: a position
   more than 50 m from the player (`cause.limit` `reach`), a scene holding the camera
   (`cause.holder` `scene`), the player out of the world, or another pose still landing
   (`cause.holder` `photo_mode --position`).

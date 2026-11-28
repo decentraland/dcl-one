@@ -35,7 +35,8 @@ export interface PhotoModeState {
 
 /** What `/photo_mode` with a pose flag reports once the photo camera is placed: the state, with
  *  `placed` (Decentraland world coordinates, where `position` is the engine's). `settled` is false,
- *  with a `warning`, when photo mode did not open within `timeoutSeconds`. */
+ *  with a `warning`, when photo mode did not open within `timeoutSeconds`, or a later request
+ *  closed it first. */
 export interface PhotoPoseState extends PhotoModeState {
   placed: [number, number, number] | null
   settled: boolean
