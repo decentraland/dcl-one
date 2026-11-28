@@ -13,6 +13,7 @@
 )]
 
 mod nft_listings;
+mod owners;
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -1458,7 +1459,8 @@ async fn the_mirrors_walk_the_subgraph_and_every_market_route_answers_over_them(
     up.set("itemsDayDatas", vec![json!({ "id": format!("19000-{c1}-1"), "sales": 2, "volume": "10", "searchWearableCategory": "hat" }), json!({ "id": format!("19001-{c1}-1"), "sales": 1, "volume": "5", "searchWearableCategory": "hat" })]);
     up.set("analyticsDayDatas", vec![json!({ "id": "19001", "date": now_s - 100, "sales": 4, "volume": "40", "creatorsEarnings": "1", "daoEarnings": "2" })]);
     let owned_urn = format!("urn:decentraland:matic:collections-v2:{c1}:4");
-    // `/v1/owners` still reads the collections subgraph's holders.
+    // The graph's holder of c1's item 4 (token "4"), which a walking node's
+    // `/v1/owners` does not read: it answers the nft index's copy below.
     up.set("nfts", vec![
         json!({ "id": format!("{c1}-{}", "4"), "tokenId": "4", "contractAddress": c1, "category": "wearable", "itemType": "wearable_v2", "urn": owned_urn, "image": "", "issuedId": "1", "itemBlockchainId": "4", "transferredAt": "1700000000", "createdAt": "1700000000", "updatedAt": "1700000001", "soldAt": "0", "owner": { "address": WALLET_A }, "item": { "id": format!("{c1}-4"), "rarity": "epic", "price": "5000000000000000000" }, "metadata": { "wearable": { "name": "Item 0004", "description": "a hat", "category": "hat", "rarity": "epic", "bodyShapes": ["BaseMale"] }, "emote": null }, "activeOrder": null }),
     ]);
@@ -1584,8 +1586,8 @@ async fn the_mirrors_walk_the_subgraph_and_every_market_route_answers_over_them(
     let (status, body) = get(app(), &format!("/v1/owners?contractAddress={c1}&itemId=4")).await;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(
-        body["data"][0],
-        json!({ "issuedId": "1", "ownerId": WALLET_A, "tokenId": "4" })
+        body,
+        json!({ "data": [{ "issuedId": "1", "ownerId": WALLET_A, "tokenId": owned_token }], "total": 1 })
     );
     for path in [
         "/v1/rankings/wearables/week?first=1",

@@ -441,6 +441,7 @@ pub(super) enum BookRoute {
     Activity,
     Catalog,
     Nfts,
+    Owners,
 }
 
 impl BookRoute {
@@ -451,6 +452,7 @@ impl BookRoute {
             Self::Activity => "activity",
             Self::Catalog => "catalog",
             Self::Nfts => "nfts",
+            Self::Owners => "owners",
         }
     }
 }
