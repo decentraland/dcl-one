@@ -36,8 +36,8 @@ type PanelTabsBarProps = {
   scrollable?: boolean
   /**
    * `vertical` stacks the tabs in a column from 1024px wide, as decentraland.org's help center does; narrower, they
-   * wrap onto rows. Up and Down move between the tabs as well as Left and Right, and `aria-orientation` follows the
-   * layout on screen. For `variant="pill"` of the default appearance only; other variants and `appearance="hud"`
+   * wrap onto rows. While the column is on screen it has `aria-orientation="vertical"` and Up and Down move between
+   * the tabs as well as Left and Right; the rows keep Left and Right only, so Up and Down scroll the page. For `variant="pill"` of the default appearance only; other variants and `appearance="hud"`
    * ignore it.
    */
   orientation?: 'horizontal' | 'vertical'
@@ -94,7 +94,7 @@ function PanelTabsBar({
 }: PanelTabsBarProps) {
   const vertical = orientation === 'vertical' && appearance !== 'hud' && variant === 'pill'
   const column = useColumnLayout(vertical)
-  const keys = vertical ? VERTICAL_KEYS : KEYS
+  const keys = column ? VERTICAL_KEYS : KEYS
   const look =
     appearance === 'hud'
       ? [styles[HUD_VARIANT[!variant || variant === 'compact' ? 'pill' : variant]], fill && styles.hudFill]

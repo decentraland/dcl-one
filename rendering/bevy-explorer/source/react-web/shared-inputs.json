@@ -17472,7 +17472,7 @@
     },
     {
       "path": "library/ui/components/TabsBar/TabsBar.tsx",
-      "sha256": "8cc11978ad0d2ce8187a64e596f67d2234f2c37daf775c9ddc3558900c5b065c"
+      "sha256": "e860618bd2d1bd42e4d3d2ed3ed4451895ae79c8787ad922123aafd8122bc490"
     },
     {
       "path": "library/ui/components/Tag/Tag.module.css",

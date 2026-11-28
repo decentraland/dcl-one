@@ -524,7 +524,7 @@ export const navigationEntries: GalleryEntry[] = [
       {
         id: 'vertical',
         title: 'Panel, pill, vertical',
-        note: 'A column from 1024px, where Up and Down move between the tabs; narrower, the tabs wrap onto rows.',
+        note: 'A column from 1024px, where Up and Down also move between the tabs; narrower, the tabs wrap onto rows that keep Left and Right only.',
         render: () => <VerticalTabsDemo />
       },
       {

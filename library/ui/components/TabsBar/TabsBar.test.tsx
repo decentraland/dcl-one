@@ -209,14 +209,27 @@ describe('TabsBar', () => {
       expect(screen.getByRole('tab', { name: 'all', selected: true })).toHaveFocus()
     })
 
-    it('keeps Left and Right for the rows it wraps onto on narrow screens', async () => {
+    it('keeps only Left and Right for the rows it wraps onto on narrow screens', async () => {
       mockColumn(false)
       render(<ButtonTabs orientation="vertical" />)
       await userEvent.tab()
+      const down = new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true, cancelable: true })
+      screen.getByRole('tab', { name: 'all' }).dispatchEvent(down)
+      expect(down.defaultPrevented).toBe(false)
+      expect(screen.getByRole('tab', { name: 'all', selected: true })).toHaveFocus()
       await userEvent.keyboard('{ArrowRight}')
       expect(screen.getByRole('tab', { name: 'my', selected: true })).toHaveFocus()
       await userEvent.keyboard('{ArrowLeft}{ArrowLeft}')
       expect(screen.getByRole('tab', { name: 'past', selected: true })).toHaveFocus()
+    })
+
+    it('takes Up and Down back when the viewport widens into the column', async () => {
+      const column = mockColumn(false)
+      render(<ButtonTabs orientation="vertical" />)
+      await userEvent.tab()
+      act(() => column.change(true))
+      await userEvent.keyboard('{ArrowDown}')
+      expect(screen.getByRole('tab', { name: 'my', selected: true })).toHaveFocus()
     })
 
     it('drops aria-orientation while the tabs are rows and restores it when the column returns', () => {
