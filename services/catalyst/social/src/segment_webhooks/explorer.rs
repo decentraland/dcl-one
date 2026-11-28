@@ -76,9 +76,11 @@ pub(super) async fn forward(
     if row.reported_at < row.received_at {
         let sub_type = row.sub_type;
         let explorer_to_segment =
-            (row.received_at - row.reported_at).num_milliseconds() as f64 / 1000.0;
+            crate::casts::approx_f64((row.received_at - row.reported_at).num_milliseconds())
+                / 1000.0;
         let segment_to_webhook =
-            (chrono::Utc::now() - row.received_at).num_milliseconds() as f64 / 1000.0;
+            crate::casts::approx_f64((chrono::Utc::now() - row.received_at).num_milliseconds())
+                / 1000.0;
         dcl_metrics::counter!("handled_explorer_events_count", "event_type" => sub_type)
             .increment(1);
         dcl_metrics::histogram!("explorer_segment_event_delay_in_seconds", "event_type" => sub_type)

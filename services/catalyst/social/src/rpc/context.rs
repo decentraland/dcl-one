@@ -123,13 +123,14 @@ impl Drop for OpenSocket {
         if sockets.remove(&self.id).is_none() {
             return;
         }
-        dcl_metrics::gauge!("ws_active_connections").set(sockets.len() as f64);
+        dcl_metrics::gauge!("ws_active_connections")
+            .set(crate::casts::approx_len_f64(sockets.len()));
         let count = &self.ctx.0.socket_counts[match self.protocol {
             Protocol::Rpc => 0,
             Protocol::Stream => 1,
         }];
         dcl_metrics::gauge!("ws_active_connections_by_protocol", "protocol" => self.protocol.label())
-            .set((count.fetch_sub(1, Ordering::Relaxed) - 1) as f64);
+            .set(crate::casts::approx_len_f64(count.fetch_sub(1, Ordering::Relaxed) - 1));
         drop(sockets);
         let protocol = self.protocol.label();
         if matches!(self.protocol, Protocol::Rpc) {
@@ -234,8 +235,11 @@ impl Context {
             Protocol::Stream => 1,
         }];
         dcl_metrics::gauge!("ws_active_connections_by_protocol", "protocol" => protocol.label())
-            .set((count.fetch_add(1, Ordering::Relaxed) + 1) as f64);
-        dcl_metrics::gauge!("ws_active_connections").set(sockets.len() as f64);
+            .set(crate::casts::approx_len_f64(
+                count.fetch_add(1, Ordering::Relaxed) + 1,
+            ));
+        dcl_metrics::gauge!("ws_active_connections")
+            .set(crate::casts::approx_len_f64(sockets.len()));
         drop(sockets);
         super::metrics::log("ws-pool", "debug");
         Some(OpenSocket {
@@ -316,9 +320,11 @@ impl Context {
     }
 
     pub(crate) fn report_subscriber_metrics(&self) {
-        dcl_metrics::gauge!("subscribers_local_count").set(self.0.presence.len() as f64);
-        dcl_metrics::gauge!("subscribers_generators_count")
-            .set(self.0.pubsub.active_generators() as f64);
+        dcl_metrics::gauge!("subscribers_local_count")
+            .set(crate::casts::approx_len_f64(self.0.presence.len()));
+        dcl_metrics::gauge!("subscribers_generators_count").set(crate::casts::approx_len_f64(
+            self.0.pubsub.active_generators(),
+        ));
     }
 
     pub fn online_count(&self) -> usize {

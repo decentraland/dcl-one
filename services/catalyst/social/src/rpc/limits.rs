@@ -117,10 +117,10 @@ impl FriendshipMutationLimiter {
         // when that first EXPIRE fails, leaving a persistent key.
         let window_ms = if window.is_finite()
             && window.fract() == 0.0
-            && window >= i64::MIN as f64
-            && window < i64::MAX as f64
+            && window >= crate::casts::approx_f64(i64::MIN)
+            && window < crate::casts::approx_f64(i64::MAX)
         {
-            (window as i64).checked_mul(1000)
+            crate::casts::saturating_i64(window).checked_mul(1000)
         } else {
             None
         };
@@ -146,7 +146,7 @@ impl FriendshipMutationLimiter {
                 dcl_metrics::counter!("friendship_rate_limiter_unavailable").increment(1);
                 true
             }
-            Ok((count, _)) => (count as f64) <= limit,
+            Ok((count, _)) => crate::casts::approx_f64(count) <= limit,
             Err(error) => {
                 tracing::error!(%error, "friendship rate limiter unavailable; allowing action");
                 dcl_metrics::counter!("friendship_rate_limiter_unavailable").increment(1);
@@ -221,7 +221,7 @@ struct Budget {
 impl Budget {
     fn full(limits: &AdmissionLimits, now: Instant) -> Self {
         Self {
-            tokens: limits.subscription_burst as f64,
+            tokens: crate::casts::approx_len_f64(limits.subscription_burst),
             updated_at: now,
         }
     }
@@ -229,7 +229,7 @@ impl Budget {
     fn replenish(&mut self, limits: &AdmissionLimits, now: Instant) {
         let elapsed = now.saturating_duration_since(self.updated_at).as_secs_f64();
         self.tokens = (self.tokens + elapsed * limits.subscriptions_per_second)
-            .min(limits.subscription_burst as f64);
+            .min(crate::casts::approx_len_f64(limits.subscription_burst));
         self.updated_at = now;
     }
 }
@@ -342,7 +342,7 @@ impl Admission {
         let (address, state) = slot.remove_entry();
         let mut budget = state.budget;
         budget.replenish(&limits, now);
-        if budget.tokens >= limits.subscription_burst as f64 {
+        if budget.tokens >= crate::casts::approx_len_f64(limits.subscription_burst) {
             return;
         }
         if inner.idle.len() >= limits.idle_budget_capacity
@@ -379,6 +379,13 @@ impl Admission {
 }
 
 #[cfg(test)]
+#[allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_possible_wrap,
+    clippy::cast_sign_loss,
+    clippy::cast_precision_loss,
+    reason = "test fixtures use small literal values"
+)]
 mod tests {
     use super::*;
 

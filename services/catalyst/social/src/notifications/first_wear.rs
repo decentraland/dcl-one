@@ -112,8 +112,9 @@ fn bucket_rule(address: &str, arms: &[(FfwRule, u32)]) -> FfwRule {
     }
     let total: u64 = arms.iter().map(|(_, w)| u64::from(*w)).sum();
     let total = if total == 0 { arms.len() as u64 } else { total };
-    let unit = cyrb53(&format!("{}:{}", address, EXPERIMENT_KEY)) as f64 / 9_007_199_254_740_992f64;
-    let target = unit * total as f64;
+    let unit = crate::casts::approx_u64_f64(cyrb53(&format!("{}:{}", address, EXPERIMENT_KEY)))
+        / 9_007_199_254_740_992f64;
+    let target = unit * crate::casts::approx_u64_f64(total);
     let mut acc = 0f64;
     for (rule, w) in arms {
         let w = if *w > 0 { f64::from(*w) } else { 1.0 };
@@ -527,7 +528,7 @@ async fn notify(
                 tracing::warn!(urn, attempts, %error, "first wear lookup retries exhausted");
                 return Ok((complete_wear(pool, wear, &[]).await?, true));
             }
-            let delay = super::delivery::backoff(attempts).as_secs() as f64;
+            let delay = crate::casts::approx_u64_f64(super::delivery::backoff(attempts).as_secs());
             sqlx::query(
                 "UPDATE social.first_wear_outbox SET attempts = $3,
                 retry_at = timezone('UTC', clock_timestamp()) + make_interval(secs => $4)
@@ -977,6 +978,13 @@ mod tests {
 }
 
 #[cfg(test)]
+#[allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_possible_wrap,
+    clippy::cast_sign_loss,
+    clippy::cast_precision_loss,
+    reason = "test fixtures use small literal values"
+)]
 mod pg_tests {
     use super::*;
     use crate::notifications::store::test_support::*;

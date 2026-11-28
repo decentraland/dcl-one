@@ -219,7 +219,10 @@ fn peer_base_of(content_base: &str) -> String {
 #[cfg(unix)]
 #[allow(unsafe_code, reason = "libc kill on a process group")]
 fn kill_process_group(pgid: u32) {
-    let pgid = pgid as i32;
+    let Ok(pgid) = i32::try_from(pgid) else {
+        tracing::warn!(pgid, "render process group id out of range; not killed");
+        return;
+    };
     if pgid <= 0 {
         return;
     }

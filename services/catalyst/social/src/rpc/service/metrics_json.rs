@@ -4,7 +4,7 @@
 use serde_json::{Map, Value, json};
 fn source_float(value: f64) -> Value {
     if value.is_finite() && value.fract() == 0.0 && value.abs() < 9_007_199_254_740_992.0 {
-        json!(value as i64)
+        json!(crate::casts::saturating_i64(value))
     } else {
         json!(value)
     }
@@ -203,6 +203,13 @@ message_json!(crate::rpc::proto::decentraland::social_service::v2::end_community
 oneof_json!(crate::rpc::proto::decentraland::social_service::v2::end_community_voice_chat_response::Response; Ok => "ok", InvalidRequest => "invalidRequest", ForbiddenError => "forbiddenError", NotFoundError => "notFoundError", InternalServerError => "internalServerError");
 message_json!(crate::rpc::proto::decentraland::social_service::v2::CommunityVoiceChatUpdate; community_id: "communityId" => scalar, created_at: "createdAt" => scalar, status: "status" => scalar, ended_at: "endedAt" => optional_scalar, positions: "positions" => repeated_scalar, is_member: "isMember" => scalar, community_name: "communityName" => scalar, community_image: "communityImage" => optional_scalar, worlds: "worlds" => repeated_scalar, stream_closed: "streamClosed" => optional_message);
 #[cfg(test)]
+#[allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_possible_wrap,
+    clippy::cast_sign_loss,
+    clippy::cast_precision_loss,
+    reason = "test fixtures use small literal values"
+)]
 mod tests {
     use super::*;
     use prost::Message;

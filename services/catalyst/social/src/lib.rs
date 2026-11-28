@@ -19,6 +19,13 @@
 
 // Production routes go through `shared::routing` (social/clippy.toml); test routers may use axum's.
 #![cfg_attr(not(test), deny(clippy::disallowed_methods))]
+// Counts, pages and chain values: a silently truncated, wrapped or rounded cast is a bug.
+#![deny(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    clippy::cast_possible_wrap,
+    clippy::cast_precision_loss
+)]
 #![cfg_attr(
     test,
     allow(
@@ -48,6 +55,7 @@ use axum::Router;
 
 pub mod analytics;
 pub mod badges;
+mod casts;
 pub mod chat;
 pub mod comms_directory;
 pub mod communities;

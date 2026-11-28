@@ -42,7 +42,7 @@ pub fn score(metrics: &Metrics) -> f64 {
     let base: f64 = values
         .into_iter()
         .map(|(value, max, logarithmic, weight)| {
-            let value = value.max(0) as f64;
+            let value = crate::casts::approx_f64(value.max(0));
             let normalized = if logarithmic {
                 (1.0 + value).ln() / (1.0 + max).ln()
             } else {
@@ -67,7 +67,9 @@ pub fn score(metrics: &Metrics) -> f64 {
 fn contribution(value: Option<f64>, maximum: i64) -> i64 {
     value
         .filter(|value| value.is_finite() && *value >= 0.0)
-        .map(|value| value.trunc().min(maximum as f64) as i64)
+        .map(|value| {
+            crate::casts::saturating_i64(value.trunc().min(crate::casts::approx_f64(maximum)))
+        })
         .unwrap_or(0)
 }
 
@@ -214,7 +216,10 @@ pub(crate) async fn recalculate_ids(
         .fetch_all(&mut *tx)
         .await?;
     let updates: Vec<Uuid> = rows.iter().map(|row| row.id).collect();
-    let scores: Vec<f32> = rows.iter().map(|row| score(&row.metrics) as f32).collect();
+    let scores: Vec<f32> = rows
+        .iter()
+        .map(|row| crate::casts::narrow_f32(score(&row.metrics)))
+        .collect();
     // The importer compares updated_at to decide which metadata edit is newer.
     sqlx::query("UPDATE social.communities c SET ranking_score=v.score
         FROM UNNEST($1::uuid[],$2::real[]) v(id,score) WHERE c.id=v.id AND c.origin='local' AND c.active")
@@ -362,7 +367,7 @@ pub async fn scan_ended(
     for _ in 0..1024 {
         match tokio::time::timeout_at(
             deadline,
-            scan_ended_page(pool, now, cursor, 100 - collected as i64),
+            scan_ended_page(pool, now, cursor, 100 - crate::casts::count_i64(collected)),
         )
         .await
         {

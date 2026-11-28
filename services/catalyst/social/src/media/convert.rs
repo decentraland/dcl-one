@@ -602,6 +602,13 @@ fn cacheable(status: StatusCode, content_type: &str, body: Bytes) -> Result<Conv
 #[path = "convert"]
 #[allow(clippy::indexing_slicing, clippy::expect_used, reason = "test support")]
 #[cfg(test)]
+#[allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_possible_wrap,
+    clippy::cast_sign_loss,
+    clippy::cast_precision_loss,
+    reason = "test fixtures use small literal values"
+)]
 mod tests {
     use super::*;
 

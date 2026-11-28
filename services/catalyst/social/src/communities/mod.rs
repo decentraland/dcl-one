@@ -59,6 +59,13 @@ mod write_support;
 #[cfg(test)]
 pub(crate) mod test_names;
 #[cfg(test)]
+#[allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_possible_wrap,
+    clippy::cast_sign_loss,
+    clippy::cast_precision_loss,
+    reason = "test fixtures use small literal values"
+)]
 mod tests;
 
 use std::sync::Arc;

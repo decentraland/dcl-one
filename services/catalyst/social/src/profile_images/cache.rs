@@ -217,7 +217,7 @@ impl ImageCache {
 /// ordering (when it was stored, not when it was last served) is a heuristic
 /// and the budget is the contract.
 pub async fn sweep_to_budget(pool: &PgPool, max: u64) -> Result<u64, sqlx::Error> {
-    let target = (max as f64 * LOW_WATER) as i64;
+    let target = crate::casts::saturating_i64(crate::casts::approx_u64_f64(max) * LOW_WATER);
     let done = sqlx::query(
         "DELETE FROM social.profile_images p \
          USING (SELECT entity_id, kind, \

@@ -273,7 +273,7 @@ impl BadgesStore {
                         tier_name: t["tier_name"].as_str().unwrap_or_default().to_string(),
                         description: t["description"].as_str().map(str::to_string),
                         assets: resolve_assets(&t["assets"], base),
-                        criteria_steps: t["steps"].as_i64().unwrap_or(0) as i32,
+                        criteria_steps: crate::casts::clamp_i32(t["steps"].as_i64().unwrap_or(0)),
                     })
                     .collect()
             } else {
@@ -454,8 +454,8 @@ impl BadgesStore {
         rows.sort_by(|((ia, a), _), ((ib, b), _)| b.cmp(a).then(ia.cmp(ib)));
         Ok(rows
             .into_iter()
-            .skip(offset.max(0) as usize)
-            .take(limit.max(0) as usize)
+            .skip(crate::casts::page(offset))
+            .take(crate::casts::page(limit))
             .map(|((index, _), tier)| {
                 let def = &catalog.defs[index];
                 let tier = tier.map(|i| &def.tiers[i]);

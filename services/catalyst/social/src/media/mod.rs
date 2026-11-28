@@ -170,8 +170,8 @@ impl Settings {
             llm_base_url,
             llm_api_key: non_empty(&raw.llm_api_key),
             llm_model: non_empty(&raw.llm_model).unwrap_or_else(|| DEFAULT_LLM_MODEL.to_string()),
-            char_limit: char_limit as usize,
-            batch_limit: batch_limit as usize,
+            char_limit: crate::casts::to_usize(char_limit),
+            batch_limit: crate::casts::to_usize(batch_limit),
             request_timeout: Duration::from_secs(timeout_secs),
             cache_ttl: (raw.cache_ttl_days > 0)
                 .then(|| Duration::from_secs(raw.cache_ttl_days * 86_400)),
@@ -186,8 +186,8 @@ impl Settings {
             llm_base_url: None,
             llm_api_key: None,
             llm_model: DEFAULT_LLM_MODEL.to_string(),
-            char_limit: DEFAULT_TRANSLATE_CHAR_LIMIT as usize,
-            batch_limit: DEFAULT_TRANSLATE_BATCH_LIMIT as usize,
+            char_limit: crate::casts::to_usize(DEFAULT_TRANSLATE_CHAR_LIMIT),
+            batch_limit: crate::casts::to_usize(DEFAULT_TRANSLATE_BATCH_LIMIT),
             request_timeout: Duration::from_secs(DEFAULT_TRANSLATE_REQUEST_TIMEOUT_SECS),
             cache_ttl: None,
         }

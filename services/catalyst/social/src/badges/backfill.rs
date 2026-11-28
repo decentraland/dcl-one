@@ -174,7 +174,7 @@ fn int(v: &Value) -> Option<i64> {
         Value::Number(n) => n.as_i64().or_else(|| {
             n.as_f64()
                 .filter(|f| f.fract() == 0.0 && f.abs() < 9.0e15)
-                .map(|f| f as i64)
+                .map(crate::casts::saturating_i64)
         }),
         _ => None,
     }
@@ -402,7 +402,7 @@ pub fn merge(
                 _ => str::to_ascii_lowercase,
             };
             let sorted = unique_sorted(stored.into_iter().chain(items.iter().cloned()), same_id);
-            user.steps = sorted.len() as i64;
+            user.steps = crate::casts::len_i64(sorted.len());
             let list = sorted
                 .iter()
                 .map(|(id, ts)| json!({ id_key: id, ts_key: ts }))
@@ -413,8 +413,9 @@ pub fn merge(
                 .iter()
                 .filter(|(_, steps)| *steps <= user.steps)
                 .map(|(tier_id, steps)| {
-                    let item = sorted
-                        .get((*steps - 1) as usize)
+                    let item = usize::try_from(*steps - 1)
+                        .ok()
+                        .and_then(|i| sorted.get(i))
                         .ok_or_else(|| format!("Could not find publication for tier {tier_id}"))?;
                     let had = truthy(stamp_of(&user.tiers, tier_id)).unwrap_or(now);
                     Ok((tier_id.clone(), had.min(item.1)))
@@ -425,9 +426,12 @@ pub fn merge(
             }
             if !user.tiers.is_empty() && user.tiers.len() == def.tiers.len() {
                 let (last_id, last_steps) = def.tiers.last().ok_or("no tiers")?;
-                let item = sorted.get((*last_steps - 1) as usize).ok_or_else(|| {
-                    format!("Could not find the item related to the last tier {last_id}")
-                })?;
+                let item = usize::try_from(*last_steps - 1)
+                    .ok()
+                    .and_then(|i| sorted.get(i))
+                    .ok_or_else(|| {
+                        format!("Could not find the item related to the last tier {last_id}")
+                    })?;
                 let completed = [user.completed_at, Some(item.1), Some(now)]
                     .into_iter()
                     .flatten()
@@ -458,7 +462,7 @@ pub fn merge(
                     unique.push(id);
                 }
             }
-            user.steps = unique.len() as i64;
+            user.steps = crate::casts::len_i64(unique.len());
             user.doc = Map::from_iter([(
                 "events_ids_visited".to_string(),
                 Value::Array(unique.into_iter().map(Value::String).collect()),
@@ -471,7 +475,7 @@ pub fn merge(
                 .filter(|(_, steps)| *steps <= user.steps)
                 .map(|(tier_id, steps)| {
                     let had = stamp_of(&user.tiers, tier_id);
-                    let at = match sorted.get((*steps - 1) as usize) {
+                    let at = match usize::try_from(*steps - 1).ok().and_then(|i| sorted.get(i)) {
                         Some((_, visit)) => match had {
                             Some(h) if h < *visit => h,
                             _ => *visit,
@@ -486,7 +490,10 @@ pub fn merge(
             }
             if !user.tiers.is_empty() && user.tiers.len() == def.tiers.len() {
                 let (_, last_steps) = def.tiers.last().ok_or("no tiers")?;
-                match sorted.get((*last_steps - 1) as usize) {
+                match usize::try_from(*last_steps - 1)
+                    .ok()
+                    .and_then(|i| sorted.get(i))
+                {
                     Some((_, visit)) if truthy(user.completed_at).is_none_or(|c| *visit < c) => {
                         user.completed_at = Some(*visit)
                     }
@@ -539,7 +546,7 @@ pub fn merge(
                 }
             }
             first.sort_by_key(|(_, at)| *at);
-            user.steps = first.len() as i64;
+            user.steps = crate::casts::len_i64(first.len());
             user.doc = Map::from_iter([(
                 "profiles_visited".to_string(),
                 Value::Array(
@@ -554,8 +561,9 @@ pub fn merge(
                 .iter()
                 .filter(|(_, steps)| *steps <= user.steps)
                 .map(|(tier_id, steps)| {
-                    let at = first
-                        .get((*steps - 1) as usize)
+                    let at = usize::try_from(*steps - 1)
+                        .ok()
+                        .and_then(|i| first.get(i))
                         .and_then(|(_, at)| truthy(Some(*at)))
                         .unwrap_or(now);
                     let at = stamp_of(&user.tiers, tier_id).map_or(at, |had| had.min(at));
@@ -567,10 +575,15 @@ pub fn merge(
             }
             if !user.tiers.is_empty() && user.tiers.len() == def.tiers.len() {
                 let (_, last_steps) = def.tiers.last().ok_or("no tiers")?;
-                user.completed_at = Some(match first.get((*last_steps - 1) as usize) {
-                    Some((_, at)) => truthy(user.completed_at).map_or(*at, |c| c.min(*at)),
-                    None => now,
-                });
+                user.completed_at = Some(
+                    match usize::try_from(*last_steps - 1)
+                        .ok()
+                        .and_then(|i| first.get(i))
+                    {
+                        Some((_, at)) => truthy(user.completed_at).map_or(*at, |c| c.min(*at)),
+                        None => now,
+                    },
+                );
             }
         }
         (Kind::LandArchitect, Input::LandArchitect(at)) => {
@@ -623,7 +636,7 @@ pub fn merge(
                     _ => None,
                 }
                 .filter(|f| f.is_finite())
-                .map(|f| f as i64)
+                .map(crate::casts::saturating_i64)
             };
             let earlier: Vec<i64> = user
                 .completed_at

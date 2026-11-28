@@ -453,7 +453,7 @@ async fn dispatch_page(
         })
         .collect();
     let inserted = insert_event_notifications(&mut tx, &batch).await?;
-    let finished = recipients.len() < PAGE as usize;
+    let finished = recipients.len() < crate::casts::page(PAGE);
     if finished
         && suppression.is_none()
         && links.slack_notices

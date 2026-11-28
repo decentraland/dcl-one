@@ -562,7 +562,7 @@ pub async fn list(
         )
         .collect();
     let total = if only_with_active_voice_chat {
-        results.len() as i64
+        crate::casts::len_i64(results.len())
     } else {
         total
     };
@@ -1339,8 +1339,8 @@ pub async fn active_voice_for_user(
                     community_id: status.community_id.as_uuid(),
                     community_name: name.clone(),
                     is_member: *member,
-                    participant_count: status.participant_count as i32,
-                    moderator_count: status.moderator_count as i32,
+                    participant_count: crate::casts::clamp_i32(status.participant_count),
+                    moderator_count: crate::casts::clamp_i32(status.moderator_count),
                 })
         })
         .collect())

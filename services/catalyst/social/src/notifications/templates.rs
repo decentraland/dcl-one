@@ -80,7 +80,7 @@ fn epoch_ms(v: &Json) -> Option<f64> {
         Json::Number(n) => n.as_f64(),
         Json::String(s) => DateTime::parse_from_rfc3339(s)
             .ok()
-            .map(|t| t.timestamp_millis() as f64),
+            .map(|t| crate::casts::approx_f64(t.timestamp_millis())),
         _ => None,
     }
 }

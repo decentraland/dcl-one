@@ -266,7 +266,7 @@ impl MessageBudget {
         let now = Instant::now();
         let elapsed = now.saturating_duration_since(self.updated_at).as_secs_f64();
         self.tokens = (self.tokens + elapsed * self.limits.messages_per_second)
-            .min(self.limits.message_burst as f64);
+            .min(crate::casts::approx_len_f64(self.limits.message_burst));
         self.updated_at = now;
         if self.tokens < 1.0 {
             return false;
@@ -461,7 +461,7 @@ impl Session {
             close,
             code: 1006,
             budget: MessageBudget {
-                tokens: limits.message_burst as f64,
+                tokens: crate::casts::approx_len_f64(limits.message_burst),
                 updated_at: Instant::now(),
                 limits,
             },

@@ -83,7 +83,7 @@ impl Adapter {
             let sample = bytes[..6]
                 .iter()
                 .fold(0_u64, |value, byte| value * 256 + u64::from(*byte));
-            sample as f64 / (1_u64 << 48) as f64
+            crate::casts::approx_u64_f64(sample) / crate::casts::approx_u64_f64(1_u64 << 48)
         });
         if let Err(error) = self.send_with_delays(message, &delays).await {
             // The source awaits and swallows these effects after its SQL write.
@@ -185,9 +185,10 @@ fn js_truthy(value: &Value) -> bool {
 fn retry_delays(mut random: impl FnMut() -> f64) -> Vec<Duration> {
     let mut delays = (0..MAX_ATTEMPTS - 1)
         .map(|attempt| {
-            Duration::from_millis(
-                ((random() + 1.0) * 1000.0 * 1.96821_f64.powi(attempt as i32)).round() as u64,
-            )
+            let exponent = i32::try_from(attempt).unwrap_or(i32::MAX);
+            Duration::from_millis(crate::casts::saturating_u64(
+                ((random() + 1.0) * 1000.0 * 1.96821_f64.powi(exponent)).round(),
+            ))
         })
         .collect::<Vec<_>>();
     delays.sort();
@@ -281,7 +282,8 @@ fn action(settings: &Settings, style: &str) -> Value {
     json!({"type":"actions","elements":[{"type":"button","text":{"type":"plain_text","text":"View Referral Dashboard","emoji":true},"url":settings.dashboard,"style":style}]})
 }
 fn timing_message(settings: &Settings, referrer: &str, newest: i64, previous: i64) -> Value {
-    let minutes = (((newest - previous) as f64 / 60_000.0) * 100.0).round() / 100.0;
+    let minutes =
+        ((crate::casts::approx_f64(newest - previous) / 60_000.0) * 100.0).round() / 100.0;
     let iso = |ms| {
         chrono::DateTime::from_timestamp_millis(ms)
             .expect("database timestamp")
@@ -307,6 +309,13 @@ fn milestone_message(settings: &Settings, referrer: &str) -> Value {
 }
 
 #[cfg(test)]
+#[allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_possible_wrap,
+    clippy::cast_sign_loss,
+    clippy::cast_precision_loss,
+    reason = "test fixtures use small literal values"
+)]
 mod tests {
     use super::*;
     use std::sync::Arc;

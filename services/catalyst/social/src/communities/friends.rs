@@ -211,7 +211,7 @@ pub async fn list_friends(
         };
         key(a).cmp(&key(b))
     });
-    let total = friends.len() as i64;
+    let total = crate::casts::len_i64(friends.len());
     Ok(Json(FriendsResponse { friends, total }))
 }
 

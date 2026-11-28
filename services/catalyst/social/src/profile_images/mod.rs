@@ -208,7 +208,7 @@ impl Settings {
                 } else {
                     raw.render_timeout_seconds
                 },
-                max_concurrent: raw.render_max_concurrent.max(1) as usize,
+                max_concurrent: crate::casts::to_usize(raw.render_max_concurrent.max(1)),
                 workdir_root: non_empty(&raw.render_workdir)
                     .unwrap_or_else(|| format!("{cache_dir}/.render-tmp")),
             })
@@ -323,4 +323,11 @@ pub fn router(state: SharedState) -> Router {
 }
 
 #[cfg(test)]
+#[allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_possible_wrap,
+    clippy::cast_sign_loss,
+    clippy::cast_precision_loss,
+    reason = "test fixtures use small literal values"
+)]
 mod tests;

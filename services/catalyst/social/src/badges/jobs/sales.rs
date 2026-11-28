@@ -448,7 +448,7 @@ pub(crate) async fn batch(pass: &Pass, log: Log) -> Result<(u64, bool), sqlx::Er
     super::report_lag(log.source(), until - last.0);
     Ok((
         passed as u64,
-        passed == rows.len() && rows.len() as i64 == limit,
+        passed == rows.len() && crate::casts::len_i64(rows.len()) == limit,
     ))
 }
 
