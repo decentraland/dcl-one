@@ -133,7 +133,7 @@ pub(crate) async fn batch(pass: &Pass) -> Result<(u64, bool), sqlx::Error> {
                     continue;
                 };
                 if !skip(ev::WALKABOUT_WANDERER) {
-                    let count = count.min(MAX_STEPS_PER_EVENT) as i64;
+                    let count = crate::casts::f64_to_i64(count.min(MAX_STEPS_PER_EVENT));
                     award(&mut tx, &address, ev::WALKABOUT_WANDERER, notify, |p| {
                         ev::walkabout_wanderer(p, count)
                     })

@@ -581,7 +581,7 @@ async fn remove_participant_calls_livekit_room_service() {
             .await
             .unwrap()
             .token_floor
-            >= cutoff as u64
+            >= u64::try_from(cutoff).unwrap()
     );
     jobs.shutdown(Duration::from_secs(2)).await;
 
@@ -604,7 +604,7 @@ async fn remove_participant_calls_livekit_room_service() {
             .await
             .unwrap()
             .token_floor
-            >= cutoff as u64
+            >= u64::try_from(cutoff).unwrap()
     );
     jobs.shutdown(Duration::from_secs(2)).await;
     server.abort();

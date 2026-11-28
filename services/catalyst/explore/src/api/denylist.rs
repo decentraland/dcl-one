@@ -238,7 +238,7 @@ pub async fn run_pass(state: &Shared, ctx: &JobContext) -> anyhow::Result<()> {
             .await
             .context("reloading the denylist")?;
         Ok(mirror::PassOutcome {
-            items: doc.users.len() as i64,
+            items: crate::casts::len_i64(doc.users.len()),
             cursor: fetched.etag,
         })
     })

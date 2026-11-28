@@ -90,10 +90,15 @@ pub fn score_request(address: &str) -> Value {
 /// JavaScript's `(x || 0) | 0`: a missing, null or NaN `vp` is 0, anything
 /// else truncated toward zero and wrapped to a signed 32-bit integer
 /// (`Snapshot/utils.ts:100`).
+#[allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    reason = "the value is wrapped into [0, 2^32) first, so u32 holds it"
+)]
 pub fn to_int32(vp: Option<f64>) -> i32 {
     let v = vp.filter(|v| v.is_finite()).unwrap_or(0.0).trunc();
     let wrapped = (v % 4_294_967_296.0 + 4_294_967_296.0) % 4_294_967_296.0;
-    (wrapped as u32) as i32
+    (wrapped as u32).cast_signed()
 }
 
 /// `body?.result?.vp` as the stored score.

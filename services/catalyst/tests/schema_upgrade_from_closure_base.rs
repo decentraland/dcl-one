@@ -1376,7 +1376,7 @@ async fn private_voice_release_retains_rows_and_indexes_before_stamp_then_migrat
         .await
         .unwrap();
     assert_eq!(
-        ledger as usize,
+        usize::try_from(ledger).unwrap(),
         schema_migrate::parse_steps(catalyst::db::MIGRATIONS_SQL).len()
     );
     old.drop().await;

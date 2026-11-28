@@ -428,7 +428,7 @@ impl PlacesComponent {
         .bind(&catalogue_ids)
         .fetch_one(&self.pool)
         .await?;
-        Ok(catalogue + scene_ids.len() as i64)
+        Ok(catalogue + crate::casts::len_i64(scene_ids.len()))
     }
 
     /// `PlaceModel.findByIds` (`Place/model.ts:556-577`): the status columns,

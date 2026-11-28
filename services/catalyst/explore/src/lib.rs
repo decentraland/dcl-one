@@ -18,6 +18,13 @@
         reason = "test routers may use axum's routing"
     )
 )]
+// Request, mirror and DB values: a silently truncated, wrapped or rounded cast is a bug.
+#![deny(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    clippy::cast_possible_wrap,
+    clippy::cast_precision_loss
+)]
 
 // The crates this one builds on, under their module names (AGENTS.md).
 pub(crate) use catalyst_chain_index as chain_index;
@@ -33,6 +40,7 @@ pub(crate) use dcl_auth as auth;
 pub(crate) use dcl_http as http;
 
 pub mod api;
+pub(crate) mod casts;
 pub mod copies;
 pub mod cors;
 pub mod events;

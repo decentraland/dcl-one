@@ -83,11 +83,13 @@ struct Params {
     selected: Vec<Coord>,
 }
 
-fn parse_clamped(q: &HashMap<String, String>, name: &str, default: i64, min: i64, max: i64) -> i64 {
-    q.get(name)
+fn parse_clamped(q: &HashMap<String, String>, name: &str, default: u32, min: u32, max: u32) -> u32 {
+    let n = q
+        .get(name)
         .and_then(|s| s.trim().parse::<i64>().ok())
-        .unwrap_or(default)
-        .clamp(min, max)
+        .unwrap_or(default.into())
+        .clamp(min.into(), max.into());
+    u32::try_from(n).unwrap_or(max)
 }
 
 fn parse_coord(s: &str) -> Option<Coord> {
@@ -99,9 +101,9 @@ fn parse_coord(s: &str) -> Option<Coord> {
 
 fn extract_params(q: &HashMap<String, String>) -> Params {
     Params {
-        width: parse_clamped(q, "width", 1024, 100, 4096) as u32,
-        height: parse_clamped(q, "height", 1024, 100, 4096) as u32,
-        size: parse_clamped(q, "size", 20, 5, 50) as u32,
+        width: parse_clamped(q, "width", 1024, 100, 4096),
+        height: parse_clamped(q, "height", 1024, 100, 4096),
+        size: parse_clamped(q, "size", 20, 5, 50),
         center: q
             .get("center")
             .and_then(|s| parse_coord(s))
@@ -126,6 +128,10 @@ fn extract_params(q: &HashMap<String, String>) -> Params {
 }
 
 /// A centre outside Genesis City is moved to its nearest edge.
+#[allow(
+    clippy::cast_possible_truncation,
+    reason = "clamped to WORLD_BOUNDS, which is within ±256"
+)]
 fn clamp_center(c: Coord) -> Coord {
     let (x0, y0, x1, y1) = crate::shared::parcel::WORLD_BOUNDS;
     Coord {

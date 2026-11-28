@@ -289,7 +289,7 @@ pub(super) async fn friendship_requests(
             FriendshipRequests { requests },
         )),
         pagination_data: Some(PaginatedResponse {
-            total: total as i32,
+            total: crate::casts::clamp_i32(total),
             page: page_of(limit, offset),
         }),
     })

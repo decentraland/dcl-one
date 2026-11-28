@@ -41,6 +41,7 @@ use sha2::{Digest as _, Sha256};
 use sqlx::PgPool;
 
 use super::{Shared, mirror};
+use crate::casts;
 use crate::chain_index::source::{Source, unavailable};
 use crate::jobs::JobContext;
 pub use build::{LandMarket, LandMarketError, LandMarketSnapshot};
@@ -561,6 +562,7 @@ pub(super) async fn store_guarded<'e, E>(
 where
     E: sqlx::PgExecutor<'e>,
 {
+    let tile_count = i32::try_from(tile_count).map_err(|e| sqlx::Error::Encode(Box::new(e)))?;
     let written = match prev {
         None => {
             sqlx::query(
@@ -569,7 +571,7 @@ where
             )
             .bind(stamp)
             .bind(digest_hex)
-            .bind(tile_count as i32)
+            .bind(tile_count)
             .bind(body_gzip)
             .bind(built_at)
             .execute(executor)
@@ -583,7 +585,7 @@ where
             )
             .bind(stamp)
             .bind(digest_hex)
-            .bind(tile_count as i32)
+            .bind(tile_count)
             .bind(body_gzip)
             .bind(built_at)
             .bind(prev.stamp)
@@ -724,7 +726,7 @@ async fn reload_quietly(state: &Shared) {
 fn served(state: &Shared) -> mirror::PassOutcome {
     match state.map.snapshot() {
         Some(g) => mirror::PassOutcome {
-            items: g.tiles.len() as i64,
+            items: casts::len_i64(g.tiles.len()),
             cursor: Some(g.last_updated_at.to_string()),
         },
         None => mirror::PassOutcome {
@@ -940,7 +942,7 @@ async fn publish(
         .context("grid gzip task")??;
     anyhow::ensure!(!ctx.is_cancelled(), "cancelled before storing the grid");
     let built_at = now.naive_utc();
-    let tile_count = tiles.len() as i64;
+    let tile_count = casts::len_i64(tiles.len());
     let stored_it = match ctx.lease() {
         // On the lease's own session: the write commits while this process
         // holds the lease, or not at all; a lease lost while the statement
@@ -992,7 +994,7 @@ async fn publish(
         "tile grid built"
     );
     let out = mirror::PassOutcome {
-        items: tiles.len() as i64,
+        items: casts::len_i64(tiles.len()),
         cursor: Some(stamp.to_string()),
     };
     state

@@ -193,5 +193,12 @@ async fn preflight_no_content(mut response: axum::response::Response) -> axum::r
 
 #[cfg(test)]
 mod backfill_tests;
+#[allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_possible_wrap,
+    clippy::cast_sign_loss,
+    clippy::cast_precision_loss,
+    reason = "test fixtures use small literal values"
+)]
 #[cfg(test)]
 mod tests;

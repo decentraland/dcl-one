@@ -30,7 +30,7 @@ fn text<'a>(raw: &'a Map<String, Value>, key: &str) -> Option<&'a str> {
 /// with `position=x,y` and, when the event names a server, `realm=server`
 /// (URLSearchParams encoding). Fixtures `events.create.minimal_success`,
 /// `.world_success`.
-pub(super) fn jump_in_url(server: Option<&str>, x: i32, y: i32) -> String {
+pub(super) fn jump_in_url(server: Option<&str>, x: i64, y: i64) -> String {
     let mut url = format!(
         "{JUMP_IN_SITE_URL}/events?position={}",
         urlencoding::encode(&format!("{x},{y}"))
@@ -45,8 +45,8 @@ pub(super) fn jump_in_url(server: Option<&str>, x: i32, y: i32) -> String {
 fn target(raw: &Map<String, Value>) -> String {
     jump_in_url(
         text(raw, "server"),
-        raw.get("x").and_then(Value::as_i64).unwrap_or(0) as i32,
-        raw.get("y").and_then(Value::as_i64).unwrap_or(0) as i32,
+        raw.get("x").and_then(Value::as_i64).unwrap_or(0),
+        raw.get("y").and_then(Value::as_i64).unwrap_or(0),
     )
 }
 

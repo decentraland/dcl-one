@@ -309,7 +309,7 @@ pub(super) async fn collect(state: &CommunitiesState) -> anyhow::Result<Value> {
         if dropped.is_empty() {
             break;
         }
-        removed += dropped.len() as i64;
+        removed += crate::casts::len_i64(dropped.len());
         let held = crate::storage::gc::referenced_among_on(
             &mut tx,
             crate::storage::gc::Pins::new(&state.storage, &[]),

@@ -69,7 +69,7 @@ fn discovery(current_time_ms: i64, user_count: u32) -> Vec<u8> {
     ServiceDiscoveryMessage {
         server_name: "archipelago".into(),
         status: Some(ServiceStatus {
-            current_time: current_time_ms.max(0) as u64,
+            current_time: u64::try_from(current_time_ms.max(0)).unwrap(),
             commit_hash: Some("cafe".into()),
             user_count,
         }),

@@ -108,7 +108,7 @@ impl EmailChannel for EmailSender {
 
 /// The wait after the `attempts`-th failure: 30 s, 60 s, 120 s ... capped at an hour.
 pub fn backoff(attempts: i32) -> Duration {
-    let factor = 1u32 << attempts.clamp(1, 16).saturating_sub(1) as u32;
+    let factor = 1u32 << attempts.clamp(1, 16).saturating_sub(1).unsigned_abs();
     BACKOFF_BASE.saturating_mul(factor).min(BACKOFF_MAX)
 }
 
@@ -400,7 +400,7 @@ pub async fn run_pass(
         .fetch_one(pool)
         .await?;
         return Ok(PassSummary {
-            held: held as usize,
+            held: crate::casts::page(held),
             ..Default::default()
         });
     }

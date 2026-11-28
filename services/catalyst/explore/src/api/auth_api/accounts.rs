@@ -637,7 +637,7 @@ mod tests {
                     sha256(('n' || i)::bytea), statement_timestamp()
              FROM generate_series(1, $1) AS i",
         )
-        .bind(TEST_LIMITS.global as i32)
+        .bind(i32::try_from(TEST_LIMITS.global).unwrap())
         .execute(&db.pool)
         .await
         .unwrap();

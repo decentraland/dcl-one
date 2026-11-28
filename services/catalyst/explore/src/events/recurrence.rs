@@ -77,14 +77,15 @@ pub(super) fn estimate_past_iterations(raw: &Map<String, Value>, now: DateTime<U
     };
     let interval = number(raw, "recurrent_interval")
         .filter(|i| *i != 0)
-        .unwrap_or(1) as f64;
+        .unwrap_or(1);
+    let interval = crate::casts::i64_f64(interval);
     let bound = match until {
         Some(until) => now.min(until),
         None => now,
     };
-    let span = (bound.timestamp_millis() - start.timestamp_millis()).max(0) as f64;
+    let span = crate::casts::i64_f64((bound.timestamp_millis() - start.timestamp_millis()).max(0));
     let by_time = span / (period * interval);
-    let by_count = count.map(|c| c as f64).unwrap_or(f64::INFINITY);
+    let by_count = count.map(crate::casts::i64_f64).unwrap_or(f64::INFINITY);
     by_time.min(by_count)
 }
 
@@ -176,7 +177,7 @@ pub(super) fn recompute(raw: &mut Map<String, Value>, now: DateTime<Utc>) -> Res
             .parse::<rrule::RRuleSet>()
             .map_err(|_| ApiError::bad_request("invalid recurrence rule"))?;
         let budget = count
-            .map(|c| (c as u16).min(MAX_OCCURRENCES))
+            .map(|c| u16::try_from(c).map_or(MAX_OCCURRENCES, |c| c.min(MAX_OCCURRENCES)))
             .unwrap_or(MAX_OCCURRENCES);
         let mut result = set.clone().all(budget);
         if result.limited && count.is_none() {

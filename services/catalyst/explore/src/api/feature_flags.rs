@@ -181,7 +181,7 @@ fn count_entries(doc: &Value) -> i64 {
     let count = |key: &str| {
         doc.get(key)
             .and_then(Value::as_object)
-            .map_or(0, |o| o.len()) as i64
+            .map_or(0, |o| crate::casts::len_i64(o.len()))
     };
     count("flags") + count("variants")
 }

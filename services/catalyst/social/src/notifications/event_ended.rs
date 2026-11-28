@@ -120,7 +120,7 @@ pub(super) async fn run_once(pool: &PgPool, now: NaiveDateTime) -> anyhow::Resul
     use sqlx::Row;
     let inserted: i64 = inserted.get(0);
     tx.commit().await?;
-    Ok(inserted as u64)
+    Ok(crate::casts::nonneg_u64(inserted))
 }
 
 #[cfg(test)]

@@ -339,8 +339,8 @@ async fn finish_pass(pool: &PgPool, source: &str, out: &PassOutcome) -> sqlx::Re
     .bind(source)
     .bind(Utc::now().naive_utc())
     .bind(out.complete)
-    .bind(out.upserted as i64)
-    .bind(out.deactivated as i64)
+    .bind(crate::casts::len_i64(out.upserted))
+    .bind(crate::casts::count_i64(out.deactivated))
     .bind(error)
     .execute(pool)
     .await?;
@@ -380,7 +380,7 @@ pub async fn run_pass(
         complete: !start.resumed,
         fetched_all: true,
         resumed_from: start.resumed.then_some(start.offset),
-        upserted: start.rows as usize,
+        upserted: crate::casts::page(start.rows),
         ..Default::default()
     };
     let mut offset = start.offset;
@@ -412,15 +412,15 @@ pub async fn run_pass(
         match fetched {
             Ok((rows, total)) => {
                 failures = 0;
-                let listed = rows.len() as i64;
+                let listed = crate::casts::len_i64(rows.len());
                 let parsed: Vec<UpstreamCommunity> = rows.iter().filter_map(extract).collect();
                 out.skipped_rows += rows.len() - parsed.len();
                 let landed = upsert_page(pool, base, &parsed, Utc::now().naive_utc()).await?;
                 let unique = parsed.iter().map(|r| r.id).collect::<HashSet<_>>().len();
-                out.local_conflicts += unique.saturating_sub(landed as usize);
-                out.upserted += landed as usize;
+                out.local_conflicts += unique.saturating_sub(crate::casts::to_usize(landed));
+                out.upserted += crate::casts::to_usize(landed);
                 offset += PAGE;
-                advance(pool, base, offset, out.upserted as i64).await?;
+                advance(pool, base, offset, crate::casts::len_i64(out.upserted)).await?;
                 if listed < PAGE || total.is_some_and(|t| offset >= t) {
                     break;
                 }
@@ -436,7 +436,7 @@ pub async fn run_pass(
                     break;
                 }
                 offset += PAGE;
-                advance(pool, base, offset, out.upserted as i64).await?;
+                advance(pool, base, offset, crate::casts::len_i64(out.upserted)).await?;
             }
         }
     }
@@ -687,5 +687,12 @@ fn pass_failed(out: &PassOutcome) -> bool {
     !out.fetched_all && !out.cancelled
 }
 
+#[allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_possible_wrap,
+    clippy::cast_sign_loss,
+    clippy::cast_precision_loss,
+    reason = "test fixtures use small literal values"
+)]
 #[cfg(test)]
 mod tests;

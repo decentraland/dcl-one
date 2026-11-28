@@ -60,6 +60,13 @@ pub mod voice;
 pub mod ws;
 
 #[cfg(test)]
+#[allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_possible_wrap,
+    clippy::cast_sign_loss,
+    clippy::cast_precision_loss,
+    reason = "test fixtures use small literal values"
+)]
 pub(crate) mod tests;
 
 use std::sync::Arc;
@@ -163,11 +170,11 @@ impl Settings {
     pub(crate) fn auth_timeout(&self) -> Duration {
         let configured = self
             .ws_auth_timeout_ms
-            .unwrap_or(self.auth_window_secs as f64 * 1000.0);
+            .unwrap_or(crate::casts::approx_f64(self.auth_window_secs) * 1000.0);
         // Node setTimeout inserts into an integer millisecond bucket and uses
         // one millisecond outside its supported positive signed-32-bit range.
         let ms = if (1.0..=i32::MAX as f64).contains(&configured) {
-            configured.trunc() as u64
+            crate::casts::f64_to_u64(configured.trunc())
         } else {
             1
         };
@@ -179,7 +186,7 @@ impl Settings {
     pub(crate) fn auth_signature_expiration(&self) -> Duration {
         let ms = self
             .ws_auth_signature_expiration_ms
-            .unwrap_or(self.auth_window_secs as f64 * 1000.0);
+            .unwrap_or(crate::casts::approx_f64(self.auth_window_secs) * 1000.0);
         if ms.is_nan() || ms <= 0.0 {
             return Duration::ZERO;
         }
@@ -433,7 +440,7 @@ pub(super) async fn not_found() -> Response {
 async fn status(AxumState(state): AxumState<Arc<State>>) -> Json<serde_json::Value> {
     let current_time = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_millis() as u64)
+        .map(|d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX))
         .unwrap_or(0);
     Json(json!({
         "version": state.settings.current_version.as_deref().unwrap_or(""),

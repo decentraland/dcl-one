@@ -245,7 +245,7 @@ async fn lost_selected_claim_and_publication_acknowledgments_reconcile_without_r
     };
     assert_eq!(
         lease.token_fence().owner_epoch,
-        committed_epoch as u64,
+        u64::try_from(committed_epoch).unwrap(),
         "reconciliation reuses the committed attempt rather than claiming a new epoch"
     );
     assert_eq!(fence.unresolved_mutations(), 0);
@@ -294,7 +294,7 @@ async fn lost_selected_claim_and_publication_acknowledgments_reconcile_without_r
         }
     };
     let same_epoch = same_session.token_fence().owner_epoch;
-    assert!(same_epoch > committed_epoch as u64);
+    assert!(same_epoch > u64::try_from(committed_epoch).unwrap());
     assert_eq!(same_session.token_fence().owner_session, SESSION);
     drop(same_session);
     selected.session = "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb".into();
@@ -302,7 +302,7 @@ async fn lost_selected_claim_and_publication_acknowledgments_reconcile_without_r
     selected.assignment_version += 1;
     let replacement = fence.lock_selected(&selected).await.unwrap();
     assert!(replacement.token_fence().owner_epoch > same_epoch);
-    assert!(replacement.token_fence().owner_epoch > committed_epoch as u64);
+    assert!(replacement.token_fence().owner_epoch > u64::try_from(committed_epoch).unwrap());
     assert_eq!(replacement.token_fence().owner_session, selected.session);
     drop(replacement);
     assert_eq!(fence.unresolved_mutations(), 0);

@@ -562,7 +562,7 @@ impl BadgesStore {
                 .bind(&t.description)
                 .bind(&t.assets)
                 .bind(t.steps)
-                .bind(ordinal as i32)
+                .bind(crate::casts::len_i32(ordinal))
                 .execute(&mut *tx)
                 .await?;
             }

@@ -158,7 +158,7 @@ pub async fn run_once(pool: &PgPool) -> anyhow::Result<u64> {
             .execute(&mut *txn)
             .await?;
         txn.commit().await?;
-        if rows.len() < PAGE_SIZE as usize {
+        if rows.len() < crate::casts::page(PAGE_SIZE) {
             break;
         }
     }

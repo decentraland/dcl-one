@@ -169,13 +169,18 @@ impl Settings {
                 .store_max_bytes
                 .filter(|b| *b > 0)
                 .unwrap_or(DEFAULT_STORE_MAX_BYTES),
-            mem_cache_bytes: raw
-                .mem_cache_bytes
-                .filter(|b| *b > 0)
-                .unwrap_or(DEFAULT_MEM_CACHE_BYTES) as usize,
+            mem_cache_bytes: crate::casts::to_usize(
+                raw.mem_cache_bytes
+                    .filter(|b| *b > 0)
+                    .unwrap_or(DEFAULT_MEM_CACHE_BYTES),
+            ),
             upstream,
             bake,
-            bake_max_failures: raw.bake.max_failures.filter(|n| *n > 0).unwrap_or(3) as u32,
+            bake_max_failures: raw
+                .bake
+                .max_failures
+                .filter(|n| *n > 0)
+                .map_or(3, |n| u32::try_from(n).unwrap_or(u32::MAX)),
             bake_quarantine_secs: raw.bake.quarantine_secs.unwrap_or(86_400),
         })
     }

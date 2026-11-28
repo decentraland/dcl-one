@@ -2,6 +2,11 @@
 //! the eligibility table as derived from authoritative facts, the crafted
 //! credit-spend bypasses, cart partitioning, and the pinned upstream rounding
 //! and chain-read vectors (`tests/fixtures/shop/`).
+#![allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    reason = "test fixtures and measurements use small values"
+)]
 
 use alloy_primitives::{U256, keccak256};
 use catalyst::shop::policy::{

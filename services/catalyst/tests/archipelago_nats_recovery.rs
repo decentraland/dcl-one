@@ -992,7 +992,7 @@ async fn real_pulse_configured_legacy_owner_completes_durable_fenced_takeover() 
     .await
     .unwrap();
     assert!(generation > 1 && floor > 0);
-    assert!(claims["nbf"].as_u64().unwrap() >= floor as u64);
+    assert!(claims["nbf"].as_u64().unwrap() >= u64::try_from(floor).unwrap());
     let client = async_nats::connect(broker.url()).await.unwrap();
     assert!(
         real_lookup(&client, &address, &session_b)

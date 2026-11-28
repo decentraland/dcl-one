@@ -322,7 +322,10 @@ pub fn decode_abi_string(hex_result: Option<&str>) -> Option<String> {
         let end = at.checked_add(32)?;
         let w = raw.get(at..end)?;
         let v = U256::from_be_slice(w);
-        (v.bit_len() <= 48).then(|| v.to::<u64>() as usize)
+        if v.bit_len() > 48 {
+            return None;
+        }
+        usize::try_from(v.to::<u64>()).ok()
     };
     let off = word(0)?;
     let len = word(off).unwrap_or(0);

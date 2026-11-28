@@ -157,7 +157,7 @@ pub fn moves_master(p: &mut Progress, timestamp_ms: i64) {
         .get("last_used_emote_timestamp")
         .and_then(Value::as_f64)
         .unwrap_or(0.0);
-    if minute as f64 <= last {
+    if crate::casts::approx_f64(minute) <= last {
         return;
     }
     p.state
@@ -441,6 +441,13 @@ pub fn wearable_item_urn(raw: &str) -> Option<String> {
     Some(item)
 }
 
+#[allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_possible_wrap,
+    clippy::cast_sign_loss,
+    clippy::cast_precision_loss,
+    reason = "test fixtures use small literal values"
+)]
 #[cfg(test)]
 mod tests {
     use super::*;

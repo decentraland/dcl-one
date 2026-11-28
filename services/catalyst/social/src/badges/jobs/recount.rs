@@ -220,7 +220,7 @@ async fn batch(pass: &Pass, recount: Recount) -> Result<(u64, bool), sqlx::Error
             written += 1;
         }
     }
-    let more = candidates.len() as i64 == limit;
+    let more = crate::casts::len_i64(candidates.len()) == limit;
     let (position, resume_after) = match candidates.last() {
         Some((last, _)) if more => (passes, Some(last.as_str())),
         _ => (passes + 1, None),

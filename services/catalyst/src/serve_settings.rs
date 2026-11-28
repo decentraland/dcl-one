@@ -85,7 +85,8 @@ pub(super) fn credits_settings(config: &Config) -> anyhow::Result<shop::credits:
         studio_grant_max_cents: config.shop.credits_studio_grant_max_cents,
         usage_index_enabled: config.shop.credits_usage_index_enabled,
         usage_rpc_url: non_empty(&config.economy.rpc_endpoint_polygon),
-        usage_chain_id: config.economy.collections_chain_id as i64,
+        usage_chain_id: i64::try_from(config.economy.collections_chain_id)
+            .context("the collections chain ID is out of range")?,
         usage_start_block: config.shop.credits_usage_start_block,
         topup_start_block: config.shop.credits_topup_start_block,
         topups_enabled: Config::non_empty(&config.economy.catalyrst_economy_admin_token).is_some()

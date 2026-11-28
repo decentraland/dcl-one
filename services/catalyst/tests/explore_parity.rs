@@ -798,9 +798,9 @@ async fn reseed(
                 .map(|c| c.as_str().unwrap().to_string())
                 .collect::<Vec<String>>(),
         )
-        .bind(place["likes"].as_i64().unwrap() as i32)
-        .bind(place["dislikes"].as_i64().unwrap() as i32)
-        .bind(place["favorites"].as_i64().unwrap() as i32)
+        .bind(i32::try_from(place["likes"].as_i64().unwrap()).unwrap())
+        .bind(i32::try_from(place["dislikes"].as_i64().unwrap()).unwrap())
+        .bind(i32::try_from(place["favorites"].as_i64().unwrap()).unwrap())
         .bind(place["deployed_at"].as_str().unwrap())
         .bind(place["disabled"].as_bool().unwrap())
         .bind(place["highlighted"].as_bool().unwrap())
@@ -1581,7 +1581,7 @@ fn check_invariant(inv: &str, body: &Value, text: &str) -> Result<(), String> {
         let Ok(n) = strip_trailing_note(n).parse::<i64>() else {
             return unparseable();
         };
-        let len = items()?.len() as i64;
+        let len = i64::try_from(items()?.len()).unwrap();
         return match count_op(op, len, n) {
             Some(true) => Ok(()),
             Some(false) => Err(format!("data.length is {len}, expected {op} {n}")),
@@ -2433,7 +2433,10 @@ async fn scale_dataset(pool: &PgPool, owner: &str) {
         let start = format!("2031-{month:02}-{day:02}T10:00:00.000Z");
         let finish = format!("2031-{month:02}-{day:02}T11:00:00.000Z");
         let mut event = event_json(&id, owner, &start, &finish);
-        let (x, y) = ((i % 150) as i64, (i / 150) as i64);
+        let (x, y) = (
+            i64::try_from(i % 150).unwrap(),
+            i64::try_from(i / 150).unwrap(),
+        );
         set(
             &mut event,
             &[

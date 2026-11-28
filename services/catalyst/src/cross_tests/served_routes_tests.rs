@@ -238,7 +238,7 @@ impl Rig {
             "INSERT INTO builder.uploaded_contents (hash, size, uploaded_by) VALUES ($1, $2, $3)",
         )
         .bind(&corpus.hash)
-        .bind(blob.len() as i64)
+        .bind(i64::try_from(blob.len()).unwrap())
         .bind(&user)
         .execute(&pool)
         .await

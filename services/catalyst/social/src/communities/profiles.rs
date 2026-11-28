@@ -94,7 +94,7 @@ fn js_number(n: &serde_json::Number) -> serde_json::Number {
     const SAFE: f64 = 9_007_199_254_740_992.0; // 2^53
     match n.as_f64() {
         Some(f) if n.is_f64() && f.fract() == 0.0 && f.abs() < SAFE => {
-            serde_json::Number::from(f as i64)
+            serde_json::Number::from(crate::casts::f64_to_i64(f))
         }
         _ => n.clone(),
     }

@@ -398,8 +398,8 @@ async fn upsert_addressed(
         .fetch_one(tx)
         .await?;
     Ok(Upserted {
-        inserted: inserted as u64,
-        updated: updated as u64,
+        inserted: crate::casts::nonneg_u64(inserted),
+        updated: crate::casts::nonneg_u64(updated),
     })
 }
 
@@ -434,8 +434,8 @@ async fn upsert_broadcasts(
     .fetch_one(tx)
     .await?;
     Ok(Upserted {
-        inserted: inserted as u64,
-        updated: updated as u64,
+        inserted: crate::casts::nonneg_u64(inserted),
+        updated: crate::casts::nonneg_u64(updated),
     })
 }
 

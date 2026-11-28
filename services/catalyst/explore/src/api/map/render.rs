@@ -8,6 +8,7 @@ use tiny_skia::{Color, Paint, Pixmap, Rect, Transform};
 
 use super::Grid;
 use super::tiles::{Tile, TileRentalListing, TileType, coords_to_id};
+use crate::casts;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Coord {
@@ -22,8 +23,8 @@ struct Viewport {
 
 fn get_viewport(width: u32, height: u32, center: Coord, size: u32) -> Viewport {
     let padding = 1i32;
-    let dim_w = ((width as f64 / size as f64).ceil() as i32) + padding;
-    let dim_h = ((height as f64 / size as f64).ceil() as i32) + padding;
+    let dim_w = casts::f64_i32((f64::from(width) / f64::from(size)).ceil()) + padding;
+    let dim_h = casts::f64_i32((f64::from(height) / f64::from(size)).ceil()) + padding;
     let nw = Coord {
         x: center.x - div_ceil(dim_w, 2),
         y: center.y + div_ceil(dim_h, 2),
@@ -37,7 +38,7 @@ fn get_viewport(width: u32, height: u32, center: Coord, size: u32) -> Viewport {
 
 #[inline]
 fn div_ceil(a: i32, b: i32) -> i32 {
-    (a as f64 / b as f64).ceil() as i32
+    casts::f64_i32((f64::from(a) / f64::from(b)).ceil())
 }
 
 struct RenderTile {
@@ -267,6 +268,10 @@ fn draw_tile(
     }
 }
 
+#[allow(
+    clippy::cast_possible_truncation,
+    reason = "pixel coordinates of an image at most 4096 px wide fit f32"
+)]
 fn fill_rect(pixmap: &mut Pixmap, paint: &Paint, x: f64, y: f64, w: f64, h: f64) {
     if w <= 0.0 || h <= 0.0 {
         return;
@@ -276,11 +281,11 @@ fn fill_rect(pixmap: &mut Pixmap, paint: &Paint, x: f64, y: f64, w: f64, h: f64)
     }
 }
 
-const MINIMAP_DIM: usize = 512;
+const MINIMAP_PX: u32 = 512;
+const MINIMAP_DIM: usize = MINIMAP_PX as usize;
 
 fn minimap_pixmap(rgba: &[u8]) -> Result<Vec<u8>, String> {
-    let mut pixmap =
-        Pixmap::new(MINIMAP_DIM as u32, MINIMAP_DIM as u32).ok_or("invalid pixmap dimensions")?;
+    let mut pixmap = Pixmap::new(MINIMAP_PX, MINIMAP_PX).ok_or("invalid pixmap dimensions")?;
     pixmap.data_mut().copy_from_slice(rgba);
     pixmap.encode_png().map_err(|e| e.to_string())
 }
@@ -289,11 +294,10 @@ fn minimap_pointer(x: i32, y: i32) -> Option<usize> {
     if !(-256..=255).contains(&x) || !(-256..=255).contains(&y) {
         return None;
     }
-    let absolute_y = MINIMAP_DIM as i32 - (y + 256);
-    if !(0..MINIMAP_DIM as i32).contains(&absolute_y) {
-        return None;
-    }
-    Some(((x + 256 + absolute_y * MINIMAP_DIM as i32) * 4) as usize)
+    // Both are non-negative after the range check; row 512 (y = -256) is off the image.
+    let col = usize::try_from(x + 256).ok()?;
+    let row = usize::try_from(256 - y).ok().filter(|r| *r < MINIMAP_DIM)?;
+    Some((col + row * MINIMAP_DIM) * 4)
 }
 
 /// One pixel per parcel: R carries the top/left/topLeft flags, G the type.

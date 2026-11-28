@@ -576,7 +576,7 @@ mod tests {
         let held = proxy
             .in_flight
             .clone()
-            .acquire_many_owned(CONCURRENT_FORWARDS as u32 - 1)
+            .acquire_many_owned(u32::try_from(CONCURRENT_FORWARDS).unwrap() - 1)
             .await
             .unwrap();
         // The last place stays taken while the answer's body is unread.

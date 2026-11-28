@@ -52,7 +52,7 @@ fn decode_hex_message(value: &str) -> Option<String> {
     for pair in body.as_bytes().chunks(2) {
         let high = char::from(pair[0]).to_digit(16)?;
         let low = char::from(pair[1]).to_digit(16)?;
-        bytes.push(((high << 4) | low) as u8);
+        bytes.push(u8::try_from((high << 4) | low).ok()?);
     }
     Some(String::from_utf8_lossy(&bytes).into_owned())
 }

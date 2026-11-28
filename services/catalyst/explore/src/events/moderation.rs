@@ -790,9 +790,12 @@ pub(super) fn invalid_image(url: &str) -> ApiError {
 
 /// `isInsideWorldLimits(x, y)` for every event, world events included
 /// (`createEvent.ts:95-103`, `updateEvent.ts:349-357`).
-pub(super) fn check_world_limits(x: i32, y: i32, body: &Value) -> Result<(), ApiError> {
-    if super::handlers::is_inside_world_limits(x, y) {
-        Ok(())
+/// The checked coordinates; one outside `i32` is outside the world.
+pub(super) fn check_world_limits(x: i64, y: i64, body: &Value) -> Result<(i32, i32), ApiError> {
+    if let (Ok(x), Ok(y)) = (i32::try_from(x), i32::try_from(y))
+        && super::handlers::is_inside_world_limits(x, y)
+    {
+        Ok((x, y))
     } else {
         Err(ApiError::with_data(
             400,
@@ -847,7 +850,7 @@ pub fn validate_create(body: &CreateEvent, now: DateTime<Utc>) -> Result<DateTim
     if !(-170..=170).contains(&body.x) || !(-170..=170).contains(&body.y) {
         return Err(ApiError::bad_request("coordinates out of range"));
     }
-    check_world_limits(body.x, body.y, &echo)?;
+    check_world_limits(body.x.into(), body.y.into(), &echo)?;
     let recurrent = body.recurrent.unwrap_or(false);
     let frequency = body.recurrent_frequency.as_deref();
     let until = body.recurrent_until.as_deref().and_then(parse_rfc3339);
@@ -895,7 +898,9 @@ pub fn build_create_raw(
         .url
         .clone()
         .filter(|u| !u.is_empty())
-        .unwrap_or_else(|| super::metadata::jump_in_url(body.server.as_deref(), body.x, body.y));
+        .unwrap_or_else(|| {
+            super::metadata::jump_in_url(body.server.as_deref(), body.x.into(), body.y.into())
+        });
     let mut seen = std::collections::HashSet::new();
     let schedules: Vec<String> = body
         .schedules

@@ -156,7 +156,7 @@ pub(crate) fn json_bytes(value: &serde_json::Value) -> usize {
 pub(super) fn rpc_request(name: &str, request: &serde_json::Value) -> std::time::Instant {
     let started = std::time::Instant::now();
     dcl_metrics::histogram!("rpc_in_procedure_call_size_bytes", "procedure" => procedure_label(name))
-        .record(json_bytes(request) as f64);
+        .record(crate::casts::approx_len_f64(json_bytes(request)));
     started
 }
 
@@ -192,7 +192,7 @@ fn response_code(response: &serde_json::Value) -> &'static str {
 
 pub(super) fn rpc_response(name: &str, response: &serde_json::Value, started: std::time::Instant) {
     let code = response_code(response);
-    dcl_metrics::histogram!("rpc_out_procedure_call_size_bytes", "code" => code, "procedure" => procedure_label(name)).record(json_bytes(response) as f64);
+    dcl_metrics::histogram!("rpc_out_procedure_call_size_bytes", "code" => code, "procedure" => procedure_label(name)).record(crate::casts::approx_len_f64(json_bytes(response)));
     rpc_finished(name, code, started);
 }
 
@@ -257,6 +257,13 @@ pub(super) async fn record_request(request: Request<Body>, next: Next) -> Respon
     response
 }
 
+#[allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_possible_wrap,
+    clippy::cast_sign_loss,
+    clippy::cast_precision_loss,
+    reason = "test fixtures use small literal values"
+)]
 #[cfg(test)]
 mod tests {
     use super::super::State as RpcState;

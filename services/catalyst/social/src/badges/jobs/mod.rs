@@ -31,6 +31,13 @@ mod client_events;
 mod deployments;
 mod recount;
 mod sales;
+#[allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_possible_wrap,
+    clippy::cast_sign_loss,
+    clippy::cast_precision_loss,
+    reason = "test fixtures use small literal values"
+)]
 #[cfg(test)]
 mod tests;
 
@@ -372,7 +379,7 @@ where
         gaps = subtract(&loaded, &found);
         // Expire only after a complete re-read: a truncated one did not look
         // at every gap.
-        if (rows.len() as i64) < limit {
+        if crate::casts::len_i64(rows.len()) < limit {
             let grace = grace(pass);
             gaps.retain(|g| !(g.restamped && g.horizon <= xmin && g.seen_at <= now - grace));
             restamp = gaps
@@ -380,9 +387,9 @@ where
                 .any(|g| !g.restamped && g.horizon <= xmin && g.seen_at <= now - grace);
         }
     }
-    let room = (limit - rows.len() as i64).max(0);
+    let room = (limit - crate::casts::len_i64(rows.len())).max(0);
     let mut position_after = position;
-    let mut more = rows.len() as i64 == limit;
+    let mut more = crate::casts::len_i64(rows.len()) == limit;
     let mut new_gaps = Vec::new();
     if room > 0 {
         let mut ahead: Vec<R> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
@@ -394,7 +401,7 @@ where
         .bind(room)
         .fetch_all(&mut *conn)
         .await?;
-        let full = ahead.len() as i64 == room;
+        let full = crate::casts::len_i64(ahead.len()) == room;
         let keys: Vec<i64> = ahead.iter().map(Keyed::key).collect();
         let (ranges, passable) = missing(position, &keys, MAX_GAPS.saturating_sub(gaps.len()));
         if passable < ahead.len() {
@@ -477,7 +484,7 @@ pub(crate) async fn report_id_lag(pool: &PgPool, source: &IdSource) {
         Ok(Some((lag, gaps, oldest))) => {
             report_lag(source.name, lag);
             dcl_metrics::gauge!("badges_processor_cursor_gaps", "source" => source.name)
-                .set(gaps as f64);
+                .set(crate::casts::approx_f64(gaps));
             dcl_metrics::gauge!("badges_processor_cursor_oldest_gap_seconds", "source" => source.name)
                 .set(oldest.unwrap_or(0.0).max(0.0));
         }
@@ -507,7 +514,8 @@ pub(crate) async fn id_lag(
 
 /// `badges_processor_cursor_lag` of `source`, in its own unit (ids, blocks).
 pub(crate) fn report_lag(source: &'static str, lag: i64) {
-    dcl_metrics::gauge!("badges_processor_cursor_lag", "source" => source).set(lag.max(0) as f64);
+    dcl_metrics::gauge!("badges_processor_cursor_lag", "source" => source)
+        .set(crate::casts::approx_f64(lag.max(0)));
 }
 
 /// The cursor of `source`, locked for this transaction; `None` when the

@@ -243,7 +243,7 @@ pub async fn serve(state: &Shared, kind: Kind, file: &str) -> anyhow::Result<Ser
                 .bind(file)
                 .bind(&cid)
                 .bind(content_type)
-                .bind(body.len() as i64)
+                .bind(crate::casts::len_i64(body.len()))
                 .execute(&state.pool)
                 .await
                 .context("recording explore.poster")?;

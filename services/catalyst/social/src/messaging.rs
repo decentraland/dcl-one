@@ -1037,7 +1037,9 @@ fn check_commit_routing(
     group_id: &str,
     epoch: i64,
 ) -> Result<(), ApiError> {
-    if !routing.group_id_hex.eq_ignore_ascii_case(group_id) || routing.epoch as i64 != epoch {
+    if !routing.group_id_hex.eq_ignore_ascii_case(group_id)
+        || i64::try_from(routing.epoch).ok() != Some(epoch)
+    {
         return Err(ApiError::bad_request(format!(
             "commit routing does not match the group and epoch (expected epoch {epoch})"
         )));
@@ -1082,9 +1084,9 @@ async fn check_roster_change(
         } else if let Some(community) = group.community {
             entitled_count(pool, community, added).await?
         } else {
-            added.len() as i64
+            crate::casts::len_i64(added.len())
         };
-        if admitted != added.len() as i64 {
+        if admitted != crate::casts::len_i64(added.len()) {
             return Err(forbidden(if group.kind == "dm" {
                 "a 'dm' group keeps its two members"
             } else {
@@ -1236,7 +1238,9 @@ pub async fn send_message(
             "ciphertext group_id does not match the URL group",
         ));
     }
-    if routing.epoch as i64 > current_epoch {
+    let message_epoch = i64::try_from(routing.epoch)
+        .map_err(|_| ApiError::bad_request("message epoch is out of range"))?;
+    if message_epoch > current_epoch {
         return Err(ApiError::labeled(
             409,
             "epoch ahead",
@@ -1265,7 +1269,7 @@ pub async fn send_message(
     .bind(&signature_hash)
     .bind(&group_id)
     .bind(&signer)
-    .bind(routing.epoch as i64)
+    .bind(message_epoch)
     .bind(&ciphertext_hash)
     .bind(&ciphertext_cid)
     .bind(now)

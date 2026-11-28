@@ -304,8 +304,10 @@ fn retry_delay(attempt: u32, headers: Option<&reqwest::header::HeaderMap>) -> Du
                 .and_then(|s| {
                     s.parse::<f64>().map(|n| n * 1000.0).ok().or_else(|| {
                         chrono::DateTime::parse_from_rfc2822(s).ok().map(|date| {
-                            (date.with_timezone(&chrono::Utc) - chrono::Utc::now())
-                                .num_milliseconds() as f64
+                            crate::casts::approx_f64(
+                                (date.with_timezone(&chrono::Utc) - chrono::Utc::now())
+                                    .num_milliseconds(),
+                            )
                         })
                     })
                 })
@@ -314,8 +316,11 @@ fn retry_delay(attempt: u32, headers: Option<&reqwest::header::HeaderMap>) -> Du
             return Duration::from_secs_f64(ms / 1000.0);
         }
     }
-    let jitter = 1.0 - (uuid::Uuid::new_v4().as_u128() as u64 as f64 / u64::MAX as f64) * 0.25;
-    Duration::from_secs_f64(0.5 * 2f64.powi(attempt as i32) * jitter)
+    let low = uuid::Uuid::new_v4().as_u64_pair().1;
+    let jitter =
+        1.0 - (crate::casts::approx_u64_f64(low) / crate::casts::approx_u64_f64(u64::MAX)) * 0.25;
+    let exponent = i32::try_from(attempt).unwrap_or(i32::MAX);
+    Duration::from_secs_f64(0.5 * 2f64.powi(exponent) * jitter)
 }
 fn truthy(value: &Value) -> bool {
     match value {
@@ -531,4 +536,8 @@ pub fn spawn_job(state: &Arc<super::State>, jobs: &crate::jobs::Jobs) {
 
 #[cfg(test)]
 #[path = "compliance_transport_tests.rs"]
+#[allow(
+    clippy::cast_possible_truncation,
+    reason = "test fixtures use small literal values"
+)]
 mod transport_tests;

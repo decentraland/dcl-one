@@ -182,9 +182,9 @@ impl Profiles {
 fn rpc_profile(profile: RegistryProfile) -> ProfileInfo {
     let name_color = profile.name_color.as_ref().and_then(|color| {
         Some(NameColor {
-            r: color.get("r")?.as_f64()? as f32,
-            g: color.get("g")?.as_f64()? as f32,
-            b: color.get("b")?.as_f64()? as f32,
+            r: crate::casts::narrow_f32(color.get("r")?.as_f64()?),
+            g: crate::casts::narrow_f32(color.get("g")?.as_f64()?),
+            b: crate::casts::narrow_f32(color.get("b")?.as_f64()?),
         })
     });
     ProfileInfo {

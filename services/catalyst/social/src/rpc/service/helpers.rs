@@ -174,7 +174,10 @@ pub(super) fn page_of(limit: i64, offset: i64) -> i32 {
         return 1;
     }
     let off = offset.max(0);
-    (((off as f64) / (limit as f64)).ceil() as i64 + 1) as i32
+    let page = crate::casts::f64_to_i64(
+        (crate::casts::approx_f64(off) / crate::casts::approx_f64(limit)).ceil(),
+    );
+    crate::casts::clamp_i32(page.saturating_add(1))
 }
 
 pub(super) fn empty_friends_profiles() -> PaginatedFriendsProfilesResponse {

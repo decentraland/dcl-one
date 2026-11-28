@@ -699,6 +699,13 @@ fn payload<T: Serialize>(message: &T) -> Value {
     serde_json::to_value(message).unwrap_or(Value::Null)
 }
 
+#[allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_possible_wrap,
+    clippy::cast_sign_loss,
+    clippy::cast_precision_loss,
+    reason = "test fixtures use small literal values"
+)]
 #[cfg(test)]
 mod tests {
     use super::*;

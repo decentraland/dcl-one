@@ -170,6 +170,10 @@ pub async fn statistics(
         hot_scenes,
     })
 }
+#[allow(
+    clippy::cast_possible_truncation,
+    reason = "range-checked against i32 just before the cast"
+)]
 fn integer(value: f64) -> Option<i32> {
     (value.is_finite() && value >= i32::MIN as f64 && value <= i32::MAX as f64)
         .then_some(value as i32)

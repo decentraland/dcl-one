@@ -277,7 +277,7 @@ impl Referral {
         if let [newest, previous, ..] = recent.as_slice() {
             let newest = newest.and_utc().timestamp_millis();
             let previous = previous.and_utc().timestamp_millis();
-            if ((newest - previous) as f64) < self.settings.suspicious_window_ms {
+            if crate::casts::approx_f64(newest - previous) < self.settings.suspicious_window_ms {
                 self.slack
                     .send(self.slack.timing(referrer.as_str(), newest, previous))
                     .await;
@@ -345,7 +345,7 @@ impl Referral {
         let pending: Option<(String, i32)> = sqlx::query_as("SELECT referrer,reward_tier FROM social.referral_progress WHERE invited_user=lower($1) AND reward_tier IS NOT NULL")
             .bind(invited).fetch_optional(&self.pool).await.map_err(database_error)?;
         if let Some((referrer, tier)) = pending {
-            self.reward(&referrer, invited, tier.into()).await?;
+            self.reward(&referrer, invited, tier).await?;
         }
         Ok(())
     }
@@ -439,7 +439,7 @@ impl Referral {
             sqlx::query("INSERT INTO social.referral_login_receipts(invited_user,login_id,expires_at,received_at) VALUES($1,$2,$3,$4)")
                 .bind(&invited).bind(login_id).bind(expires_at).bind(now).execute(&mut *tx).await.map_err(login_database_error)?;
         }
-        if (days.len() as f64) < self.settings.min_login_days {
+        if crate::casts::approx_len_f64(days.len()) < self.settings.min_login_days {
             let today = match today {
                 Some(day) => day,
                 None => sqlx::query_scalar("SELECT timezone('UTC',clock_timestamp())::date")
@@ -480,7 +480,7 @@ impl Referral {
         if tier {
             sqlx::query("UPDATE social.referral_progress SET reward_tier=$2 WHERE invited_user=$1")
                 .bind(&invited)
-                .bind(total as i32)
+                .bind(crate::casts::clamp_i32(total))
                 .execute(&mut *tx)
                 .await
                 .map_err(login_database_error)?;
@@ -527,7 +527,7 @@ impl Referral {
                     .bind(&invited).execute(&self.pool).await.map_err(database_error)?;
                 continue;
             }
-            match self.reward(&referrer, &invited, tier.into()).await {
+            match self.reward(&referrer, &invited, tier).await {
                 Ok(RewardAttempt::Settled) => {}
                 Ok(RewardAttempt::EmptySupply) => {
                     tracing::warn!(tier, "referral reward supply is empty; retrying later");
@@ -546,8 +546,9 @@ impl Referral {
         &self,
         referrer: &str,
         invited: &str,
-        total: i64,
+        tier: i32,
     ) -> Result<RewardAttempt, CommError> {
+        let total = i64::from(tier);
         let mut connection = self.pool.acquire().await.map_err(database_error)?;
         // Closing this infrequent worker connection also releases a lock when
         // cancellation interrupts acquisition (SQLx try_acquire is not cancel safe).
@@ -576,7 +577,7 @@ impl Referral {
              RETURNING p.reward_requested_at,p.reward_response,p.reward_paid,previous.reward_retry_at",
         )
         .bind(invited)
-        .bind(total as i32)
+        .bind(tier)
         .fetch_optional(&mut *guard)
         .await
         .map_err(database_error)?;
@@ -614,7 +615,7 @@ impl Referral {
                     )
                 })?;
             let claimed = sqlx::query("UPDATE social.referral_progress SET reward_requested_at=timezone('UTC',now()) WHERE invited_user=$1 AND reward_tier=$2 AND reward_requested_at IS NULL")
-                .bind(invited).bind(total as i32).execute(&mut *guard).await.map_err(database_error)?.rows_affected();
+                .bind(invited).bind(tier).execute(&mut *guard).await.map_err(database_error)?.rows_affected();
             if claimed == 0 {
                 return Ok(RewardAttempt::Settled);
             }
@@ -662,7 +663,7 @@ impl Referral {
                      SET reward_retry_at=timezone('UTC',now())+$3::interval+moved.position*interval '1 microsecond' \
                      FROM moved WHERE p.invited_user=moved.invited_user",
                 ))
-                .bind(total as i32)
+                .bind(tier)
                 .bind(invited)
                 .bind(EMPTY_SUPPLY_RETRY)
                 .bind(gather)
@@ -677,7 +678,7 @@ impl Referral {
                     ")) + interval '1 microsecond' \
                      WHERE invited_user=$2 AND reward_tier=$1",
                 ))
-                .bind(total as i32)
+                .bind(tier)
                 .bind(invited)
                 .bind(EMPTY_SUPPLY_RETRY)
                 .execute(&mut *tx)
@@ -711,7 +712,7 @@ impl Referral {
             .await
             .map_err(database_error)?;
         sqlx::query("INSERT INTO social.referral_reward_images(referrer,reward_image_url,tier) SELECT $1,$2,$3 WHERE NOT EXISTS (SELECT 1 FROM social.referral_reward_images WHERE referrer=$1 AND tier=$3)")
-            .bind(referrer).bind(image).bind(total as i32).execute(&mut *tx).await.map_err(database_error)?;
+            .bind(referrer).bind(image).bind(tier).execute(&mut *tx).await.map_err(database_error)?;
         if !paid.as_ref().is_some_and(|paid| paid["notified"] == true) {
             let notification = self.notification(referrer, invited, total, Some(&reward))?;
             crate::notifications::insert_notifications(&mut *tx, &[notification])
@@ -719,7 +720,7 @@ impl Referral {
                 .map_err(database_error)?;
         }
         sqlx::query("UPDATE social.referral_progress SET reward_tier=NULL,reward_paid=NULL,reward_retry_at=NULL WHERE invited_user=$1 AND reward_tier=$2")
-            .bind(invited).bind(total as i32).execute(&mut *tx).await.map_err(database_error)?;
+            .bind(invited).bind(tier).execute(&mut *tx).await.map_err(database_error)?;
         tx.commit().await.map_err(database_error)?;
         Ok(RewardAttempt::Settled)
     }
@@ -1142,6 +1143,13 @@ pub async fn add_referral_email(
     Ok(StatusCode::NO_CONTENT)
 }
 
+#[allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_possible_wrap,
+    clippy::cast_sign_loss,
+    clippy::cast_precision_loss,
+    reason = "test fixtures use small literal values"
+)]
 #[cfg(test)]
 mod tests {
     use super::*;

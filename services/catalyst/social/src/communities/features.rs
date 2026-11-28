@@ -123,7 +123,7 @@ impl super::State {
         )
         .await?;
         dcl_metrics::gauge!("social_dapps_flags_last_refresh_timestamp_seconds")
-            .set(chrono::Utc::now().timestamp() as f64);
+            .set(crate::casts::approx_f64(chrono::Utc::now().timestamp()));
         Ok(())
     }
 

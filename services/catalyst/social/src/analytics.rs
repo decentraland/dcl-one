@@ -166,7 +166,7 @@ fn request_timeout(configured: Option<f64>) -> Duration {
     };
     // Node's setTimeout integer bucket, including finite overflow/sub-ms input.
     let bucket = if (1.0..=2_147_483_647.0).contains(&milliseconds) {
-        milliseconds.trunc() as u64
+        crate::casts::f64_to_u64(milliseconds.trunc())
     } else {
         1
     };

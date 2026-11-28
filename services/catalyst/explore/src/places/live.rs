@@ -242,7 +242,10 @@ pub async fn fill_connected(live: &Arc<Live>, rows: &mut [PlaceRow]) {
         let addresses = comms_key(d)
             .and_then(|k| connected.get(&k).cloned())
             .flatten();
-        let seen = addresses.as_ref().map(|a| a.len() as i32).unwrap_or(0);
+        let seen = addresses
+            .as_ref()
+            .map(|a| crate::casts::len_i32(a.len()))
+            .unwrap_or(0);
         if seen > d.user_count.unwrap_or(0) {
             d.user_count = Some(seen);
         }

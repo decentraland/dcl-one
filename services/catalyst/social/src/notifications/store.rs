@@ -344,7 +344,7 @@ impl NotificationsStore {
                 .bind(now)
                 .fetch_one(&self.pool)
                 .await?;
-            return Ok(inserted as u64);
+            return Ok(crate::casts::nonneg_u64(inserted));
         };
         if list.is_empty() {
             return Ok(0);
@@ -378,7 +378,7 @@ impl NotificationsStore {
             .bind(now)
             .fetch_one(&self.pool)
             .await?;
-        Ok(inserted as u64)
+        Ok(crate::casts::nonneg_u64(inserted))
     }
 
     pub async fn mark_read(&self, address: &Address, ids: &[Uuid]) -> Result<u64, ApiError> {
@@ -404,7 +404,7 @@ impl NotificationsStore {
         .bind(now_utc())
         .fetch_one(&self.pool)
         .await?;
-        Ok(updated as u64)
+        Ok(crate::casts::nonneg_u64(updated))
     }
 
     /// The subscription row (the defaults without one) and, read on its own,

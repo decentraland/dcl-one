@@ -552,12 +552,14 @@ pub async fn replace_ranking(
         .collect();
     lock_world_scenes(&mut tx, &touched).await?;
     for (world, spared, applied, cleared_ids, scene_ids) in legs {
-        let applied_count = write_overlays(&mut tx, &applied, actor).await? as i64;
+        let applied_count =
+            crate::casts::count_i64(write_overlays(&mut tx, &applied, actor).await?);
         let cleared: Vec<(String, Value)> = cleared_ids
             .into_iter()
             .map(|id| (id, json!({ "ranking": 0 })))
             .collect();
-        let mut cleared_count = write_overlays(&mut tx, &cleared, actor).await? as i64;
+        let mut cleared_count =
+            crate::casts::count_i64(write_overlays(&mut tx, &cleared, actor).await?);
         if !scene_ids.is_empty() {
             // Re-read under the lock: a scene curated meanwhile keeps its ranking.
             let scenes: Vec<(String, Value)> =
@@ -571,7 +573,7 @@ pub async fn replace_ranking(
                     .collect();
             write_overlays(&mut tx, &scenes, actor).await?;
             // Disjoint from the catalogue clear, which leaves scene ids out.
-            cleared_count += scenes.len() as i64;
+            cleared_count += crate::casts::len_i64(scenes.len());
         }
         if world {
             result.worlds.applied = applied_count;

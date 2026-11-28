@@ -20,6 +20,13 @@ pub mod intervals;
 pub mod sink;
 pub mod sweeper;
 
+#[allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_possible_wrap,
+    clippy::cast_sign_loss,
+    clippy::cast_precision_loss,
+    reason = "test fixtures use small literal values"
+)]
 #[cfg(test)]
 mod tests;
 
@@ -164,11 +171,13 @@ pub async fn drain(
     retries: &mut Retries,
 ) -> anyhow::Result<()> {
     let mut pass = Pass::default();
-    while apply_from(pool, settings, asset_base, clock, retries, &mut pass).await? as i64
-        >= settings.event_batch
+    while crate::casts::len_i64(
+        apply_from(pool, settings, asset_base, clock, retries, &mut pass).await?,
+    ) >= settings.event_batch
     {}
     retries.waits.retain(|seq, _| pass.seen.contains(seq));
-    dcl_metrics::gauge!("badges_presence_waiting_events").set(retries.waits.len() as f64);
+    dcl_metrics::gauge!("badges_presence_waiting_events")
+        .set(crate::casts::approx_len_f64(retries.waits.len()));
     Ok(())
 }
 
@@ -241,7 +250,7 @@ async fn apply_from(
     if pass.after == 0 {
         match oldest_not_waiting_ms(pool, retries).await {
             Ok(oldest) => dcl_metrics::gauge!("badges_presence_queue_oldest_seconds")
-                .set(oldest.unwrap_or(0).max(0) as f64 / 1000.0),
+                .set(crate::casts::approx_f64(oldest.unwrap_or(0).max(0)) / 1000.0),
             // keep the last reading; 0 would report an empty queue
             Err(error) => {
                 dcl_metrics::counter!("badges_presence_queue_age_read_failures").increment(1);

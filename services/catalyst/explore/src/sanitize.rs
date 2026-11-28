@@ -293,10 +293,11 @@ fn parse_ipv4(host: &str) -> Option<u32> {
     }
 
     Some(
+        // At most three leading parts, the first in the top byte.
         leading
             .iter()
-            .enumerate()
-            .fold(*last, |acc, (i, n)| acc | (n << (8 * (3 - i as u32)))),
+            .zip([24u32, 16, 8])
+            .fold(*last, |acc, (n, shift)| acc | (n << shift)),
     )
 }
 
@@ -367,8 +368,9 @@ fn parse_ipv6(input: &str) -> Option<[u16; 8]> {
                 return None;
             }
             let embedded = parse_embedded_ipv4(&input[start..])?;
-            groups[index] = (embedded >> 16) as u16;
-            groups[index + 1] = embedded as u16;
+            let [a, b, c, d] = embedded.to_be_bytes();
+            groups[index] = u16::from_be_bytes([a, b]);
+            groups[index + 1] = u16::from_be_bytes([c, d]);
             index += 2;
             break;
         }
@@ -419,7 +421,9 @@ fn parse_embedded_ipv4(input: &str) -> Option<u32> {
 }
 
 fn hex_value(byte: u8) -> Option<u8> {
-    (byte as char).to_digit(16).map(|d| d as u8)
+    (byte as char)
+        .to_digit(16)
+        .and_then(|d| u8::try_from(d).ok())
 }
 
 fn strip_prefix_ignore_ascii_case<'a>(s: &'a str, prefix: &str) -> Option<&'a str> {

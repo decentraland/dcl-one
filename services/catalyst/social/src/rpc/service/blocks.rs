@@ -287,7 +287,7 @@ impl SocialServiceImpl {
         Ok(GetBlockedUsersResponse {
             profiles,
             pagination_data: Some(PaginatedResponse {
-                total: total as i32,
+                total: crate::casts::clamp_i32(total),
                 page: page_of(limit, offset),
             }),
         })

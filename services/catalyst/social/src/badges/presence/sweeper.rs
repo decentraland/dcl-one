@@ -179,7 +179,7 @@ impl Flow<'_> {
                 .await?
                 .rows_affected();
                 pruned += deleted;
-                if (deleted as i64) < batch {
+                if crate::casts::count_i64(deleted) < batch {
                     break;
                 }
             }

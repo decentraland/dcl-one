@@ -183,6 +183,10 @@ const INTEGER_FIELDS: &[&str] = &[
 /// A whole float (`11.0`) is the integer `11`, as JavaScript read it, so the
 /// readers (`as_i64`, the typed create body) see no float; a fraction stays
 /// for the schema to refuse (`validate::EVENT_INTEGER_FIELDS`).
+#[allow(
+    clippy::cast_precision_loss,
+    reason = "i64's bounds as f64 only bound the range check"
+)]
 fn normalize_integers(body: &mut Map<String, Value>) {
     for key in INTEGER_FIELDS {
         if let Some(value) = body.get_mut(*key)
@@ -190,7 +194,7 @@ fn normalize_integers(body: &mut Map<String, Value>) {
             && let Some(whole) = value.as_f64().filter(|f| f.fract() == 0.0)
             && (i64::MIN as f64..=i64::MAX as f64).contains(&whole)
         {
-            *value = json!(whole as i64);
+            *value = json!(crate::casts::f64_i64(whole));
         }
     }
 }
@@ -418,8 +422,8 @@ pub async fn create_event(
     normalize_integers(&mut data);
     let has_custom_url = !is_falsy(data.get("url"));
     if !has_custom_url {
-        let x = data.get("x").and_then(Value::as_i64).unwrap_or(0) as i32;
-        let y = data.get("y").and_then(Value::as_i64).unwrap_or(0) as i32;
+        let x = data.get("x").and_then(Value::as_i64).unwrap_or(0);
+        let y = data.get("y").and_then(Value::as_i64).unwrap_or(0);
         let server = data
             .get("server")
             .and_then(Value::as_str)
@@ -1061,9 +1065,9 @@ async fn update_event(
         return Err(refuse(&max_duration_message()));
     }
     // updateEvent.ts:349-357
-    let x = updated.get("x").and_then(Value::as_i64).unwrap_or(0) as i32;
-    let y = updated.get("y").and_then(Value::as_i64).unwrap_or(0) as i32;
-    check_world_limits(x, y, &echo)?;
+    let x = updated.get("x").and_then(Value::as_i64).unwrap_or(0);
+    let y = updated.get("y").and_then(Value::as_i64).unwrap_or(0);
+    let (x, y) = check_world_limits(x, y, &echo)?;
     // updateEvent.ts:362-373
     if updated.get("categories").is_some() {
         let mut check = Map::new();

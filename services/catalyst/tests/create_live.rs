@@ -254,7 +254,12 @@ fn multipart(parts: &[Part<'_>]) -> (Vec<u8>, String) {
 /// A `w` x `h` PNG whose pixels depend on `seed`, so two uploads never share a hash.
 fn png(w: u32, h: u32, seed: u8) -> Vec<u8> {
     let img = image::RgbaImage::from_fn(w, h, |x, y| {
-        image::Rgba([(x as u8).wrapping_mul(seed), (y as u8) ^ seed, seed, 255])
+        image::Rgba([
+            x.to_le_bytes()[0].wrapping_mul(seed),
+            y.to_le_bytes()[0] ^ seed,
+            seed,
+            255,
+        ])
     });
     let mut out = std::io::Cursor::new(Vec::new());
     img.write_to(&mut out, image::ImageFormat::Png).unwrap();

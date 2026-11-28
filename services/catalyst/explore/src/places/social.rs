@@ -192,7 +192,7 @@ pub(super) fn canonical_position(position: &str, glue: &str) -> Option<String> {
             return Some(0);
         }
         let n: f64 = piece.parse().ok()?;
-        (n.is_finite() && n.fract() == 0.0 && n.abs() < 1e9).then_some(n as i64)
+        (n.is_finite() && n.fract() == 0.0 && n.abs() < 1e9).then_some(crate::casts::f64_i64(n))
     };
     let (x, y) = (number(pieces[0])?, number(pieces[1])?);
     if !crate::shared::parcel::is_inside_world_limits(x, y) {
