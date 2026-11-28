@@ -15,7 +15,8 @@
 //   a frame after the end).
 // - A duration is seconds, or a fraction of the source state's length when not fixed; the offset is where the
 //   destination starts (normalized), the destination state's cycle offset added.
-// - A trigger counts for the update it is set in.
+// - A trigger (a parameter the controller lists as one) is set by an update that passes it true and stays set until a
+//   transition that has it among its conditions starts, which resets it.
 // - A blend tree plays its dominant child: the nearest threshold (per axis on a 2D grid, a tie to the higher one),
 //   picked when the state starts. A motion the caller picks ({ scene }) is played as the caller decides; its length is
 //   the tree's at the current parameters (children share their normalized time).
@@ -58,6 +59,7 @@ export type AnimatorController = {
   any: Transition[];
   states: Record<string, State>;
   clips: Record<string, { length: number; loop: boolean }>; // s
+  triggers?: string[]; // the parameters that are triggers
 };
 
 export type Pose = {
@@ -83,6 +85,7 @@ export class Animator {
   private offset = 0; // normalized time it started from
   private length = 1; // s per normalized unit, fixed when its clip is picked
   private fromLength = 1;
+  private readonly set = new Set<string>(); // the triggers set and not yet consumed
   private pose: Pose;
 
   constructor(private readonly c: AnimatorController) {
@@ -102,7 +105,12 @@ export class Animator {
   }
 
   // Advances the layer by dt (s) with the parameters of this update.
-  update(p: Params, dt: number): Pose {
+  update(params: Params, dt: number): Pose {
+    const p = { ...params };
+    for (const k of this.c.triggers ?? []) {
+      if (p[k] === true) this.set.add(k);
+      p[k] = this.set.has(k);
+    }
     this.time += dt;
     const t = this.time - this.since + EPS; // in the state at the end of this update
     const before = t - dt;
@@ -141,6 +149,7 @@ export class Animator {
   }
 
   private enter(tr: Transition, blend: number, p: Params) {
+    for (const [param] of tr.when ?? []) this.set.delete(param);
     const prev = this.pose;
     this.fromLength = this.stateLength(p);
     this.from = this.state;

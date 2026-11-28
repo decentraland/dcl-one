@@ -270,10 +270,19 @@ export function gliderOpen(prop: GlideProp): boolean {
   return prop === GlideProp.OPENING || prop === GlideProp.GLIDING;
 }
 
+// The animation's Jump trigger, set when a jump starts. A jump while the glider is open (a landing that takes a buffered
+// jump as the glider opens) starts no jump state: the glider is embedded in the glide clips, which a jump clip would
+// replace. The trigger is not set then, as the animator would hold it and start the jump state when the glider closes,
+// in place of the glider's closing clip.
+export function animatorJump(jumpStarts: boolean, prop: GlideProp): boolean {
+  return jumpStarts && !gliderOpen(prop);
+}
+
 // A requested emote waits until the avatar stands: grounded, out of the jump states (the landing until its blend into
 // locomotion is over, the hard landing's start until its loop has blended in), and with the movement blend at most
 // EMOTE_MOVE_BLEND. A jump state being blended into holds it too, so an emote never cuts into a landing that has
-// started.
+// started: an emote started during that cross-fade would end on the update that ends it, as the landing's animation
+// is not idle and the scene cannot tell that an emote plays.
 export function emoteWaits(animator: Animator, jumpingOrFalling: boolean, moveBlend: number): boolean {
   const jumpState = animator.tag === 'Jumping' || CHARACTER_ANIMATOR.states[animator.state].tag === 'Jumping';
   return jumpState || jumpingOrFalling || moveBlend > EMOTE_MOVE_BLEND;
@@ -305,7 +314,7 @@ function selectAnimation(): MovementAnimation {
 
   const pose = animator.update({
     MovementBlend: moveBlend,
-    Jump: jumpTrigger,
+    Jump: animatorJump(jumpTrigger, glideProp),
     JumpCount: jumps,
     JumpVariation: jumpVariation,
     IsGrounded: !jumpingOrFalling,

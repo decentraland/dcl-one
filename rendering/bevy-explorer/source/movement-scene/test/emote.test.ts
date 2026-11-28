@@ -2,7 +2,8 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { Animator, Params } from '../src/animator'
 import { CHARACTER_ANIMATOR } from '../src/character-animator'
-import { EMOTE_MOVE_BLEND, emoteWaits } from '../src/index'
+import { countJumps, EMOTE_MOVE_BLEND, emoteWaits } from '../src/index'
+import { Player } from './player'
 
 const DT = 1 / 60
 
@@ -18,6 +19,27 @@ test('an emote waits while the movement blend is above its threshold', () => {
 
 test('an emote waits while the avatar is in the air', () => {
   assert.equal(emoteWaits(new Animator(CHARACTER_ANIMATOR), true, 0), true)
+})
+
+test('an emote waits while the avatar falls in the Movement state, before a jump state starts', () => {
+  // a walk off a ledge: the jump states start once the coyote window has passed, and until then the state is Movement
+  const player = new Player()
+  const animator = new Animator(CHARACTER_ANIMATOR)
+  let seen = 0
+  const tick = (onGround: boolean) => {
+    player.tick(onGround)
+    const { jumps, trigger } = countJumps(seen, player.s.jumpCount, false, undefined, false)
+    seen = jumps
+    animator.update({ MovementBlend: 0, Jump: trigger, JumpCount: jumps, IsGrounded: onGround }, DT)
+  }
+  for (let i = 0; i < 60; i++) tick(true)
+  let airborne = 0
+  for (tick(false); animator.state === 'Movement'; tick(false), airborne++) {
+    assert.ok(airborne < 60, 'the jump states start')
+    assert.equal(animator.tag, 'Movement')
+    assert.equal(emoteWaits(animator, true, 0), true, `airborne update ${airborne}`)
+  }
+  assert.ok(airborne > 0, 'the avatar is in the air in the Movement state')
 })
 
 test('an emote waits from a jump through its landing until the cross-fade into locomotion is over', () => {
