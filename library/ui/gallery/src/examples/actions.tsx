@@ -77,6 +77,16 @@ export const actionEntries: GalleryEntry[] = [
         )
       },
       {
+        id: 'inline',
+        title: 'Inline in running text',
+        note: 'inline takes the surrounding font and colour, keeps its case and underlines on hover.',
+        render: () => (
+          <p style={{ margin: 0 }}>
+            Created by <Button variant="inline">AudioHotLab</Button> on Genesis City.
+          </p>
+        )
+      },
+      {
         id: 'sizes',
         title: 'Sizes, desktop and mobile',
         render: () => (

@@ -113,26 +113,6 @@
   color: var(--dcl-primary-primary);
 }
 
-/* The reference's creator control is a button: it inherits the font but not the letter-spacing. */
-button.creatorName {
-  border: none;
-  padding: 0;
-  margin: 0;
-  background: none;
-  font: inherit;
-  cursor: pointer;
-}
-
-button.creatorName:hover {
-  text-decoration: underline;
-}
-
-button.creatorName:focus-visible {
-  outline: 2px solid var(--dcl-neutrals-snow);
-  outline-offset: 2px;
-  border-radius: 2px;
-}
-
 .modalCreatorName {
   font-weight: 500;
 }

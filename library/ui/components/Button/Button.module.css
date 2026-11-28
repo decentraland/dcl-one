@@ -134,6 +134,32 @@
     --button-hover: var(--dcl-neutrals-pearl);
     --button-pressed: var(--dcl-neutrals-gray);
   }
+  /* Not in Figma: a button set in running text (`inline`), read as a link. Like a native button it takes the
+     text's font but not its letter spacing, sits on the text's baseline and keeps its label on one line. */
+  .root[data-variant='inline'] {
+    --button-background: transparent;
+    --button-hover: transparent;
+    --button-pressed: transparent;
+    display: inline-block;
+    min-width: 0;
+    min-height: 0;
+    padding: var(--dcl-space-0);
+    border: 0;
+    border-radius: 2px;
+    color: inherit;
+    font: inherit;
+    letter-spacing: normal;
+    text-align: start;
+    text-transform: none;
+    vertical-align: baseline;
+  }
+  .root[data-variant='inline']:is(:hover, [data-force-state='hover']):not([aria-disabled='true']) {
+    text-decoration: underline;
+  }
+  .root[data-variant='inline']:is(:focus-visible, [data-force-state='focus']) {
+    outline-color: var(--dcl-text-primary);
+    outline-offset: 2px;
+  }
   .root:is(:hover, [data-force-state='hover']):not([aria-disabled='true']) {
     background: var(--button-hover);
   }

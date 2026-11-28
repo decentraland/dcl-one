@@ -89,9 +89,8 @@ export function UsersTable({ rows, onAdd, onEdit }: UsersTableProps) {
                     ) : (
                       <span className={styles.avatar} aria-hidden="true" />
                     )}
-                    <button
-                      type="button"
-                      className={styles.userButton}
+                    <Button
+                      variant="inline"
                       onClick={(event) => {
                         event.stopPropagation()
                         onEdit(row)
@@ -99,7 +98,7 @@ export function UsersTable({ rows, onAdd, onEdit }: UsersTableProps) {
                     >
                       {row.address}
                       {row.name ? ` (${row.name})` : null}
-                    </button>
+                    </Button>
                   </th>
                   {ADMIN_PERMISSIONS.map((permission) => (
                     <td key={permission.id} className={styles.center}>
