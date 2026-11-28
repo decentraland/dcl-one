@@ -1751,6 +1751,110 @@ mod tests {
         );
     }
 
+    /// `order_by=created_at` with `desc` (or no `order`) puts a newer uncurated
+    /// destination above an older featured one and an older higher-ranked one,
+    /// as `decentraland/places#896` does; `asc` keeps the featured shelf on top.
+    #[tokio::test]
+    async fn destinations_created_at_desc_lists_a_newer_destination_above_an_older_featured_one() {
+        let Some(pool) = crate::db::scratch::isolated_pool(2).await else {
+            return;
+        };
+        let (newer, featured, ranked, oldest) = (
+            uuid::Uuid::new_v4().to_string(),
+            uuid::Uuid::new_v4().to_string(),
+            uuid::Uuid::new_v4().to_string(),
+            uuid::Uuid::new_v4().to_string(),
+        );
+        // (id, base_position, title, highlighted, created_at, ranking)
+        for (id, base, title, highlighted, created_at, ranking) in [
+            (
+                &newer,
+                "-140,142",
+                "Amber Hollow",
+                false,
+                "2025-06-01T00:00:00.000Z",
+                0,
+            ),
+            (
+                &featured,
+                "-141,142",
+                "Cobalt Spire",
+                true,
+                "2023-06-01T00:00:00.000Z",
+                2000,
+            ),
+            (
+                &ranked,
+                "-143,142",
+                "Silver Terrace",
+                false,
+                "2024-06-01T00:00:00.000Z",
+                5000,
+            ),
+            (
+                &oldest,
+                "-142,142",
+                "Quiet Orchard",
+                false,
+                "2022-01-01T00:00:00.000Z",
+                0,
+            ),
+        ] {
+            sqlx::query(
+                "INSERT INTO explore.place (id, base_position, title, description, categories, highlighted, deployed_at, raw) \
+                 VALUES ($1, $2, $3, $3 || ' description', '{}', $4, timezone('UTC', now()), $5)",
+            )
+            .bind(id)
+            .bind(base)
+            .bind(title)
+            .bind(highlighted)
+            .bind(json!({
+                "owner": "0x00000000000000000000000000000000000000aa",
+                "positions": [base],
+                "image": "https://cdn.example/thumbnail.png",
+                "created_at": created_at,
+                "ranking": ranking,
+            }))
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+        let state = Arc::new(crate::ExploreState::new(
+            pool.clone(),
+            crate::Settings::for_tests(),
+            None,
+        ));
+        for uri in [
+            "/api/destinations?limit=1&order_by=created_at",
+            "/api/destinations?limit=1&order_by=created_at&order=desc",
+        ] {
+            let body = response(state.clone(), uri).await;
+            assert_eq!(ids(&body), vec![newer.clone()], "{uri}: {body}");
+        }
+        let body = post(
+            state.clone(),
+            "/api/destinations?limit=1&order_by=created_at",
+            json!([featured, newer, ranked, oldest]),
+        )
+        .await;
+        assert_eq!(ids(&body), vec![newer.clone()], "{body}");
+        // Without the featured row, recency still outranks the ranking alone.
+        let body = post(
+            state.clone(),
+            "/api/destinations?limit=1&order_by=created_at",
+            json!([ranked, newer]),
+        )
+        .await;
+        assert_eq!(ids(&body), vec![newer.clone()], "{body}");
+        // Ascending would list the oldest first if the override applied to it.
+        let body = response(
+            state.clone(),
+            "/api/destinations?limit=1&order_by=created_at&order=asc",
+        )
+        .await;
+        assert_eq!(ids(&body), vec![featured.clone()], "{body}");
+    }
+
     /// Case-insensitive world ids: upstream reads `WHERE w.id = $1` verbatim
     /// (`World/model.ts:333`), so `PATCH /api/worlds/FOO.dcl.eth/favorites`
     /// and the admin PUTs miss a mixed-case id; dcl-one's resolvers fold the

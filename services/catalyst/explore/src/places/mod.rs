@@ -36,8 +36,8 @@ use crate::shared::cache::{TtlCache, cache_get, cache_put};
 use crate::shared::errors::ApiError;
 use query::{
     Bind, bind_param, build_active_lead, build_live_user_count_order, build_order_by,
-    build_where_from, destinations_lead_prefix, destinations_ranking_prefix,
-    like_score_recount_join, order_tail,
+    build_where_from, destinations_lead_prefix, destinations_newest_first,
+    destinations_ranking_prefix, like_score_recount_join, order_tail,
 };
 pub use rows::{
     ActiveRows, CategoryTarget, PlaceListFilters, PlaceOrderBy, PlaceRow, PlaceStatusRow, WorldRow,
@@ -799,8 +799,7 @@ fn list_sql_from(
         ),
         destinations_ranking_prefix(f),
         &rank_prefix,
-        order,
-        dir,
+        (!destinations_newest_first(f)).then_some((order, dir)),
         order_tail(f),
     );
     let like_score_top_n = matches!(f.order_by, PlaceOrderBy::LikeScore)
@@ -1086,6 +1085,93 @@ mod list_sql_tests {
             "{like_score}"
         );
         assert!(!like_score.contains("CASE WHEN world THEN"), "{like_score}");
+    }
+
+    #[test]
+    fn destinations_created_at_desc_lists_the_newest_above_the_featured_shelf() {
+        let order_of = |f: PlaceListFilters| {
+            let (sql, _, _) = list_sql(&f, false);
+            sql[sql.rfind("ORDER BY").unwrap()..].trim_end().to_string()
+        };
+        let destinations = |order_by, order_desc| PlaceListFilters {
+            destinations_mode: true,
+            order_by,
+            order_desc,
+            ..default_list()
+        };
+        let union_tail = "COALESCE(updated_at_ts, deployed_at) DESC, id ASC";
+        let newest = destinations(PlaceOrderBy::CreatedAt, true);
+        for (f, tail) in [
+            (newest.clone(), union_tail),
+            (
+                PlaceListFilters {
+                    only_places: true,
+                    ..newest.clone()
+                },
+                "deployed_at DESC, id ASC",
+            ),
+            (
+                PlaceListFilters {
+                    only_worlds: true,
+                    ..newest.clone()
+                },
+                union_tail,
+            ),
+        ] {
+            assert_eq!(
+                order_of(f),
+                format!(
+                    "ORDER BY created_at_ts DESC NULLS LAST, highlighted DESC, COALESCE(ranking_num, 0) DESC, {tail}"
+                )
+            );
+        }
+
+        // A search's text rank stays below the creation time, as under most_active.
+        let searched = order_of(PlaceListFilters {
+            search: Some("tower".into()),
+            ..newest
+        });
+        assert!(
+            searched.starts_with("ORDER BY created_at_ts DESC NULLS LAST, highlighted DESC, "),
+            "{searched}"
+        );
+        assert!(
+            searched.find("highlighted DESC").unwrap() < searched.find("ts_rank_cd").unwrap(),
+            "{searched}"
+        );
+        assert_eq!(searched.matches("created_at_ts").count(), 1, "{searched}");
+
+        // Ascending and updated_at keep the shelf on top and sort below the ranking.
+        for (f, column) in [
+            (
+                destinations(PlaceOrderBy::CreatedAt, false),
+                "created_at_ts ASC",
+            ),
+            (
+                destinations(PlaceOrderBy::UpdatedAt, true),
+                "updated_at_ts DESC",
+            ),
+            (
+                destinations(PlaceOrderBy::UpdatedAt, false),
+                "updated_at_ts ASC",
+            ),
+        ] {
+            assert_eq!(
+                order_of(f),
+                format!(
+                    "ORDER BY highlighted DESC, COALESCE(ranking_num, 0) DESC, {column} NULLS LAST, {union_tail}"
+                )
+            );
+        }
+
+        // A places listing has no shelf to outrank; its order is unchanged.
+        assert_eq!(
+            order_of(PlaceListFilters {
+                order_by: PlaceOrderBy::CreatedAt,
+                ..default_list()
+            }),
+            "ORDER BY created_at_ts DESC NULLS LAST, deployed_at DESC, id ASC"
+        );
     }
 
     #[test]

@@ -1841,7 +1841,7 @@ export interface operations {
                 creator_address?: string;
                 sdk?: string;
                 only_sdk7?: string;
-                /** @description like_score (default) | most_active | updated_at | created_at; any other value (user_visits included) orders by like_score (the `oneOf` fallback, Destination/model.ts:189-195). most_active is the one ordering where the current user count outranks highlighted, so a busy uncurated destination lists above an empty featured one */
+                /** @description like_score (default) | most_active | updated_at | created_at; any other value (user_visits included) orders by like_score (the `oneOf` fallback, Destination/model.ts:189-195). Under most_active the current user count outranks highlighted, so a busy uncurated destination lists above an empty featured one; under created_at with order omitted or desc the creation time outranks it, so the newest destinations list first. Every other ordering, created_at ascending and updated_at included, lists highlighted destinations first */
                 order_by?: string;
                 order?: string;
                 /** @description Comma-separated decorations: live_events, connected_users, realms_detail. `next_event` is read on `/v1/destinations` only. */
@@ -4354,7 +4354,7 @@ export interface operations {
                 creator_address?: string;
                 sdk?: string;
                 only_sdk7?: string;
-                /** @description like_score (default) | most_active | user_visits | updated_at | created_at. most_active is the one ordering where the current user count outranks highlighted, so a busy uncurated destination lists above an empty featured one */
+                /** @description like_score (default) | most_active | user_visits | updated_at | created_at. Under most_active the current user count outranks highlighted, so a busy uncurated destination lists above an empty featured one; under created_at with order omitted or desc the creation time outranks it, so the newest destinations list first. Every other ordering, created_at ascending and updated_at included, lists highlighted destinations first */
                 order_by?: string;
                 order?: string;
                 /** @description Comma-separated decorations: live_events, connected_users, realms_detail, next_event. */
@@ -4417,7 +4417,7 @@ export interface operations {
                 creator_address?: string;
                 sdk?: string;
                 only_sdk7?: string;
-                /** @description like_score (default) | most_active | user_visits | updated_at | created_at. most_active is the one ordering where the current user count outranks highlighted, so a busy uncurated destination lists above an empty featured one */
+                /** @description like_score (default) | most_active | user_visits | updated_at | created_at. Under most_active the current user count outranks highlighted, so a busy uncurated destination lists above an empty featured one; under created_at with order omitted or desc the creation time outranks it, so the newest destinations list first. Every other ordering, created_at ascending and updated_at included, lists highlighted destinations first */
                 order_by?: string;
                 order?: string;
                 /** @description Comma-separated decorations: live_events, connected_users, realms_detail, next_event. */
