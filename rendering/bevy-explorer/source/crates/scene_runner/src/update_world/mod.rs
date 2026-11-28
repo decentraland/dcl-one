@@ -29,9 +29,9 @@ use self::{
     billboard::BillboardPlugin, camera_mode_area::CameraModeAreaPlugin,
     gltf_container::GltfDefinitionPlugin, material::MaterialDefinitionPlugin,
     mesh_collider::MeshColliderPlugin, mesh_renderer::MeshDefinitionPlugin,
-    pointer_events::PointerEventsPlugin, raycast::RaycastPlugin, scene_ui::SceneUiPlugin,
-    text_shape::TextShapePlugin, transform_and_parent::TransformAndParentPlugin,
-    visibility::VisibilityComponentPlugin,
+    pointer_events::PointerEventsPlugin, post_processing::PostProcessingPlugin,
+    raycast::RaycastPlugin, scene_ui::SceneUiPlugin, text_shape::TextShapePlugin,
+    transform_and_parent::TransformAndParentPlugin, visibility::VisibilityComponentPlugin,
 };
 
 use super::{DeletedSceneEntities, RendererSceneContext, SceneLoopSchedule, SceneLoopSets};
@@ -48,6 +48,7 @@ pub mod material;
 pub mod mesh_collider;
 pub mod mesh_renderer;
 pub mod pointer_events;
+pub mod post_processing;
 pub mod raycast;
 pub mod scene_ui;
 pub mod text_shape;
@@ -202,6 +203,7 @@ impl Plugin for SceneOutputPlugin {
             app.add_plugins(fonts::SceneFontsPlugin);
         }
         app.add_plugins(CameraModeAreaPlugin);
+        app.add_plugins(PostProcessingPlugin);
         if !headless {
             app.add_plugins(VisibilityComponentPlugin {
                 setup_crdt_lww: true,

@@ -1,0 +1,85 @@
+From 0000000000000000000000000000000000000000
+Subject: feat(bevy): tonemapping keeps its last ready pipeline while a new variant compiles
+Date: 2026-11-27T01:50:15+00:00
+
+---
+diff --git a/crates/bevy_core_pipeline/src/tonemapping/mod.rs b/crates/bevy_core_pipeline/src/tonemapping/mod.rs
+index c8a2a1f6f135ba1975431b9117dec9387bc33cde..3056218432fd619a858773481ca353fd4f6241d1 100644
+--- a/crates/bevy_core_pipeline/src/tonemapping/mod.rs
++++ b/crates/bevy_core_pipeline/src/tonemapping/mod.rs
+@@ -352,8 +352,13 @@ impl FromWorld for TonemappingPipeline {
+     }
+ }
+ 
++/// The pipeline a view's tonemapping pass draws with, and the curve it was specialized for, whose
++/// lookup table it binds.
+ #[derive(Component)]
+-pub struct ViewTonemappingPipeline(CachedRenderPipelineId);
++pub struct ViewTonemappingPipeline {
++    id: CachedRenderPipelineId,
++    tonemapping: Tonemapping,
++}
+ 
+ pub fn prepare_view_tonemapping_pipelines(
+     mut commands: Commands,
+@@ -366,11 +371,12 @@ pub fn prepare_view_tonemapping_pipelines(
+             &ExtractedView,
+             Option<&Tonemapping>,
+             Option<&DebandDither>,
++            Option<&ViewTonemappingPipeline>,
+         ),
+         With<ViewTarget>,
+     >,
+ ) {
+-    for (entity, view, tonemapping, dither) in view_targets.iter() {
++    for (entity, view, tonemapping, dither, previous) in view_targets.iter() {
+         // As an optimization, we omit parts of the shader that are unneeded.
+         let mut flags = TonemappingPipelineKeyFlags::empty();
+         flags.set(
+@@ -397,11 +403,25 @@ pub fn prepare_view_tonemapping_pipelines(
+             tonemapping: *tonemapping.unwrap_or(&Tonemapping::None),
+             flags,
+         };
+-        let pipeline = pipelines.specialize(&pipeline_cache, &upscaling_pipeline, key);
++        let mut pipeline = ViewTonemappingPipeline {
++            id: pipelines.specialize(&pipeline_cache, &upscaling_pipeline, key),
++            tonemapping: key.tonemapping,
++        };
++
++        // A new key compiles a new shader variant, and the pass is skipped until it is ready.
++        // Keep drawing with the last ready variant meanwhile; every variant shares one layout.
++        if let Some(previous) = previous {
++            if pipeline_cache.get_render_pipeline(pipeline.id).is_none()
++                && pipeline_cache.get_render_pipeline(previous.id).is_some()
++            {
++                pipeline = ViewTonemappingPipeline {
++                    id: previous.id,
++                    tonemapping: previous.tonemapping,
++                };
++            }
++        }
+ 
+-        commands
+-            .entity(entity)
+-            .insert(ViewTonemappingPipeline(pipeline));
++        commands.entity(entity).insert(pipeline);
+     }
+ }
+ /// Enables a debanding shader that applies dithering to mitigate color banding in the final image for a given [`Camera`] entity.
+diff --git a/crates/bevy_core_pipeline/src/tonemapping/node.rs b/crates/bevy_core_pipeline/src/tonemapping/node.rs
+index db3a54b37400b10b90f6a258c6c4ed540004779a..900e9a4deb80eff9f96c459ba48b429b38811776 100644
+--- a/crates/bevy_core_pipeline/src/tonemapping/node.rs
++++ b/crates/bevy_core_pipeline/src/tonemapping/node.rs
+@@ -58,9 +58,11 @@ impl ViewNode for TonemappingNode {
+             return Ok(());
+         }
+ 
+-        let Some(pipeline) = pipeline_cache.get_render_pipeline(view_tonemapping_pipeline.0) else {
++        let Some(pipeline) = pipeline_cache.get_render_pipeline(view_tonemapping_pipeline.id) else {
+             return Ok(());
+         };
++        // the lookup table of the curve the pipeline draws, which a fallback pipeline keeps
++        let tonemapping = &view_tonemapping_pipeline.tonemapping;
+ 
+         let post_process = target.post_process_write();
+         let source = post_process.source;

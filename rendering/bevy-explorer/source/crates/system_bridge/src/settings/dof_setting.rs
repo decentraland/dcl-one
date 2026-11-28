@@ -4,7 +4,7 @@ use bevy::{
     ecs::system::{lifetimeless::SRes, SystemParamItem},
     prelude::*,
 };
-use common::structs::{AppConfig, DofConfig, DofSetting};
+use common::structs::{AppConfig, CameraLook, DofConfig, DofSetting};
 
 use super::{AppSetting, EnumAppSetting};
 
@@ -75,7 +75,7 @@ impl AppSetting for DofSetting {
             if *self != DofSetting::Off {
                 warn_once!("depth of field is off while MSAA is on");
             }
-            cmds.remove::<(DepthOfField, DofConfig)>();
+            cmds.remove::<DofConfig>().queue_silenced(set_dof(None));
             return;
         }
 
@@ -86,19 +86,27 @@ impl AppSetting for DofSetting {
             DofSetting::Low => (DepthOfFieldMode::Gaussian, 0.15),
             DofSetting::High => (DepthOfFieldMode::Gaussian, 0.05),
         };
-        cmds.try_insert((
-            DepthOfField {
-                mode,
-                focal_distance: 50.0, // updated based on cam + extra
-                aperture_f_stops,
-                max_depth: 250.0,
-                max_circle_of_confusion_diameter: 20.0,
-                sensor_height: 0.06,
-            },
-            DofConfig {
-                default_sensor_height: 0.06,
-                extra_focal_distance: 50.0,
-            },
-        ));
+        cmds.try_insert(DofConfig {
+            default_sensor_height: 0.06,
+            extra_focal_distance: 50.0,
+        })
+        .queue_silenced(set_dof(Some(DepthOfField {
+            mode,
+            focal_distance: 50.0, // updated based on cam + extra
+            aperture_f_stops,
+            max_depth: 250.0,
+            max_circle_of_confusion_diameter: 20.0,
+            sensor_height: 0.06,
+            linear_ramp: 0.0,
+        })));
+    }
+}
+
+/// Sets the depth of field of a camera's own look.
+fn set_dof(dof: Option<DepthOfField>) -> impl FnOnce(EntityWorldMut) {
+    move |mut camera: EntityWorldMut| {
+        if let Some(mut look) = camera.get_mut::<CameraLook>() {
+            look.dof = dof;
+        }
     }
 }

@@ -213,34 +213,33 @@ fn start_clock(mut commands: Commands) {
     ));
 }
 
-/// Which scene a root-only component `C` comes from for the primary player: of the scenes
-/// containing the player that have it, the parcel scene before portables, then the earliest
-/// started.
+/// Which scene a scene setting comes from for the primary player: of the scenes containing the
+/// player that have it, the parcel scene before portables, then the earliest started.
 #[derive(SystemParam)]
-pub(crate) struct RootComponentSource<'w, 's, C: Component> {
+pub(crate) struct SceneSource<'w, 's> {
     primary_player: Res<'w, PrimaryPlayerRes>,
     containing_scene: ContainingScene<'w, 's>,
-    scenes: Query<'w, 's, (Entity, &'static RendererSceneContext), With<C>>,
-    changed: Query<'w, 's, (), Changed<C>>,
-    removed: RemovedComponents<'w, 's, C>,
+    contexts: Query<'w, 's, (Entity, &'static RendererSceneContext)>,
     last_player_state: Local<'s, Option<Option<(IVec2, bool)>>>,
 }
 
-impl<C: Component> RootComponentSource<'_, '_, C> {
-    /// The scene to read `C` from, or `None` while nothing it depends on has changed: the scene
-    /// layout, the player's parcel, or a scene adding, changing or removing `C`.
-    pub(crate) fn changed_pick(&mut self) -> Option<Option<Entity>> {
+impl SceneSource<'_, '_> {
+    /// The scene to read the setting from, of those for which `has` holds, or `None` while
+    /// nothing it depends on has changed: the scene layout, the player's parcel, or a scene's
+    /// setting (`changed`).
+    pub(crate) fn changed_pick(
+        &mut self,
+        changed: bool,
+        has: impl Fn(Entity) -> bool,
+    ) -> Option<Option<Entity>> {
         let player_state = self
             .containing_scene
             .transforms
             .get(self.primary_player.0)
             .ok()
             .map(|(gt, oow)| (scene_runner::vec3_to_parcel(gt.translation()), oow));
-        let any_removed = self.removed.read().next().is_some();
-        self.removed.clear();
         let dirty = self.containing_scene.scene_layout_changed()
-            || !self.changed.is_empty()
-            || any_removed
+            || changed
             || self.last_player_state.as_ref() != Some(&player_state);
         *self.last_player_state = Some(player_state);
         if !dirty {
@@ -249,8 +248,9 @@ impl<C: Component> RootComponentSource<'_, '_, C> {
 
         let containing_primary_player = self.containing_scene.get(self.primary_player.0);
         Some(
-            self.scenes
+            self.contexts
                 .iter_many_unique(EntityHashSet::from_iter(containing_primary_player))
+                .filter(|(entity, _)| has(*entity))
                 .min_by_key(|(_, renderer_scene_context)| {
                     (
                         renderer_scene_context.is_portable,
@@ -259,6 +259,28 @@ impl<C: Component> RootComponentSource<'_, '_, C> {
                 })
                 .map(|(entity, _)| entity),
         )
+    }
+}
+
+/// [`SceneSource`] for a component `C` on scenes' roots.
+#[derive(SystemParam)]
+pub(crate) struct RootComponentSource<'w, 's, C: Component> {
+    source: SceneSource<'w, 's>,
+    scenes: Query<'w, 's, (), With<C>>,
+    changed: Query<'w, 's, (), Changed<C>>,
+    removed: RemovedComponents<'w, 's, C>,
+}
+
+impl<C: Component> RootComponentSource<'_, '_, C> {
+    /// The scene to read `C` from, or `None` while nothing it depends on has changed: the scene
+    /// layout, the player's parcel, or a scene adding, changing or removing `C`.
+    pub(crate) fn changed_pick(&mut self) -> Option<Option<Entity>> {
+        let any_removed = self.removed.read().next().is_some();
+        self.removed.clear();
+        let changed = !self.changed.is_empty() || any_removed;
+        let scenes = &self.scenes;
+        self.source
+            .changed_pick(changed, |scene| scenes.contains(scene))
     }
 }
 

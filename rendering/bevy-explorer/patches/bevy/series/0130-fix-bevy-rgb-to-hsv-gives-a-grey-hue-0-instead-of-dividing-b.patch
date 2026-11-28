@@ -1,0 +1,22 @@
+From 0000000000000000000000000000000000000000
+Subject: fix(bevy): rgb_to_hsv gives a grey hue 0 instead of dividing by zero
+Date: 2026-11-26T21:13:17+00:00
+
+---
+diff --git a/crates/bevy_render/src/color_operations.wgsl b/crates/bevy_render/src/color_operations.wgsl
+index b68ad2a3db57f825704b8486ed5374f637d10fc7..a762a36e3bb0a5fefbafce66d05c0749acb8b476 100644
+--- a/crates/bevy_render/src/color_operations.wgsl
++++ b/crates/bevy_render/src/color_operations.wgsl
+@@ -34,7 +34,11 @@ fn rgb_to_hsv(rgb: vec3<f32>) -> vec3<f32> {
+         swizzle = vec3(rgb.rg, 4.0);
+     }
+ 
+-    let h = FRAC_PI_3 * (((swizzle.x - swizzle.y) / c + swizzle.z) % 6.0);
++    // Avoid division by zero: a grey has no hue.
++    var h = 0.0;
++    if (c > 0.0) {
++        h = FRAC_PI_3 * (((swizzle.x - swizzle.y) / c + swizzle.z) % 6.0);
++    }
+ 
+     // Avoid division by zero.
+     var s = 0.0;

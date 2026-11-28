@@ -17,10 +17,38 @@ mod wasm;
 pub use wasm::*;
 
 use bevy::{
-    core_pipeline::bloom::{Bloom, BloomCompositeMode, BloomPrefilter},
+    core_pipeline::{
+        bloom::{Bloom, BloomCompositeMode, BloomPrefilter},
+        dof::DepthOfField,
+        tonemapping::Tonemapping,
+    },
+    ecs::component::Component,
     render::view::{ColorGrading, ColorGradingGlobal, ColorGradingSection},
 };
 use std::ops::Range;
+
+/// A camera's own look, as the explorer sets it: the camera's spawn, the player's settings, the
+/// console and the auto-focus. They edit this, not the camera's `Tonemapping`, `ColorGrading`,
+/// `Bloom` and `DepthOfField`: `visuals::post_processing` writes those from it, with a scene's
+/// settings over it.
+#[derive(Component, Clone)]
+pub struct CameraLook {
+    pub tonemapping: Tonemapping,
+    pub grading: ColorGrading,
+    pub bloom: Option<Bloom>,
+    pub dof: Option<DepthOfField>,
+}
+
+impl Default for CameraLook {
+    fn default() -> Self {
+        Self {
+            tonemapping: Tonemapping::AcesFitted,
+            grading: default_color_grading(),
+            bloom: Some(scatter_bloom(BLOOM_SCATTER)),
+            dof: None,
+        }
+    }
+}
 
 /// The shadows weight `w` of the grading: dark pixels are multiplied by `1 + 4w`, weighted by
 /// `1 - smoothstep(0, 0.3, luma)`. It is a gain on dark pixels, not an additive lift.
@@ -79,6 +107,20 @@ pub fn scatter_bloom(scatter: f32) -> Bloom {
         },
         composite_mode: BloomCompositeMode::Additive,
         ..Bloom::NATURAL
+    }
+}
+
+/// `bloom` with its whole glow multiplied by `scale`, capped where the composite reaches full
+/// weight (or at `bloom` itself, if it is past that). bevy multiplies the blend factors down the
+/// mip chain, so the scale goes on the composite (mip 0, which the low-frequency boost never
+/// reaches) and the boost keeps every other mip's factor. For an additive bloom.
+pub fn scaled_bloom(bloom: &Bloom, scale: f32) -> Bloom {
+    let cap = bloom.intensity.recip().max(1.0);
+    let intensity = bloom.intensity * scale.min(cap).max(0.0);
+    Bloom {
+        intensity,
+        low_frequency_boost: bloom.intensity + bloom.low_frequency_boost - intensity,
+        ..bloom.clone()
     }
 }
 

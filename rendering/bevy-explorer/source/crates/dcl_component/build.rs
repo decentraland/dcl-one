@@ -74,6 +74,7 @@ fn gen_sdk_components() -> Result<()> {
         "tween_state",
         "light_source",
         "global_light",
+        "post_processing",
         "texture_camera",
         "camera_layer",
         "camera_layers",

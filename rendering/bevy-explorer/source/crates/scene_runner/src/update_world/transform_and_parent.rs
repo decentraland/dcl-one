@@ -48,6 +48,7 @@ impl Plugin for TransformAndParentPlugin {
                 PostUpdateSets::AttachSync,
                 PostUpdateSets::Billboard,
                 PostUpdateSets::CameraFit,
+                PostUpdateSets::PostProcessing,
             )
                 .chain()
                 .after(GltfLinkSet)

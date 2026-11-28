@@ -61,4 +61,8 @@ pub enum PostUpdateSets {
     /// Geometry fitted to a camera's final projection: after bevy's `CameraUpdateSystem`, which
     /// resets a projection's aspect ratio when its target is resized.
     CameraFit,
+    /// Cameras' `Tonemapping`, `ColorGrading`, `Bloom` and `DepthOfField`, written from their
+    /// `CameraLook` with scenes' settings over it: after every writer of a look, and after
+    /// `CameraUpdate`, which starts the camera's moves.
+    PostProcessing,
 }
