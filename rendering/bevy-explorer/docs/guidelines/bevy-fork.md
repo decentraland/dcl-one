@@ -271,7 +271,14 @@ across workers:
   `AnimationTransitions` fades a new clip in linearly over the current pose, also over a
   transition that is still running, so the pose does not jump. A paused main clip leaves the
   blend at once: its weight drops to 0 and it stays in the player at its position, so the
-  weights still sum to 1. The tests in `transition.rs` cover each case.
+  weights still sum to 1. `AnimationTransitions::play_blend` plays several animations with
+  weights as one layer (`AnimationBlend`), as a 1D blend tree of a state machine does: the
+  members split the layer's weight in proportion to theirs and share one normalized phase,
+  and a cycle lasts the weighted mean of their clip durations. The same set of animations
+  again changes only the weights, with no restart and no fade; another set fades in as one
+  animation. `advance_blends`, between `advance_transitions` and `advance_animations`, sets
+  each member's seek time and speed from the phase. An animation plays in one layer at a
+  time. The tests in `transition.rs` cover each case.
 - `bevy_text`: faces of removed `Font` assets are evicted from the cosmic font system;
   `TextFont` is `PartialEq`.
 - `bevy_winit`: modifier transitions reported only via `ModifiersChanged` are synthesised as key
