@@ -35,14 +35,14 @@ export type OwnerSyncDeps = {
   syncCollectionOwner: (collectionId: string) => Promise<Collection>
 }
 
-// Ten minutes of 5s polls: the subgraph usually indexes within a couple of minutes, and builder-server
-// also picks the new owner up on their first write, so a longer wait buys little.
 const OWNER_SYNC_DELAY_MS = 5000
-const OWNER_SYNC_RETRIES = (10 * 60 * 1000) / OWNER_SYNC_DELAY_MS
+const OWNER_SYNC_WINDOW_MS = 20 * 60 * 1000
+const OWNER_SYNC_RETRIES = OWNER_SYNC_WINDOW_MS / OWNER_SYNC_DELAY_MS
 
 /**
- * Asks builder-server to store the new owner until it reports it: the subgraph lags the transaction. A
- * failed request is retried as well, except a refusal (4xx), which no amount of waiting fixes.
+ * Asks the node for the collection's owner until it reports the new one, for at most the node's lag bound on the
+ * chain copy (three mirror passes plus the subgraph's own lag). A failed request is retried as well, except a
+ * refusal (4xx), which no amount of waiting fixes.
  */
 export async function waitForOwnerSync(
   collectionId: string,

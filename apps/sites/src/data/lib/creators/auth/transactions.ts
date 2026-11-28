@@ -1,7 +1,7 @@
 // On-chain reads and writes, kept inside the sealed auth module (CONVENTIONS.md, seam 1) so the
 // provider never leaks: consumers describe a call (contract + method + args) and get a tx hash back.
-// Writes go straight through the wallet when it already sits on the target chain, and otherwise as
-// a Polygon meta-transaction through Decentraland's relayer — the same path the legacy builder uses.
+// Writes go as a Polygon meta-transaction through the relayer, and from the wallet itself, on the
+// contract's chain, only once the relayer refuses one.
 import {
   TransactionNotFoundError,
   TransactionReceiptNotFoundError,
@@ -14,10 +14,12 @@ import {
   type PublicClient
 } from 'viem'
 import { estimateGas, getTransaction } from 'viem/actions'
+import { catalystUrl } from '../../catalyst/bases'
 import { config } from '../config'
+import { isDecentralandHost } from '../config/env'
 import { encodeContractCall, type ContractCall, type ContractData } from '../chain/contracts'
-import { sendMetaTransaction, type MetaTransactionWallet } from '../chain/metaTransaction'
-import { WrongAccountError, WrongChainError } from '../walletErrors'
+import { RelayRefusedError, sendMetaTransaction, type MetaTransactionWallet } from '../chain/metaTransaction'
+import { WrongAccountError, WrongChainError, isWalletRejection } from '../walletErrors'
 import type { Session } from './auth'
 import { readWalletChainId, requireAccount, switchWalletChain } from './provider'
 import { walletClientOf } from './walletClient'
@@ -63,15 +65,31 @@ export async function readContract<T>(contract: ContractData, method: string, ar
   return result as T
 }
 
-/** Sends the call and resolves with the transaction hash (not the receipt). */
+/** The meta-transaction relay: the environment's on a Decentraland host, else that of the node serving the page. */
+export const relayUrl = (host = typeof window === 'undefined' ? '' : window.location.host) =>
+  isDecentralandHost(host) ? config.get('TRANSACTIONS_API_URL') : `${catalystUrl()}/transactions-api/v1`
+
+/**
+ * Sends the call and resolves with the transaction hash (not the receipt). It goes through the relayer, which pays
+ * the gas. When the relayer refuses it, the wallet is offered the contract's chain and sends it itself; a creator
+ * who declines that gets the relayer's refusal. An email or social account only signs typed data, so it is offered
+ * nothing.
+ */
 export async function sendContractTransaction(session: Session, call: ContractCall): Promise<string> {
-  // The in-app signer of email and social accounts only signs typed data, so it always goes through the relayer.
-  if (session.kind !== 'managed') {
-    const chainId = await readWalletChainId(session)
-    if (chainId === Number(call.contract.chainId)) return sendFromWallet(session, chainId, call)
+  try {
+    return await relayContractTransaction(session, call)
+  } catch (refusal) {
+    if (session.kind === 'managed' || !(refusal instanceof RelayRefusedError)) throw refusal
+    try {
+      return (await sendWalletTransaction(session, call)).hash
+    } catch (error) {
+      throw isWalletRejection(error) ? refusal : error
+    }
   }
+}
+
+async function relayContractTransaction(session: Session, call: ContractCall): Promise<string> {
   const wallet = metaTransactionWallet(session, call.contract.chainId)
-  // The account checked here is the one that signs, as the wallet spelled it (the relayed calldata keeps its case).
   const [active = ''] = await wallet.accounts()
   if (active.toLowerCase() !== session.address.toLowerCase()) {
     throw new WrongAccountError(session.address, active.toLowerCase())
@@ -85,7 +103,7 @@ export async function sendContractTransaction(session: Session, call: ContractCa
     callContract,
     encodeContractCall(call),
     call.contract,
-    config.get('TRANSACTIONS_API_URL')
+    relayUrl()
   )
 }
 

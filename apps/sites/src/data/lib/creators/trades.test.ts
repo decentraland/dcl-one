@@ -22,6 +22,7 @@ import {
   fetchTrade,
   getTradeContract,
   getTradeDomain,
+  marketplaceUrl,
   toOnChainTrade,
   toTradeTypedValues,
   type UnsignedTrade
@@ -122,7 +123,7 @@ describe('createTrade', () => {
     await expect(createTrade(SIGNER, signed)).resolves.toBe('trade-1')
     expect(signedFetch).toHaveBeenCalledWith(
       SIGNER,
-      'https://marketplace-api.decentraland.zone',
+      `${window.location.origin}/marketplace-api`,
       '/v1/trades',
       expect.objectContaining({ method: 'POST' }),
       { signer: 'dcl:builder', intent: 'dcl:create-trade' }
@@ -219,9 +220,33 @@ describe('fetchTrade', () => {
     vi.stubGlobal('fetch', fetchMock)
     fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ ok: true, data: stored }), { status: 200 }))
     await expect(fetchTrade('trade-1')).resolves.toMatchObject({ id: 'trade-1' })
-    expect(fetchMock.mock.calls[0][0]).toBe('https://marketplace-api.decentraland.zone/v1/trades/trade-1')
+    expect(fetchMock.mock.calls[0][0]).toBe(`${window.location.origin}/marketplace-api/v1/trades/trade-1`)
     fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ ok: false }), { status: 404 }))
     await expect(fetchTrade('nope')).rejects.toBeInstanceOf(TradeNotFoundError)
     vi.unstubAllGlobals()
+  })
+})
+
+describe('marketplaceUrl', () => {
+  describe('when the page is served by this deployment, as on localhost or its own domain', () => {
+    afterEach(() => {
+      delete (window as Window & { __CATALYST_BASE__?: string }).__CATALYST_BASE__
+    })
+
+    it("should be the marketplace-api of the node behind the page's origin", () => {
+      expect(marketplaceUrl()).toBe(`${window.location.origin}/marketplace-api`)
+      expect(marketplaceUrl('dcl.example')).toBe(`${window.location.origin}/marketplace-api`)
+    })
+
+    it('should be the marketplace-api of the public node base when the page names one', () => {
+      ;(window as Window & { __CATALYST_BASE__?: string }).__CATALYST_BASE__ = 'https://node.example/'
+      expect(marketplaceUrl()).toBe('https://node.example/marketplace-api')
+    })
+  })
+
+  describe('when the page is on a Decentraland host', () => {
+    it("should be that environment's marketplace-api", () => {
+      expect(marketplaceUrl('decentraland.zone')).toBe('https://marketplace-api.decentraland.zone')
+    })
   })
 })

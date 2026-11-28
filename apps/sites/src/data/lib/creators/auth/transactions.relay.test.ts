@@ -17,7 +17,7 @@ afterEach(() => {
 })
 
 // Expected values were produced by decentraland-transactions@3.3.0's sendMetaTransaction on this same harness.
-const RELAYER = 'https://transactions-api.decentraland.zone/v1/transactions'
+const RELAYER = `${window.location.origin}/transactions-api/v1/transactions`
 const COLLECTION = '0x00000000000000000000000000000000000000ee'
 const HASH = `0x${'ab'.repeat(32)}`
 const NONCE = `0x${'0'.repeat(62)}2a`
@@ -36,7 +36,7 @@ type Scenario = {
   relay?: { status: number; body: object }
 }
 
-/** A wallet on Ethereum signing with the test key, a Polygon read node answering the nonce, and the relayer. */
+/** A wallet on Ethereum signing with the test key and refusing to leave it, a Polygon read node answering the nonce, and the relayer. */
 function world(scenario: Scenario = {}) {
   const walletLog: Request[] = []
   let answered = 0
@@ -57,6 +57,8 @@ function world(scenario: Scenario = {}) {
         return accounts()
       case 'eth_getCode':
         return scenario.code ?? '0x'
+      case 'wallet_switchEthereumChain':
+        throw Object.assign(new Error('User rejected the request.'), { code: 4001 })
       case 'eth_signTypedData_v4': {
         if (scenario.denies) throw new Error('MetaMask Typed Message Signature: User denied message signature.')
         // eslint-disable-next-line @typescript-eslint/only-throw-error -- EIP-1193 wallets reject with plain objects

@@ -26,7 +26,7 @@ describe('fetchCollections', () => {
 
     const [address, baseUrl, path] = signedFetchMock.mock.calls[0] as [string, string, string]
     expect(address).toBe(ADDRESS)
-    expect(baseUrl).toBe('https://builder-api.decentraland.zone/v1')
+    expect(baseUrl).toBe('http://localhost:3000/builder-api/v1')
     // page+limit are ALWAYS sent — without both, builder-server answers a bare array.
     expect(path).toBe(`/${ADDRESS}/collections?q=hat&page=1&limit=20`)
     expect(result.total).toBe(1)
@@ -35,10 +35,12 @@ describe('fetchCollections', () => {
 })
 
 describe('fetchCollectionItemPreviews', () => {
-  it('fetches the first items and resolves their content-addressed thumbnail URLs', async () => {
+  it('fetches the first items with their thumbnail hash and whether each is published', async () => {
     signedFetchMock.mockResolvedValue(
       okResponse({
-        results: [{ id: 'i1', name: 'Hat', thumbnail: 'thumbnail.png', contents: { 'thumbnail.png': 'Qmhash' } }]
+        results: [
+          { id: 'i1', name: 'Hat', thumbnail: 'thumbnail.png', contents: { 'thumbnail.png': 'Qmhash' }, is_published: false }
+        ]
       })
     )
 
@@ -47,7 +49,7 @@ describe('fetchCollectionItemPreviews', () => {
     const [, , path] = signedFetchMock.mock.calls[0] as [string, string, string]
     expect(path).toBe('/collections/a1b2/items?page=1&limit=4')
     expect(previews).toEqual([
-      { id: 'i1', name: 'Hat', thumbnailUrl: 'https://builder-api.decentraland.zone/v1/storage/contents/Qmhash' }
+      { id: 'i1', name: 'Hat', thumbnailHash: 'Qmhash', isPublished: false }
     ])
   })
 

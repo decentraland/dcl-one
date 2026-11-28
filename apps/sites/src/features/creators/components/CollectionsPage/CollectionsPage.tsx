@@ -8,6 +8,7 @@ import { pageRangeLabel } from '@/data/lib/creators/pagination'
 import { useWallet } from '../../store/wallet'
 import { COLLECTIONS_PAGE_SIZE, useCollections, useCollectionsSummary } from '../../hooks/useCollections'
 import { useSaveCollection } from '../../hooks/useCollection'
+import { useRefusalText } from '../../hooks/useRefusalText'
 import { CONTRACT_PARAM, useCollectionByContractLink } from '../../hooks/useCollectionByContractLink'
 import { track } from '@/data/lib/creators/analytics'
 import {
@@ -18,7 +19,7 @@ import {
   type CollectionListFilter
 } from '@/data/lib/creators/collections'
 import { buildNewCollection } from '@/data/lib/creators/saveCollection'
-import { isRefusedRequest } from '@/data/lib/creators/builder'
+import { boundRefusal, isRefusedRequest } from '@/data/lib/creators/builder'
 import { captureError } from '@/data/lib/creators/monitoring'
 import {
   LINKED_WEARABLES_DOCS_PATH,
@@ -60,6 +61,7 @@ function parseStatus(raw: string | null): CollectionListFilter {
 
 const CollectionsPage = () => {
   const { t } = useTranslation()
+  const refusalText = useRefusalText()
   const navigate = useNavigate()
   const { session, restored, signIn } = useWallet()
   const address = session?.address
@@ -335,7 +337,9 @@ const CollectionsPage = () => {
       ) : collections.isError ? (
         <section className={shared.panel} data-testid="collections-error">
           <h2 className={shared.panelTitle}>{t('collections_page.error.title')}</h2>
-          <p className={shared.panelText}>{t('collections_page.error.description')}</p>
+          <p className={shared.panelText}>
+            {refusalText(boundRefusal(collections.error)) ?? t('collections_page.error.description')}
+          </p>
           <Button type="button" variant="secondary" onClick={() => void collections.refetch()}>
             {t('collections_page.error.retry')}
           </Button>

@@ -28,9 +28,9 @@ type RawItem = {
   is_published?: boolean;
   is_approved?: boolean;
   total_supply?: string | number;
-  created_at?: number | string;
-  /** The node's on-chain rows (`/{address}/items`) send these instead of `created_at` (ms here) and `thumbnail`. */
-  createdAt?: number | null;
+  created_at?: string;
+  /** The node's on-chain rows (`/{address}/items`) send these instead of `created_at` and `thumbnail`. */
+  createdAt?: string | null;
   image?: string | null;
   rarity?: string;
   type?: "wearable" | "emote";
@@ -104,6 +104,11 @@ async function getJson<T>(path: string, opts: BuilderOptions): Promise<T> {
   return ((json as { data?: T }).data ?? json) as T;
 }
 
+function epochMillis(iso: string | null | undefined): number | undefined {
+  const ms = iso ? Date.parse(iso) : NaN;
+  return Number.isNaN(ms) ? undefined : ms;
+}
+
 function categoryOf(item: RawItem): string {
   return item.data?.wearable?.category ?? item.data?.emote?.category ?? item.data?.category ?? item.type ?? "wearable";
 }
@@ -121,11 +126,11 @@ function fromContents(name: string | undefined, contents: Record<string, string>
   return "";
 }
 
-/** Upstream `fetchCreatorCollections`: the creator's PUBLISHED collections (the only ones that can be listed). */
+/** Upstream `fetchCreatorCollections`: the creator's published collections, as the node filters them, that have a contract (the only ones that can be listed). */
 export async function fetchCreatorCollections(address: string, opts: BuilderOptions): Promise<CreatorCollection[]> {
   const payload = await getJson<Paginated<RawCollection>>(`/${address.toLowerCase()}/collections?is_published=true`, opts);
   return unwrapList(payload)
-    .filter((c) => c.is_published && !!c.contract_address)
+    .filter((c) => !!c.contract_address)
     .map((c) => ({
       id: c.id,
       name: c.name,
@@ -157,7 +162,7 @@ function toPublishableItem(raw: RawItem, collection: CreatorCollection, base?: s
     totalSupply: total,
     maxSupply: max,
     remainingSupply: Math.max(0, max - total),
-    createdAt: raw.created_at ? Number(raw.created_at) * 1000 : (raw.createdAt ?? undefined),
+    createdAt: epochMillis(raw.created_at ?? raw.createdAt),
     minters: collection.minters,
   };
 }
@@ -197,7 +202,7 @@ export async function fetchPublishableItems(address: string, opts: BuilderOption
     const perCollection = await Promise.all(collections.map((c) => fetchCollectionItems(c, opts).catch(() => [] as PublishableItem[])));
     return perCollection.flat();
   }
-  const byId = new Map(collections.map((c) => [c.id, c]));
+  const byId = new Map(collections.flatMap((c) => [[c.id, c], [c.contractAddress, c]] as const));
   const position = new Map(collections.map((c, i) => [c.id, i]));
   return rawItems
     .flatMap((raw) => {

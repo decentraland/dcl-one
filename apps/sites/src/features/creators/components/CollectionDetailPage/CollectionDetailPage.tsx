@@ -12,6 +12,7 @@ import {
 } from '../../hooks/useCollection'
 import {
   BuilderServerError,
+  boundRefusal,
   ValidationLimitError,
   isCollectionBusy,
   isValidationRunning
@@ -52,6 +53,7 @@ import {
 } from '@/data/lib/creators/itemFilters'
 import { MAX_PUBLISH_ITEMS, getPublishBlocker } from '@/data/lib/creators/publishCollection'
 import { useSaveItem } from '../../hooks/useSaveItem'
+import { useRefusalText } from '../../hooks/useRefusalText'
 import { useForumPostRecovery } from '../../hooks/useForumPost'
 import { useLockedCollectionDeployed, useSyncPublishedItems } from '../../hooks/usePublishCollection'
 import { usePublishInFlight } from '../../store/publishSync'
@@ -149,6 +151,7 @@ const NO_ITEMS: Item[] = []
 
 const CollectionDetailPage = () => {
   const { t } = useTranslation()
+  const refusalText = useRefusalText()
   const intl = useIntl()
   const navigate = useNavigate()
   const location = useLocation()
@@ -611,7 +614,10 @@ const CollectionDetailPage = () => {
       ) : isError || !collection ? (
         <section className={shared.panel} data-testid="collection-detail-error">
           <h2 className={shared.panelTitle}>{t('collection_detail_page.error.title')}</h2>
-          <p className={shared.panelText}>{t('collection_detail_page.error.description')}</p>
+          <p className={shared.panelText}>
+            {refusalText(boundRefusal(collectionQuery.error ?? itemsQuery.error ?? thirdParty.error)) ??
+              t('collection_detail_page.error.description')}
+          </p>
           <Button
             type="button"
             variant="secondary"

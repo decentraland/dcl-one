@@ -9,7 +9,6 @@ import { useApproveMana, usePublishCollection, useRarities } from '../../../hook
 import { useBeforeUnloadGuard } from '../../../hooks/useBeforeUnloadGuard'
 import { track } from '@/data/lib/creators/analytics'
 import type { Session } from '@/data/lib/creators/auth'
-import { getContentsStorageUrl } from '@/data/lib/creators/builder'
 import type { Collection } from '@/data/lib/creators/collections'
 import { FeatureFlag } from '@/data/lib/creators/featureFlags'
 import type { Item } from '@/data/lib/creators/items'
@@ -202,7 +201,7 @@ export function PaymentStep({
     () =>
       items
         .slice(0, 4)
-        .map(item => ({ url: getContentsStorageUrl(item.contents[item.thumbnail]), rarity: item.rarity })),
+        .map(item => ({ item, hash: item.contents[item.thumbnail], rarity: item.rarity })),
     [items]
   )
 

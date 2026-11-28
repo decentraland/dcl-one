@@ -19,7 +19,7 @@ import {
   waitForTransaction,
   type TypedDataTypes
 } from '.'
-import { waitForReceipt, watchTransaction } from './transactions'
+import { relayUrl, waitForReceipt, watchTransaction } from './transactions'
 import { OFFCHAIN_MARKETPLACE_TYPES, getTradeDomain } from '../trades'
 import { typedDataDigest } from '../test/chain'
 
@@ -213,25 +213,20 @@ describe('when sending a transaction from the wallet itself', () => {
     await sendWalletTransaction(session, call)
     expect(BigInt(sent()[0]?.maxPriorityFeePerGas)).toBe(30_000_000_000n)
   })
-
-  it('should floor the tip on the regular path too, when the wallet is already on the contract chain', async () => {
-    const { session, sent } = walletOn(80002)
-    await expect(sendContractTransaction(session, call)).resolves.toBe(HASH)
-    expect(BigInt(sent()[0]?.maxPriorityFeePerGas)).toBe(30_000_000_000n)
-  })
 })
 
-describe('when the wallet is on another chain than the contract', () => {
+describe('when a call is sent through the relayer', () => {
   const contract = getCollectionContract(80002, COLLECTION)
   const transfer = { contract, method: 'transferCreatorship', args: [OTHER] }
-  const RELAYER = 'https://transactions-api.decentraland.zone/v1/transactions'
+  const RELAYER = `${window.location.origin}/transactions-api/v1/transactions`
 
   /** The read node answering the nonce, and the relayer answering `relay`; returns what each was sent. */
   function nodeAndRelayer(relay: object = { ok: true, txHash: HASH }) {
     const fetch = vi.fn(async (url: string, init: { body: string }) => {
       if (url === RELAYER) return new Response(JSON.stringify(relay), { status: 200 })
       const body = JSON.parse(init.body) as { id: number; method: string }
-      return new Response(JSON.stringify({ jsonrpc: '2.0', id: body.id, result: numberToHex(3, { size: 32 }) }))
+      const result = body.method === 'eth_getCode' ? '0x' : numberToHex(3, { size: 32 })
+      return new Response(JSON.stringify({ jsonrpc: '2.0', id: body.id, result }))
     })
     vi.stubGlobal('fetch', fetch)
     const bodies = (relayed: boolean) =>
@@ -274,11 +269,77 @@ describe('when the wallet is on another chain than the contract', () => {
     expect(relayed()).toHaveLength(0)
   })
 
-  it('should pass on what the relayer refused the transaction for', async () => {
-    nodeAndRelayer({ ok: false, message: 'Max limit reached', code: 'user_limit_reached' })
-    await expect(sendContractTransaction(walletOn(1).session, transfer)).rejects.toMatchObject({
-      message: 'Max limit reached',
-      code: 'user_limit_reached'
+  it('should not ask the wallet to change chain', async () => {
+    nodeAndRelayer()
+    const { session, request } = walletOn(1)
+    await sendContractTransaction(session, transfer)
+    expect(request).not.toHaveBeenCalledWith(expect.objectContaining({ method: 'wallet_switchEthereumChain' }))
+  })
+
+  describe('and the wallet is already on the contract chain', () => {
+    it('should still relay it, gas paid by the relayer', async () => {
+      const { relayed } = nodeAndRelayer()
+      const { session, sent } = walletOn(80002)
+      await expect(sendContractTransaction(session, transfer)).resolves.toBe(HASH)
+      expect(relayed()).toHaveLength(1)
+      expect(sent()).toHaveLength(0)
+    })
+  })
+
+  describe('and the creator dismisses the signature', () => {
+    it('should not offer to send it from the wallet', async () => {
+      nodeAndRelayer()
+      const { session, request, sent } = walletOn(1, 'denies-signature')
+      await rejection(sendContractTransaction(session, transfer))
+      expect(request).not.toHaveBeenCalledWith(expect.objectContaining({ method: 'wallet_switchEthereumChain' }))
+      expect(sent()).toHaveLength(0)
+    })
+  })
+
+  describe('and the relayer refuses it', () => {
+    const REFUSAL = { ok: false, message: 'Max limit reached', code: 'user_limit_reached' }
+
+    it('should offer the wallet the contract chain and send it from there, tip floored', async () => {
+      nodeAndRelayer(REFUSAL)
+      const { session, request, sent } = walletOn(1)
+      await expect(sendContractTransaction(session, transfer)).resolves.toBe(HASH)
+      expect(request).toHaveBeenCalledWith({ method: 'wallet_switchEthereumChain', params: [{ chainId: '0x13882' }] })
+      expect(sent()).toEqual([expect.objectContaining({ from: ACCOUNT, to: COLLECTION })])
+      expect(BigInt(sent()[0]?.maxPriorityFeePerGas)).toBe(30_000_000_000n)
+    })
+
+    it('should send it from a wallet already on the contract chain without a switch', async () => {
+      nodeAndRelayer(REFUSAL)
+      const { session, request, sent } = walletOn(80002)
+      await expect(sendContractTransaction(session, transfer)).resolves.toBe(HASH)
+      expect(request).not.toHaveBeenCalledWith(expect.objectContaining({ method: 'wallet_switchEthereumChain' }))
+      expect(sent()).toHaveLength(1)
+    })
+
+    it('should pass on what the relayer refused it for when the creator refuses the switch', async () => {
+      nodeAndRelayer(REFUSAL)
+      const { session, sent } = walletOn(1, 'refuses')
+      await expect(sendContractTransaction(session, transfer)).rejects.toMatchObject({
+        message: 'Max limit reached',
+        code: 'user_limit_reached'
+      })
+      expect(sent()).toHaveLength(0)
+    })
+
+    it('should fail with what stopped the wallet when it stays on another chain', async () => {
+      nodeAndRelayer(REFUSAL)
+      const { session, sent } = walletOn(1, 'ignores')
+      await expect(sendContractTransaction(session, transfer)).rejects.toBeInstanceOf(WrongChainError)
+      expect(sent()).toHaveLength(0)
+    })
+
+    it('should offer nothing to an email or social account, whose signer sends no transactions', async () => {
+      nodeAndRelayer(REFUSAL)
+      const { session, request, sent } = walletOn(1)
+      const managed = { ...session, kind: 'managed' } as Session
+      await expect(sendContractTransaction(managed, transfer)).rejects.toMatchObject({ code: 'user_limit_reached' })
+      expect(request).not.toHaveBeenCalledWith(expect.objectContaining({ method: 'wallet_switchEthereumChain' }))
+      expect(sent()).toHaveLength(0)
     })
   })
 })
@@ -556,5 +617,20 @@ describe('when watching a transaction until it settles', () => {
     await expect(watchTransaction(unknown.reader, HASH, { ...options, ...unknown.clock })).resolves.toBe('pending')
     const down = chain({ fail: true })
     await expect(watchTransaction(down.reader, HASH, { ...options, ...down.clock })).resolves.toBe('pending')
+  })
+})
+
+describe('relayUrl', () => {
+  describe('when the page is served by this deployment, as on localhost or its own domain', () => {
+    it("should be the transactions relay of the node behind the page's origin", () => {
+      expect(relayUrl()).toBe(`${window.location.origin}/transactions-api/v1`)
+      expect(relayUrl('dcl.example')).toBe(`${window.location.origin}/transactions-api/v1`)
+    })
+  })
+
+  describe('when the page is on a Decentraland host', () => {
+    it("should be that environment's transactions relay", () => {
+      expect(relayUrl('decentraland.zone')).toBe('https://transactions-api.decentraland.zone/v1')
+    })
   })
 })
