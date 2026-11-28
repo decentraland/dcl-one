@@ -364,6 +364,35 @@ type StoredCollection = (
     Option<bool>,
 );
 
+/// Whether `signer` may change or remove the virtual third party `id`
+/// listing `listed`: a wallet it lists that also manages the provider
+/// ([`provider_managers`] over `registry`), so a change never widens an
+/// unapproved record's managers for a wallet the registry leaves out.
+pub(crate) fn changes_virtual_third_party(
+    registry: &[Provider],
+    id: &str,
+    listed: &[String],
+    signer: &str,
+) -> bool {
+    has_manager(listed, signer)
+        && has_manager(&provider_managers(Some(registry), id, Some(listed)), signer)
+}
+
+/// Whether `signer` may remove the virtual third party `id` listing
+/// `listed`: once the registry has the provider, a manager the registry
+/// lists, whether `listed` holds it or not; before, a wallet `listed` holds.
+pub(crate) fn removes_virtual_third_party(
+    registry: &[Provider],
+    id: &str,
+    listed: &[String],
+    signer: &str,
+) -> bool {
+    match third_parties::provider(registry, id) {
+        Some(record) => has_manager(&record.managers, signer),
+        None => has_manager(listed, signer),
+    }
+}
+
 /// The wallets that manage the provider `id`, as builder-server's
 /// `ThirdPartyService.isManager` orders its sources: the registry's managers
 /// once it approved the provider; before approval, its managers that the
@@ -574,6 +603,52 @@ pub async fn own_address(
         );
     }
     managing(state, signer).await
+}
+
+/// May read a provider's slots; carries the registry the decision read.
+#[derive(Debug)]
+pub struct ProviderManage {
+    id: String,
+    registry: Registry,
+}
+
+impl ProviderManage {
+    pub fn id(&self) -> &str {
+        &self.id
+    }
+
+    pub fn registry(&self) -> &[Provider] {
+        &self.registry
+    }
+}
+
+/// `GET /v1/thirdParties/:id/slots`: a manager of the provider `id`
+/// ([`provider_managers`]); anyone else, an unknown provider included, is
+/// refused with builder-server's 401.
+pub async fn manage_provider(
+    state: &SharedState,
+    signer: &Signer,
+    id: &str,
+) -> Result<ProviderManage, ApiError> {
+    let registry = registry(state, Since::read()).await?;
+    let listed: Option<Vec<String>> =
+        sqlx::query_scalar("SELECT managers FROM builder.virtual_third_parties WHERE id = $1")
+            .bind(id)
+            .fetch_optional(state.items.pool())
+            .await?;
+    if !has_manager(
+        &provider_managers(Some(&registry), id, listed.as_deref()),
+        signer.as_str(),
+    ) {
+        return Err(ApiError::unauthorized(
+            "Unauthorized access. Account is not manager of the collection",
+        )
+        .with_data(json!({ "eth_address": signer.as_str() })));
+    }
+    Ok(ProviderManage {
+        id: id.to_string(),
+        registry,
+    })
 }
 
 /// The signer must be a current committee member.

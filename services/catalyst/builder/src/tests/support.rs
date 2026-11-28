@@ -576,6 +576,29 @@ impl FakeRegistry {
             );
     }
 
+    /// Changes one field of provider `id`.
+    pub fn set(&self, id: &str, field: &str, value: serde_json::Value) {
+        if let Some(provider) = self
+            .providers
+            .lock()
+            .unwrap()
+            .as_mut()
+            .and_then(|p| p.get_mut(id))
+        {
+            provider[field] = value;
+        }
+    }
+
+    /// Answers a GraphQL error (`true`) or the providers it holds.
+    pub fn fail(&self, down: bool) {
+        let mut providers = self.providers.lock().unwrap();
+        match (down, providers.is_some()) {
+            (true, true) => *providers = None,
+            (false, false) => *providers = Some(BTreeMap::new()),
+            _ => {}
+        }
+    }
+
     async fn answer(
         axum::extract::State(fake): axum::extract::State<Self>,
         axum::Json(body): axum::Json<serde_json::Value>,

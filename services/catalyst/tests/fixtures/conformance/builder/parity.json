@@ -600,7 +600,7 @@
       "anchors": []
     },
     "virtual-third-party-changes": {
-      "text": "PATCH and DELETE /v1/thirdParties/:id: the node lets a wallet the virtual third party lists change or remove it only when the wallet also manages the provider: once the registry lists the provider, approved or not, a manager the registry lists too; with no registry record, the virtual third party's managers. Another wallet gets 401 {ok:false, data:{id}, error:'You are not the manager of this Third Party.'}. PATCH reads the registry and answers 503 while it can't tell. Upstream lets every wallet the virtual third party lists change or remove it, and reads the registry only for a removal.",
+      "text": "PATCH /v1/thirdParties/:id: the node lets a wallet the virtual third party lists change it only when the wallet also manages the provider: once the registry lists the provider, approved or not, a manager the registry lists too; with no registry record, the virtual third party's managers. Another wallet gets 401 {ok:false, data:{id}, error:'You are not the manager of this Third Party.'}. A missing virtual third party is 404 and a wallet it doesn't list 401 before the registry is read; then PATCH answers 503 while the registry can't tell. DELETE /v1/thirdParties/:id: once the registry lists the provider, approved or not, every manager the registry lists removes the virtual third party, whether it lists that manager or not, and every other wallet gets 401; with no registry record, a wallet it lists gets 400 and another 401. Upstream lets exactly the wallets the virtual third party lists change or remove it, and reads the registry only for a removal.",
       "captures": [],
       "anchors": []
     },
