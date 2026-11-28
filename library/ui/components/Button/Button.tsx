@@ -24,6 +24,7 @@ type Variant =
   | 'quaternary'
   | 'inverse'
   | 'iconOnly'
+  | 'inline'
 type NativeProps =
   | (Omit<ButtonHTMLAttributes<HTMLButtonElement>, 'children'> & {
       href?: never
@@ -72,7 +73,26 @@ export type ButtonHudSize =
   | 'start'
   | 'bare'
 
-type DefaultLook = {
+type DefaultLook = (
+  | { variant?: Exclude<Variant, 'inline'> }
+  | {
+      /**
+       * Not in Figma: a button set in running text, read as a link. It takes the surrounding text's font and
+       * colour, keeps its case, has no box, and underlines on hover. It takes no `size`, `viewport`, icon,
+       * `contentLayout` or loading state.
+       */
+      variant: 'inline'
+      iconOnly?: false
+      contentLayout?: never
+      size?: never
+      viewport?: never
+      loading?: never
+      leadingIcon?: never
+      trailingIcon?: never
+      startIcon?: never
+      endIcon?: never
+    }
+) & {
   appearance?: 'default'
   size?: 'xl' | 'lg' | 'md' | 'sm'
   /** Responsive uses the mobile dimensions below 768px or with a coarse primary pointer. */

@@ -83,21 +83,6 @@
   vertical-align: middle;
 }
 
-.userButton {
-  padding: 0;
-  border: 0;
-  background: none;
-  color: inherit;
-  font: inherit;
-  text-align: start;
-  cursor: pointer;
-}
-
-.userButton:focus-visible {
-  outline: 2px solid var(--dcl-neutrals-snow);
-  outline-offset: 2px;
-}
-
 .check {
   color: var(--dcl-feedback-success);
   vertical-align: middle;

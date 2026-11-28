@@ -617,13 +617,11 @@ function PlaceDetail({
                   <p className={styles.by}>
                     By{' '}
                     {creatorAddress && onCreator ? (
-                      <button
-                        type="button"
-                        className={styles.creatorName}
-                        onClick={() => onCreator(creatorAddress)}
-                      >
-                        {creator.name}
-                      </button>
+                      <span className={styles.creatorName}>
+                        <Button variant="inline" onClick={() => onCreator(creatorAddress)}>
+                          {creator.name}
+                        </Button>
+                      </span>
                     ) : (
                       <span className={styles.creatorName}>{creator.name}</span>
                     )}

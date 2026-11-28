@@ -610,6 +610,63 @@ describe('when an untyped caller passes dangerouslySetInnerHTML', () => {
   })
 })
 
+describe('when a Button is set inline in running text', () => {
+  it('should carry the inline look and keep its label as given', () => {
+    render(<Button variant="inline">0xabc (Ana)</Button>)
+    const button = screen.getByRole('button', { name: '0xabc (Ana)' })
+    expect(button).toHaveAttribute('data-variant', 'inline')
+    expect(button).toHaveAttribute('type', 'button')
+    expect(button.querySelector('[data-button-label]')?.textContent).toBe('0xabc (Ana)')
+  })
+
+  it('should call its handler once per press', async () => {
+    const onClick = vi.fn()
+    render(
+      <Button variant="inline" onClick={onClick}>
+        AudioHotLab
+      </Button>
+    )
+    await userEvent.click(screen.getByRole('button', { name: 'AudioHotLab' }))
+    expect(onClick).toHaveBeenCalledTimes(1)
+  })
+
+  it('should ignore activation while disabled', async () => {
+    const onClick = vi.fn()
+    render(
+      <Button variant="inline" disabled onClick={onClick}>
+        AudioHotLab
+      </Button>
+    )
+    await userEvent.click(screen.getByRole('button', { name: 'AudioHotLab' }))
+    expect(onClick).not.toHaveBeenCalled()
+  })
+
+  it('should stay a link when given an href', () => {
+    render(
+      <Button variant="inline" href="/profile/0xabc">
+        AudioHotLab
+      </Button>
+    )
+    const link = screen.getByRole('link', { name: 'AudioHotLab' })
+    expect(link).toHaveAttribute('href', '/profile/0xabc')
+    expect(link).toHaveAttribute('data-variant', 'inline')
+  })
+
+  // Checked by the typecheck, not at run time: each line fails to compile without its directive.
+  it('should not type-check with a size, an icon, a content layout, a loading state or as icon-only', () => {
+    // @ts-expect-error An inline Button takes the text's size.
+    void (<Button variant="inline" size="sm" label="Ana" />)
+    // @ts-expect-error An inline Button has no icon slot.
+    void (<Button variant="inline" startIcon={<svg />} label="Ana" />)
+    // @ts-expect-error An inline Button keeps its label at its own width.
+    void (<Button variant="inline" contentLayout="fill" label="Ana" />)
+    // @ts-expect-error An inline Button has no loading state.
+    void (<Button variant="inline" loading label="Ana" />)
+    // @ts-expect-error An inline Button is text, never icon-only.
+    void (<Button variant="inline" iconOnly aria-label="Ana" />)
+  })
+})
+
 describe('when a Button takes the hud appearance', () => {
   describe('and it renders a button', () => {
     it('should default to the primary variant and the md size, with no radius override', () => {
