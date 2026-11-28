@@ -238,7 +238,6 @@ fn camera_state(
         Projection::Perspective(p) => (Some(p.far), Some(p.fov.to_degrees())),
         _ => (None, None),
     };
-    let level_name = |level| format!("{level:?}");
     let shoulder_offset = zoom
         .level()
         .map(|level| zoom.shoulder_offset(level).to_array());
