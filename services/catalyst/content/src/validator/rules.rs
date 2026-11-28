@@ -976,6 +976,7 @@ impl<E: ExternalCalls, B: BlockchainChecker> ContentValidator<'_, E, B> {
             let mut seen: HashSet<&str> = HashSet::new();
             let mut invalid_urns: Vec<&str> = Vec::new();
             let mut non_item_urns: Vec<&str> = Vec::new();
+            let mut unlinked_third_party_urns: Vec<&str> = Vec::new();
             let wearables = metadata
                 .get("outfits")
                 .and_then(|v| v.as_array())
@@ -991,6 +992,12 @@ impl<E: ExternalCalls, B: BlockchainChecker> ContentValidator<'_, E, B> {
                 match super::urn::parse(urn) {
                     None => invalid_urns.push(urn),
                     Some(parsed) if parsed.is_collection_asset() => non_item_urns.push(urn),
+                    Some(parsed)
+                        if entity.timestamp >= adr_timestamps::THIRD_PARTY_ITEM_URN
+                            && parsed.is_third_party_without_nft() =>
+                    {
+                        unlinked_third_party_urns.push(urn)
+                    }
                     Some(_) => {}
                 }
             }
@@ -1005,6 +1012,13 @@ impl<E: ExternalCalls, B: BlockchainChecker> ContentValidator<'_, E, B> {
                     "Wearable pointers {} should be items, not assets. \
                      The URNs must include the tokenId.",
                     non_item_urns.join(", ")
+                ));
+            }
+            if !unlinked_third_party_urns.is_empty() {
+                return ValidationResponse::fail(format!(
+                    "Wearable pointers {} should be third-party items linked to an NFT. \
+                     The URNs must include the NFT network, contract and tokenId.",
+                    unlinked_third_party_urns.join(", ")
                 ));
             }
         }
@@ -2239,6 +2253,47 @@ mod tests {
             ] {
                 assert!(errors(&urn).is_empty(), "{urn}");
             }
+        }
+
+        #[test]
+        fn outfit_third_party_wearables_must_name_their_nft_from_the_cutoff() {
+            let calls = Calls::new(Duration::ZERO);
+            let checker = SlowChecker(Duration::ZERO, false);
+            let validator = ContentValidator {
+                external_calls: &calls,
+                blockchain_checker: &checker,
+                ignore_blockchain_access: false,
+                synced: false,
+                access_passed: false,
+            };
+            let errors = |urn: &str, timestamp: Timestamp| {
+                let mut d = profile();
+                d.entity.entity_type = EntityType::Outfits;
+                d.entity.pointers = vec![format!("{OWNER}:outfits")];
+                d.entity.timestamp = timestamp;
+                d.entity.metadata = Some(serde_json::json!({
+                    "outfits": [{"slot": 0, "outfit": {"wearables": [urn]}}],
+                    "namesForExtraSlots": []
+                }));
+                validator
+                    .validate_outfits_content(&d.view())
+                    .errors()
+                    .map(<[String]>::to_vec)
+                    .unwrap_or_default()
+            };
+            let from = adr_timestamps::THIRD_PARTY_ITEM_URN;
+            let unlinked = "urn:decentraland:matic:collections-thirdparty:tp:col:hat";
+            assert_eq!(
+                errors(unlinked, from),
+                [format!(
+                    "Wearable pointers {unlinked} should be third-party items linked to an NFT. \
+                     The URNs must include the NFT network, contract and tokenId."
+                )]
+            );
+            assert!(errors(unlinked, from - 1).is_empty());
+            let linked = "urn:decentraland:matic:collections-thirdparty:tp:col:hat:matic:\
+                          0xf87e31492faf9a91b02ee0deaad50d51d56d5d4d:5";
+            assert!(errors(linked, from).is_empty());
         }
 
         #[tokio::test]

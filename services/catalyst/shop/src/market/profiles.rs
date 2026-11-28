@@ -515,15 +515,15 @@ async fn process_profiles_observed(
                     _ => Ok(std::sync::Arc::new(Vec::new())),
                 }
             });
-            // A profile whose linked items could not be checked keeps
-            // its v1 items only; the others in the batch are unaffected.
+            // A profile whose linked items could not be checked keeps none
+            // of them; the others in the batch are unaffected.
             let third_party_futs = addresses.iter().zip(&worn).map(|(a, worn)| async move {
                 let kept = if collections {
                     third_party::sanitize_third_party_urns(state, a, worn)
                         .await
                         .unwrap_or_else(|e| {
-                            tracing::warn!(error = %e, address = %a, "profiles: third-party items could not be checked; keeping the v1 items only");
-                            third_party::v1_third_party_urns(worn)
+                            tracing::warn!(error = %e, address = %a, "profiles: third-party items could not be checked; leaving them out");
+                            Vec::new()
                         })
                 } else {
                     Vec::new()

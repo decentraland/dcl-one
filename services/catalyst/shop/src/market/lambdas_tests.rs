@@ -1085,8 +1085,9 @@ async fn the_g1_lambdas_answer_from_the_mirrors_indexes_and_readers() {
         json!({ "data": [{ "name": "TP", "description": "A provider", "urn": "urn:decentraland:matic:collections-thirdparty:tp" }] })
     );
 
-    // Profiles keep the v1 third-party items unchecked and the linked items
-    // whose NFT the mapping includes and the owner holds, after the others.
+    // Profiles keep the linked third-party items whose NFT the mapping
+    // includes and the owner holds, after the others; an item without its
+    // NFT is dropped.
     let hat = format!("urn:decentraland:matic:collections-v2:{COFFEE}:1");
     let linked = |token: u32| format!("{TP_URN}:matic:{TP_CONTRACT}:{token}");
     deploy(
@@ -1112,10 +1113,9 @@ async fn the_g1_lambdas_answer_from_the_mirrors_indexes_and_readers() {
         json!([
             "urn:decentraland:off-chain:base-avatars:eyes_00",
             format!("{hat}:11"),
-            TP_URN,
             linked(2)
         ]),
-        "the newest held token is appended (ENSURE_ERC_721); token 3 is mapped but not held, token 9 is not mapped: {body}"
+        "the newest held token is appended (ENSURE_ERC_721); token 3 is mapped but not held, token 9 is not mapped, the item without its NFT is dropped: {body}"
     );
 
     // An entity a remote list (`DENYLIST_URLS`) names is left out of the
