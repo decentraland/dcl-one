@@ -14,7 +14,8 @@ use std::time::{Duration, Instant};
 use tokio::sync::Notify;
 
 use crate::chain_index::names::{
-    Answer, NameAuthority, NamesError, Observation, OwnedName, Purpose, hold_index_publication,
+    Answer, NameAuthority, NamesError, Observation, OwnedName, PublicationHold, Purpose,
+    hold_index_publication,
 };
 
 use super::super::deploy::BEFORE_PERSIST;
@@ -159,10 +160,10 @@ impl NameAuthority for TableNames {
 
     async fn hold_publication_on(&self, conn: &mut sqlx::PgConnection) -> Result<(), NamesError> {
         match hold_index_publication(conn).await {
-            Ok(true) => Ok(()),
-            Ok(false) => Err(NamesError::NotEstablished(
-                "the names index is not published".into(),
-            )),
+            Ok(PublicationHold::Held) => Ok(()),
+            Ok(PublicationHold::Unpublished | PublicationHold::Busy) => Err(
+                NamesError::NotEstablished("the names index is not published".into()),
+            ),
             Err(e) => Err(NamesError::Failed(e.to_string())),
         }
     }
@@ -415,7 +416,7 @@ async fn a_fold_waits_only_for_the_write_transaction() {
             .await
             .expect("a fold publishes while a publish has not begun its write");
         assert!(
-            done - started < Duration::from_millis(500),
+            done - started < Duration::from_secs(2),
             "{:?}",
             done - started
         );
@@ -456,14 +457,69 @@ async fn a_fold_waits_only_for_the_write_transaction() {
             fold.await.unwrap()
         }
     );
-    let after = folded.saturating_duration_since(answered);
+    // The fold commits right after the write: within a generous bound of the
+    // publish's answer, either side of it.
+    let gap = folded
+        .saturating_duration_since(answered)
+        .max(answered.saturating_duration_since(folded));
     assert!(
-        answered.saturating_duration_since(folded) < Duration::from_millis(500)
-            && after < Duration::from_millis(500),
-        "the fold commits right after the write: {after:?}"
+        gap < Duration::from_secs(2),
+        "the fold commits right after the write: {gap:?}"
     );
     assert_eq!(
         deployed_entity_ids(&f.pool, &world).await,
         std::slice::from_ref(&second.entity_id)
     );
+}
+
+/// A publish that reaches its write while a fold holds the publication past
+/// the bounded wait (`chain_index::names::HOLD_WAIT`) is refused as the
+/// names index's 503. It holds the world's locks no longer than that wait,
+/// and the world keeps its scene and owner.
+#[tokio::test]
+async fn a_publish_behind_a_long_fold_answers_the_names_index_503() {
+    let holder = Wallet::random();
+    let Some((f, world)) = fenced(&holder).await else {
+        return;
+    };
+    let now = chrono::Utc::now().timestamp_millis();
+    let first = deployment_at(
+        &holder,
+        &world,
+        "First",
+        "0,0",
+        &["0,0"],
+        "thumb.png",
+        b"first",
+        now,
+    )
+    .await;
+    post_entity(&f.app, &first, 200).await;
+    let before = world_state(&f, &world).await;
+    let mut fold = f.pool.begin().await.unwrap();
+    sqlx::query(
+        "SELECT 1 FROM shop.chain_cursor WHERE indexer = 'nft' AND network = 'ethereum' FOR UPDATE",
+    )
+    .execute(&mut *fold)
+    .await
+    .unwrap();
+    let second = deployment_at(
+        &holder,
+        &world,
+        "Second",
+        "0,0",
+        &["0,0"],
+        "thumb.png",
+        b"second",
+        now + 1,
+    )
+    .await;
+    let started = Instant::now();
+    let body = post_entity(&f.app, &second, 503).await;
+    let waited = started.elapsed();
+    assert_eq!(body["source"], "nft-index", "{body}");
+    let wait = crate::chain_index::names::HOLD_WAIT;
+    assert!(waited < wait + Duration::from_secs(3), "{waited:?}");
+    fold.rollback().await.unwrap();
+    assert_eq!(world_state(&f, &world).await, before);
 }

@@ -169,6 +169,21 @@ pub(super) fn source_unavailable(source: Source, message: impl Into<String>) -> 
     )
 }
 
+/// A publish whose authority could not be established, refused fail-closed:
+/// the names index unable to establish the NAME's holder right now (not
+/// current, or a registrar event walked past its fold) is a transient
+/// readiness condition, the retryable 503 naming it, never a denial a client
+/// would not retry; anything else, an ambiguous label included, is the 403.
+/// The permission check and a scoped grantee's owner lookup answer alike.
+fn authority_undetermined(why: &AuthorityNotEstablished) -> Refusal {
+    match crate::policy::names_not_current(why) {
+        Some(reason) => source_unavailable(Source::NftIndex, reason),
+        None => {
+            forbidden("Not authorized: could not verify deployment permissions (deploy denied)")
+        }
+    }
+}
+
 /// The refusal of a signer who neither holds `world_name`'s NAME nor was
 /// granted it, worded as the old service.
 fn no_permission(world_name: &str) -> String {
@@ -933,20 +948,8 @@ pub(super) async fn validate(
                 });
             }
             Err(undetermined) => {
-                // The names index cannot establish the NAME's holder right
-                // now (not current, or a registrar event walked past its
-                // fold): a transient readiness condition, refused as the names
-                // index being unavailable, never as a denial a client would
-                // not retry. Anything else, an ambiguous label included, is
-                // the fail-closed 403.
-                if let Some(reason) = crate::policy::names_not_current(&undetermined) {
-                    tracing::warn!(world = %world, signer = %signer.as_str(), %reason, "deploy deferred: the names index cannot establish the NAME's holder");
-                    return Err(source_unavailable(Source::NftIndex, reason));
-                }
-                tracing::warn!(world = %world, signer = %signer.as_str(), error = %undetermined, "deploy denied: authority undetermined (fail-closed)");
-                return Err(forbidden(
-                    "Not authorized: could not verify deployment permissions (deploy denied)",
-                ));
+                tracing::warn!(world = %world, signer = %signer.as_str(), error = %undetermined, "deploy refused: authority undetermined (fail-closed)");
+                return Err(authority_undetermined(&undetermined));
             }
         }
     } else {
@@ -986,14 +989,9 @@ pub(super) async fn validate(
                 ));
             }
             Err(e) => {
-                tracing::warn!(world = %world, error = %e, "deploy denied: NAME owner undetermined");
-                // The same names-index wait the owner's own publish answers.
-                if let Some(reason) = crate::policy::names_not_current(&e) {
-                    return Err(source_unavailable(Source::NftIndex, reason));
-                }
-                return Err(unavailable(
-                    "Deployment failed: the world's owner could not be resolved right now",
-                ));
+                tracing::warn!(world = %world, error = %e, "deploy refused: NAME owner undetermined (fail-closed)");
+                // A grantee's lookup is answered as the permission check's.
+                return Err(authority_undetermined(&e));
             }
         },
     };

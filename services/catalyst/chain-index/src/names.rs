@@ -181,19 +181,63 @@ pub trait NameAuthority: Send + Sync {
     }
 }
 
+/// How long [`hold_index_publication`] waits for a fold that holds the
+/// names index's publication row: past it the caller is answered as the
+/// index not being current, a retryable refusal, instead of holding its own
+/// locks behind a long refold until its statement bound fails it.
+pub const HOLD_WAIT: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// What [`hold_index_publication`] got.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PublicationHold {
+    /// The publication row is held until the transaction ends.
+    Held,
+    /// There is no publication row: nothing to authorize under.
+    Unpublished,
+    /// A fold held the row past [`HOLD_WAIT`]. The transaction is aborted.
+    Busy,
+}
+
 /// The names index's publication row, the Ethereum `nft` cursor, locked
-/// `FOR SHARE` on `conn` until its transaction ends; `false` when there is
-/// none. The nft fold locks that row `FOR UPDATE` from its first projection
-/// write to its commit, and every publication, withdrawal or refold of the
-/// index updates it, so none of them commits while the share is held.
-/// Take it only inside a short transaction: a fold waits for its end.
-pub async fn hold_index_publication(conn: &mut sqlx::PgConnection) -> Result<bool, sqlx::Error> {
-    let held: Option<i32> = sqlx::query_scalar(
+/// `FOR SHARE` on `conn` until its transaction ends. The nft fold locks that
+/// row `FOR UPDATE` from its first projection write to its commit, and every
+/// publication, withdrawal or refold of the index updates it, so none of
+/// them commits while the share is held. Take it only inside a short
+/// transaction: a fold waits for its end. The wait for a fold already
+/// holding it is bounded by [`HOLD_WAIT`] (`lock_timeout`, set for this
+/// statement and restored after it).
+pub async fn hold_index_publication(
+    conn: &mut sqlx::PgConnection,
+) -> Result<PublicationHold, sqlx::Error> {
+    let previous: String = sqlx::query_scalar("SELECT current_setting('lock_timeout')")
+        .fetch_one(&mut *conn)
+        .await?;
+    sqlx::query("SELECT set_config('lock_timeout', $1, true)")
+        .bind(format!("{}ms", HOLD_WAIT.as_millis()))
+        .execute(&mut *conn)
+        .await?;
+    let held = sqlx::query_scalar::<_, i32>(
         "SELECT 1 FROM shop.chain_cursor WHERE indexer = 'nft' AND network = 'ethereum' FOR SHARE",
     )
-    .fetch_optional(conn)
-    .await?;
-    Ok(held.is_some())
+    .fetch_optional(&mut *conn)
+    .await;
+    let held = match held {
+        Ok(held) => held,
+        // lock_not_available: the wait for the fold ran out.
+        Err(e) if e.as_database_error().and_then(|d| d.code()).as_deref() == Some("55P03") => {
+            return Ok(PublicationHold::Busy);
+        }
+        Err(e) => return Err(e),
+    };
+    sqlx::query("SELECT set_config('lock_timeout', $1, true)")
+        .bind(previous)
+        .execute(&mut *conn)
+        .await?;
+    Ok(if held.is_some() {
+        PublicationHold::Held
+    } else {
+        PublicationHold::Unpublished
+    })
 }
 
 /// The marketplace subgraph as the NAME source, where the operator selects

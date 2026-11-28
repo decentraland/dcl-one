@@ -386,12 +386,18 @@ impl NameAuthority for IndexNames {
     }
 
     /// The Ethereum nft cursor held `FOR SHARE`
-    /// ([`crate::chain_index::names::hold_index_publication`]); no cursor is
-    /// no publication to authorize under.
+    /// ([`crate::chain_index::names::hold_index_publication`]). No cursor is
+    /// no publication to authorize under, and a fold holding it past the
+    /// bounded wait is the index not being current yet: both are
+    /// [`NamesError::NotEstablished`], a retryable refusal.
     async fn hold_publication_on(&self, conn: &mut PgConnection) -> Result<(), NamesError> {
-        match crate::chain_index::names::hold_index_publication(conn).await {
-            Ok(true) => Ok(()),
-            Ok(false) => Err(not_established(Purpose::Authorize)),
+        use crate::chain_index::names::{PublicationHold, hold_index_publication};
+        match hold_index_publication(conn).await {
+            Ok(PublicationHold::Held) => Ok(()),
+            Ok(PublicationHold::Unpublished) => Err(not_established(Purpose::Authorize)),
+            Ok(PublicationHold::Busy) => Err(NamesError::NotEstablished(
+                "the ethereum nft index is publishing a fold: the DCL NAME publication cannot be held now".to_string(),
+            )),
             Err(e) => Err(failed(e)),
         }
     }
@@ -552,6 +558,42 @@ mod tests {
             Err(NamesError::NotEstablished(_))
         ));
         drop(conn);
+        db.drop().await;
+    }
+
+    /// A fold that holds the publication longer than the bounded wait leaves
+    /// the hold refused as the index not being current yet (retryable),
+    /// never a failed read, and the caller holds nothing past the wait.
+    #[tokio::test]
+    async fn a_fold_holding_the_publication_past_the_wait_is_not_established() {
+        let Some((db, names)) = published().await else {
+            return;
+        };
+        let mut fold = db.pool.begin().await.unwrap();
+        sqlx::query("SELECT 1 FROM shop.chain_cursor WHERE indexer = 'nft' AND network = 'ethereum' FOR UPDATE")
+            .execute(&mut *fold)
+            .await
+            .unwrap();
+        let mut tx = db.pool.begin().await.unwrap();
+        let wait = crate::chain_index::names::HOLD_WAIT;
+        let started = std::time::Instant::now();
+        let held = tokio::time::timeout(
+            wait + Duration::from_secs(3),
+            names.hold_publication_on(&mut tx),
+        )
+        .await
+        .expect("the hold gives up after its bounded wait");
+        let waited = started.elapsed();
+        assert!(
+            matches!(held, Err(NamesError::NotEstablished(_))),
+            "{held:?}"
+        );
+        assert!(
+            waited >= wait && waited < wait + Duration::from_secs(3),
+            "{waited:?}"
+        );
+        drop(tx);
+        fold.rollback().await.unwrap();
         db.drop().await;
     }
 

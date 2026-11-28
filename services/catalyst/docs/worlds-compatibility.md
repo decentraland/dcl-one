@@ -306,14 +306,20 @@ A difference not listed here is a gap, not a decision.
   right after the scene schema. Upstream refuses such a name at the
   permission check. `<address>.dcl.eth` is that address's personal world,
   which the address may publish without holding a NAME.
-- **Authority faults on writes fail closed.** When the name authority
-  cannot answer, a publish answers 403 `Not authorized: could not verify
-  deployment permissions (deploy denied)` and the world undeploy its
-  authority status (503 for a store fault). A grantee publish whose NAME
-  has no owner answers 400 `Cannot deploy scene "<id>" to world "<name>":
-  owner address could not be resolved.`, and a storage allowance that
-  cannot be read answers 503 `Deployment failed: the storage allowance
-  could not be determined right now`. Upstream answers 500 for these (400
+- **Authority faults on writes fail closed.** While the names index
+  cannot establish a NAME's holder (not current, or a fold holds its
+  publication), a publish answers 503 with `source: nft-index` and
+  `Retry-After`. For any other fault, an ambiguous label included, it
+  answers 403 `Not authorized: could not verify deployment permissions
+  (deploy denied)`. A scoped grantee's owner lookup answers alike. The
+  holder is checked again in the write's transaction, under the names
+  publication it holds: a fold withdrawn since validation is the 503, and
+  a holder replaced since then is the owner's 400 or a grantee's 409. The
+  world undeploy keeps its authority status (503 for a store fault). A
+  grantee publish whose NAME has no owner answers 400 `Cannot deploy scene
+  "<id>" to world "<name>": owner address could not be resolved.`, and a
+  storage allowance that cannot be read answers 503 `Deployment failed:
+  the storage allowance could not be determined right now`. Upstream answers 500 for these (400
   `Could not determine owner for world <name>` while sizing). A deploy 500
   is `{"error": "Internal Server Error"}`.
 - **Publish auth chains.** A contract-wallet (EIP-1654) chain is verified

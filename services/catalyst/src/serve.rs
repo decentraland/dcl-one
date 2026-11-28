@@ -876,7 +876,7 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
                 newsletter_publication_id: config.create.newsletter_publication_id.clone(),
                 newsletter_api_key: config.create.newsletter_service_api_key.clone(),
                 foundation_url: Some(config.create.builder_foundation_url.clone()),
-                committee_index_enabled: config.marketplace.marketplace_committee_index_enabled,
+                committee_index_walked: market.settings.market.indexes.walks_committee(),
             })
             .context("BUILDER_* / NEWSLETTER_* configuration")?,
         )

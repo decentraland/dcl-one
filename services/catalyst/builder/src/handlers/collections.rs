@@ -814,12 +814,12 @@ mod tests {
         pool.close().await;
     }
 
-    /// With the committee index on, the curation console lists the published
-    /// index's current members, and answers 503 while the index is
-    /// unpublished or stale (never an empty committee) and when it cannot be
-    /// read. With the index off, a supported mode in which only the
-    /// configured admins curate, the console lists the queue with no indexed
-    /// members.
+    /// On a deployment that walks the committee index, the curation console
+    /// lists the published index's current members, and answers 503 while
+    /// the publication is missing or stale (never an empty committee) and
+    /// when it cannot be read. On one that does not walk it (the switch off,
+    /// or a testnet, which schedules no committee walk), a missing
+    /// publication lists the queue with no indexed members.
     #[tokio::test]
     async fn curation_console_lists_the_indexed_committee() {
         let Some(pool) = crate::db::scratch::isolated_pool(4).await else {
@@ -831,7 +831,7 @@ mod tests {
             pool.clone(),
             crate::Settings {
                 admin_addresses: vec![admin.clone()],
-                committee_index_enabled: true,
+                committee_index_walked: true,
                 ..Default::default()
             },
         )

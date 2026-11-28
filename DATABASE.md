@@ -133,8 +133,10 @@ publication step. Every publication or withdrawal updates it. None of those
 transactions takes a world lock, so the order (world locks, then the cursor)
 cannot deadlock. The share is taken only in that short write transaction, after
 upload, hashing and validation. A fold's publication waits for at most one scene
-write, and a publish that arrives during a fold waits for that fold's commit
-and reads its publication. Personal and ENS worlds, and a node reading NAMEs
+write. A publish that arrives during a fold waits for that fold's commit, up to
+`HOLD_WAIT` (5 s, as `lock_timeout`), and then reads its publication. Past that
+wait it answers the names index's retryable 503, so it never holds the world and
+store locks behind a long refold. Personal and ENS worlds, and a node reading NAMEs
 from the subgraph, hold nothing.
 
 Partial batches for one entity hold a session advisory lock from their first
@@ -3700,10 +3702,12 @@ runs. When Polygon is in scope, Shop accounts require a fresh committee
 fold covering the published sales block and include every indexed member
 through that block, including former members. An index that is off, not yet published or
 published more than 30 minutes ago (`READY_WINDOW`) admits only the
-configured addresses, and a failed read answers 503. With the index on
-(`MARKETPLACE_COMMITTEE_INDEX_ENABLED`) but not yet published or stale, the
-curation console's committee list answers 503 too, never an empty
-committee; with it off, the console lists no indexed members. Changing a column builder reads updates this section
+configured addresses, and a failed read answers 503. The curation console
+lists a current publication whichever process maintains it. Without one, a
+deployment that walks the index (`MARKETPLACE_COMMITTEE_INDEX_ENABLED` on a node
+serving mainnet Polygon) answers 503, never an empty committee, because the
+publication is its own lag. A deployment that does not walk it (the switch off,
+or a testnet, which schedules no committee walk) lists no indexed members. Changing a column builder reads updates this section
 and the AGENTS.md "Ownership" entry in the same change.
 
 ## Third-party registry
