@@ -895,6 +895,15 @@ mod tests {
         let (status, body) = get(&app, "/v1/collections/curation", Some(OWNER_KEY)).await;
         assert_eq!(status, StatusCode::OK, "{body}");
         assert_eq!(committee(&body), vec![member.to_string()], "{body}");
+        // A current publication another process maintains is listed by a
+        // node that does not walk the index too.
+        let (status, body) = get(&index_off, "/v1/collections/curation", Some(OWNER_KEY)).await;
+        assert_eq!(status, StatusCode::OK, "index off: {body}");
+        assert_eq!(
+            committee(&body),
+            vec![member.to_string()],
+            "index off: {body}"
+        );
 
         sqlx::query("UPDATE shop.chain_cursor SET folded_at = timezone('UTC', now()) - interval '2 hours' WHERE indexer = 'committee'")
             .execute(&pool)

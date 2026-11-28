@@ -546,7 +546,9 @@ async fn names_of(
             NamesError::NotEstablished(message) | NamesError::Ambiguous(message) => {
                 super::unavailable(source, &message)
             }
-            NamesError::Failed(message) => readers::upstream_failed("/v1/users/names", &message),
+            NamesError::Failed(message) | NamesError::Transient(message) => {
+                readers::upstream_failed("/v1/users/names", &message)
+            }
         })
 }
 

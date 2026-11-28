@@ -396,7 +396,7 @@ pub async fn user_names(
                 Err(NamesError::NotEstablished(message) | NamesError::Ambiguous(message)) => {
                     return super::unavailable(super::Source::NftIndex, &message);
                 }
-                Err(NamesError::Failed(e)) => {
+                Err(NamesError::Failed(e) | NamesError::Transient(e)) => {
                     tracing::warn!(error = %e, address, "names source failed");
                     return fetcher_error(&requested);
                 }

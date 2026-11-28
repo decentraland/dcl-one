@@ -59,9 +59,38 @@ pub enum NamesError {
     /// does), so a write refuses it rather than asking to be retried.
     #[error("{0}")]
     Ambiguous(String),
+    /// The source could not answer this time: a transient database fault
+    /// (a statement timeout, a deadlock or serialization failure, a lock
+    /// wait that ran out, a lost connection; [`transient_fault`]). Asking
+    /// again may succeed, so a write refuses it as retryable.
+    #[error("{0}")]
+    Transient(String),
     /// The source failed (a database or subgraph error).
     #[error("{0}")]
     Failed(String),
+}
+
+/// Whether `e` is a database fault that asking again may clear: a lost or
+/// refused connection (SQLSTATE class 08, an I/O error, the pool timing out
+/// or closing), a serialization failure (40001), a deadlock (40P01), a lock
+/// wait that ran out (55P03), a cancelled statement, its statement bound
+/// included (57014), a server shutting down or starting (57P01 to 57P03),
+/// or too many connections (53300).
+pub fn transient_fault(e: &sqlx::Error) -> bool {
+    match e {
+        sqlx::Error::Io(_)
+        | sqlx::Error::PoolTimedOut
+        | sqlx::Error::PoolClosed
+        | sqlx::Error::WorkerCrashed => true,
+        sqlx::Error::Database(d) => d.code().is_some_and(|code| {
+            code.starts_with("08")
+                || matches!(
+                    code.as_ref(),
+                    "40001" | "40P01" | "55P03" | "57014" | "57P01" | "57P02" | "57P03" | "53300"
+                )
+        }),
+        _ => false,
+    }
 }
 
 /// An answer and the publication it was read under (`None` for a source
@@ -181,10 +210,13 @@ pub trait NameAuthority: Send + Sync {
     }
 }
 
-/// How long [`hold_index_publication`] waits for a fold that holds the
-/// names index's publication row: past it the caller is answered as the
+/// How long [`hold_index_publication`] waits, in all, for a fold that holds
+/// the names index's publication row: past it the caller is answered as the
 /// index not being current, a retryable refusal, instead of holding its own
-/// locks behind a long refold until its statement bound fails it.
+/// locks behind a long refold until its statement bound fails it. It bounds
+/// the whole share statement (`statement_timeout`), so a share queued behind
+/// another waiter (a tuple lock, then the fold's transaction lock) waits no
+/// longer either.
 pub const HOLD_WAIT: std::time::Duration = std::time::Duration::from_secs(5);
 
 /// What [`hold_index_publication`] got.
@@ -204,15 +236,15 @@ pub enum PublicationHold {
 /// publication, withdrawal or refold of the index updates it, so none of
 /// them commits while the share is held. Take it only inside a short
 /// transaction: a fold waits for its end. The wait for a fold already
-/// holding it is bounded by [`HOLD_WAIT`] (`lock_timeout`, set for this
-/// statement and restored after it).
+/// holding it is bounded by [`HOLD_WAIT`] in all (`statement_timeout`, set
+/// for this statement and restored after it).
 pub async fn hold_index_publication(
     conn: &mut sqlx::PgConnection,
 ) -> Result<PublicationHold, sqlx::Error> {
-    let previous: String = sqlx::query_scalar("SELECT current_setting('lock_timeout')")
+    let previous: String = sqlx::query_scalar("SELECT current_setting('statement_timeout')")
         .fetch_one(&mut *conn)
         .await?;
-    sqlx::query("SELECT set_config('lock_timeout', $1, true)")
+    sqlx::query("SELECT set_config('statement_timeout', $1, true)")
         .bind(format!("{}ms", HOLD_WAIT.as_millis()))
         .execute(&mut *conn)
         .await?;
@@ -223,13 +255,19 @@ pub async fn hold_index_publication(
     .await;
     let held = match held {
         Ok(held) => held,
-        // lock_not_available: the wait for the fold ran out.
-        Err(e) if e.as_database_error().and_then(|d| d.code()).as_deref() == Some("55P03") => {
+        // The bound ran out waiting for the fold (query_canceled), or a
+        // shorter lock wait the session set did (lock_not_available).
+        Err(e)
+            if matches!(
+                e.as_database_error().and_then(|d| d.code()).as_deref(),
+                Some("57014" | "55P03")
+            ) =>
+        {
             return Ok(PublicationHold::Busy);
         }
         Err(e) => return Err(e),
     };
-    sqlx::query("SELECT set_config('lock_timeout', $1, true)")
+    sqlx::query("SELECT set_config('statement_timeout', $1, true)")
         .bind(previous)
         .execute(&mut *conn)
         .await?;
@@ -317,5 +355,31 @@ impl NameAuthority for SubgraphNames {
 
     fn observes(&self) -> bool {
         false
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::transient_fault;
+
+    /// A lost or exhausted pool may clear on a retry; a query the schema
+    /// cannot answer or a decode never will.
+    #[test]
+    fn only_faults_a_retry_may_clear_are_transient() {
+        for transient in [
+            sqlx::Error::PoolTimedOut,
+            sqlx::Error::PoolClosed,
+            sqlx::Error::WorkerCrashed,
+            sqlx::Error::Io(std::io::Error::from(std::io::ErrorKind::ConnectionReset)),
+        ] {
+            assert!(transient_fault(&transient), "{transient}");
+        }
+        for lasting in [
+            sqlx::Error::RowNotFound,
+            sqlx::Error::ColumnNotFound("owner".into()),
+            sqlx::Error::Protocol("unexpected message".into()),
+        ] {
+            assert!(!transient_fault(&lasting), "{lasting}");
+        }
     }
 }
