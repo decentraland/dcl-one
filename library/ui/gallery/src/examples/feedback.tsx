@@ -681,6 +681,37 @@ export const feedbackEntries: GalleryEntry[] = [
             </Tag>
           </div>
         )
+      },
+      {
+        id: 'category',
+        title: 'Category pills: the category colours, and the large pill on brand colours',
+        note: 'The medium pill is 24px high, 26px from 1024px wide.',
+        render: () => (
+          <div className={layout.stack}>
+            <div className={layout.row}>
+              <Tag variant="category" tone="updates">
+                Announcements
+              </Tag>
+              <Tag variant="category" tone="communities">
+                Community Highlights
+              </Tag>
+              <Tag variant="category" tone="about">
+                About Decentraland
+              </Tag>
+            </div>
+            <div className={layout.row}>
+              <Tag variant="category" size="lg" tone="ruby">
+                Announcements
+              </Tag>
+              <Tag variant="category" size="lg" tone="violet">
+                Platform
+              </Tag>
+              <Tag variant="category" size="lg" tone="orange">
+                Community
+              </Tag>
+            </div>
+          </div>
+        )
       }
     ]
   },
@@ -825,6 +856,26 @@ export const feedbackEntries: GalleryEntry[] = [
             <ProfilePic name="Ada" src={people.ada.picture} size={76} compactOnMobile />
             <ProfilePic name="Ada" src={people.ada.picture} size={48} status="online" />
             <ProfilePic name={people.grace.name} size={32} status="away" />
+          </div>
+        )
+      },
+      {
+        id: 'gradient',
+        title: 'Without the ring at 56px, and the brand gradient fallback',
+        note: 'Initials show on the gradient from 48px up; the smaller discs stay blank beside a visible name.',
+        render: () => (
+          <div className={layout.row}>
+            <ProfilePic
+              name="Ada"
+              alt=""
+              src={people.ada.picture}
+              size={56}
+              ring={false}
+              fallback="gradient"
+            />
+            <ProfilePic name={people.grace.name} size={56} ring={false} fallback="gradient" />
+            <ProfilePic name={people.grace.name} alt="" size={28} fallback="gradient" />
+            <ProfilePic name="Ada" alt="" src={people.ada.picture} size={28} fallback="gradient" />
           </div>
         )
       }

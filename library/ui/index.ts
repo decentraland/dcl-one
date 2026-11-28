@@ -167,7 +167,7 @@ export type { SubmitFieldProps } from './components/SubmitField/SubmitField'
 export { SwapLabel } from './components/SwapLabel/SwapLabel'
 export type { SwapLabelProps } from './components/SwapLabel/SwapLabel'
 export { Tag } from './components/Tag/Tag'
-export type { TagProps, TagVariant } from './components/Tag/Tag'
+export type { TagProps, TagTone, TagVariant } from './components/Tag/Tag'
 
 export { FriendCTA } from './components/FriendCTA/FriendCTA'
 export type {

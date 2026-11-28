@@ -226,6 +226,63 @@
     color: var(--dcl-feedback-error);
   }
 
+  /* Figma `category-tag`: a 24px pill, 26px from 1024px, with 12px semibold capitals 8px from its ends. The
+   * communities wine (the Event Live surface EventCard also uses) has no token, and the updates and about pills
+   * carry black text where Figma draws white, for contrast. Not in Figma: the `lg` pill, 16px bold capitals inside
+   * 8px, 16px and 7px of padding, on a brand colour. The pill keeps its own width in a column. */
+  .root[data-variant='category'] {
+    align-self: flex-start;
+    min-height: 24px;
+    padding: 0 var(--dcl-space-8);
+    border-radius: var(--dcl-radius-full);
+    font-size: var(--dcl-font-size-label-xs-caps);
+    font-weight: 600;
+    line-height: 1.25;
+    letter-spacing: 0.5px;
+    text-transform: uppercase;
+  }
+
+  @media (min-width: 1024px) {
+    .root[data-variant='category'][data-size='md'] {
+      min-height: 26px;
+    }
+  }
+
+  .root[data-variant='category'][data-size='lg'] {
+    min-height: 0;
+    padding: var(--dcl-space-8) var(--dcl-space-16) 7px;
+    font-size: var(--dcl-font-size-label-md-caps);
+    font-weight: 700;
+    line-height: 1;
+    letter-spacing: 0.64px;
+  }
+
+  .root[data-tone='updates'] {
+    background: var(--dcl-brand-orange);
+    color: var(--dcl-neutrals-black);
+  }
+
+  .root[data-tone='communities'] {
+    background: #680d4a;
+  }
+
+  .root[data-tone='about'] {
+    background: var(--dcl-brand-lavender);
+    color: var(--dcl-neutrals-black);
+  }
+
+  .root[data-tone='ruby'] {
+    background: var(--dcl-brand-ruby);
+  }
+
+  .root[data-tone='violet'] {
+    background: var(--dcl-brand-violet);
+  }
+
+  .root[data-tone='orange'] {
+    background: var(--dcl-brand-orange);
+  }
+
   @media (forced-colors: active) {
     .root {
       border: 1px solid CanvasText;

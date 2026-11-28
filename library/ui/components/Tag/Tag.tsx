@@ -13,7 +13,8 @@ import styles from './Tag.module.css'
 /**
  * Status: `live`, `online`, `streaming`, `listening`, `voiceStream`, `featured`. Location:
  * `location` (coordinates or a World's name). Community: `public`, `private` and `role` (owner,
- * moderator). `realm`. Age rating: `teen`, `adult`, `restricted`.
+ * moderator). `realm`. Age rating: `teen`, `adult`, `restricted`. `category`: a post's category as a
+ * coloured pill.
  */
 export type TagVariant =
   | 'live'
@@ -30,6 +31,13 @@ export type TagVariant =
   | 'teen'
   | 'adult'
   | 'restricted'
+  | 'category'
+
+/**
+ * A `category` pill's colour. `updates`, `communities` and `about` are Figma's `category-tag` colours; `ruby`,
+ * `violet` and `orange` are brand colours under the primary text.
+ */
+export type TagTone = 'updates' | 'communities' | 'about' | 'ruby' | 'violet' | 'orange'
 
 export type TagProps = Omit<HTMLAttributes<HTMLSpanElement>, 'children'> & {
   variant: TagVariant
@@ -44,6 +52,13 @@ export type TagProps = Omit<HTMLAttributes<HTMLSpanElement>, 'children'> & {
   count?: ReactNode
   /** What the count means, for assistive technology: "24 players". Without it the number is read alone. */
   countLabel?: string
+  /** The `category` pill's colour. `about` by default. */
+  tone?: TagTone
+  /**
+   * The `category` pill's size. `md` (default) is Figma's `category-tag`: 24px high, 26px from 1024px, 12px
+   * capitals. `lg` is not in Figma: 31px high, 16px bold capitals.
+   */
+  size?: 'md' | 'lg'
 }
 
 const DEFAULT_TEXT: Partial<Record<TagVariant, string>> = {
@@ -136,7 +151,17 @@ function mark(variant: TagVariant): ReactNode {
  * a count after it. It is text, not a control. Every mark is decorative, so the text, the count
  * label or the age rating's word carries the meaning; colour is never the only sign.
  */
-export function Tag({ variant, appearance, children, count, countLabel, className, ...rest }: TagProps) {
+export function Tag({
+  variant,
+  appearance,
+  children,
+  count,
+  countLabel,
+  tone,
+  size,
+  className,
+  ...rest
+}: TagProps) {
   const text = TEXTLESS.has(variant) && count != null ? null : (children ?? DEFAULT_TEXT[variant])
   const ratingName = RATING_NAMES[variant]
   // The one letter of an age rating is read as its word, unless the caller names the tag.
@@ -151,6 +176,7 @@ export function Tag({ variant, appearance, children, count, countLabel, classNam
       className={[styles.root, className].filter(Boolean).join(' ')}
       data-variant={variant}
       data-appearance={appearance}
+      {...(variant === 'category' ? { 'data-tone': tone ?? 'about', 'data-size': size ?? 'md' } : null)}
     >
       {mark(variant)}
       {variant === 'role' ? text : text != null && <span className={styles.text}>{text}</span>}

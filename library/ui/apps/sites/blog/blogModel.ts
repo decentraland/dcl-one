@@ -119,14 +119,3 @@ const categoryTones: Record<string, { article: BlogBadgeTone; card: BlogCardBadg
 export const blogBadgeTone = (slug: string): BlogBadgeTone => categoryTones[slug]?.article ?? 'ruby'
 export const blogCardBadgeTone = (slug: string): BlogCardBadgeTone =>
   categoryTones[slug]?.card ?? 'about'
-
-/** Up to two initials of a name, upper case; "" for a blank name. */
-export function blogInitials(name: string): string {
-  return name
-    .trim()
-    .split(/\s+/)
-    .filter(Boolean)
-    .slice(0, 2)
-    .map((word) => word[0]!.toUpperCase())
-    .join('')
-}

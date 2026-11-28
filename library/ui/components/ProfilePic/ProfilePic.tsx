@@ -3,7 +3,7 @@ import type { CSSProperties, HTMLAttributes } from 'react'
 import { ConnectionStatus, type ConnectionStatusValue } from './ConnectionStatus'
 import styles from './ProfilePic.module.css'
 
-export type ProfilePicSize = 76 | 72 | 60 | 48 | 40 | 32 | 28 | 24 | 20
+export type ProfilePicSize = 76 | 72 | 60 | 56 | 48 | 40 | 32 | 28 | 24 | 20
 
 type Common = Omit<HTMLAttributes<HTMLSpanElement>, 'children'> & {
   /** The member's name: the picture's text alternative, and the source of the fallback initial. */
@@ -28,6 +28,14 @@ type DefaultLook = {
   /** The connection dot is shown from 32px up. */
   status?: ConnectionStatusValue
   statusLabel?: string
+  /** The white 60% ring around the picture (default). Without it the picture fills the whole size. */
+  ring?: boolean
+  /**
+   * Not in Figma: `gradient` puts the brand gradient behind the picture in place of the name colour, and the
+   * name's initials (up to two) on it from 48px up; below 48px the disc stays blank, for a picture shown beside the
+   * name. `initial` (default) is the name's first letter on the name colour.
+   */
+  fallback?: 'initial' | 'gradient'
 }
 
 /**
@@ -51,6 +59,17 @@ export type ProfilePicProps = Common & (DefaultLook | HudLook)
 function initialOf(name: string): string {
   for (const character of name.trim()) return character.toUpperCase()
   return '?'
+}
+
+/** The first letters of the name's first two words, upper case. */
+function initialsOf(name: string): string {
+  return name
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((word) => Array.from(word)[0]!.toUpperCase())
+    .join('')
 }
 
 /** The HUD's initial: the first letter or digit, past a leading `@` or `#`. */
@@ -125,6 +144,8 @@ function DefaultProfilePic({
   compactOnMobile = false,
   status,
   statusLabel,
+  ring = true,
+  fallback = 'initial',
   nameColor,
   onPictureLoad,
   onPictureError,
@@ -146,6 +167,8 @@ function DefaultProfilePic({
       className={[styles.root, className].filter(Boolean).join(' ')}
       data-size={size}
       data-compact-on-mobile={compactOnMobile || undefined}
+      data-ring={ring ? undefined : 'none'}
+      data-fallback={fallback === 'gradient' ? 'gradient' : undefined}
       style={nameColor ? ({ ...style, '--profile-pic-name-color': nameColor } as CSSProperties) : style}
     >
       <span className={styles.picture}>
@@ -167,7 +190,7 @@ function DefaultProfilePic({
             className={styles.initial}
             {...(alt ? { role: 'img', 'aria-label': alt } : { 'aria-hidden': true })}
           >
-            {initialOf(name)}
+            {fallback === 'gradient' ? (size >= 48 ? initialsOf(name) : null) : initialOf(name)}
           </span>
         )}
       </span>

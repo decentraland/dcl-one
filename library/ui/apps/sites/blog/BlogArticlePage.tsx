@@ -1,7 +1,7 @@
 // TODO(figma-ds): replace with the generated BlogArticle template when the DCL UI library lands
 import { useId } from 'react'
 import { GeneralLeftArrow } from '../../../foundations/icons/general'
-import { BlogAvatar } from './BlogAvatar'
+import { ProfilePic } from '../../../components/ProfilePic/ProfilePic'
 import { BlogBadge } from './BlogBadge'
 import { BlogCover } from './BlogCover'
 import { BlogPostCard } from './BlogPostCard'
@@ -62,7 +62,14 @@ export function BlogArticlePage({ post, shareUrl, related, categories }: BlogArt
         <div className={styles.byline}>
           {post.author.name ? (
             <p className={styles.author}>
-              <BlogAvatar name={post.author.name} image={post.author.image} size="md" />
+              <ProfilePic
+                name={post.author.name}
+                src={post.author.image}
+                alt=""
+                size={56}
+                ring={false}
+                fallback="gradient"
+              />
               {post.author.slug ? (
                 <BlogLink className={styles.authorName} href={blogAuthorHref(post.author.slug)}>
                   {post.author.name}

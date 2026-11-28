@@ -205,3 +205,55 @@ describe('when a default ProfilePic reports its picture', () => {
     expect(screen.getByRole('img', { name: 'Mojito' }).tagName).toBe('SPAN')
   })
 })
+
+describe('when a default ProfilePic drops the ring', () => {
+  it('should mark the root without a ring and keep the ring by default', () => {
+    const { container, rerender } = render(<ProfilePic name="Ana" size={56} ring={false} />)
+    expect(container.firstElementChild).toHaveAttribute('data-ring', 'none')
+    expect(container.firstElementChild).toHaveAttribute('data-size', '56')
+    rerender(<ProfilePic name="Ana" size={56} />)
+    expect(container.firstElementChild).not.toHaveAttribute('data-ring')
+  })
+})
+
+describe('when a default ProfilePic uses the gradient fallback', () => {
+  it('should show up to two initials from 48px up, under the text alternative', () => {
+    render(<ProfilePic name=" jane   doe smith " alt="Jane" size={56} fallback="gradient" />)
+    const fallback = screen.getByRole('img', { name: 'Jane' })
+    expect(fallback).toHaveTextContent(/^JD$/)
+    expect(fallback.closest('[data-fallback]')).toHaveAttribute('data-fallback', 'gradient')
+  })
+
+  it('should show one initial for a one-word name', () => {
+    render(<ProfilePic name="Catalyrst" size={48} fallback="gradient" />)
+    expect(screen.getByRole('img', { name: 'Catalyrst' })).toHaveTextContent(/^C$/)
+  })
+
+  it('should leave the disc blank below 48px and keep it decorative with an empty alternative', () => {
+    const { container } = render(<ProfilePic name="Jane Doe" alt="" size={28} fallback="gradient" />)
+    expect(screen.queryByRole('img')).toBeNull()
+    expect(container.textContent).toBe('')
+  })
+
+  it('should show nothing for a blank name instead of a mark', () => {
+    const { container } = render(<ProfilePic name="   " alt="" size={56} fallback="gradient" />)
+    expect(container.textContent).toBe('')
+  })
+
+  it('should show the picture over the gradient, and the initials after it fails to load', () => {
+    const { container } = render(
+      <ProfilePic name="Jane Doe" alt="" src="/jane.png" size={56} ring={false} fallback="gradient" />
+    )
+    const picture = container.querySelector('img')!
+    expect(picture).toHaveAttribute('alt', '')
+    fireEvent.error(picture)
+    expect(container.querySelector('img')).toBeNull()
+    expect(container.textContent).toBe('JD')
+  })
+
+  it('should keep the name initial and no gradient by default', () => {
+    const { container } = render(<ProfilePic name="jane doe" size={56} />)
+    expect(container.firstElementChild).not.toHaveAttribute('data-fallback')
+    expect(screen.getByRole('img', { name: 'jane doe' })).toHaveTextContent(/^J$/)
+  })
+})
