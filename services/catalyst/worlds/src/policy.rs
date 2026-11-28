@@ -632,8 +632,12 @@ impl Policy {
             size = None;
         }
         Ok(WorldLimits {
-            // A negative stored limit admits no parcel.
-            max_parcels: parcels.map_or(self.max_parcels, |n| u32::try_from(n).unwrap_or(0)),
+            max_parcels: parcels.map_or(self.max_parcels, |n| {
+                u32::try_from(n).unwrap_or_else(|_| {
+                    tracing::warn!(world = %world.key(), parcels = n, "negative stored parcel limit; admitting none");
+                    0
+                })
+            }),
             max_size_bytes: size.unwrap_or_else(|| self.world_size_cap(world)),
             size_overridden: size.is_some() || world.is_ens_world(),
         })
