@@ -514,7 +514,7 @@ impl ItemsComponent {
                 return Err(ApiError::bad_request("Invalid filename"));
             }
             let hash = hash_bytes_v1(&bytes);
-            let size = bytes.len() as i64;
+            let size = crate::shared::casts::len_i64(bytes.len());
             if !self
                 .blobs
                 .exist(&hash)
