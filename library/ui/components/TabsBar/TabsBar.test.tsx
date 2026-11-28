@@ -256,7 +256,38 @@ describe('TabsBar', () => {
     })
   })
 
+  describe('when it is vertical but not a pill tab list', () => {
+    afterEach(() => {
+      vi.unstubAllGlobals()
+    })
+
+    it.each(['underline', 'compact', undefined] as const)(
+      'ignores the orientation for the %s variant: no class, no aria-orientation, no Up/Down',
+      async (variant) => {
+        const matchMedia = vi.fn()
+        vi.stubGlobal('matchMedia', matchMedia)
+        render(
+          <TabsBar label="Sections" variant={variant} orientation="vertical">
+            <Tabs label="One" selected onClick={() => {}} />
+            <Tabs label="Two" onClick={() => {}} />
+          </TabsBar>
+        )
+        const list = screen.getByRole('tablist')
+        expect(list.className).not.toMatch(/vertical/)
+        expect(list).not.toHaveAttribute('aria-orientation')
+        expect(matchMedia).not.toHaveBeenCalled()
+        screen.getByRole('tab', { name: 'One' }).focus()
+        await userEvent.keyboard('{ArrowDown}')
+        expect(screen.getByRole('tab', { name: 'One' })).toHaveFocus()
+      }
+    )
+  })
+
   describe('when it is horizontal, the default', () => {
+    afterEach(() => {
+      vi.unstubAllGlobals()
+    })
+
     it('ignores Up and Down, has no aria-orientation and never reads the media query', async () => {
       const matchMedia = vi.fn()
       vi.stubGlobal('matchMedia', matchMedia)
@@ -266,7 +297,6 @@ describe('TabsBar', () => {
       expect(screen.getByRole('tab', { name: 'all', selected: true })).toHaveFocus()
       expect(screen.getByRole('tablist')).not.toHaveAttribute('aria-orientation')
       expect(matchMedia).not.toHaveBeenCalled()
-      vi.unstubAllGlobals()
     })
   })
 })
