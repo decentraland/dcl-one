@@ -5,6 +5,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent } from "react";
 import { Link } from "react-router";
 
+import { Button } from "@dcl/one-ui";
 import { isShopApiError } from "@shop/api/client";
 import { shopCart } from "../../cart/store";
 import { SHOP_BASE } from "../../routes";
@@ -17,6 +18,7 @@ import type { CatalogItem } from "@shop/discovery/lib/catalogItem";
 import { railGeometry, railPageFromGeometry, scrollRailToPage } from "../lib/pagedRail";
 import { useShopQuery } from "../query";
 import carouselArrow from "../icons/carousel-arrow.svg?url";
+import creditsCoin from "../components/assets/credits-coin.svg?url";
 import { shopClient } from "../../api/host";
 import "../components/rail.css";
 import "./overviewoutfits.css";
@@ -131,8 +133,9 @@ function OutfitCard({ outfit, byKey, resolving }: { outfit: OutfitSummary; byKey
   return (
     <Link className="shop-outfit-card" to={`${SHOP_BASE}/items/outfits/${outfit.id}`} data-testid="outfit-card">
       <span className="shop-outfit-card__frame" data-testid="outfit-card-thumb" style={{ background: `radial-gradient(65.83% 65.83% at 50% 50%, ${to} 0%, ${from} 100%)` }} />
+      <span className="shop-outfit-card__pattern" />
       <span className="shop-outfit-card__mask">{thumb ? <img className="shop-outfit-card__thumb" src={thumb} alt={outfit.name} loading="lazy" /> : null}</span>
-      <span className="shop-outfit-card__fade" style={{ background: `linear-gradient(180deg, ${rgba(to, 0)} 0%, ${rgba(to, 0.8)} 100%)` }} />
+      <span className="shop-outfit-card__fade" style={{ background: `linear-gradient(180deg, ${rgba(to, 0)} 75%, ${to} 100%)` }} />
       <span className="shop-outfit-card__scrim" />
       <span className="shop-outfit-card__body" data-testid="outfit-card-info">
         <span className="shop-outfit-card__top">
@@ -144,15 +147,23 @@ function OutfitCard({ outfit, byKey, resolving }: { outfit: OutfitSummary; byKey
             </span>
           ) : priced ? (
             <span className="shop-outfit-card__price">
-              <Icon name="credits" size={16} /> <span title={formatCreditsFull(credits)} aria-hidden>{formatCredits(credits)}</span>
+              <img className="shop-outfit-card__coin" src={creditsCoin} alt="" width={16} height={16} />
+              <span title={formatCreditsFull(credits)} aria-hidden>{formatCredits(credits)}</span>
               <span className="shop-sr">{t("assetCard.credits", { count: credits })}</span>
             </span>
           ) : null}
         </span>
-        <button type="button" className="shop-outfit-card__cta" onClick={onAdd} disabled={resolving || items.length === 0} data-testid="outfit-card-cta">
-          <Icon name="cart-solid" size={16} />
+        <Button
+          variant="secondary"
+          size="md"
+          className="shop-outfit-card__cta"
+          leadingIcon={<Icon name="cart-solid" size={20} />}
+          onClick={onAdd}
+          disabled={resolving || items.length === 0}
+          data-testid="outfit-card-cta"
+        >
           {added ? t("outfit.added") : tr("outfits.card.add", t("itemDetail.addToCart"))}
-        </button>
+        </Button>
       </span>
     </Link>
   );
