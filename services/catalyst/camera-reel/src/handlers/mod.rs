@@ -41,7 +41,7 @@ pub struct PageQuery {
 impl PageQuery {
     pub fn page(&self) -> Result<Page, ApiError> {
         match &self.cursor {
-            None => Ok(Page::Offset(self.offset as i64)),
+            None => offset(self.offset).map(Page::Offset),
             Some(raw) if raw.is_empty() => Ok(Page::After(None)),
             Some(raw) => Cursor::decode(raw)
                 .map(|c| Page::After(Some(c)))
@@ -55,7 +55,12 @@ impl PageQuery {
 }
 
 pub fn capped_limit(limit: u64) -> i64 {
-    limit.min(MAX_LIMIT) as i64
+    crate::shared::casts::saturating_i64(limit.min(MAX_LIMIT))
+}
+
+/// A request offset as its `bigint` bind; one past it is a 400.
+pub fn offset(offset: u64) -> Result<i64, ApiError> {
+    i64::try_from(offset).map_err(|_| ApiError::BadRequest("invalid offset".to_string()))
 }
 
 /// The wire form of a page's `next`: absent on an offset request.

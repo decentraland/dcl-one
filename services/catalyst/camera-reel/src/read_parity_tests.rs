@@ -1,3 +1,9 @@
+#![allow(
+    clippy::cast_sign_loss,
+    clippy::cast_possible_wrap,
+    reason = "test fixtures use small literal values"
+)]
+
 use std::sync::Arc;
 
 use alloy::signers::{Signer as _, local::PrivateKeySigner};
