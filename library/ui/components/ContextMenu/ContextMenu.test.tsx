@@ -234,6 +234,20 @@ describe('Submenu', () => {
     expect(screen.getByRole('menuitem', { name: 'First' })).toHaveFocus()
   })
 
+  it('opens on a pointer click and leaves no focus on the row, for a later key press to ring', () => {
+    render(<Submenu label="Invite">{list}</Submenu>)
+    const row = screen.getByRole('menuitem', { name: 'Invite' })
+    row.focus()
+    fireEvent.click(row, { detail: 1 })
+    expect(row).not.toHaveFocus()
+    expect(row).toHaveAttribute('aria-expanded', 'true')
+    expect(screen.getByRole('menu', { name: 'Communities' })).toBeInTheDocument()
+    fireEvent.mouseLeave(row.parentElement as HTMLElement)
+    row.focus()
+    fireEvent.click(row, { detail: 0 })
+    expect(screen.getByRole('menuitem', { name: 'First' })).toHaveFocus()
+  })
+
   it('closes when the focus leaves the row and its list, and stays open while it moves inside', () => {
     render(
       <>
@@ -269,6 +283,29 @@ describe('Submenu', () => {
     expect(row).toHaveAttribute('aria-expanded', 'false')
     expect(row).toHaveFocus()
     expect(off).toHaveBeenCalledTimes(1)
+  })
+
+  it("closes from the host's closer without taking the focus when the pointer opened it", () => {
+    let closer: (() => void) | undefined
+    render(
+      <Submenu
+        label="Invite"
+        whileOpen={(close) => {
+          closer = close
+          return () => {}
+        }}
+      >
+        {list}
+      </Submenu>
+    )
+    const row = screen.getByRole('menuitem', { name: 'Invite' })
+    fireEvent.mouseEnter(row.parentElement as HTMLElement)
+    act(() => closer?.())
+    expect(row).toHaveAttribute('aria-expanded', 'false')
+    expect(row).not.toHaveFocus()
+    fireEvent.click(row, { detail: 1 })
+    act(() => closer?.())
+    expect(row).not.toHaveFocus()
   })
 
   it('opens and closes without a host closer', () => {

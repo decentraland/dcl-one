@@ -53,6 +53,7 @@ import {
   type Rarity
 } from '.'
 import { SHOWCASE_INDEX, type ShowcaseName } from './ShowcaseIndex'
+import { pressedWith, releasePointerFocus, type PressedWith } from '../lib/pressedWith'
 import reelShareIcon from '../assets/camera-reel/share-x.png'
 import reelLinkIcon from '../assets/camera-reel/copy-link.png'
 import reelDownloadIcon from '../assets/camera-reel/download.png'
@@ -622,7 +623,7 @@ export function Showcase(): React.JSX.Element {
 }
 
 function AnchoredMenuDemo(): React.JSX.Element {
-  const [anchor, setAnchor] = useState<{ x: number; y: number; opener: Element } | null>(null)
+  const [anchor, setAnchor] = useState<{ x: number; y: number; opener: Element; openedWith: PressedWith } | null>(null)
   const [pub, setPub] = useState(true)
   return (
     <>
@@ -630,7 +631,9 @@ function AnchoredMenuDemo(): React.JSX.Element {
         variant="secondary"
         onClick={(e) => {
           const box = e.currentTarget.getBoundingClientRect()
-          setAnchor(anchor == null ? { x: box.left + box.width / 2, y: box.top + box.height / 2, opener: e.currentTarget } : null)
+          const opener = e.currentTarget
+          releasePointerFocus(e)
+          setAnchor(anchor == null ? { x: box.left + box.width / 2, y: box.top + box.height / 2, opener, openedWith: pressedWith(e) } : null)
         }}
       >
         Open the photo options
@@ -639,6 +642,7 @@ function AnchoredMenuDemo(): React.JSX.Element {
         <AnchoredMenu
           anchor={anchor}
           ignore={anchor.opener}
+          openedWith={anchor.openedWith}
           onClose={() => setAnchor(null)}
           aria-label="Photo options"
           items={[

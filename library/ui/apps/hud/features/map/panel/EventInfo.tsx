@@ -1,12 +1,12 @@
 // An event in the map's panel: when it runs, who hosts it and where, and its time table.
 
-import { useRef, useState } from 'react'
+import { useRef } from 'react'
 import { setEventAttending } from '@explorer-core/features/map/mapApi'
 import type { EventData } from '@explorer-core/engine/protocol'
 import type { EventView } from '@explorer-core/features/map/navmap'
 import { calendarLink, eventSchedule, eventShareLinks, upcomingDates } from '@explorer-core/features/map/shareLinks'
 import { PANEL_ART } from '../mapArt'
-import { ShareMenu } from './ShareMenu'
+import { ShareMenu, useShareMenu } from './ShareMenu'
 import { TextWithLinks } from './TextWithLinks'
 import styles from './MapPanel.module.css'
 import { MaskIcon } from '@dcl/one-ui'
@@ -23,7 +23,7 @@ export function EventInfo({
   onJumpIn: () => void
 }): React.JSX.Element {
   const { event, place } = view
-  const [sharing, setSharing] = useState(false)
+  const share = useShareMenu()
   const current = useRef(event)
   current.current = event
   const reminds = useRef(0)
@@ -90,10 +90,10 @@ export function EventInfo({
             </button>
           )}
           <span className={styles.shareAnchor}>
-            <button type="button" className={`${styles.action} ${styles.eventShareLarge}`} aria-label="Share" aria-haspopup="menu" aria-expanded={sharing} onClick={() => setSharing(true)}>
+            <button type="button" className={`${styles.action} ${styles.eventShareLarge}`} aria-label="Share" aria-haspopup="menu" aria-expanded={share.openedWith != null} onClick={share.press}>
               <MaskIcon src={PANEL_ART.share} size={22} />
             </button>
-            {sharing && <ShareMenu links={eventShareLinks(event, referrer)} onClose={() => setSharing(false)} />}
+            {share.openedWith != null && <ShareMenu links={eventShareLinks(event, referrer)} openedWith={share.openedWith} onClose={share.close} />}
           </span>
         </div>
         <hr className={styles.rule} />

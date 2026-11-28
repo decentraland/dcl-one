@@ -12,7 +12,7 @@ import { EmojiPicker, useCloseEmojiPanelOnOutsidePress } from './EmojiPicker'
 import { EmojiButton } from './EmojiButton'
 import { ReactionLane } from './ReactionLane'
 import { EmojiSuggestList, emojiSuggestionAt, moveSelection, tokenAtCaret } from './EmojiSuggestList'
-import { ConversationMenu, MENU_LAYER } from './ConversationMenu'
+import { ChatMenuOpen, ConversationMenu, MENU_LAYER } from './ConversationMenu'
 import { HeartIcon } from './ChatIcons'
 import { ConversationRail } from './ConversationRail'
 import { CommunityHeader } from './CommunityHeader'
@@ -704,6 +704,8 @@ export function Chat({
   // Focus anywhere in the panel (a title bar button, the members list, the options menu) keeps the
   // chat active, as the input's does: only a click outside lets go of it.
   const [within, setWithin] = useState(false)
+  // So does an open options menu, which holds no focus when the pointer opened it.
+  const [menuOpen, setMenuOpen] = useState(false)
   const listRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
   const pickerRef = useRef<HTMLDivElement>(null)
@@ -730,7 +732,7 @@ export function Chat({
   // "active" = the user is interacting → show the full solid panel + chrome.
   // A profile card opened from the chat keeps it active, so the view under the card stays put.
   const [cardOpen, setCardOpen] = useState(false)
-  const active = open && (hovered || focused || within || picker || cardOpen || reacting != null)
+  const active = open && (hovered || focused || within || menuOpen || picker || cardOpen || reacting != null)
   const bare = !active // collapsed or idle-open → borderless translucent input only
   // `within` is where the focus is, read from the document, not kept from focus and blur events: a
   // focused control that unmounts (the members list's Back, a menu entry that closes its menu, a
@@ -1186,7 +1188,7 @@ export function Chat({
   if (hidden) return null
 
   return (
-    <>
+    <ChatMenuOpen.Provider value={setMenuOpen}>
     <div
       ref={setRoot}
       className={`${styles.root} ${open ? styles.open : ''} ${active ? styles.active : ''} ${focused ? styles.focused : ''} ${active && showMembers ? styles.membersOpen : ''} ${hasRail ? styles.withRail : ''}`.trim()}
@@ -1455,6 +1457,6 @@ export function Chat({
     {/* beside the panel, not in it: the panel clips what it paints, and reactions rise out of it.
         Next after it, so a panel opened over the chat is over its reactions too. */}
     <ReactionLane subscribe={chat.onReaction} anchor={heartRef} />
-    </>
+    </ChatMenuOpen.Provider>
   )
 }

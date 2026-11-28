@@ -4,6 +4,7 @@
 // strip is keyboard-operable (the panels it heads are not `tabpanel`s; the strip only owns selection).
 
 import { CountBadge, Tabs as SharedTab, TabsBar } from '@dcl/one-ui'
+import { releasePointerFocus } from '../lib/pressedWith'
 
 export interface TabItem<T extends string = string> {
   id: T
@@ -50,8 +51,8 @@ export function Tabs<T extends string>({
           selected={it.id === value}
           disabled={it.disabled}
           onClick={(event) => {
-            // Safari does not focus a button on click, and the arrow keys start from the focused tab.
-            event.currentTarget.focus()
+            // Enter, Space and the arrows keep the keyboard's focus on the tab; a pointer click keeps none.
+            releasePointerFocus(event)
             onChange(it.id)
           }}
           label={

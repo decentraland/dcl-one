@@ -6,6 +6,7 @@ import { photoTime } from '../session/useEngineSession'
 import { useOptionalSession } from '../session/SessionContext'
 import type { GalleryPhoto } from '@explorer-core/engine/protocol'
 import { copyReelLink, downloadReel, shareReelToX } from './reelActions'
+import { pressedWith, releasePointerFocus, type PressedWith } from '../../lib/pressedWith'
 import menuVerticalIcon from '../../assets/camera-reel/menu-vertical.png'
 import shareIcon from '../../assets/camera-reel/share-x.png'
 import linkIcon from '../../assets/camera-reel/copy-link.png'
@@ -134,7 +135,7 @@ export function ReelGrid({
     if (view.measured) onVisibleIndex(lastOnScreen)
   }, [view.measured, lastOnScreen, photos.length, onVisibleIndex])
 
-  const [menuFor, setMenuFor] = useState<{ photo: GalleryPhoto; anchor: { x: number; y: number }; trigger: HTMLElement } | null>(null)
+  const [menuFor, setMenuFor] = useState<{ photo: GalleryPhoto; anchor: { x: number; y: number }; trigger: HTMLElement; openedWith: PressedWith } | null>(null)
   const openPhoto = menuFor != null ? photos.find((p) => p.id === menuFor.photo.id) : undefined
   useEffect(() => {
     if (menuFor != null && openPhoto == null) setMenuFor(null)
@@ -175,13 +176,13 @@ export function ReelGrid({
                   hasMenu={menu != null}
                   menuOpen={menuFor?.photo.id === photo.id}
                   onOpen={() => onOpen(r.start + i)}
-                  onMenu={(trigger) => {
+                  onMenu={(trigger, openedWith) => {
                     if (menuFor?.photo.id === photo.id) {
                       setMenuFor(null)
                       return
                     }
                     const box = trigger.getBoundingClientRect()
-                    setMenuFor({ photo, trigger, anchor: { x: box.left + box.width / 2, y: box.top + box.height / 2 } })
+                    setMenuFor({ photo, trigger, openedWith, anchor: { x: box.left + box.width / 2, y: box.top + box.height / 2 } })
                   }}
                 />
               ))}
@@ -198,7 +199,7 @@ export function ReelGrid({
         </div>
       )}
       {menu != null && menuFor != null && openPhoto != null && (
-        <ReelMenu key={openPhoto.id} photo={openPhoto} anchor={menuFor.anchor} trigger={menuFor.trigger} menu={menu} onClose={() => setMenuFor(null)} />
+        <ReelMenu key={openPhoto.id} photo={openPhoto} anchor={menuFor.anchor} trigger={menuFor.trigger} openedWith={menuFor.openedWith} menu={menu} onClose={() => setMenuFor(null)} />
       )}
     </div>
   )
@@ -221,7 +222,7 @@ function Thumbnail({
   hasMenu: boolean
   menuOpen: boolean
   onOpen: () => void
-  onMenu: (trigger: HTMLElement) => void
+  onMenu: (trigger: HTMLElement, openedWith: PressedWith) => void
 }): React.JSX.Element {
   const [loaded, setLoaded] = useState(false)
   const [failed, setFailed] = useState(false)
@@ -251,7 +252,11 @@ function Thumbnail({
           aria-label="Photo options"
           aria-haspopup="menu"
           aria-expanded={menuOpen}
-          onClick={(e) => onMenu(e.currentTarget)}
+          onClick={(e) => {
+            const trigger = e.currentTarget
+            releasePointerFocus(e)
+            onMenu(trigger, pressedWith(e))
+          }}
         >
           <MaskIcon src={menuVerticalIcon} size={24} className={styles.optionsIcon} />
         </button>
@@ -264,12 +269,14 @@ function ReelMenu({
   photo,
   anchor,
   trigger,
+  openedWith,
   menu,
   onClose
 }: {
   photo: GalleryPhoto
   anchor: { x: number; y: number }
   trigger: HTMLElement
+  openedWith: PressedWith
   menu: ReelGridMenu
   onClose: () => void
 }): React.JSX.Element {
@@ -297,5 +304,5 @@ function ReelMenu({
     const onDelete = menu.onDelete
     items.push({ label: 'Delete', icon: icon(deleteIcon), onClick: () => onDelete(photo) })
   }
-  return <AnchoredMenu anchor={anchor} items={items} onClose={onClose} ignore={trigger} aria-label="Photo options" />
+  return <AnchoredMenu anchor={anchor} items={items} onClose={onClose} ignore={trigger} openedWith={openedWith} aria-label="Photo options" />
 }

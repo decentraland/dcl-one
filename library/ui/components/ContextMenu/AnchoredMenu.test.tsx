@@ -33,6 +33,20 @@ describe('AnchoredMenu', () => {
     expect(screen.getByRole('menuitem', { name: 'Share' })).toHaveFocus()
   })
 
+  it('opened with the pointer, takes no focus and gives none back as it closes, for a later key press to ring', () => {
+    render(<button type="button">opener</button>)
+    const opener = screen.getByRole('button', { name: 'opener' })
+    const view = render(
+      <AnchoredMenu anchor={{ x: 0, y: 0 }} items={items} onClose={() => {}} ignore={opener} openedWith="pointer" />
+    )
+    expect(document.body).toHaveFocus()
+    // A browser focuses an entry the pointer presses; the menu closing under it leaves the focus nowhere.
+    screen.getByRole('menuitem', { name: 'Share' }).focus()
+    view.unmount()
+    expect(opener).not.toHaveFocus()
+    expect(document.body).toHaveFocus()
+  })
+
   it('draws nothing, takes no focus and hears no press while closed', () => {
     const onClose = vi.fn()
     const whileOpen = vi.fn(() => () => {})

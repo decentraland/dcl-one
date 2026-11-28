@@ -1,7 +1,8 @@
 import { beforeEach, describe, it, expect, vi } from 'vitest'
-import { act, render, screen } from '@testing-library/react'
+import { act, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { Chat } from '../../features/chat/Chat'
+import { PING_LABEL } from '../../features/chat/ConversationMenu'
 import type { ChatState, CommunityConversation } from '../../features/session/useEngineSession'
 import { pingModeFor, resetPingPrefs, setPingDefault, setPingMode } from '../../features/chat/ping'
 import { fakeSession } from '../harness'
@@ -84,7 +85,8 @@ describe('community chat panel', () => {
   it("the title's menu closes on Escape, giving the focus back, and on a press outside", async () => {
     render(<Chat chat={chatWith({ channel: 'community:c1', communities: [community()] })} />)
     const title = screen.getByRole('button', { name: 'Decentraland Foundation options' })
-    await userEvent.click(title)
+    title.focus()
+    await userEvent.keyboard('{Enter}')
     expect(screen.getByRole('menuitem', { name: 'View Community' })).toHaveFocus()
     act(() => {
       dispatchCancelLayer()
@@ -162,6 +164,53 @@ describe('community chat panel', () => {
     await userEvent.click(screen.getByRole('button', { name: 'React' }))
     await userEvent.click(screen.getByRole('button', { name: String.fromCodePoint(0x2665, 0xfe0f) }))
     expect(vi.mocked(chat.react)).toHaveBeenCalledWith(`${MOJITO}:1`, String.fromCodePoint(0x2665, 0xfe0f), false)
+  })
+
+  it('a menu opened with the pointer leaves no focus on its button or its rows, as its page turns too', async () => {
+    render(<Chat chat={chatWith({})} />)
+    await userEvent.click(screen.getByRole('button', { name: 'Conversation options' }))
+    expect(screen.getByRole('menuitem', { name: PING_LABEL })).toBeInTheDocument()
+    expect(document.body).toHaveFocus()
+    await userEvent.click(screen.getByRole('menuitem', { name: PING_LABEL }))
+    expect(screen.getByRole('menuitemradio', { name: 'Default' })).toBeInTheDocument()
+    expect(document.body).toHaveFocus()
+  })
+
+  it('a menu the pointer opened keeps the chat active while it is open, though it holds no focus', async () => {
+    const chat = chatWith({ setActive: vi.fn() })
+    render(<Chat chat={chat} />)
+    const options = screen.getByRole('button', { name: 'Conversation options' })
+    await userEvent.click(options)
+    await userEvent.unhover(options)
+    expect(screen.getByRole('menu')).toBeInTheDocument()
+    expect(vi.mocked(chat.setActive)).toHaveBeenLastCalledWith(true)
+    // a gamepad's Cancel closes it with no DOM event at all
+    act(() => {
+      dispatchCancelLayer()
+    })
+    expect(screen.queryByRole('menu')).toBeNull()
+    expect(vi.mocked(chat.setActive)).toHaveBeenLastCalledWith(false)
+    await userEvent.click(options)
+    await userEvent.unhover(options)
+    expect(vi.mocked(chat.setActive)).toHaveBeenLastCalledWith(true)
+    await userEvent.click(document.body)
+    expect(screen.queryByRole('menu')).toBeNull()
+    await waitFor(() => expect(vi.mocked(chat.setActive)).toHaveBeenLastCalledWith(false))
+  })
+
+  it('a menu opened from the keyboard takes the focus to its first row, keeps it in the menu as its page turns and gives it back', async () => {
+    render(<Chat chat={chatWith({})} />)
+    const options = screen.getByRole('button', { name: 'Conversation options' })
+    options.focus()
+    await userEvent.keyboard('{Enter}')
+    expect(screen.getByRole('menuitem', { name: PING_LABEL })).toHaveFocus()
+    await userEvent.keyboard('{Enter}')
+    expect(screen.getByRole('menuitemradio', { name: 'Default' })).toHaveFocus()
+    act(() => {
+      dispatchCancelLayer()
+    })
+    expect(screen.queryByRole('menu')).toBeNull()
+    expect(options).toHaveFocus()
   })
 
   it('Nearby and DM title bars carry the ping menu too', async () => {

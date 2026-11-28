@@ -347,11 +347,13 @@ describe('GalleryPage', () => {
       expect(screen.queryByRole('menu', { name: 'Photo options' })).toBeNull()
     })
 
-    it('closing the menu puts focus back on its ⋮', async () => {
+    it('opened from the keyboard, the menu takes the focus, and closing it puts the focus back on its ⋮', async () => {
       renderPage(gallery(photos))
-      await openMenu()
+      await loadThumbnails()
       const trigger = screen.getAllByRole('button', { name: 'Photo options' })[0]
-      expect(trigger).not.toHaveFocus()
+      trigger.focus()
+      await userEvent.keyboard('{Enter}')
+      expect(screen.getByRole('menu', { name: 'Photo options' })).toContainElement(document.activeElement as HTMLElement)
       act(() => {
         dispatchCancelLayer()
       })

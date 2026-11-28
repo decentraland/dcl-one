@@ -4996,6 +4996,10 @@
           "kind": "regular"
         },
         {
+          "name": "pressedWith.ts",
+          "kind": "regular"
+        },
+        {
           "name": "useFocusTrap.ts",
           "kind": "regular"
         },
@@ -5239,6 +5243,10 @@
         },
         {
           "name": "surfaceBoundary.test.tsx",
+          "kind": "regular"
+        },
+        {
+          "name": "tabs.test.tsx",
           "kind": "regular"
         },
         {
@@ -13116,7 +13124,7 @@
     },
     {
       "path": "library/ui/apps/hud/design/Showcase.tsx",
-      "sha256": "4cd429d1c858ef846d480ba3676f666c9560f5f5bafdba2126299c8889d73832"
+      "sha256": "a3d0d633a7829546742697325f4eb4ec84442a8b5d163a5ac7c5684c5b1ae8c7"
     },
     {
       "path": "library/ui/apps/hud/design/ShowcaseIndex.ts",
@@ -13128,7 +13136,7 @@
     },
     {
       "path": "library/ui/apps/hud/design/Tabs.tsx",
-      "sha256": "7f081c43fc63d219c7898ee08bde2a311903ed8dd42372b8a824a23c87f518c6"
+      "sha256": "995d273fa7980838e4fd8011509e8f5384304925af07c483d8243cc78076e7ed"
     },
     {
       "path": "library/ui/apps/hud/design/TextArea.module.css",
@@ -13196,7 +13204,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/chat/Chat.tsx",
-      "sha256": "f13e8dd576bbe03d66bcdadb4703c95c1fe3790ff91a739ce2fd1938c4f504cf"
+      "sha256": "54a17018eb9b77a2415d6fce1c034d77d8f7fcfcde789aeaf3eb0441ca797e65"
     },
     {
       "path": "library/ui/apps/hud/features/chat/ChatIcons.tsx",
@@ -13212,7 +13220,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/chat/ConversationMenu.tsx",
-      "sha256": "cf82e04220b8465d1e403e309fe11b731f0c9bc75a68c9dfe14b33af9b999cd4"
+      "sha256": "f5e318924321d53032fe1317c6ed84ba8f6ccceba99445cbf7a2e828ec899002"
     },
     {
       "path": "library/ui/apps/hud/features/chat/ConversationRail.tsx",
@@ -13648,7 +13656,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/gallery/ReelGrid.tsx",
-      "sha256": "69a107c7d5cb12506211d810fb46ea3940e78ac91fdd76f8911501917eb4b3f6"
+      "sha256": "3614a89bba2e865cb0a98186851cb787039fdf5728869f2216fbd99e625c7bd9"
     },
     {
       "path": "library/ui/apps/hud/features/gallery/publicReels.ts",
@@ -13892,7 +13900,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/map/panel/EventInfo.tsx",
-      "sha256": "b6b59a6ed311e690d199bb4476649e9db0f68e4c6d5a83b43f169a3170b4ce52"
+      "sha256": "e964d27094de0b0066cfd9f89dc886170510c5e5a1733e560b9728fb49aa6e77"
     },
     {
       "path": "library/ui/apps/hud/features/map/panel/MapPanel.module.css",
@@ -13900,7 +13908,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/map/panel/PlaceInfo.tsx",
-      "sha256": "2c95625d8014130c424f13c848e9abeb6a5901f615c0ffab398ca7d4889b2fb5"
+      "sha256": "6cf1a353b90ebe2d755134bc6e113975fdba74fb637f272d5050f5878f4798be"
     },
     {
       "path": "library/ui/apps/hud/features/map/panel/RightPanel.tsx",
@@ -13916,7 +13924,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/map/panel/ShareMenu.tsx",
-      "sha256": "e6c296a5b6fd5d2adfd4f21a55bf43b15d1a74d1bcd3be8f0d141fab236745bd"
+      "sha256": "9338c765eec2a2a0365fcff36ed098ca7571937819a44eea6caab23124f223d4"
     },
     {
       "path": "library/ui/apps/hud/features/map/panel/TextWithLinks.tsx",
@@ -14455,6 +14463,10 @@
       "sha256": "ccb0c386a1b862293f7137b1587474d41e357713955f6c15fecd473fe8fbadec"
     },
     {
+      "path": "library/ui/apps/hud/lib/pressedWith.ts",
+      "sha256": "2a18ed0b7b657ff30eb6a4780be5e294448b47d69af14e417a02961fda24d90c"
+    },
+    {
       "path": "library/ui/apps/hud/lib/useFocusTrap.ts",
       "sha256": "8b30600d944e137ce3224dcd53ef20abf9271c71bccb9ef9bcee71537c164780"
     },
@@ -14692,7 +14704,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/hosted/communityChat.render.test.tsx",
-      "sha256": "ad8afe5ae9b7453f27d9d0c49e1071754bd411d8dab663eec57183ac8205de81"
+      "sha256": "f030d4d55a40f138075978b8cab97ccab42faa614696422bc81dc4525b862594"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/communityChat.test.tsx",
@@ -14764,7 +14776,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/hosted/gallery.page.test.tsx",
-      "sha256": "7d52b44b3936c46af06c3f49cd29e909aeaf17caf403652a03924fcd7623d0a2"
+      "sha256": "6b3605450d56c4589ef33509c3f2f823ba3e4fe93da0465f654bd2ef9ee357c5"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/gallery.test.tsx",
@@ -14848,7 +14860,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/hosted/map.page.test.tsx",
-      "sha256": "25101f816971b7c159bb5e5b4b0301cc3879cf628fee1ecf580b358b19443402"
+      "sha256": "4c77581d2e91c93118aeed2cb705f9b2268bbe4b212e3bac63d3e2676e35dd49"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/mapPanel.test.tsx",
@@ -15116,7 +15128,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/reelGrid.test.tsx",
-      "sha256": "59085def5feb143211d88db400a544bd698d85e407be931366773af02be36ed4"
+      "sha256": "b661cfc336b170a180b18193cb40be5c76452366c82034d27fb92c61031c0687"
     },
     {
       "path": "library/ui/apps/hud/test/referral.test.ts",
@@ -15153,6 +15165,10 @@
     {
       "path": "library/ui/apps/hud/test/surfaceBoundary.test.tsx",
       "sha256": "73563cfc7b7e1c0dcc210360e9377b9f699caa4aef902198e46d1e9e88245871"
+    },
+    {
+      "path": "library/ui/apps/hud/test/tabs.test.tsx",
+      "sha256": "c4eebff3cba59c4677ca6142487df5b407128fcb515ff69803b4cf5ba2e6a617"
     },
     {
       "path": "library/ui/apps/hud/test/textArea.test.tsx",
@@ -17068,7 +17084,7 @@
     },
     {
       "path": "library/ui/components/ContextMenu/AnchoredMenu.tsx",
-      "sha256": "db46b0de0941051c7f446f3dcffa0a3046cacc148056823d4e55db9ae34c6df0"
+      "sha256": "9cc4aba3b347b68d86a15f69accf164be749739ba03a42c84e1d8987e8d2ede8"
     },
     {
       "path": "library/ui/components/ContextMenu/ContextMenu.module.css",
@@ -17076,7 +17092,7 @@
     },
     {
       "path": "library/ui/components/ContextMenu/ContextMenu.tsx",
-      "sha256": "73595bc5fe53a395615762090b7948b747b6f22213d994fb3050145e0349e10d"
+      "sha256": "91c64aae629fc033edcb97b92eecda79a452734246e470c994b72fe32ab257cd"
     },
     {
       "path": "library/ui/components/ContextMenu/KebabMenu.tsx",
@@ -22355,6 +22371,21 @@
     },
     {
       "from": "library/ui/apps/hud/design/Showcase.tsx",
+      "to": "library/ui/apps/hud/lib/pressedWith.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/design/Showcase.tsx",
+      "to": "library/ui/apps/hud/lib/pressedWith.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/design/Showcase.tsx",
+      "to": "library/ui/apps/hud/lib/pressedWith.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/design/Showcase.tsx",
       "to": "library/ui/index.ts",
       "kind": "native:runtime"
     },
@@ -22400,6 +22431,21 @@
     },
     {
       "from": "library/ui/apps/hud/design/Tabs.tsx",
+      "to": "library/ui/apps/hud/lib/pressedWith.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/design/Tabs.tsx",
+      "to": "library/ui/apps/hud/lib/pressedWith.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/design/Tabs.tsx",
+      "to": "library/ui/apps/hud/lib/pressedWith.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/design/Tabs.tsx",
       "to": "library/ui/index.ts",
       "kind": "native:runtime"
     },
@@ -25610,6 +25656,21 @@
     },
     {
       "from": "library/ui/apps/hud/features/chat/ConversationMenu.tsx",
+      "to": "library/ui/apps/hud/lib/pressedWith.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/chat/ConversationMenu.tsx",
+      "to": "library/ui/apps/hud/lib/pressedWith.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/chat/ConversationMenu.tsx",
+      "to": "library/ui/apps/hud/lib/pressedWith.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/chat/ConversationMenu.tsx",
       "to": "library/ui/index.ts",
       "kind": "native:runtime"
     },
@@ -30545,6 +30606,21 @@
     },
     {
       "from": "library/ui/apps/hud/features/gallery/ReelGrid.tsx",
+      "to": "library/ui/apps/hud/lib/pressedWith.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/gallery/ReelGrid.tsx",
+      "to": "library/ui/apps/hud/lib/pressedWith.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/gallery/ReelGrid.tsx",
+      "to": "library/ui/apps/hud/lib/pressedWith.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/gallery/ReelGrid.tsx",
       "to": "library/ui/index.ts",
       "kind": "native:runtime"
     },
@@ -36050,6 +36126,21 @@
     },
     {
       "from": "library/ui/apps/hud/features/map/panel/ShareMenu.tsx",
+      "to": "library/explorer-core/lib/cancelLayers.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/map/panel/ShareMenu.tsx",
+      "to": "library/explorer-core/lib/cancelLayers.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/map/panel/ShareMenu.tsx",
+      "to": "library/explorer-core/lib/cancelLayers.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/map/panel/ShareMenu.tsx",
       "to": "library/ui/apps/hud/design/index.ts",
       "kind": "native:runtime"
     },
@@ -36091,6 +36182,21 @@
     {
       "from": "library/ui/apps/hud/features/map/panel/ShareMenu.tsx",
       "to": "library/ui/apps/hud/features/map/panel/MapPanel.module.css",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/map/panel/ShareMenu.tsx",
+      "to": "library/ui/apps/hud/lib/pressedWith.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/map/panel/ShareMenu.tsx",
+      "to": "library/ui/apps/hud/lib/pressedWith.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/map/panel/ShareMenu.tsx",
+      "to": "library/ui/apps/hud/lib/pressedWith.ts",
       "kind": "test:runtime"
     },
     {
@@ -47180,6 +47286,21 @@
     },
     {
       "from": "library/ui/apps/hud/test/hosted/communityChat.render.test.tsx",
+      "to": "library/ui/apps/hud/features/chat/ConversationMenu.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/communityChat.render.test.tsx",
+      "to": "library/ui/apps/hud/features/chat/ConversationMenu.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/communityChat.render.test.tsx",
+      "to": "library/ui/apps/hud/features/chat/ConversationMenu.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/communityChat.render.test.tsx",
       "to": "library/ui/apps/hud/features/chat/ping.ts",
       "kind": "native:runtime"
     },
@@ -49276,6 +49397,21 @@
     {
       "from": "library/ui/apps/hud/test/hosted/map.page.test.tsx",
       "to": "library/explorer-core/features/map/navigation.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/map.page.test.tsx",
+      "to": "library/explorer-core/lib/cancelLayers.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/map.page.test.tsx",
+      "to": "library/explorer-core/lib/cancelLayers.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/map.page.test.tsx",
+      "to": "library/explorer-core/lib/cancelLayers.ts",
       "kind": "test:runtime"
     },
     {
@@ -52546,6 +52682,21 @@
     {
       "from": "library/ui/apps/hud/test/surfaceBoundary.test.tsx",
       "to": "library/ui/apps/hud/features/error/SurfaceBoundary.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/tabs.test.tsx",
+      "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/tabs.test.tsx",
+      "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/tabs.test.tsx",
+      "to": "library/ui/apps/hud/design/index.ts",
       "kind": "test:runtime"
     },
     {
@@ -69825,6 +69976,11 @@
     },
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/ui/apps/hud/lib/pressedWith.ts",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/ui/apps/hud/lib/useFocusTrap.ts",
       "kind": "type"
     },
@@ -70686,6 +70842,11 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/ui/apps/hud/test/surfaceBoundary.test.tsx",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/ui/apps/hud/test/tabs.test.tsx",
       "kind": "type"
     },
     {
