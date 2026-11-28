@@ -43,6 +43,7 @@ const once = (length: number) => ({ length, loop: false }), looped = (length: nu
 
 export const CHARACTER_ANIMATOR: AnimatorController = {
   entry: 'Movement',
+  triggers: ['Jump', 'StartGliding'],
   // The scene's clip lengths (s) and loop flags; also the clips the scene preloads.
   clips: {
     [LOCOMOTION.idle]: looped(s(120)), [LOCOMOTION.walk]: looped(s(60)),
@@ -65,12 +66,11 @@ export const CHARACTER_ANIMATOR: AnimatorController = {
     [GLIDE_POSE.forward]: looped(s(238)), [GLIDE_POSE.idle]: looped(s(238)),
     [GLIDE_START]: once(s(68)), [GLIDE_END]: once(s(16)),
   },
-  // No jump state while the glider is open (NOT_GLIDING): the glider is embedded in the glide clips, which a jump clip
-  // would replace.
+  // The scene sets Jump only while the glider is closed (index.ts, animatorJump).
   any: [
-    tr('Jump', [['Jump', 'if'], ['JumpCount', 'less', 2], NOT_GLIDING], 0.1310842, true,
+    tr('Jump', [['Jump', 'if'], ['JumpCount', 'less', 2]], 0.1310842, true,
       { offset: 0.3291167, interruption: DEST, noSelf: true }),
-    tr('Double Jump', [['Jump', 'if'], ['JumpCount', 'greater', 1], NOT_GLIDING], 0.05, true),
+    tr('Double Jump', [['Jump', 'if'], ['JumpCount', 'greater', 1]], 0.05, true),
     tr('Gliding_Start', [['StartGliding', 'if']], 0.05, true),
   ],
   states: {

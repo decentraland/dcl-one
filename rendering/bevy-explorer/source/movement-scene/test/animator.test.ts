@@ -46,6 +46,14 @@ test('during a cross-fade with no interruption source no transition starts', () 
   assert.equal(a.update({ toC: true }, 0.1).state, 'C')
 })
 
+test('a transition that a condition starts waits for the update after the one that ends the cross-fade', () => {
+  const a = crossFading()
+  a.update({}, 0.4)
+  // the update from 0.4 s to 0.5 s ends the 0.5 s cross-fade into B
+  assert.equal(a.update({ toC: true }, 0.1).state, 'B')
+  assert.equal(a.update({ toC: true }, 0.1).state, 'C')
+})
+
 test('a cross-fade that the destination interrupts lets the destination\'s transitions start', () => {
   const a = crossFading('destination')
   assert.equal(a.update({ toD: true }, 0.1).state, 'B')
@@ -80,9 +88,16 @@ test('an exit time crossed after the cross-fade is taken on the update that ends
   assert.equal(exitUpdate(0.4), 2)
 })
 
-test('a trigger lasts the one update it is set in', () => {
+test('a trigger stays set until a transition that has it among its conditions starts', () => {
+  const c = machine({ A: [go('B', { when: [['go', 'if'], ['ready', 'if']] })], B: [go('A', { when: on('go') })] })
+  const a = new Animator({ ...c, triggers: ['go'] })
+  assert.equal(a.update({ go: true, ready: false }, 0.1).state, 'A')
+  assert.equal(a.update({ ready: true }, 0.1).state, 'B', 'the trigger set on the update before still counts')
+  assert.equal(a.update({}, 0.1).state, 'B', 'the transition into B reset it')
+})
+
+test('a parameter that is not a trigger counts only on the updates that pass it', () => {
   const a = new Animator(machine({ A: [go('B', { when: [['go', 'if'], ['ready', 'if']] })], B: [] }))
   assert.equal(a.update({ go: true, ready: false }, 0.1).state, 'A')
-  assert.equal(a.update({ ready: true }, 0.1).state, 'A', 'the trigger of the update before no longer counts')
-  assert.equal(a.update({ go: true, ready: true }, 0.1).state, 'B')
+  assert.equal(a.update({ ready: true }, 0.1).state, 'A')
 })
