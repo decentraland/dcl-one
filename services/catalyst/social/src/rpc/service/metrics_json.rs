@@ -4,7 +4,7 @@
 use serde_json::{Map, Value, json};
 fn source_float(value: f64) -> Value {
     if value.is_finite() && value.fract() == 0.0 && value.abs() < 9_007_199_254_740_992.0 {
-        json!(crate::casts::saturating_i64(value))
+        json!(crate::casts::f64_to_i64(value))
     } else {
         json!(value)
     }

@@ -174,7 +174,7 @@ fn int(v: &Value) -> Option<i64> {
         Value::Number(n) => n.as_i64().or_else(|| {
             n.as_f64()
                 .filter(|f| f.fract() == 0.0 && f.abs() < 9.0e15)
-                .map(crate::casts::saturating_i64)
+                .map(crate::casts::f64_to_i64)
         }),
         _ => None,
     }
@@ -636,7 +636,7 @@ pub fn merge(
                     _ => None,
                 }
                 .filter(|f| f.is_finite())
-                .map(crate::casts::saturating_i64)
+                .map(crate::casts::f64_to_i64)
             };
             let earlier: Vec<i64> = user
                 .completed_at

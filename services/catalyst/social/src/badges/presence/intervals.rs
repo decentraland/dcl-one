@@ -47,7 +47,7 @@ pub fn threshold_crossing(intervals: &[Interval], required_seconds: i64) -> Opti
 pub fn from_document(value: Option<&Value>) -> Vec<Interval> {
     let number = |v: &Value| {
         v.as_i64()
-            .or_else(|| v.as_f64().map(crate::casts::saturating_i64))
+            .or_else(|| v.as_f64().map(crate::casts::f64_to_i64))
     };
     value
         .and_then(Value::as_array)

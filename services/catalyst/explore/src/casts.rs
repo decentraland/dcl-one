@@ -35,9 +35,10 @@ pub fn coord_i32(v: i64) -> Option<i32> {
     c
 }
 
-/// A stored page bound or offset as `usize`; a negative one is 0.
+/// A stored page bound or offset as `usize`; a negative one is 0, one past
+/// `usize` saturates.
 pub fn page(n: i64) -> usize {
-    usize::try_from(n).unwrap_or(0)
+    usize::try_from(n.max(0)).unwrap_or(usize::MAX)
 }
 
 /// `x as i32`: saturates at the bounds and maps NaN to 0.

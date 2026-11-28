@@ -21,7 +21,8 @@ pub(crate) fn to_usize(n: u64) -> usize {
     usize::try_from(n).unwrap_or(usize::MAX)
 }
 
-/// A page bound, offset or stored count as `usize`; a negative one is 0.
+/// A page bound, offset or stored count as `usize`; a negative one is 0, one
+/// past `usize` saturates.
 pub(crate) fn page(n: i64) -> usize {
     usize::try_from(n.max(0)).unwrap_or(usize::MAX)
 }
@@ -42,17 +43,17 @@ pub(crate) fn clamp_i32(n: i64) -> i32 {
     clippy::cast_possible_truncation,
     reason = "float-to-int `as` saturates; that is the conversion wanted"
 )]
-pub(crate) fn saturating_i64(v: f64) -> i64 {
+pub(crate) fn f64_to_i64(v: f64) -> i64 {
     v as i64
 }
 
-/// As [`saturating_i64`], with negatives as 0.
+/// As [`f64_to_i64`], with negatives as 0.
 #[allow(
     clippy::cast_possible_truncation,
     clippy::cast_sign_loss,
     reason = "float-to-int `as` saturates; that is the conversion wanted"
 )]
-pub(crate) fn saturating_u64(v: f64) -> u64 {
+pub(crate) fn f64_to_u64(v: f64) -> u64 {
     v as u64
 }
 

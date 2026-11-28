@@ -174,7 +174,7 @@ impl Settings {
         // Node setTimeout inserts into an integer millisecond bucket and uses
         // one millisecond outside its supported positive signed-32-bit range.
         let ms = if (1.0..=i32::MAX as f64).contains(&configured) {
-            crate::casts::saturating_u64(configured.trunc())
+            crate::casts::f64_to_u64(configured.trunc())
         } else {
             1
         };

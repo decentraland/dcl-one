@@ -120,7 +120,7 @@ impl FriendshipMutationLimiter {
             && window >= crate::casts::approx_f64(i64::MIN)
             && window < crate::casts::approx_f64(i64::MAX)
         {
-            crate::casts::saturating_i64(window).checked_mul(1000)
+            crate::casts::f64_to_i64(window).checked_mul(1000)
         } else {
             None
         };

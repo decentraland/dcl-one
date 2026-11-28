@@ -186,7 +186,7 @@ fn retry_delays(mut random: impl FnMut() -> f64) -> Vec<Duration> {
     let mut delays = (0..MAX_ATTEMPTS - 1)
         .map(|attempt| {
             let exponent = i32::try_from(attempt).unwrap_or(i32::MAX);
-            Duration::from_millis(crate::casts::saturating_u64(
+            Duration::from_millis(crate::casts::f64_to_u64(
                 ((random() + 1.0) * 1000.0 * 1.96821_f64.powi(exponent)).round(),
             ))
         })
