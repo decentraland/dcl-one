@@ -8,8 +8,10 @@ renders them (production @dcl/sites 0.76.0 served the same text on 2026-11-03). 
 source is licensed under the Apache License 2.0; the license is included at
 library/ui/apps/sites/assets/LICENSE and applies to these files.
 creatorFund.ts and fixtures/creator-fund-terms.json are ported the same way from revision
-dd905b2a98d3450d73c8f8c562881ad45ff3c83c, src/pages/creator-fund-terms, which also places the
-Creator Fund entry in the sidebar every fixture records.
+b7e4fa8ca37caca81e56eb8022d42d31ee26dda2, src/pages/creator-fund-terms (production
+@dcl/sites 0.83.0 served the same text on 2026-11-19). Revision
+dd905b2a98d3450d73c8f8c562881ad45ff3c83c places the Creator Fund entry in the sidebar every
+fixture records.
 The text is legal content: change it only from a new source revision, never by hand. The
 one exception is a link to this site's own pages, which is written as the gateway serves it:
 brand.ts links /terms and /content without the source's trailing slash.

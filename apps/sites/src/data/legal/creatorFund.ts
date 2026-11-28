@@ -1,4 +1,4 @@
-// Ported verbatim from decentraland/sites@dd905b2a (src/pages/creator-fund-terms); the text is legal
+// Ported verbatim from decentraland/sites@b7e4fa8c (src/pages/creator-fund-terms); the text is legal
 // content: do not edit it by hand. Its frozen rendering is apps/sites/src/data/legal/fixtures/creator-fund-terms.json.
 import type { LegalDocument } from "./types";
 
@@ -314,7 +314,7 @@ export const CREATOR_FUND: LegalDocument = {
               type: "strong",
               children: ["Excluded Persons."],
             },
-            " The following may not take part: (a) members of the Decentraland DAO Council; (b) consultants, contractors and advisors of the Foundation or of DCL Regenesis Labs Foundation, except creators engaged under the Foundation's Creator Success Program, who may take part in respect of their own experiences.",
+            " The following may not take part: (a) persons who design, operate or make decisions on the Program, or have access to its non-public data or detection methods; (b) consultants, contractors and advisors of the Foundation or of DCL Regenesis Labs Foundation, except creators engaged under the Creator Success Program, who may take part in respect of their own experiences.",
           ],
         },
         {
@@ -484,7 +484,15 @@ export const CREATOR_FUND: LegalDocument = {
               type: "strong",
               children: ["Excluded activity."],
             },
-            " The following never count: (a) sessions by you, your collaborators or other Program participants; (b) sessions by Excluded Persons; (c) activity generated in breach of Section 8; (d) if a Rewards Program season runs at the same time, visits rewarded under that program; and (e) players brought to your experience through advertising or campaigns run by the Foundation or DCL Regenesis Labs Foundation.",
+            " The following do not count toward Rewards: (a) sessions by you, your collaborators or other Program participants; (b) sessions by Excluded Persons; (c) activity generated in breach of Section 8; (d) if a Rewards Program season runs at the same time, visits rewarded under that program; and (e) players brought to your experience through paid advertising campaigns run or funded by the Foundation or DCL Regenesis Labs Foundation, for the metrics and to the extent set out on the ",
+            {
+              type: "link",
+              href: "https://docs.decentraland.org/creator/creator-fund/program-rules",
+              target: "_blank",
+              rel: "noopener noreferrer",
+              children: ["Program Rules page"],
+            },
+            ".",
           ],
         },
         {
