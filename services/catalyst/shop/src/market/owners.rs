@@ -20,7 +20,7 @@ use serde::Serialize;
 use serde_json::{Value, json};
 use sqlx::{PgConnection, Row};
 
-use super::chain_walk::{self, ChainNet};
+use super::chain_walk::ChainNet;
 use super::graph;
 use super::nft_index::Catalogue;
 use super::owned_items::{self, Rule};
@@ -376,7 +376,6 @@ async fn indexed_owners(
     };
     let descending = f.order_direction.as_deref() != Some("asc");
     let catalogue = state.settings.catalogue();
-    let now = Utc::now();
     let mut tx = state
         .pool
         .begin()
@@ -389,14 +388,23 @@ async fn indexed_owners(
     super::nft_reads::set_read_timeout(&mut tx)
         .await
         .map_err(readers::index_read_error)?;
+    // set_read_timeout establishes the snapshot before this instant: a fold
+    // published while the request waited for a connection is judged by the
+    // clock of the snapshot that sees it.
+    let now = Utc::now();
     owned_items::check(&mut tx, catalogue, &ChainNet::ALL, Rule::Fresh, true, now)
         .await
         .map_err(readers::index_source_error)?;
     for net in ChainNet::ALL {
-        let published =
-            chain_walk::rows_published_on(&mut tx, chain_walk::INDEXER_NFT, net, &["nft"], None)
-                .await
-                .map_err(readers::index_read_error)?;
+        let published = super::orders::listing_rows_published_on(
+            &mut tx,
+            net,
+            super::orders::BookRoute::Owners,
+            &["nft"],
+            None,
+        )
+        .await
+        .map_err(readers::index_read_error)?;
         if !published {
             return Err(owned_items::not_ready(&format!(
                 "the {} nft index holds a fold it has not published yet",

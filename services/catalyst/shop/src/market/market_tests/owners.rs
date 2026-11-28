@@ -674,3 +674,48 @@ async fn owners_with_every_url_unset_follow_the_native_catalogue() {
     );
     own.drop().await;
 }
+
+/// The freshness clock is read after the snapshot: a fold published while
+/// the request waits for the reader pool's only connection is fresh at the
+/// snapshot that sees it. A clock read before the wait would put that
+/// fold's publication in its future and refuse it with a spurious 503.
+#[tokio::test]
+async fn a_fold_published_while_the_read_waits_is_fresh_at_its_snapshot() {
+    let Some(own) = super::super::tests::support::OwnDb::create("owners_clock").await else {
+        return;
+    };
+    let pool = own.pool.clone();
+    let fx = fixture();
+    seed(&pool, &fx).await;
+    super::super::owned_items::test_support::publish(&pool, &ChainNet::ALL, true, Duration::ZERO)
+        .await;
+    record_collections_pass(&pool).await;
+    let reader_pool = sqlx::postgres::PgPoolOptions::new()
+        .max_connections(1)
+        .connect_with((*pool.connect_options()).clone())
+        .await
+        .unwrap();
+    let walker = router_over(
+        &reader_pool,
+        super::super::owned_items::test_support::walking(Settings::for_tests()),
+    );
+    let polygon = &fx["items"][0];
+    let uri = format!(
+        "/v1/owners?contractAddress={}&itemId={}",
+        text(polygon, "contractAddress"),
+        text(polygon, "itemId")
+    );
+    let held = reader_pool.acquire().await.unwrap();
+    let read = tokio::spawn(async move { get(walker, &uri).await });
+    // The request is parsed and waits for the slot; then both folds publish.
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    super::super::owned_items::test_support::publish(&pool, &ChainNet::ALL, true, Duration::ZERO)
+        .await;
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    drop(held);
+    let (status, body) = read.await.unwrap();
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["total"], 10, "{body}");
+    reader_pool.close().await;
+    own.drop().await;
+}

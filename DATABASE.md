@@ -5944,8 +5944,8 @@ at whatever height. Reads refused that way are counted by
 between a fold's commit and its publication. The denominator is
 `catalyst_shop_order_book_fold_read_checks_total`, incremented once for each
 attempted network's publication check. Both counters use `network` and
-`route` labels. The route is `orders`, `open_by_items`, `activity`, `catalog`
-or `nfts`. Each activity page takes its own book snapshot and counts its checks.
+`route` labels. The route is `orders`, `open_by_items`, `activity`, `catalog`,
+`nfts` or `owners` (`/v1/owners`, which checks the NFT fold alone). Each activity page takes its own book snapshot and counts its checks.
 For the catalog label this also counts a withheld book leg on an
 ordinary page that can still serve item metadata.
 
