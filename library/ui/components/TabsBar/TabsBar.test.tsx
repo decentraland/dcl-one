@@ -168,7 +168,7 @@ describe('TabsBar', () => {
       vi.stubGlobal(
         'matchMedia',
         vi.fn((media: string) => {
-          expect(media).toBe('(min-width: 1024px)')
+          expect(media).toBe('(width >= 1024px)')
           return query
         })
       )
@@ -310,6 +310,15 @@ describe('TabsBar', () => {
       expect(screen.getByRole('tab', { name: 'all', selected: true })).toHaveFocus()
       expect(screen.getByRole('tablist')).not.toHaveAttribute('aria-orientation')
       expect(matchMedia).not.toHaveBeenCalled()
+    })
+
+    it('keeps an aria-orientation the caller passes', () => {
+      render(
+        <TabsBar label="Events" variant="pill" aria-orientation="vertical">
+          <Tabs label="All" variant="pill" selected />
+        </TabsBar>
+      )
+      expect(screen.getByRole('tablist')).toHaveAttribute('aria-orientation', 'vertical')
     })
   })
 })

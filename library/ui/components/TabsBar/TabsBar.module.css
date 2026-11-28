@@ -26,7 +26,7 @@
 
   /* Not in Figma: decentraland.org's help center tabs, a column 8px apart from 1024px. Narrower, the pill tabs
      wrap onto rows with their own gap. Matches COLUMN_QUERY in TabsBar.tsx. */
-  @media (min-width: 1024px) {
+  @media (width >= 1024px) {
     .vertical {
       flex-direction: column;
       flex-wrap: nowrap;

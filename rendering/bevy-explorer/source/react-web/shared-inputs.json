@@ -16420,7 +16420,7 @@
     },
     {
       "path": "library/ui/apps/sites/help/HelpPage.module.css",
-      "sha256": "99a8ab9266d271e1383099614100778b4edc386e06ea3b2ad27ff720c93ff62e"
+      "sha256": "7775a31d3a3bdc41bd457462af8b8bb0c01e30a9269fcc7c5310437322b9a44f"
     },
     {
       "path": "library/ui/apps/sites/help/HelpPage.tsx",
@@ -17464,7 +17464,7 @@
     },
     {
       "path": "library/ui/components/TabsBar/TabsBar.module.css",
-      "sha256": "d270031474fe28adc5c38e57807c75c72c4b44f67e9409d616b6392ad105ce8d"
+      "sha256": "1b0d4b93aacc3dd8b0dd79a47dc42fbae4f265a4088aa74793d84c75e222fa1d"
     },
     {
       "path": "library/ui/components/TabsBar/TabsBar.module.css.d.ts",
@@ -17472,7 +17472,7 @@
     },
     {
       "path": "library/ui/components/TabsBar/TabsBar.tsx",
-      "sha256": "e860618bd2d1bd42e4d3d2ed3ed4451895ae79c8787ad922123aafd8122bc490"
+      "sha256": "a6959a65de270a34dc3eeb2b4876f6133d4aa4026cbe93e2fbd8feee71021169"
     },
     {
       "path": "library/ui/components/Tag/Tag.module.css",
@@ -65071,6 +65071,21 @@
     {
       "from": "library/ui/components/TabsBar/TabsBar.tsx",
       "to": "library/ui/components/TabsBar/TabsBar.module.css",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/components/TabsBar/TabsBar.tsx",
+      "to": "library/ui/foundations/layout/layout.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/components/TabsBar/TabsBar.tsx",
+      "to": "library/ui/foundations/layout/layout.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/components/TabsBar/TabsBar.tsx",
+      "to": "library/ui/foundations/layout/layout.ts",
       "kind": "test:runtime"
     },
     {

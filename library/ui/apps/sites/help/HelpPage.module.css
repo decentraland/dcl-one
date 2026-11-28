@@ -103,7 +103,7 @@
 
 /* Tablets stack the page: the title and status share a row, the tabs sit on one row (the vertical TabsBar is a
    column from 1024px only) and the section takes the width. */
-@media (max-width: 1023px) {
+@media (width < 1024px) {
   .layout {
     grid-template-areas:
       'title status'

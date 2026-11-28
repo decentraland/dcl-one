@@ -9,6 +9,7 @@ import {
 import { Tabs } from '../Tabs/Tabs'
 import styles from './TabsBar.module.css'
 import { assertNavigationEntries, isPlainLinkClick } from '../../link.helpers'
+import { breakpoints } from '../../foundations/layout/layout'
 
 type PanelTabsBarProps = {
   /**
@@ -37,8 +38,8 @@ type PanelTabsBarProps = {
   /**
    * `vertical` stacks the tabs in a column from 1024px wide, as decentraland.org's help center does; narrower, they
    * wrap onto rows. While the column is on screen it has `aria-orientation="vertical"` and Up and Down move between
-   * the tabs as well as Left and Right; the rows keep Left and Right only, so Up and Down scroll the page. For `variant="pill"` of the default appearance only; other variants and `appearance="hud"`
-   * ignore it.
+   * the tabs as well as Left and Right; the rows keep Left and Right only, so Up and Down scroll the page. For
+   * `variant="pill"` of the default appearance only; other variants and `appearance="hud"` ignore it.
    */
   orientation?: 'horizontal' | 'vertical'
 } & Omit<HTMLAttributes<HTMLDivElement>, 'children' | 'role' | 'aria-label'>
@@ -46,8 +47,8 @@ type PanelTabsBarProps = {
 const KEYS = new Set(['ArrowLeft', 'ArrowRight', 'Home', 'End'])
 const VERTICAL_KEYS = new Set([...KEYS, 'ArrowUp', 'ArrowDown'])
 const NEXT_KEYS = new Set(['ArrowRight', 'ArrowDown'])
-/* Matches the column breakpoint in TabsBar.module.css (.vertical). */
-const COLUMN_QUERY = '(min-width: 1024px)'
+/* Matches the column breakpoint in TabsBar.module.css (.vertical); range syntax leaves no gap at fractional widths. */
+const COLUMN_QUERY = `(width >= ${breakpoints.desktop}px)`
 
 function subscribeColumn(onChange: () => void) {
   if (typeof window.matchMedia !== 'function') return () => {}
@@ -123,7 +124,7 @@ function PanelTabsBar({
       {...rest}
       role="tablist"
       aria-label={label || undefined}
-      aria-orientation={column ? 'vertical' : undefined}
+      aria-orientation={vertical ? (column ? 'vertical' : undefined) : rest['aria-orientation']}
       className={[
         styles.root,
         ...look,
