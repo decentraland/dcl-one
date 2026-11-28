@@ -19,16 +19,25 @@ use crate::{
 /// Frames waited once the scene is ready, so the frame it first drew in has been presented: the
 /// render world draws a frame while the main world runs the next one.
 const PRESENT_FRAMES: u32 = 2;
-const DEFAULT_TIMEOUT_SECONDS: f32 = 60.0;
+/// How long a scene wait waits when `--timeout-seconds` is not given.
+pub const DEFAULT_TIMEOUT_SECONDS: f32 = 60.0;
 const MAX_TIMEOUT_SECONDS: f32 = 300.0;
 
-/// The `--wait [--timeout-seconds S]` pair of a settling command, checked: how long to wait, or
-/// `None` for a command that does not wait.
-pub fn wait_timeout(wait: bool, timeout_seconds: Option<f32>) -> Result<Option<f32>, String> {
+/// The `--wait [--timeout-seconds S]` pair of a waiting command, checked: how long to wait, or
+/// `None` for a command that does not wait. Without `--timeout-seconds` the command's own
+/// `default_seconds` applies, which may run past the flag's cap: a default is not a value the
+/// caller gave.
+pub fn wait_timeout(
+    wait: bool,
+    timeout_seconds: Option<f32>,
+    default_seconds: f32,
+) -> Result<Option<f32>, String> {
     if !wait {
         return Ok(None);
     }
-    let timeout = timeout_seconds.unwrap_or(DEFAULT_TIMEOUT_SECONDS);
+    let Some(timeout) = timeout_seconds else {
+        return Ok(Some(default_seconds));
+    };
     if !timeout.is_finite() || timeout <= 0.0 || timeout > MAX_TIMEOUT_SECONDS {
         return Err(format!(
             "--timeout-seconds takes more than 0 and at most {MAX_TIMEOUT_SECONDS}; got {timeout}"
@@ -476,6 +485,18 @@ mod tests {
         rx.try_recv()
             .ok()
             .map(|r| serde_json::from_str(&r.unwrap()).unwrap())
+    }
+
+    #[test]
+    fn a_given_timeout_is_checked_and_a_default_is_taken_as_it_is() {
+        assert_eq!(wait_timeout(false, None, 60.0), Ok(None));
+        assert_eq!(wait_timeout(true, None, 60.0), Ok(Some(60.0)));
+        assert_eq!(wait_timeout(true, Some(2.5), 60.0), Ok(Some(2.5)));
+        // a command's default may run past the cap the flag has
+        assert_eq!(wait_timeout(true, None, 305.0), Ok(Some(305.0)));
+        for refused in [0.0, -1.0, 301.0, f32::NAN, f32::INFINITY] {
+            assert!(wait_timeout(true, Some(refused), 60.0).is_err(), "{refused}");
+        }
     }
 
     #[test]

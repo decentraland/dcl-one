@@ -43,7 +43,11 @@ pub fn change_location(
     mut waits: ResMut<SceneWaits>,
 ) {
     if let Some(Ok(command)) = input.take() {
-        let timeout = match settle::wait_timeout(command.wait, command.timeout_seconds) {
+        let timeout = match settle::wait_timeout(
+            command.wait,
+            command.timeout_seconds,
+            settle::DEFAULT_TIMEOUT_SECONDS,
+        ) {
             Ok(timeout) => timeout,
             Err(e) => return input.reply_failed(e),
         };

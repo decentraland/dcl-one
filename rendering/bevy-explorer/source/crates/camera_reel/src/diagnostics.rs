@@ -14,6 +14,7 @@ use console::{
 };
 use dcl_component::transform_and_parent::DclTranslation;
 use ipfs::IpfsAssetServer;
+use scene_runner::util::settle;
 use serde_json::json;
 use wallet::Wallet;
 
@@ -29,7 +30,6 @@ use crate::{
 
 /// How long a placed photo camera may take to land when `--timeout-seconds` is not given.
 const DEFAULT_LANDING_SECONDS: f32 = 5.0;
-const MAX_LANDING_SECONDS: f32 = 300.0;
 /// How far the camera may land from `--position` and count as there, in metres.
 const LANDED_METRES: f32 = 0.1;
 
@@ -135,12 +135,10 @@ fn pose_of(
             None => Ok(None),
         };
     }
-    let timeout = args.timeout_seconds.unwrap_or(DEFAULT_LANDING_SECONDS);
-    if !timeout.is_finite() || timeout <= 0.0 || timeout > MAX_LANDING_SECONDS {
-        return Err(format!(
-            "--timeout-seconds takes more than 0 and at most {MAX_LANDING_SECONDS}; got {timeout}"
-        ));
-    }
+    // a pose always waits for its landing
+    let timeout =
+        settle::wait_timeout(true, args.timeout_seconds, DEFAULT_LANDING_SECONDS)?
+            .unwrap_or(DEFAULT_LANDING_SECONDS);
     let point = |v: &Option<Vec<f32>>| v.as_deref().map(|v| [v[0], v[1], v[2]]);
     let (position, look_at) = (point(&args.position), point(&args.look_at));
     if !position

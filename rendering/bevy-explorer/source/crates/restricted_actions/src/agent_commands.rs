@@ -9,6 +9,7 @@ use dcl_component::transform_and_parent::DclTranslation;
 use scene_runner::{
     initialize_scene::{LiveScenes, PortableKind, PortableScenes},
     renderer_context::RendererSceneContext,
+    util::settle,
     vec3_to_parcel,
 };
 use serde_json::json;
@@ -32,7 +33,6 @@ impl Plugin for AgentCommandsPlugin {
 
 /// How long `--wait` waits after the move's duration when `--timeout-seconds` is not given.
 const DEFAULT_WAIT_SECONDS: f32 = 10.0;
-const MAX_WAIT_SECONDS: f32 = 300.0;
 /// The speed, in metres a second, under which the player counts as still.
 const STILL_SPEED: f32 = 0.3;
 /// Frames in a row the player must be still to have settled.
@@ -70,25 +70,6 @@ struct MovePlayerToCommand {
     timeout_seconds: Option<f32>,
 }
 
-/// The `--wait [--timeout-seconds S]` pair, checked: how long to wait, or `None` without `--wait`.
-fn wait_timeout(
-    wait: bool,
-    timeout_seconds: Option<f32>,
-    duration: Option<f32>,
-) -> Result<Option<f32>, String> {
-    if !wait {
-        return Ok(None);
-    }
-    let timeout =
-        timeout_seconds.unwrap_or(DEFAULT_WAIT_SECONDS + duration.unwrap_or(0.0).max(0.0));
-    if !timeout.is_finite() || timeout <= 0.0 || timeout > MAX_WAIT_SECONDS {
-        return Err(format!(
-            "--timeout-seconds takes more than 0 and at most {MAX_WAIT_SECONDS}; got {timeout}"
-        ));
-    }
-    Ok(Some(timeout))
-}
-
 fn move_player_to_cmd(
     mut input: ConsoleCommand<MovePlayerToCommand>,
     mut events: EventWriter<RpcCallEvent>,
@@ -112,7 +93,8 @@ fn move_player_to_cmd(
         input.reply_failed("the coordinates and the duration must be finite numbers");
         return;
     }
-    let timeout = match wait_timeout(command.wait, command.timeout_seconds, command.duration) {
+    let default_wait = DEFAULT_WAIT_SECONDS + command.duration.unwrap_or(0.0).max(0.0);
+    let timeout = match settle::wait_timeout(command.wait, command.timeout_seconds, default_wait) {
         Ok(timeout) => timeout,
         Err(e) => {
             input.reply_failed(e);
