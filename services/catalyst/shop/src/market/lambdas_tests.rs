@@ -3308,6 +3308,112 @@ async fn a_narrow_profile_request_survives_a_wider_failing_read() {
     db.drop().await;
 }
 
+/// One profile page answers from one publication: a cold `[A, B]` request
+/// joins a read of A held after its ownership query (under the publication
+/// where A holds the NAME alice), then reads B after one transaction moved
+/// alice to B and published that fold. The two profiles were read under
+/// different publications, so the page is read again in one snapshot and
+/// exactly one of them claims alice.
+#[tokio::test]
+async fn a_profile_page_shows_one_holder_of_a_name() {
+    let Some(OwnershipFixture { db, walking, .. }) = ownership_fixture().await else {
+        return;
+    };
+    let other = "0xbbbb000000000000000000000000000000000002";
+    deploy(
+        &db.pool,
+        "bafyreceiver",
+        "profile",
+        other,
+        json!({ "avatars": [{ "name": "alice", "avatar": { "bodyShape": "urn:decentraland:off-chain:base-avatars:BaseFemale", "wearables": [] } }] }),
+        &[],
+    )
+    .await;
+    let registrar = super::nft_index::DCL_REGISTRAR;
+    sqlx::query(
+        "INSERT INTO shop.nft (network, contract_address, token_id, owner, ens_subdomain, minted_block, minted_at, transferred_block, transferred_log, transferred_at) \
+         VALUES ('ethereum', $1, 77, $2, 'alice', 1, 1, 1, 0, 1)",
+    )
+    .bind(registrar)
+    .bind(OWNER)
+    .execute(&db.pool)
+    .await
+    .unwrap();
+    set_nft_cursor(&db.pool, "ethereum", Some(0)).await;
+    set_nft_cursor(&db.pool, "matic", Some(0)).await;
+    walking.test_hold_reads();
+    let leader = tokio::spawn({
+        let state = walking.clone();
+        async move { post_profiles(&state, &[OWNER]).await }
+    });
+    walking.test_held.notified().await;
+    // The pair's own read of B waits on its entities until the transfer
+    // and its fold are published together.
+    let mut change = db.pool.begin().await.unwrap();
+    sqlx::query("LOCK TABLE content.deployments IN ACCESS EXCLUSIVE MODE")
+        .execute(&mut *change)
+        .await
+        .unwrap();
+    let pair = tokio::spawn({
+        let state = walking.clone();
+        async move { post_profiles(&state, &[OWNER, other]).await }
+    });
+    tokio::time::timeout(std::time::Duration::from_secs(8), async {
+        while walking.profile_flights.reads_started() != 2 {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("the pair joined A's read and started its own for B");
+    sqlx::query(
+        "UPDATE shop.nft SET owner = $1 WHERE network = 'ethereum' AND contract_address = $2 AND token_id = 77",
+    )
+    .bind(other)
+    .bind(registrar)
+    .execute(&mut *change)
+    .await
+    .unwrap();
+    sqlx::query(
+        "UPDATE shop.chain_cursor SET last_block = 101, folded_block = 101, folded_at = timezone('UTC', now()) \
+         WHERE network = 'ethereum' AND indexer = 'nft'",
+    )
+    .execute(&mut *change)
+    .await
+    .unwrap();
+    change.commit().await.unwrap();
+    walking.test_held.notified().await;
+    walking.test_release();
+    let (status, alone) = leader.await.unwrap();
+    assert_eq!(status, StatusCode::OK, "{alone}");
+    assert_eq!(alone[0]["avatars"][0]["hasClaimedName"], true, "{alone}");
+    let (status, page) = pair.await.unwrap();
+    assert_eq!(status, StatusCode::OK, "{page}");
+    let claims: Vec<(String, bool)> = page
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|p| {
+            (
+                p["avatars"][0]["ethAddress"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .to_lowercase(),
+                p["avatars"][0]["hasClaimedName"].as_bool().unwrap(),
+            )
+        })
+        .collect();
+    assert_eq!(claims.len(), 2, "{page}");
+    assert_eq!(
+        claims
+            .iter()
+            .filter(|(_, claimed)| *claimed)
+            .collect::<Vec<_>>(),
+        vec![&(other.to_string(), true)],
+        "only the published holder claims alice: {page}"
+    );
+    db.drop().await;
+}
+
 /// A warm outfits answer lasts only while the networks it needed are fresh:
 /// Polygon published 3 s short of the freshness window answers, then, with
 /// no publication in between, the same memo is not served past the window.

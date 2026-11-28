@@ -507,9 +507,11 @@ where
 
     /// The output of `key`'s flight: this caller's own read with `read`, or
     /// a joined read's output that `accept` takes. A joined output `accept`
-    /// refuses, and a joined read that ended without output, are read again
-    /// (a read that published no longer holds its key). This caller's own
-    /// read is always its answer.
+    /// refuses, and a joined read that ended without output, are followed by
+    /// one read of this caller's own, not shared: a caller waits on at most
+    /// one joined read, so callers that all refuse (a source failing for
+    /// everyone) read side by side instead of one after another. This
+    /// caller's own read is always its answer.
     pub async fn run_accepting<F, Fut, A, AFut>(&self, key: K, read: F, mut accept: A) -> O
     where
         F: FnOnce() -> Fut,
@@ -517,28 +519,23 @@ where
         A: FnMut(O) -> AFut,
         AFut: Future<Output = bool>,
     {
-        let mut read = Some(read);
-        loop {
-            match self.claim(std::slice::from_ref(&key)) {
-                (Some(flight), _) => {
-                    let read = read.take().expect("a caller leads one read");
-                    let output = read().await;
-                    flight.publish(&output);
-                    return output;
-                }
-                (None, joined) => {
-                    for (_, mut channel, _) in joined {
-                        let output = match channel.wait_for(Option::is_some).await {
-                            Ok(output) => (*output).clone().expect("waited for an output"),
-                            Err(_) => continue,
-                        };
-                        if accept(output.clone()).await {
-                            return output;
-                        }
-                    }
-                }
+        let (flight, joined) = self.claim(std::slice::from_ref(&key));
+        if let Some(flight) = flight {
+            let output = read().await;
+            flight.publish(&output);
+            return output;
+        }
+        for (_, mut channel, _) in joined {
+            let output = match channel.wait_for(Option::is_some).await {
+                Ok(output) => (*output).clone().expect("waited for an output"),
+                Err(_) => continue,
+            };
+            if accept(output.clone()).await {
+                return output;
             }
         }
+        self.reads.fetch_add(1, Ordering::Relaxed);
+        read().await
     }
 
     /// The outputs for many keys: the keys in flight join those flights, and
@@ -579,7 +576,9 @@ where
         self.flights.len()
     }
 
-    /// How many reads were started (each joined by any number of callers).
+    /// How many reads were started: shared ones (each joined by any number
+    /// of callers) and the unshared one a caller makes after refusing a
+    /// joined output.
     pub fn reads_started(&self) -> u64 {
         self.reads.load(Ordering::Relaxed)
     }
@@ -760,6 +759,45 @@ mod tests {
         assert_eq!(leader.await.unwrap(), 1);
         assert_eq!(joiner.await.unwrap(), 2, "the refused 1 was read again");
         assert_eq!(coalesce.reads_started(), 2);
+        assert_eq!(coalesce.in_flight(), 0);
+    }
+
+    /// Callers that all refuse a failing read wait on one joined read at
+    /// most, then read side by side: four callers of a source that fails
+    /// every 100 ms read for 200 ms, not 400 ms.
+    #[tokio::test(start_paused = true)]
+    async fn refusing_callers_read_side_by_side() {
+        let coalesce: Arc<Coalesce<&'static str, Option<u32>>> = Arc::new(Coalesce::new());
+        let reads = Arc::new(AtomicUsize::new(0));
+        let started = tokio::time::Instant::now();
+        let callers: Vec<_> = (0..4)
+            .map(|_| {
+                let (coalesce, reads) = (coalesce.clone(), reads.clone());
+                tokio::spawn(async move {
+                    coalesce
+                        .run_accepting(
+                            "k",
+                            || async {
+                                reads.fetch_add(1, Ordering::SeqCst);
+                                tokio::time::sleep(Duration::from_millis(100)).await;
+                                None
+                            },
+                            |output| async move { output.is_some() },
+                        )
+                        .await
+                })
+            })
+            .collect();
+        for caller in callers {
+            assert_eq!(caller.await.unwrap(), None);
+        }
+        assert_eq!(reads.load(Ordering::SeqCst), 4);
+        assert_eq!(coalesce.reads_started(), 4);
+        assert!(
+            started.elapsed() < Duration::from_millis(250),
+            "{:?}",
+            started.elapsed()
+        );
         assert_eq!(coalesce.in_flight(), 0);
     }
 

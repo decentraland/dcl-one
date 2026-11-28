@@ -802,26 +802,27 @@ pub(super) async fn profiles_under(
     publications: owned_items::Publications,
 ) -> Result<Vec<(String, Value)>, Failure> {
     let wanted = unique_pointers(pointers);
-    let mut found: HashMap<String, Value> = Default::default();
+    // Pointer -> its profile and the publications it was read under.
+    let mut found: HashMap<String, ReadProfile> = Default::default();
     let mut missing: Vec<String> = Vec::new();
     for pointer in &wanted {
         match state
             .profile_cache
             .get_fresh(&(pointer.clone(), publications))
         {
+            // Filed under the publications looked up (or depending on none):
+            // taken as read under them.
             Some(v) => {
-                found.insert(pointer.clone(), v);
+                found.insert(pointer.clone(), (v, Some(publications)));
             }
             None => missing.push(pointer.clone()),
         }
     }
     if !missing.is_empty() {
         let asked: HashSet<&String> = missing.iter().collect();
-        let mut keep = |pointer: &String, profile: &Value| {
-            if asked.contains(pointer) && !profile.is_null() {
-                found
-                    .entry(pointer.clone())
-                    .or_insert_with(|| profile.clone());
+        let mut keep = |pointer: &String, read: &ReadProfile| {
+            if asked.contains(pointer) && !read.0.is_null() {
+                found.entry(pointer.clone()).or_insert_with(|| read.clone());
             }
         };
         let keys: Vec<(String, owned_items::Publications)> = missing
@@ -838,8 +839,8 @@ pub(super) async fn profiles_under(
             })
             .await;
         if let Some(own) = many.own {
-            for (pointer, (profile, _)) in own?.iter() {
-                keep(pointer, profile);
+            for (pointer, read) in own?.iter() {
+                keep(pointer, read);
             }
         }
         let mut again: Vec<String> = many
@@ -850,26 +851,38 @@ pub(super) async fn profiles_under(
         for (read, keys) in many.joined {
             for (pointer, _) in keys {
                 match read.as_ref().ok().and_then(|read| read.get(&pointer)) {
-                    Some((profile, observed))
+                    Some(joined @ (_, observed))
                         if observed.is_none_or(|observed| observed == publications) =>
                     {
-                        keep(&pointer, profile)
+                        keep(&pointer, joined)
                     }
                     _ => again.push(pointer),
                 }
             }
         }
         if !again.is_empty() {
-            for (pointer, (profile, _)) in read_profiles(state, &again, publications).await? {
-                keep(&pointer, &profile);
+            for (pointer, read) in read_profiles(state, &again, publications).await? {
+                keep(&pointer, &read);
             }
         }
+    }
+    // One page answers from one publication. Profiles read under different
+    // ones (a read that observed a publication the others did not) could
+    // show one NAME or item with two holders, so the page is read again,
+    // every pointer together in one ownership snapshot.
+    let read_under: HashSet<owned_items::Publications> = found
+        .values()
+        .filter(|(profile, _)| !profile.is_null())
+        .filter_map(|(_, observed)| *observed)
+        .collect();
+    if read_under.len() > 1 {
+        found = read_profiles(state, &wanted, publications).await?;
     }
     Ok(wanted
         .into_iter()
         .filter_map(|p| {
-            let profile = found.remove(&p).filter(|v| !v.is_null())?;
-            Some((p, profile))
+            let (profile, _) = found.remove(&p)?;
+            (!profile.is_null()).then_some((p, profile))
         })
         .collect())
 }
