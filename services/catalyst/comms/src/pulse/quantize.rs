@@ -3,6 +3,10 @@ fn steps(bits: u32) -> u32 {
     (1u32 << bits) - 1
 }
 
+#[allow(
+    clippy::cast_possible_truncation,
+    reason = "a tie has a fractional part, so |floor| < 2^23 there"
+)]
 #[inline]
 fn round_half_even(x: f32) -> f32 {
     let floor = x.floor();
@@ -11,7 +15,7 @@ fn round_half_even(x: f32) -> f32 {
         floor
     } else if diff > 0.5 {
         floor + 1.0
-    } else if floor % 2.0 == 0.0 {
+    } else if (floor as i64) % 2 == 0 {
         floor
     } else {
         floor + 1.0

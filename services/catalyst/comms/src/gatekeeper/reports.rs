@@ -77,7 +77,7 @@ const PENDING_SLOT_WINDOW_HOURS: i32 = 24;
 #[allow(
     clippy::cast_possible_truncation,
     clippy::cast_sign_loss,
-    reason = "a constant of 25 slots"
+    reason = "PENDING_SLOTS_PER_REPORTER is 25"
 )]
 const SOURCE_SLOTS_PER_DAY: u32 = 4 * PENDING_SLOTS_PER_REPORTER as u32;
 /// Evidence one client address may send to the store, in KiB: a bucket of

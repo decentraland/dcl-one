@@ -6,7 +6,7 @@ pub const DATAGRAM_HEADER_SIZE: usize = 5;
 
 #[allow(
     clippy::cast_possible_truncation,
-    reason = "the u32 length prefix is the wire format; server packets stay far below 4 GiB"
+    reason = "the u32 length prefix is the wire format; reliable sends are capped by max_message_bytes or the relay payload cap"
 )]
 pub fn stream_frame(payload: &[u8]) -> Vec<u8> {
     let mut out = Vec::with_capacity(STREAM_HEADER_SIZE + payload.len());

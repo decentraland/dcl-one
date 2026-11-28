@@ -288,7 +288,7 @@ impl ManualClock {
 
 #[allow(
     clippy::cast_possible_truncation,
-    reason = "ENet ids index a host of at most ENET_CAPACITY (4095) peers"
+    reason = "ENet ids index the host's peer_limit slots; the server builds it with ENET_CAPACITY (4095)"
 )]
 #[inline]
 fn from_enet_peer(id: enet::PeerID) -> PeerId {

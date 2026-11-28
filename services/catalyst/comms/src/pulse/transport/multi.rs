@@ -319,7 +319,7 @@ mod tests {
 /// An ENet peer's id; ENet owns the slots below `enet_capacity`.
 #[allow(
     clippy::cast_possible_truncation,
-    reason = "ENet slots are below ENET_CAPACITY (4095)"
+    reason = "ENet owns the slots below enet_capacity, ENET_CAPACITY (4095) in the server"
 )]
 #[inline]
 fn enet_peer(peer: u32) -> u16 {
