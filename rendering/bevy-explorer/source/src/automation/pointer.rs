@@ -57,6 +57,25 @@ const DEFAULT_HOVER_FRAMES: u32 = 30;
 const DEFAULT_TIMEOUT_FRAMES: u32 = 600;
 /// The id a hit reports when it is no entity of the job's scene (an avatar, another scene).
 const FOREIGN_HIT: u32 = u32::MAX;
+/// The scene input actions `/click_entity --button` presses, by their SDK names in lowercase
+/// without the `IA_` prefix, in the SDK's order. `IA_ANY` matches any action in a scene's entry
+/// and is bound to no input, so it is not one.
+const BUTTONS: [(&str, CommonInputAction); 14] = [
+    ("pointer", CommonInputAction::IaPointer),
+    ("primary", CommonInputAction::IaPrimary),
+    ("secondary", CommonInputAction::IaSecondary),
+    ("forward", CommonInputAction::IaForward),
+    ("backward", CommonInputAction::IaBackward),
+    ("right", CommonInputAction::IaRight),
+    ("left", CommonInputAction::IaLeft),
+    ("jump", CommonInputAction::IaJump),
+    ("walk", CommonInputAction::IaWalk),
+    ("action_3", CommonInputAction::IaAction3),
+    ("action_4", CommonInputAction::IaAction4),
+    ("action_5", CommonInputAction::IaAction5),
+    ("action_6", CommonInputAction::IaAction6),
+    ("modifier", CommonInputAction::IaModifier),
+];
 
 mod machine;
 pub use machine::{
@@ -373,7 +392,8 @@ pub struct ClickEntityCommand {
     /// rather than at its origin (the origin when it has none)
     #[arg(long)]
     bounds: bool,
-    /// The action to press: pointer, primary or secondary
+    /// The scene input action to press, by its lowercase SDK name: pointer, primary, secondary,
+    /// forward, backward, right, left, jump, walk, action_3 to action_6 or modifier
     #[arg(long, default_value = "pointer")]
     button: String,
     /// click (down then up), down or up
@@ -598,15 +618,13 @@ fn click_request(
         "up" => ClickKind::Up,
         other => return Answer::Failed(format!("unknown event `{other}`: use click, down or up")),
     };
-    let action = match command.button.as_str() {
-        "pointer" => CommonInputAction::IaPointer,
-        "primary" => CommonInputAction::IaPrimary,
-        "secondary" => CommonInputAction::IaSecondary,
-        other => {
-            return Answer::Failed(format!(
-                "unknown button `{other}`: use pointer, primary or secondary"
-            ));
-        }
+    let Some(&(_, action)) = BUTTONS.iter().find(|(name, _)| *name == command.button) else {
+        let names: Vec<_> = BUTTONS.iter().map(|(name, _)| *name).collect();
+        return Answer::Failed(format!(
+            "unknown button `{}`: use one of {}",
+            command.button,
+            names.join(", ")
+        ));
     };
     let (binding, hud_holds) = if kind == ClickKind::Up {
         (None, false)
@@ -920,6 +938,26 @@ mod tests {
         assert_eq!(app.world().resource::<PointerJob>().busy(), None);
         assert!(app.world().resource::<SyntheticPointer>().0.is_none());
         assert_eq!(rx.try_recv().ok(), Some(Ok("cleared".to_owned())));
+    }
+
+    #[test]
+    fn button_takes_every_bindable_sdk_input_action_by_its_lowercase_name() {
+        use dcl_component::proto_components::sdk::components::common::InputAction;
+        use scene_runner::update_scene::pointer_results::IaToDcl;
+
+        let sdk: Vec<String> = (0..)
+            .map_while(InputAction::from_i32)
+            .filter(|action| *action != InputAction::IaAny)
+            .map(|action| action.as_str_name()["IA_".len()..].to_lowercase())
+            .collect();
+        let names: Vec<String> = BUTTONS.iter().map(|(name, _)| name.to_string()).collect();
+        assert_eq!(names, sdk);
+        for (name, action) in BUTTONS {
+            assert_eq!(
+                action.to_dcl().as_str_name(),
+                format!("IA_{}", name.to_uppercase())
+            );
+        }
     }
 
     #[test]

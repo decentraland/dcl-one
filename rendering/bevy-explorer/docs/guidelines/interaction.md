@@ -83,12 +83,11 @@ input (`window.__dclTrustedInput`), so they need no DevTools client.
 | `--timeout-frames` | Frames the job may take in all. A hover's deadline is `max(timeout, frames + 3)`, so the default never cuts a long hover short | 600 |
 | `--clear` | End any aim and release a held press, instead of hovering | off |
 
-`/click_entity <entity> [--bounds] [--button pointer|primary|secondary] [--event click|down|up]
-[--timeout-frames N]`:
+`/click_entity <entity> [--bounds] [--button <action>] [--event click|down|up] [--timeout-frames N]`:
 
 | Option | Meaning | Default |
 | --- | --- | --- |
-| `--button` | The action to press, by its binding | `pointer` |
+| `--button` | The scene input action to press, by its SDK name in lowercase without `IA_`: `pointer`, `primary`, `secondary`, `forward`, `backward`, `right`, `left`, `jump`, `walk`, `action_3` to `action_6`, `modifier`. The command presses the key or mouse button bound to it, so the scene gets the press as that action (`events[].button`, e.g. `IaJump`). The avatar reads the same bindings, so `forward`, `backward`, `left` and `right` also move it, `jump` jumps and `walk` and `modifier` change its gait, and under `--event down` it keeps moving until the `up`, which changes `playerDistance` while the press is held | `pointer` |
 | `--event` | `click` presses, then releases on a later scene tick; `down` presses and holds; `up` releases a held press | `click` |
 | `--timeout-frames` | Frames the click may take in all | 600 |
 
@@ -144,3 +143,44 @@ When a press is still held at the end (`--clear`, or a click that failed after p
 release is played on the aimed entity first: the reply, and the end of the aim, wait until it has
 been played and the pointer pipeline has run after it, and other pointer commands are refused
 until then.
+
+## Reading the pointer target
+
+`/debug_pointer [true|false]` (preview only, `pointer_results.rs`) shows or hides the pointer
+target in the debug overlay, toggling it without an argument, and replies, as JSON, with what the
+pointer targets now. It reads the pipeline's last target and ray, so it presses and hovers
+nothing; under a `/hover_entity` or `/click_entity` aim it reads that aim's target.
+
+```json
+{"kind": "scene_entity", "container": 512, "scene": "pointer-targets", "mesh": null,
+ "inPlayerScene": true, "hitPoint": {"x": 8.0, "y": 1.0, "z": 6.0},
+ "playerDistance": 4.0, "cameraDistance": 5.22,
+ "hasPointerEvents": true, "withinRange": true, "hoverText": "Near",
+ "entries": [{"button": "IaPointer", "event": "PetDown", "hoverText": "Near", "enabled": true, "tooFar": false}],
+ "cursorLocked": true, "rayFromScreenCenter": true, "aimedByCommand": false,
+ "ray": {"origin": {"x": 8.0, "y": 2.5, "z": 1.0}, "direction": {"x": 0.0, "y": -0.2873, "z": 0.9578}}}
+```
+
+- `kind`: `scene_entity` (a collider of any scene, the player's or a neighbouring one), `ui` (a
+  scene UI element), `avatar` or `nothing`.
+- `container` and `scene`: the scene entity that owns the target, named as in `/click_entity`'s
+  `hit`, and its scene's title, or `null` (an avatar); `mesh` names the collider mesh hit, when it
+  has a name.
+- `inPlayerScene`: the player stands in the target's scene. Cursor entries reach only such a
+  target, so a neighbouring scene's entity reads `false` with every entry out of reach and not
+  `tooFar`.
+- `hitPoint` and `ray` are in world coordinates, as `/world_state` reports them; `hitPoint` is
+  `null` for a UI target. `playerDistance` and `cameraDistance` are measured and named as in
+  `/click_entity`'s `hit`, rounded to the centimetre.
+- `entries` are the target's cursor entries, as in `/click_entity`'s reply; `hasPointerEvents`
+  says it has any, `withinRange` that one is in reach, and `hoverText` is the text of one in reach
+  before one out of reach.
+- `cursorLocked`: the camera holds the cursor; `rayFromScreenCenter`: the ray goes through the
+  screen centre (locked, and no command aims); `aimedByCommand`: a pointer command's aim drives
+  the ray. `ray` is `null` when the pipeline's last pass cast none: no camera or player, the
+  cursor outside the window, or an aim at an entity not placed yet.
+
+The reply reads the pipeline's last results without waiting for a fresh pass. The ray is cast
+early in the frame and the target resolved with the scene input, which the command is not ordered
+against, so the target can trail the ray by a frame. With the cursor outside the window, `ray` is
+`null` while the target keeps the last one it had.

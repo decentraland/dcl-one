@@ -601,10 +601,11 @@ The HUD and input:
   left, or 0 to 1 of the window with `--normalized`. It replies JSON: `x` and `y` in pixels,
   `normalized`, `button`, `screen` and, on the web, `input` (`trusted` or `synthetic`).
 - `/hover_entity <entity> [--bounds] [--frames N] [--timeout-frames N]`, `/hover_entity --clear`
-  and `/click_entity <entity> [--bounds] [--button pointer|primary|secondary] [--event
-  click|down|up] [--timeout-frames N]`: hover or click a scene entity of the active scene by id
-  through the pointer pipeline, on native and web alike. The pointer ray is aimed from the camera
-  at the entity, and a click presses the key or mouse button bound to the action. The reply is
+  and `/click_entity <entity> [--bounds] [--button <action>] [--event click|down|up]
+  [--timeout-frames N]`: hover or click a scene entity of the active scene by id through the
+  pointer pipeline, on native and web alike. The pointer ray is aimed from the camera at the
+  entity, and a click presses the key or mouse button bound to the action, any scene input action
+  by its lowercase SDK name (`pointer`, the default, `primary`, `jump`, `action_3`, ...). The reply is
   JSON: `hit` (`entity`, `container`, `scene`, `playerDistance`, `cameraDistance`, or `null`), the
   hover `entries`, the pointer `events` the scene got (`event`, `button`, `tick`) and a `diagnosis`
   (`null`, `blocked by entity <id>`, `entity not live`, `input held by the HUD`,
@@ -614,6 +615,12 @@ The HUD and input:
   shorter than its frames plus 3, whatever `--timeout-frames` says.
   A blocked outcome is a resolved reply with `diagnosis` set, not a failure.
   [Interaction](interaction.md) has every option and reply field.
+- `/debug_pointer [true|false]` (preview only): show, hide or (without an argument) toggle the
+  pointer target in the debug overlay, and reply JSON with what the pointer targets now: `kind`
+  (`scene_entity`, `ui`, `avatar`, `nothing`), `container`, `scene`, `mesh`, `inPlayerScene`,
+  `hitPoint`, `playerDistance`, `cameraDistance`, `hasPointerEvents`, `withinRange`,
+  `hoverText`, `entries`, `cursorLocked`, `rayFromScreenCenter`, `aimedByCommand` and `ray`. It
+  presses and hovers nothing ([Interaction](interaction.md#reading-the-pointer-target)).
 - `/raycast_stats` (JSON: the capped tier's `budgetMs`, `ran`, `deferred` and `spentMs`, and the
   uncapped tier's `uncappedRan` and `uncappedSpentMs`, each for its last frame with raycasts to
   cast) and `/raycast_budget [ms|auto]` (show the capped budget, a tenth of the target frame, or

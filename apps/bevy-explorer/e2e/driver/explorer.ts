@@ -126,6 +126,12 @@ export interface SceneStateReport {
   settleWaits: number
 }
 
+/** A scene input action `/click_entity --button` presses: the SDK's `InputAction` name in
+ *  lowercase without `IA_` (`IA_ANY` is bound to no input). */
+export type SceneAction =
+  | 'pointer' | 'primary' | 'secondary' | 'forward' | 'backward' | 'right' | 'left' | 'jump' | 'walk'
+  | 'action_3' | 'action_4' | 'action_5' | 'action_6' | 'modifier'
+
 /**
  * What `/hover_entity` and `/click_entity` report. A hit on an avatar or on another scene's
  * entity reports `entity` and `container` as 4294967295.
@@ -1326,7 +1332,7 @@ export class Explorer {
 
   clickEntity(
     entity: string | number,
-    options: { bounds?: boolean; button?: 'pointer' | 'primary' | 'secondary'; event?: 'click' | 'down' | 'up'; timeoutFrames?: number } = {}
+    options: { bounds?: boolean; button?: SceneAction; event?: 'click' | 'down' | 'up'; timeoutFrames?: number } = {}
   ): Promise<PointerReport> {
     let line = `/click_entity ${entity}`
     if (options.bounds) line += ' --bounds'
