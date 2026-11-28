@@ -52,9 +52,14 @@ source in this repository.
 - Changes to the Explorer's protos trigger the Explorer workflows (`library/protocol/proto`
   is one of their inputs, in `tooling/bevy-ci.py` and the `paths:` filters), and the Nix
   Play build's source set includes it.
-- `@dcl/protocol` is still published by `decentraland/protocol`; the package here is marked
-  `private` until publishing moves. Publishing (`next` on `main` pushes, a dist-tag from a
-  branch on a manual run, with npm trusted publishing) is a separate change, as is the SDK.
+- `.github/workflows/protocol-release.yml` publishes `@dcl/protocol` under the `next` dist-tag on
+  a push to `main` that changes `library/protocol`, as `1.0.0-<run>.commit-<sha>` (oddish stamps
+  it; the manifest keeps `1.0.0`), through npm trusted publishing and the `npm-release`
+  environment the SDK's releases use ([releases ADR](2026-11-09-releases-per-scope.md)). A pull
+  request from this repository publishes what its run packed as `@dcl-regenesislabs/protocol`
+  under the shared `pr` dist-tag from `.github/workflows/protocol.yml`, and the PR's CI status
+  comment names the exact version; fork pull requests publish nothing. The package has no
+  versioned release and no branch dist-tag from here.
 
 What was reconciled, all additive (`buf breaking` clean, no `ecs_component_id` or
 field-number collision): the components `gltf_node` 1200, `gltf_node_state` 1201,
@@ -83,7 +88,11 @@ places where its copy was behind `main`.
 
 ## Follow-ups
 
-1. Publish `@dcl/protocol` from here and stop publishing from `decentraland/protocol`.
+1. `decentraland/protocol` to stop publishing `next`: while it publishes, the tag points at
+   whichever repository pushed last, and a commit it lands on `main` is missing here until it is
+   ported. `next` also needs a trusted publisher on `@dcl/protocol` naming
+   `protocol-release.yml` and the `npm-release` environment, and the previews one on
+   `@dcl-regenesislabs/protocol` naming `protocol.yml`.
 2. Import `js-sdk-toolchain` beside it (`library/js-sdk-toolchain`), reading
    `library/protocol` directly; then its publishing and the `auth-server` branch.
 3. Decide the protocol repository's `experimental` and `protocol-squad` branches, which no

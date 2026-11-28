@@ -11,7 +11,7 @@ use bevy::{
 use bevy_console::ConsoleCommandEntered;
 use common::{
     rpc::RpcStreamReceiver,
-    structs::{PlayerModifiers, PrimaryPlayerRes},
+    structs::{CameraZoomLevel, PlayerModifiers, PrimaryPlayerRes},
     sync::MutexExt,
 };
 use scene_runner::update_world::text_shape::{GlyphAtlases, Page};
@@ -94,6 +94,7 @@ fn harness() -> Harness {
     let (sender, hud) = RpcStreamSender::channel();
     app.world_mut()
         .send_event(SystemApi::GetReactionStream(sender));
+    app.world_mut().resource_mut::<AppConfig>().chat_reactions = true;
     app.update();
 
     Harness {
@@ -423,6 +424,35 @@ fn a_sender_who_leaves_takes_their_waiting_reactions() {
     assert_eq!(harness.streamed().len(), 1);
 }
 
+#[test]
+fn the_hud_hears_nothing_while_the_setting_is_off() {
+    let mut harness = harness();
+    let peer = harness.peer();
+    harness
+        .app
+        .world_mut()
+        .resource_mut::<AppConfig>()
+        .chat_reactions = false;
+    harness.pick("👍");
+    harness.hear(peer, "🔥", 1.0, 2);
+    harness.run(1.0);
+    assert!(harness.streamed().is_empty());
+    // they played all the same
+    assert_eq!(harness.stats().played, 3);
+
+    // switched back on, only what plays from then on is passed
+    harness
+        .app
+        .world_mut()
+        .resource_mut::<AppConfig>()
+        .chat_reactions = true;
+    harness.app.update();
+    assert!(harness.streamed().is_empty());
+    harness.pick("👍");
+    harness.app.update();
+    assert_eq!(harness.streamed().len(), 1);
+}
+
 // The world lane: the particles over avatars.
 
 /// Where the nametag anchor of a player made by [`AttachPoints::new`] stands over their feet.
@@ -613,9 +643,9 @@ impl Harness {
         })
     }
 
-    fn set_camera_distance(&mut self, distance: f32) {
+    fn set_camera_level(&mut self, level: CameraZoomLevel) {
         let mut cameras = self.app.world_mut().query::<&mut PrimaryCamera>();
-        cameras.single_mut(self.app.world_mut()).unwrap().distance = distance;
+        cameras.single_mut(self.app.world_mut()).unwrap().level = level;
     }
 
     /// A particle over the local player, its glyphs landed and a frame on.
@@ -1206,7 +1236,7 @@ fn in_first_person_the_local_users_own_are_not_drawn() {
     assert!(harness.drawn(mine));
 
     // one alive as the camera goes into the player's head is hidden
-    harness.set_camera_distance(0.0);
+    harness.set_camera_level(CameraZoomLevel::FirstPerson);
     harness.app.update();
     assert!(!harness.drawn(mine));
     // and the next gets no particle, while it is passed to the HUD as any is
@@ -1229,7 +1259,7 @@ fn in_first_person_the_local_users_own_are_not_drawn() {
         .unwrap();
     assert!(harness.drawn(theirs));
 
-    harness.set_camera_distance(1.0);
+    harness.set_camera_level(CameraZoomLevel::ThirdPerson);
     harness.app.update();
     assert!(harness.drawn(mine));
 }

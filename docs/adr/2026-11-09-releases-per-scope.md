@@ -43,7 +43,8 @@ from here ([SDK ADR](2026-10-26-sdk-in-dcl-one.md), follow-up 1).
   environment, which only `main` and `auth-server` may deploy to (a repository setting), and each
   package's trusted publisher requires it. The environment is the gate, not the filename. A branch
   the environment admits can publish any dist-tag by editing its copy of the workflow, so
-  `auth-server` is a protected branch that takes pull requests only.
+  `auth-server` is a protected branch that takes pull requests only. `@dcl/protocol`
+  publishes through the same environment, so it relies on that protection too.
 - PR previews cannot pass that gate: a pull request's run is not a run of those branches, and npm rejects
   trusted publishing from `pull_request_target`, which GitHub also blocks by default in public
   repositories. So previews publish from the pull request's own run to separate packages,
@@ -57,9 +58,9 @@ from here ([SDK ADR](2026-10-26-sdk-in-dcl-one.md), follow-up 1).
 
 ## Follow-ups
 
-1. A protocol release workflow publishing `@dcl/protocol` from `library/protocol` under
-   `protocol-v<version>`, for the consumers outside this repository (Godot and Unity take the
-   proto files, TypeScript services take `out-ts`); it needs a version scheme and the package made
-   public.
+1. A versioned protocol release from `.github/workflows/protocol-release.yml`, which publishes
+   `@dcl/protocol@next` from `library/protocol` today, under `protocol-v<version>`, for the
+   consumers outside this repository (Godot and Unity take the proto files, TypeScript services
+   take `out-ts`); it needs a version scheme.
 2. A release-everything dispatcher that starts each scope's release run and creates the one
    release that claims "Latest", listing the scope versions it shipped.

@@ -331,6 +331,11 @@ from HUD-side key matching. The rules:
   where the engine deliberately resolves nothing (`UiText`). There: match with
   `isCancelKey`, and `stopPropagation()` anything you consumed so the blur rule doesn't
   also fire on the same press.
+- **What counts as a text field is one rule in two places**: `isEditableTarget` (the HUD's
+  `text` focus) and the engine page's key forwarding (`isTextField` in
+  `../deploy/web/engine/boot.js`). A checkbox (every switch) or a radio is not one: Escape and
+  movement still reach the engine from it, and Space and Enter press it. Change both together;
+  `src/test/bootKeyForwarding.test.ts` fails when they disagree.
 - **A new panel/popup/overlay must be visible to `uiFocus`** — panels via the session's
   `anyPanelOpen`, dialogs via the popup stack (`openPopup`), full-screen input freezes via
   `inputLock`. If the engine can't see that your surface is active, scenes keep receiving
@@ -370,7 +375,8 @@ shows them and stops or restarts them (`bridge-scene/src/domains/portables.ts`).
 
 A situational reaction is an emoji the player picks from the chat's Reactions button. The engine
 shows it over their avatar and tells the players around them (`crates/avatar/src/reaction`); the
-HUD offers the pick (`bridge-scene/src/domains/reactions.ts`). Expectations:
+HUD offers the pick and shows each reaction the engine plays on screen
+(`bridge-scene/src/domains/reactions.ts`). Expectations:
 
 - **Button**: the heart in the chat's strip, named `Reactions`, pressed while its bar is open. It
   shows while the chat is open and not showing the nearby list, in every conversation, a blocked
@@ -381,9 +387,28 @@ HUD offers the pick (`bridge-scene/src/domains/reactions.ts`). Expectations:
   recent, and the picker stays open too. A press outside, the button again, another conversation,
   the nearby list, or the chat closing or giving way to a panel closes it; Cancel closes the
   picker, then the bar. It and a message's bar are never both open.
-- An emoji the wire has no index for (a flag) plays nowhere: the engine drops the pick.
-- Tests: `library/ui/apps/hud/test/hosted/chatReactions.test.tsx` and
-  `chatReactions.clicks.test.tsx`, `src/test/bridgeReactions.test.ts`.
+- **Chat Reactions switch**: in the bar, bound to the engine's `Chat Reactions` setting (off until
+  the player turns it on; the Settings page lists it too). Absent on an engine with no such
+  setting.
+- **On screen**: while the setting is on the engine passes each reaction it plays (`reaction`),
+  the player's own included, and each rises from beside the button for about two seconds
+  (`features/chat/ReactionLane.tsx`, its numbers in `reactionMotion.ts`). It starts at the same
+  place while the chat is collapsed and the button is not drawn, at every HUD scale. At most 30
+  fly at once; more are not shown. The lane is part of the chat: while the chat gives way to a
+  panel (Friends) or the HUD is hidden (a full-screen page, the camera, the scene editor, Hide
+  UI) none is shown, the ones in flight go with it and none is shown later. A panel opened over
+  the chat (Notifications) is over its reactions too. An emoji the wire has no index for (a
+  flag) plays nowhere, so the HUD shows none of its own accord. With reduced motion a reaction
+  fades in place.
+- Mock: `?mock=1&mockreactions=1` (the setting on and the nearby players reacting). Tests:
+  `library/ui/apps/hud/test/hosted/chatReactions.test.tsx`, `chatReactions.clicks.test.tsx` and
+  `chatReactionLane.test.tsx`, `library/ui/apps/hud/features/chat/reactionMotion.test.ts`,
+  `src/test/bridgeReactions.test.ts`.
+- No visual baseline yet: the bar (its row of emoji and the `Chat Reactions` row under it) needs
+  a capture of the open chat with the bar up. The lane has none to take: it is motion only, the
+  harness stops animations at capture, and a flight that is over draws nothing. Where a reaction
+  starts and its scale are tier-1 (`chatReactionLane.test.tsx`); its look is checked by eye in
+  the mock above.
 
 ## Analytics
 

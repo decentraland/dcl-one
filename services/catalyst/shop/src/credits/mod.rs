@@ -90,6 +90,7 @@ pub mod batch;
 pub mod captcha;
 pub mod charge;
 pub mod checkout;
+pub mod daily_summary;
 pub mod digest;
 pub mod dto;
 pub mod errors;
@@ -125,6 +126,8 @@ pub mod writes;
 
 #[cfg(test)]
 mod alerts_tests;
+#[cfg(test)]
+mod daily_summary_tests;
 #[cfg(test)]
 mod metrics_tests;
 #[cfg(test)]
@@ -181,7 +184,8 @@ pub struct RawSettings {
     /// signed requests may change the studios, and read what a read admin reads.
     pub write_admin_addresses: String,
     /// `CREDITS_ADMIN_WRITES_REQUIRE_BOUND_BODY` (false): refuse a wallet's
-    /// admin write that signs no `bodySha256` (`admin::require_write_admin`).
+    /// admin write (`admin::require_write_admin`) or studio grant
+    /// (`handlers::studio_operators`) that signs no `bodySha256`.
     pub admin_writes_require_bound_body: bool,
     /// `CREDITS_CAPTCHA_SECRET` (or `_FILE`): the hCaptcha secret; unset skips the token check.
     pub captcha_secret: Option<String>,
@@ -205,6 +209,9 @@ pub struct RawSettings {
     pub mana_price_max_staleness_secs: i64,
     /// `CREDITS_USD_PEGGED_FEED_MAX_AGE_SECS` (3600).
     pub credits_usd_pegged_feed_max_age_secs: u64,
+    /// `CREDITS_DAILY_SUMMARY_HOUR_UTC` (9): from this hour the daily
+    /// summary reports yesterday (`daily_summary.rs`).
+    pub daily_summary_hour_utc: u32,
     /// `CHECKOUT_FULFILLMENT_MODE` (primary; the legacy secondary | auto run as primary).
     pub checkout_fulfillment_mode: String,
     /// `CREDITS_REQUIRE_PURCHASE_INTENT` (true).
@@ -303,6 +310,7 @@ impl Default for RawSettings {
             marketplace_markup_bps: DEFAULT_MARKETPLACE_MARKUP_BPS,
             mana_price_max_staleness_secs: DEFAULT_MANA_PRICE_MAX_STALENESS_SECS,
             credits_usd_pegged_feed_max_age_secs: 3_600,
+            daily_summary_hour_utc: daily_summary::DEFAULT_HOUR_UTC,
             checkout_fulfillment_mode: DEFAULT_CHECKOUT_FULFILLMENT_MODE.to_string(),
             require_purchase_intent: DEFAULT_REQUIRE_PURCHASE_INTENT,
             checkout_worker_interval_secs: DEFAULT_CHECKOUT_WORKER_INTERVAL_SECS,
@@ -355,8 +363,8 @@ pub struct Settings {
     /// the studios with a signed request (`admin::require_write_admin`); they
     /// read too.
     pub write_admin_addresses: Vec<String>,
-    /// A wallet's admin write must sign its body (`bodySha256`); off, one
-    /// that signs none is accepted with a warning.
+    /// A wallet's admin write or studio grant must sign its body
+    /// (`bodySha256`); off, one that signs none is accepted with a warning.
     pub admin_writes_require_bound_body: bool,
     pub captcha_secret: Option<String>,
     pub captcha_verify_url: String,
@@ -369,6 +377,7 @@ pub struct Settings {
     pub marketplace_markup_bps: i64,
     pub mana_price_max_staleness_secs: i64,
     pub credits_usd_pegged_feed_max_age_secs: u64,
+    pub daily_summary_hour_utc: u32,
     pub checkout_fulfillment_mode: String,
     pub require_purchase_intent: bool,
     pub checkout_worker_interval: Duration,
@@ -577,6 +586,9 @@ impl Settings {
                 i64::MAX
             );
         }
+        if raw.daily_summary_hour_utc > 23 {
+            anyhow::bail!("CREDITS_DAILY_SUMMARY_HOUR_UTC must be an hour of the day, 0 to 23");
+        }
         if raw.credit_buffer_bps > crate::types::CreditSizing::MAX_BUFFER_BPS {
             anyhow::bail!(
                 "CREDITS_ORACLE_BUFFER_BPS must be at most {}",
@@ -679,6 +691,7 @@ impl Settings {
             marketplace_markup_bps: raw.marketplace_markup_bps,
             mana_price_max_staleness_secs: raw.mana_price_max_staleness_secs,
             credits_usd_pegged_feed_max_age_secs: raw.credits_usd_pegged_feed_max_age_secs,
+            daily_summary_hour_utc: raw.daily_summary_hour_utc,
             checkout_fulfillment_mode: parse_fulfillment_mode(&raw.checkout_fulfillment_mode)?,
             require_purchase_intent: raw.require_purchase_intent,
             checkout_worker_interval: Duration::from_secs(raw.checkout_worker_interval_secs.max(1)),
@@ -809,6 +822,8 @@ pub struct State {
     pub feed: Arc<dyn feed::MarketplaceFeed>,
     /// Where the credits alerts are posted (`alerts.rs`).
     pub alerts: alerts::Delivery,
+    /// The daily summary's hour and chain (`daily_summary.rs`).
+    pub daily_summary: daily_summary::DailySummary,
     /// Existing chain transport for the seasonal program paused() view.
     pub goals_chain: Option<Arc<crate::evm::chain::ChainComponent>>,
     pub goal_flags: goals::flags::Flags,
@@ -899,13 +914,13 @@ impl State {
                     std::time::Duration::from_secs(10),
                 ))
             });
-        let gate: Arc<dyn settlement::IssuanceGate> = match &chain {
-            Some(chain) => Arc::new(settlement::ChainGate::new(
-                chain.clone(),
-                settings.usage.chain_id as u64,
-            )),
-            None => Arc::new(settlement::ClosedGate),
-        };
+        let gate: Arc<dyn settlement::IssuanceGate> =
+            match (&chain, u64::try_from(settings.usage.chain_id)) {
+                (Some(chain), Ok(chain_id)) => {
+                    Arc::new(settlement::ChainGate::new(chain.clone(), chain_id))
+                }
+                _ => Arc::new(settlement::ClosedGate),
+            };
         let feed: Arc<dyn feed::MarketplaceFeed> = match &chain {
             Some(chain) => Arc::new(feed::ChainFeed::new(
                 chain.clone(),
@@ -933,6 +948,14 @@ impl State {
             &settings.shop_base_url,
             http.clone(),
         );
+        let daily_summary = daily_summary::DailySummary {
+            hour_utc: settings.daily_summary_hour_utc,
+            chain: daily_summary::ChainReader::for_usage(
+                chain.as_ref(),
+                &settings.usage,
+                settings.mana_price_max_staleness_secs,
+            ),
+        };
         let goal_flags = goals::flags::Flags::new(settings.goal_flags_source.clone(), http);
         Self {
             goal_flags,
@@ -953,6 +976,7 @@ impl State {
             revoker,
             feed,
             alerts,
+            daily_summary,
             goals_chain: chain,
             dapps_flags: None,
             balance_changes: stream::BalanceChanges::default(),
@@ -1041,6 +1065,12 @@ impl State {
             jobs,
             self.credits.clone(),
             self.alerts.clone(),
+            self.settings.writes_enabled,
+        );
+        daily_summary::spawn(
+            jobs,
+            self.credits.clone(),
+            self.daily_summary.clone(),
             self.settings.writes_enabled,
         );
         self.spawn_usage_index(jobs);

@@ -328,7 +328,7 @@ impl Credits {
 
             tracing::info!(chunk = chunks, wallets_scanned, adjustments_this_chunk = applied_here, adjustments_total = out.len(), cursor = %cursor, "ledger realign progress");
 
-            if (addresses.len() as i64) < batch {
+            if i64::try_from(addresses.len()).is_ok_and(|n| n < batch) {
                 break;
             }
         }

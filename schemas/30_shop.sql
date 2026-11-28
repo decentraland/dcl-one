@@ -683,6 +683,11 @@ CREATE INDEX nft_item_idx ON shop.nft (network, contract_address, item_id) WHERE
 -- held tokens by minted_at DESC, walked per network (an incremental sort
 -- orders the ties by contract and token) instead of sorting every candidate.
 CREATE INDEX nft_mint_order_idx ON shop.nft (network, minted_at DESC) WHERE owner IS NOT NULL;
+-- The recently sold browse of /v1/nfts: each source's first `first + skip`
+-- held tokens by their legacy OrderSuccessful time, newest first, ties by
+-- contract and token, walked per network.
+CREATE INDEX nft_sold_order_idx ON shop.nft (network, sold_at DESC, contract_address, token_id)
+    WHERE sold_at IS NOT NULL AND owner IS NOT NULL;
 -- A DCL NAME's holders by label, compared lowercased (the NAME source's owner
 -- read: worlds' owner and admission, the Admin Toolkit, the lambdas name
 -- owner): WHERE lower(ens_subdomain) = ANY($1).
@@ -961,6 +966,13 @@ CREATE INDEX legacy_order_updated_idx ON shop.legacy_order (updated_at DESC);
 -- (/v1/orders?status=open&sortBy=cheapest).
 CREATE INDEX legacy_order_open_idx ON shop.legacy_order (contract_address, price) WHERE status = 'open';
 CREATE INDEX legacy_order_open_price_idx ON shop.legacy_order (price) WHERE status = 'open';
+-- The next expiry in the catalogue's memo key, read on its publication snapshot.
+CREATE INDEX legacy_order_open_expiry_idx ON shop.legacy_order (network, expires_at) WHERE status = 'open';
+-- Unscoped token ID sorts walk this index in either direction.
+-- PostgreSQL sorts the equal-token ties by order ID.
+CREATE INDEX legacy_order_issued_idx ON shop.legacy_order (token_id);
+-- Cheapest without an open status filter includes all unexpired orders.
+CREATE INDEX legacy_order_price_idx ON shop.legacy_order (price, order_id);
 
 -- LAND and estate names and descriptions from Update and CreateEstate.
 -- The latest parcel Update or the latest valid estate document supplies both fields.
@@ -17460,7 +17472,7 @@ CREATE TABLE shop.sale_publication (
 -- reader takes it only from a valid publication whose `last_sale_through`
 -- reaches the published block. Workload: one row per sold token, written by
 -- the fold (a window's tokens per pass), read by joining a page's
--- candidates on the primary key.
+-- candidates on the primary key, and newest first by the recently sold sort.
 CREATE TABLE shop.nft_last_sale (
     network text NOT NULL CHECK (network IN ('ethereum', 'matic')),
     contract_address text NOT NULL,
@@ -17471,6 +17483,9 @@ CREATE TABLE shop.nft_last_sale (
 );
 -- The rows a changed history deletes: WHERE network = $1 AND block_number > $2.
 CREATE INDEX nft_last_sale_block ON shop.nft_last_sale (network, block_number);
+-- The recently sold browse of /v1/nfts: a network's sold tokens newest first,
+-- ties by contract and token, each joined to its source until the page fills.
+CREATE INDEX nft_last_sale_recent_idx ON shop.nft_last_sale (network, sold_at DESC, contract_address, token_id);
 
 -- Sparse fee configuration changes. Look up the last event before a
 -- particular execution, including a change earlier in the same block.
@@ -17683,6 +17698,12 @@ CREATE TRIGGER nft_written_update AFTER UPDATE ON shop.nft
 REFERENCING NEW TABLE AS written FOR EACH STATEMENT EXECUTE FUNCTION shop.note_projection_write('nft');
 CREATE TRIGGER nft_written_delete AFTER DELETE ON shop.nft
 REFERENCING OLD TABLE AS written FOR EACH STATEMENT EXECUTE FUNCTION shop.note_projection_write('nft');
+CREATE TRIGGER nft_order_written_insert AFTER INSERT ON shop.nft_order
+REFERENCING NEW TABLE AS written FOR EACH STATEMENT EXECUTE FUNCTION shop.note_projection_write('nft');
+CREATE TRIGGER nft_order_written_update AFTER UPDATE ON shop.nft_order
+REFERENCING NEW TABLE AS written FOR EACH STATEMENT EXECUTE FUNCTION shop.note_projection_write('nft');
+CREATE TRIGGER nft_order_written_delete AFTER DELETE ON shop.nft_order
+REFERENCING OLD TABLE AS written FOR EACH STATEMENT EXECUTE FUNCTION shop.note_projection_write('nft');
 CREATE TRIGGER legacy_order_written_insert AFTER INSERT ON shop.legacy_order
 REFERENCING NEW TABLE AS written FOR EACH STATEMENT EXECUTE FUNCTION shop.note_projection_write('nft');
 CREATE TRIGGER legacy_order_written_update AFTER UPDATE ON shop.legacy_order
@@ -17714,6 +17735,27 @@ $$;
 
 CREATE TRIGGER chain_cursor_publication AFTER INSERT OR UPDATE OF folded_block, folded_at ON shop.chain_cursor
 FOR EACH ROW EXECUTE FUNCTION shop.acknowledge_projection_writes();
+
+-- On upgrade an existing NFT cursor must publish once after the object pass
+-- adds the nft_order triggers. Even an empty order projection gains proof.
+-- The shared publication trigger acknowledges writes on existing rows.
+CREATE FUNCTION shop.record_nft_order_publication() RETURNS trigger
+LANGUAGE plpgsql AS $$
+BEGIN
+    IF NEW.indexer = 'nft' AND NEW.folded_block IS NOT NULL AND NEW.folded_at IS NOT NULL
+       AND (TG_OP = 'INSERT' OR NEW.folded_at IS DISTINCT FROM OLD.folded_at
+            OR NEW.folded_block IS DISTINCT FROM OLD.folded_block) THEN
+        INSERT INTO shop.projection_write (indexer, network, projection, pending, written_through)
+        VALUES ('nft', NEW.network, 'nft_order', false, NEW.folded_block)
+        ON CONFLICT (indexer, network, projection) DO NOTHING;
+    END IF;
+    RETURN NULL;
+END;
+$$;
+
+CREATE TRIGGER chain_cursor_nft_order_publication
+AFTER INSERT OR UPDATE OF folded_block, folded_at ON shop.chain_cursor
+FOR EACH ROW EXECUTE FUNCTION shop.record_nft_order_publication();
 
 -- The nft walk's rewinds, for the bids fold: a seller inferred from the nft
 -- walk's transfers may name an owner the rewind took away, so the next fold

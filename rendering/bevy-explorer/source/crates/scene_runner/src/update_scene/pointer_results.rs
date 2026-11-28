@@ -16,9 +16,12 @@ use comms::global_crdt::ForeignPlayer;
 use console::DoAddConsoleCommand;
 use system_bridge::{HoverAction, HoverEvent, ProximityEvent, SystemApi};
 
-use super::synthetic_pointer::{
-    aim_ray, anchor_point, cursor_entries, expire_synthetic_aim, ui_gate_passes,
-    LoggedPointerEvent, PointerEventLog, SyntheticPointer,
+use super::{
+    left_drag_pan::LeftDragPan,
+    synthetic_pointer::{
+        aim_ray, anchor_point, cursor_entries, expire_synthetic_aim, ui_gate_passes,
+        LoggedPointerEvent, PointerEventLog, SyntheticPointer,
+    },
 };
 use crate::{
     gltf_resolver::GltfMeshResolver,
@@ -115,6 +118,7 @@ impl Plugin for PointerResultPlugin {
             .init_resource::<PointerActionTarget>()
             .init_resource::<UiPointerTarget>()
             .init_resource::<WorldPointerTarget>()
+            .init_resource::<PanHoldsPointer>()
             .init_resource::<DebugPointers>()
             .init_resource::<ProximityCandidates>()
             .init_resource::<MonotonicTimestamp<PbPointerEventsResult>>()
@@ -275,6 +279,19 @@ pub struct PointerActionTarget {
     entities: HashMap<InputAction, PressCapture>,
 }
 
+impl PointerActionTarget {
+    #[cfg(test)]
+    pub(crate) fn capture_for_test(&mut self, action: InputAction, capture: PressCapture) {
+        self.entities.insert(action, capture);
+    }
+
+    /// The pointer press was captured by a scene entity that listens for `PetDrag` or
+    /// `PetDragLocked`.
+    pub(crate) fn holds_pointer_drag(&self) -> bool {
+        self.entities.contains_key(&InputAction::IaPointer)
+    }
+}
+
 #[derive(Default, Debug, Resource, Clone, PartialEq, Eq)]
 pub struct UiPointerTarget(pub UiPointerTargetValue);
 
@@ -317,6 +334,13 @@ pub struct WorldPointerTarget(pub Option<PointerTargetInfo>);
 #[derive(Resource, Default)]
 pub struct PointerRay(pub Option<Ray3d>);
 
+/// Whether a left-drag pan holds the pointer this frame, recorded in `PreUpdate` before the pan
+/// sees the release, so the release frame counts too. While it is set nothing is a pointer
+/// target, scene UI included: natively the hidden cursor is only confined and keeps moving, so
+/// UI focus can still land on a scene UI button under it.
+#[derive(Resource, Default)]
+struct PanHoldsPointer(bool);
+
 /// Entities currently within `max_player_distance` of the avatar that carry at
 /// least one PROXIMITY pointer-event entry. Distance is the closest-point distance
 /// from the avatar's center (transform + half player collider height) to the
@@ -351,8 +375,11 @@ fn update_pointer_target(
     transforms: Query<&GlobalTransform>,
     meshes: Query<(&Aabb, &GlobalTransform, &InheritedVisibility)>,
     children: Query<&Children>,
+    pan: Res<LeftDragPan>,
+    mut pan_holds_pointer: ResMut<PanHoldsPointer>,
 ) {
     pointer_ray.0 = None;
+    pan_holds_pointer.0 = pan.is_panning();
 
     let Ok((camera, camera_position)) = camera.single() else {
         // can't do much without a camera
@@ -397,6 +424,15 @@ fn update_pointer_target(
     };
 
     pointer_ray.0 = Some(ray);
+
+    // a drag that turns the camera hovers nothing, up to and including its release frame: this
+    // runs before the pan sees the release, and the cursor is still locked at the screen centre,
+    // so a target here would send the release to whatever is under the reticle. The ray stays
+    // for trigger areas.
+    if pan.is_panning() {
+        world_target.0 = None;
+        return;
+    }
 
     let nearby_scenes = containing_scenes.get_area(player, PARCEL_SIZE);
     let containing_scenes = containing_scenes.get_area(player, PLAYER_COLLIDER_RADIUS);
@@ -864,11 +900,12 @@ fn resolve_pointer_target(
     mut prev: Local<Option<Entity>>,
     tick: Res<FrameCount>,
     synthetic: Res<SyntheticPointer>,
+    pan_holds_pointer: Res<PanHoldsPointer>,
 ) {
     let any_root_interacting = ui_roots
         .iter()
         .any(|root| !matches!(root, Interaction::None));
-    if !ui_gate_passes(any_root_interacting, synthetic.0.is_some()) {
+    if pan_holds_pointer.0 || !ui_gate_passes(any_root_interacting, synthetic.0.is_some()) {
         target.0 = None;
         if prev.is_some() {
             debug!("[{}] {prev:?} -> None", tick.0);
@@ -2097,6 +2134,44 @@ mod distance_tests {
 }
 
 #[cfg(test)]
+mod pan_tests {
+    use super::*;
+
+    /// A scene UI button under the hidden cursor, with UI focus on it, as when a native drag
+    /// ends over one.
+    fn app_over_scene_ui(panning: bool) -> App {
+        let mut app = App::new();
+        app.init_resource::<WorldPointerTarget>()
+            .init_resource::<PointerTarget>()
+            .init_resource::<FrameCount>()
+            .init_resource::<SyntheticPointer>()
+            .insert_resource(PanHoldsPointer(panning))
+            .add_systems(Update, resolve_pointer_target);
+        let button = app
+            .world_mut()
+            .spawn((Interaction::Hovered, MouseInteractionComponent))
+            .id();
+        app.insert_resource(UiPointerTarget(UiPointerTargetValue::Primary(button, None)));
+        app
+    }
+
+    #[test]
+    fn a_pan_holding_the_pointer_targets_no_scene_ui() {
+        let mut app = app_over_scene_ui(true);
+        app.update();
+        assert!(app.world().resource::<PointerTarget>().0.is_none());
+    }
+
+    #[test]
+    fn without_a_pan_scene_ui_is_the_target() {
+        let mut app = app_over_scene_ui(false);
+        app.update();
+        let target = app.world().resource::<PointerTarget>().0.clone();
+        assert_eq!(target.map(|t| t.ty), Some(PointerTargetType::Ui));
+    }
+}
+
+#[cfg(test)]
 mod pointer_target_tests {
     use super::*;
     use crate::{
@@ -2186,6 +2261,8 @@ mod pointer_target_tests {
         world.init_resource::<AvatarColliders>();
         world.init_resource::<WorldPointerTarget>();
         world.init_resource::<PointerRay>();
+        world.init_resource::<LeftDragPan>();
+        world.init_resource::<PanHoldsPointer>();
 
         // the player stands in the notch and aims along -z at the post behind it
         world.spawn((

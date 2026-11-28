@@ -620,7 +620,8 @@ CREATE INDEX revocations_chain_hash_idx ON credits.revocations (chain_id, credit
 -- sweep: a credit the Shop submitted that expired unconsumed, a wallet whose
 -- purchases of one item keep expiring), and the purchase feed's lines (the
 -- Stripe webhook: a pack credited, a reversal; settlement: an item purchase
--- settled), at most once per (kind, dedupe_key).
+-- settled), and the daily summary of each closed UTC day, queued by its own
+-- job, at most once per (kind, dedupe_key).
 -- The credits-alerts job posts it to CREDITS_ALERTS_SLACK_WEBHOOK: `sent` once
 -- Slack accepted it, `skipped` (logged at error) with no webhook, `failed`
 -- (logged at error) when still undelivered a day later.

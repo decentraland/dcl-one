@@ -1,125 +1,14 @@
-// WearableCard — a backpack item tile: the rarity texture with the thumbnail, a rarity-tinted
-// corner flap with the category glyph, an orange ring when equipped, and on hover a scale-up with a
-// glow panel holding the EQUIP / UNEQUIP button under the tile.
+// WearableCard — the shared WearableCard drawn with the HUD's art: the rarity's tile texture, the corner
+// flap's shape, the equipped outline and the panel behind a hovered card.
 
-import { useState } from 'react'
+import { WearableCard as SharedWearableCard, type WearableCardProps, type WearableCardRarity } from '@dcl/one-ui'
+import flap from '../assets/backpack/corner-flap.webp'
+import ring from '../assets/backpack/equipped-outline.webp'
+import hoverPanel from '../assets/backpack/hover-bg.webp'
 import { rarityTile } from './rarityArt'
-import styles from './WearableCard.module.css'
 
-export type Rarity =
-  | 'base'
-  | 'common'
-  | 'uncommon'
-  | 'rare'
-  | 'epic'
-  | 'legendary'
-  | 'mythic'
-  | 'unique'
-  | 'exotic'
+export type Rarity = WearableCardRarity
 
-interface WearableCardProps {
-  thumbnail?: string
-  name?: string
-  rarity?: Rarity
-  equipped?: boolean
-  /** Open in the detail panel (no visual ring; exposed as aria-pressed). */
-  selected?: boolean
-  isNew?: boolean
-  /** Shows the SMART badge. */
-  isSmart?: boolean
-  incompatible?: boolean
-  /** False for a required category (body shape, eyes…): equipped, it offers no UNEQUIP. */
-  unequippable?: boolean
-  /** Body-part glyph shown in the top-left flap. */
-  categoryIcon?: React.ReactNode
-  /** Emote wheel slot the item is equipped in, shown top-right (emote cards). */
-  slotNumber?: number
-  /** Card click — selects the item (shows its detail; does not equip or preview). */
-  onClick?: () => void
-  /** Card double-click — the explicit equip action (persists), same as the button. */
-  onDoubleClick?: () => void
-  /** Hover EQUIP/UNEQUIP click — the explicit equip action (persists). */
-  onEquip?: () => void
-  onHoverChange?: (hovered: boolean) => void
-  /** A tile to pick, not to equip (the gift picker): no hover panel or action, a ring while selected. */
-  pick?: boolean
-  /** How many copies are owned, shown as "xN" when more than one. */
-  count?: number
-  /** Covers the tile with a note, and it can't be picked. */
-  coverNote?: string
-}
-
-export function WearableCard({
-  thumbnail,
-  name,
-  rarity = 'base',
-  equipped = false,
-  selected = false,
-  isNew = false,
-  isSmart = false,
-  incompatible = false,
-  unequippable = true,
-  categoryIcon,
-  slotNumber,
-  onClick,
-  onDoubleClick,
-  onEquip,
-  onHoverChange,
-  pick = false,
-  count,
-  coverNote
-}: WearableCardProps): React.JSX.Element {
-  const [failed, setFailed] = useState(false)
-  const action = pick ? null : incompatible && !equipped ? null : equipped ? (unequippable ? 'UNEQUIP' : null) : 'EQUIP'
-  const ringed = pick ? selected : equipped
-  return (
-    <button
-      type="button"
-      className={[styles.card, ringed && styles.equipped, incompatible && styles.incompatible, pick && styles.pick].filter(Boolean).join(' ')}
-      data-rarity={rarity}
-      title={name}
-      aria-label={name}
-      aria-pressed={selected}
-      aria-disabled={coverNote != null ? true : undefined}
-      onClick={coverNote != null ? undefined : onClick}
-      onDoubleClick={onDoubleClick}
-      onMouseEnter={onHoverChange && (() => onHoverChange(true))}
-      onMouseLeave={onHoverChange && (() => onHoverChange(false))}
-    >
-      {!pick && <span className={styles.hoverPanel} aria-hidden="true" />}
-      <span className={styles.body} style={{ backgroundImage: `url(${rarityTile(rarity)})` }}>
-        {thumbnail && !failed && <img className={styles.thumb} src={thumbnail} alt="" onError={() => setFailed(true)} />}
-        {categoryIcon != null && (
-          <span className={styles.flap}>
-            <span className={styles.flapTint} aria-hidden="true" />
-            <span className={styles.flapIcon}>{categoryIcon}</span>
-          </span>
-        )}
-        {isNew && <span className={styles.new}>NEW</span>}
-        {isSmart && <span className={styles.smart}>SMART</span>}
-        {slotNumber != null && <span className={styles.slotNumber}>{slotNumber}</span>}
-        {count != null && count > 1 && <span className={styles.count}>{`x${count}`}</span>}
-        {coverNote != null && (
-          <span className={styles.incompatibleCover}>
-            <span className={`${styles.incompatibleNote} ${styles.shownNote}`}>{coverNote}</span>
-          </span>
-        )}
-        {incompatible && (
-          <span className={styles.incompatibleCover}>
-            <span className={styles.incompatibleNote}>Incompatible with body shape</span>
-          </span>
-        )}
-      </span>
-      <span className={styles.ring} aria-hidden="true" />
-      {action != null && (
-        <span
-          className={`${styles.action} ${equipped ? styles.unequip : styles.equip}`}
-          role="button"
-          onClick={(e) => { e.stopPropagation(); onEquip?.() }}
-        >
-          {action}
-        </span>
-      )}
-    </button>
-  )
+export function WearableCard(props: Omit<WearableCardProps, 'art' | 'labels'>): React.JSX.Element {
+  return <SharedWearableCard {...props} art={{ tile: rarityTile(props.rarity), flap, ring, hoverPanel }} />
 }

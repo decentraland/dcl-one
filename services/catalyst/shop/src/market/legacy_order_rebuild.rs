@@ -455,7 +455,7 @@ async fn old_book_published(
         .fetch_optional(&mut *conn)
         .await?;
     Ok(through == Some(checkpoint.last)
-        && super::published(conn, net, checkpoint.last).await?
+        && super::visible_readiness_on(conn, net).await? == super::Readiness::Published
         && chain_walk::rows_published_on(conn, INDEXER_NFT, net, &["nft", "legacy_order"]).await?)
 }
 

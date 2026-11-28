@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Create or update the one CI status comment on a pull request, replacing only the given sections
-# (build | tests | performance | automation | inworld | sdk). The writers call this through the
+# (build | tests | performance | automation | inworld | sdk | protocol). The writers call this through the
 # bevy-explorer-ci-status composite action: Bevy Explorer / CI status (build, tests) and Bevy Explorer /
 # Benchmark (performance). Each writer's bot comment collapses into one.
 #
@@ -19,6 +19,7 @@
 #   <!-- ci:automation:start -->  …automation…  <!-- ci:automation:end -->
 #   <!-- ci:inworld:start -->     …inworld…     <!-- ci:inworld:end -->
 #   <!-- ci:sdk:start -->         …sdk…         <!-- ci:sdk:end -->
+#   <!-- ci:protocol:start -->    …protocol…    <!-- ci:protocol:end -->
 #
 # The writers run as independent workflows that can fire at the same time, so a plain
 # read-modify-write would drop a section or create a duplicate comment. Each attempt collapses any
@@ -39,11 +40,11 @@ case "${COMMENT:-bevy-explorer}" in
   bevy-explorer)
     MARKER="<!-- bevy-explorer-ci-status -->"
     HEADER='### 🚦 Bevy Explorer CI'
-    SECTIONS='build tests performance automation inworld sdk'
+    SECTIONS='build tests performance automation inworld sdk protocol'
     SKELETON='build tests performance'
-    # A pull request that only changes the SDK gets no explorer build: seeding its sections would
+    # A pull request that only changes the SDK or the protocol gets no explorer build: seeding its sections would
     # leave them waiting for good. They append their own fences if they do report.
-    if [ "${SECTION:-}" = sdk ]; then SKELETON=''; fi
+    case "${SECTION:-}" in sdk | protocol) SKELETON='' ;; esac
     ;;
   creator-hub)
     MARKER="<!-- creator-hub-test-builds -->"
@@ -105,6 +106,7 @@ section_default() {
     tests) printf '![Tests](https://img.shields.io/badge/Tests-Waiting-lightgrey?logo=rust&logoColor=white&style=for-the-badge)\n\n_Waiting for the test suite…_' ;;
     performance) printf '![Performance](https://img.shields.io/badge/Performance-Waiting-lightgrey?logo=speedtest&logoColor=white&style=for-the-badge)\n\n_Waiting for a passed CI run with the web app built: the benchmark then measures it against main in Chrome on the laptop fleet, and the report lands here._' ;;
     automation) printf '![Automation](https://img.shields.io/badge/Automation-Waiting-lightgrey?logo=github&logoColor=white&style=for-the-badge)\n\n_Waiting for the automation suite…_' ;;
+    protocol) printf '![Protocol](https://img.shields.io/badge/Protocol-Waiting-lightgrey?logo=npm&logoColor=white&style=for-the-badge)\n\n_Waiting for the protocol preview package…_' ;;
     sdk) printf '![SDK](https://img.shields.io/badge/SDK-Waiting-lightgrey?logo=npm&logoColor=white&style=for-the-badge)\n\n_Waiting for the SDK preview packages…_' ;;
     inworld) printf '![InWorld](https://img.shields.io/badge/InWorld-Waiting-lightgrey?logo=github&logoColor=white&style=for-the-badge)\n\n_Waiting for the InWorld suite…_' ;;
     desktop) printf '![Desktop app](https://img.shields.io/badge/Desktop%%20app-Not%%20built-lightgrey?logo=electron&logoColor=white&style=for-the-badge)\n\n_To build the desktop app, add the `ci:desktop` label, or `ci:linux` for Linux alone, then push or reopen._' ;;
@@ -136,7 +138,7 @@ skeleton() {
 # The cap is per section and blind to the others, so it only bounds the total if
 # (section count × CAP) stays under 65536 with headroom for the header and the fences. A comment
 # has at most 5 sections of any size (see above): 5 × 12000 = 60000, leaving about 5.5k, of which
-# the sdk section, one install command, takes under 1k. Re-derive
+# the sdk and protocol sections, one install command each, take under 1k apiece. Re-derive
 # this when a section is added, or the ${#NEW_BODY} guard below is the only thing left between a big comment
 # and a 422.
 CAP=12000

@@ -106,12 +106,12 @@ wasm-opt = ["-Oz"]
 # Cargo.lock as unused, in an order that changes from run to run, which --locked refuses.
 [patch.crates-io]
 naga_oil = { git = "https://github.com/decentraland/dcl-one", rev = "b90aa836dcd1f0226779473c5550e9e04b37f224" }
-bevy = { git = "https://github.com/decentraland/dcl-one", rev = "ab63e345bed22ce58ef3fa38a1b822099f4a4f3f" }
-bevy_ecs = { git = "https://github.com/decentraland/dcl-one", rev = "ab63e345bed22ce58ef3fa38a1b822099f4a4f3f" }
-bevy_math = { git = "https://github.com/decentraland/dcl-one", rev = "ab63e345bed22ce58ef3fa38a1b822099f4a4f3f" }
-bevy_color = { git = "https://github.com/decentraland/dcl-one", rev = "ab63e345bed22ce58ef3fa38a1b822099f4a4f3f" }
-bevy_transform = { git = "https://github.com/decentraland/dcl-one", rev = "ab63e345bed22ce58ef3fa38a1b822099f4a4f3f" }
-bevy_platform = { git = "https://github.com/decentraland/dcl-one", rev = "ab63e345bed22ce58ef3fa38a1b822099f4a4f3f" }
+bevy = { git = "https://github.com/decentraland/dcl-one", rev = "20efb877c79578ee591581660321fe0866926196" }
+bevy_ecs = { git = "https://github.com/decentraland/dcl-one", rev = "20efb877c79578ee591581660321fe0866926196" }
+bevy_math = { git = "https://github.com/decentraland/dcl-one", rev = "20efb877c79578ee591581660321fe0866926196" }
+bevy_color = { git = "https://github.com/decentraland/dcl-one", rev = "20efb877c79578ee591581660321fe0866926196" }
+bevy_transform = { git = "https://github.com/decentraland/dcl-one", rev = "20efb877c79578ee591581660321fe0866926196" }
+bevy_platform = { git = "https://github.com/decentraland/dcl-one", rev = "20efb877c79578ee591581660321fe0866926196" }
 gltf = { git = "https://github.com/gltf-rs/gltf", rev = "50d65229" }
 gltf-json = { git = "https://github.com/gltf-rs/gltf", rev = "50d65229" }
 winit = { git = "https://github.com/decentraland/dcl-one", rev = "ee0414e120eb9837c1f5892a325791dddb586cc2" }
@@ -121,4 +121,4 @@ naga = { git = "https://github.com/decentraland/dcl-one", rev = "189227bff6dafe7
 bevy_console = { git = "https://github.com/decentraland/dcl-one", rev = "62b94f3c152da9e748d7790c7e9126aed493d327" }
 bevy_kira_audio = { git = "https://github.com/decentraland/dcl-one", rev = "343c72eb0e0e4b232aea96a4f5210209d06e113b" }
 [patch."https://github.com/robtfm/bevy"]
-bevy = { git = "https://github.com/decentraland/dcl-one", rev = "ab63e345bed22ce58ef3fa38a1b822099f4a4f3f" }
+bevy = { git = "https://github.com/decentraland/dcl-one", rev = "20efb877c79578ee591581660321fe0866926196" }

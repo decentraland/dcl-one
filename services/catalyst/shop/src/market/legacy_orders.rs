@@ -29,7 +29,7 @@
 //! same live table and marker throughout the build.
 //!
 //! A reader requires the book's checkpoint hash, an empty live repair
-//! queue, and the NFT publication on the same snapshot ([`caught_up`]).
+//! queue, and the NFT publication on the same snapshot ([`readiness_on`]).
 
 #[path = "legacy_order_rebuild.rs"]
 mod rebuild;
@@ -191,53 +191,66 @@ async fn write_marker(conn: &mut PgConnection, net: ChainNet) -> sqlx::Result<()
     Ok(())
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum Readiness {
+    Published,
+    Behind,
+    RefoldQueued,
+}
+
 /// Whether `net`'s order book may be read beside the published nft fold on
 /// `conn`'s snapshot: it stands (its marker's recovery point keeps the hash
 /// it recorded) and its marker, written in the fold's transaction, is the
-/// nft cursor's published `folded_block`. False while the book has not
+/// nft cursor's published `folded_block`. It is behind while the book has not
 /// caught up with nft folds that ran without it, when an earlier binary
 /// rewound the walk under it, and between a fold's commit and its
 /// publication: the rows then already hold the next fold, which is not
 /// published yet (the walk publishes only after its head reads, which can
 /// stall). A walk that advanced without folding leaves the book at the
-/// published block, which stays readable. Also false while `net` has a
+/// published block, which stays readable. A separate outcome names a
 /// refold queued (`shop.legacy_order_refold`): a writer changed an order
 /// event the book has already folded, and an earlier binary can republish
 /// the same height without folding it, so the book is read again only once
 /// a fold of this binary has taken it. Another network's queue does not
 /// withhold this one.
-pub async fn caught_up(conn: &mut PgConnection, net: ChainNet) -> sqlx::Result<bool> {
+pub(super) async fn readiness_on(
+    conn: &mut PgConnection,
+    net: ChainNet,
+) -> sqlx::Result<Readiness> {
     if building(conn, net).await? {
-        return Ok(false);
+        return Ok(Readiness::Behind);
     }
-    let stands: Option<i64> = sqlx::query_scalar(STANDS_SQL)
+    visible_readiness_on(conn, net).await
+}
+
+async fn visible_readiness_on(conn: &mut PgConnection, net: ChainNet) -> sqlx::Result<Readiness> {
+    let through: Option<i64> = sqlx::query_scalar(STANDS_SQL)
         .bind(net.db_name())
         .bind(super::chain_walk::INDEXER_NFT)
         .fetch_optional(&mut *conn)
         .await?;
-    let Some(through) = stands else {
-        return Ok(false);
-    };
-    published(conn, net, through).await
-}
-
-async fn published(conn: &mut PgConnection, net: ChainNet, through: i64) -> sqlx::Result<bool> {
+    if through.is_none()
+        || !super::chain_walk::holds_published_fold_on(
+            conn,
+            super::chain_walk::INDEXER_NFT,
+            net,
+            through,
+        )
+        .await?
+    {
+        return Ok(Readiness::Behind);
+    }
     let queued: bool = sqlx::query_scalar(
         "SELECT EXISTS (SELECT 1 FROM shop.legacy_order_refold WHERE network = $1)",
     )
     .bind(net.db_name())
-    .fetch_one(&mut *conn)
+    .fetch_one(conn)
     .await?;
-    if queued {
-        return Ok(false);
-    }
-    super::chain_walk::holds_published_fold_on(
-        conn,
-        super::chain_walk::INDEXER_NFT,
-        net,
-        Some(through),
-    )
-    .await
+    Ok(if queued {
+        Readiness::RefoldQueued
+    } else {
+        Readiness::Published
+    })
 }
 
 /// Deletes `net`'s orders of the tokens (`contracts[i]`, `tokens[i]`) a
@@ -400,7 +413,7 @@ mod tests {
 
     async fn stands(pool: &PgPool) -> bool {
         let mut tx = pool.begin().await.unwrap();
-        let caught = caught_up(&mut tx, ChainNet::Matic).await.unwrap();
+        let caught = readiness_on(&mut tx, ChainNet::Matic).await.unwrap() == Readiness::Published;
         tx.rollback().await.unwrap();
         caught
     }
@@ -999,9 +1012,10 @@ mod tests {
             .unwrap();
         assert_eq!(marker, 50);
         assert!(
-            published(&mut reader, ChainNet::Matic, marker)
+            visible_readiness_on(&mut reader, ChainNet::Matic)
                 .await
                 .unwrap()
+                == Readiness::Published
         );
         assert!(
             chain_walk::rows_published_on(
@@ -1043,9 +1057,10 @@ mod tests {
                 .unwrap();
         assert_eq!(still_old, 2);
         assert!(
-            published(&mut reader, ChainNet::Matic, marker)
+            visible_readiness_on(&mut reader, ChainNet::Matic)
                 .await
                 .unwrap()
+                == Readiness::Published
         );
         reader.commit().await.unwrap();
 
@@ -1420,8 +1435,9 @@ mod tests {
         seed_log(&db.pool, 100).await;
         nft_cursor(&db.pool, 100, Some(40), Some(40)).await;
         let mut tx = db.pool.begin().await.unwrap();
-        assert!(
-            !caught_up(&mut tx, ChainNet::Matic).await.unwrap(),
+        assert_eq!(
+            readiness_on(&mut tx, ChainNet::Matic).await.unwrap(),
+            Readiness::Behind,
             "the book (20) trails the published fold (40)"
         );
         tx.rollback().await.unwrap();
@@ -1595,6 +1611,7 @@ mod tests {
                 crate::market::chain_walk::INDEXER_NFT,
                 ChainNet::Matic,
                 &["nft"],
+                None,
             )
             .await
             .unwrap();

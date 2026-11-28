@@ -35,16 +35,28 @@ and own the rest. Scenes keep the behaviour they had on 0.307 wherever the new c
   byte-identical under `crates/dcl_deno/src/js/vendor/` with the fetch and webstorage scripts
   (MIT, versions and hashes in `upstream.lock.json`).
 - **Per scene, nothing shared:** a Blob store per runtime; deno_web registers the lock manager
-  and broadcast ops, and the runtime disables them (`DISABLED_OPS`), so a call fails. The
-  native BroadcastChannel stays our own bridge shim. deno_web's native classes are not installed.
-- **Upstream ops that panic on scene input:** `op_compile_function`, `op_serialize`,
-  `op_deserialize` and `op_urlpattern_process_match_input` are disabled (nothing the runtime
-  loads calls them), and `op_structured_clone`
+  and broadcast ops, and the runtime disables them, so a call fails. The native
+  BroadcastChannel stays our own bridge shim. deno_web's native classes are not installed.
+- **Upstream ops are an allowlist** (`UPSTREAM_OPS`): the ones a script the runtime loads
+  calls. Every other upstream op is disabled, including one a later upstream version adds,
+  until it is listed. Client scenes keep `Deno.core.ops`, so an op nothing needs is only a
+  way for a scene to reach code that was never written for scene input.
+- **Upstream ops that panic on scene input:** `op_panic`, `op_compile_function`,
+  `op_serialize`, `op_deserialize`, `op_urlpattern_process_match_input`, the leak-tracing ops
+  and `op_current_user_call_site` are off the allowlist (nothing the runtime loads calls them,
+  with leak tracing off). `op_url_parse`, `op_url_parse_with_base` and `op_url_reparse` index
+  a short buffer and `op_eval_context` unwraps its host-defined options; fetch and `require`
+  need them, so they stay until they are replaced. So do the
+  `op_readable_stream_resource_*` ops that take the sink pointer (`write_buf`, `write_sync`,
+  `write_error`, `close`): they trust whatever pointer the script passes back, and the streams
+  script needs them. `op_structured_clone`
   (`performance.mark` and `measure` reach it) is replaced by a serializer with no host-object path
   (`structured_clone.rs`). `op_drain_pending_rejections` returns nothing (`rejections.rs`):
   upstream holds the rejection queue's borrow while a scene's `Array.prototype` setter can run,
   and the queue is private to deno_core, so the event loop, which takes the queue out first,
-  hands rejections to the same handler.
+  hands rejections to the same handler. `op_blob_slice_part` is replaced too (`blob_slice.rs`):
+  upstream nests one part per slice, and a long chain overflows the stack when it is read or
+  dropped, so a slice of a slice wraps the original part instead.
 - **Op results** are ordinary objects (`JsPlain<T>`): serde_v8 builds them with a null
   prototype, so `String(result)` would throw.
 - **Clock:** `performance.now()` keeps a 2 ms resolution (`clock.rs`). deno_core's timer clock

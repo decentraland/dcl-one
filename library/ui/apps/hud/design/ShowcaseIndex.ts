@@ -36,7 +36,7 @@ export const SHOWCASE_INDEX = [
   { name: 'IconButton', title: 'IconButton (navigation bar)', components: ['IconButton'] },
   { name: 'Chip', title: 'Chip (breadcrumb filter)', components: ['Chip'] },
   { name: 'OptionMenu', title: 'OptionMenu', components: ['OptionMenu'] },
-  { name: 'ContextMenu', title: 'ContextMenu (items · submenu · exclusive options)', components: ['ContextMenu'] },
+  { name: 'ContextMenu', title: 'ContextMenu (icons · submenu · switch · exclusive options)', components: ['ContextMenu'] },
   { name: 'Submenu', title: 'Submenu (a menu row that opens a list beside it: hover or press it)', components: ['Submenu'] },
   { name: 'AnchoredMenu', title: 'AnchoredMenu (a ContextMenu opened from a button, as the photo options use it)', components: ['AnchoredMenu'] },
   { name: 'KebabMenu', title: 'KebabMenu (md · sm)', components: ['KebabMenu'] },
@@ -52,7 +52,7 @@ export const SHOWCASE_INDEX = [
   { name: 'Avatar', title: 'Avatar', components: ['Avatar'] },
   { name: 'WearableCard', title: 'WearableCard (backpack)', components: ['WearableCard'] },
   { name: 'WearableCardPick', title: 'WearableCard pick (gift picker)', components: ['WearableCard'] },
-  { name: 'EquippedItemCard', title: 'EquippedItemCard (passport)', components: ['EquippedItemCard', 'Icon'] },
+  { name: 'EquippedItemCard', title: 'EquippedItemCard (passport)', components: ['Icon'] },
   { name: 'Toast', title: 'Toast (plain · error · keyed progress · action + dismiss)', components: ['ToastHost'] },
   { name: 'Chat', title: 'Chat components', components: [] }
 ] as const satisfies readonly ShowcaseEntry[]
