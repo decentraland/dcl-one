@@ -5366,6 +5366,81 @@ async fn put_settings(
 }
 
 #[tokio::test]
+async fn shared_world_management_refuses_local_mutations_but_keeps_local_overrides() {
+    let upstream = "https://worlds-content-server.decentraland.org";
+    let Some(f) = fixture_full(
+        PersonalWorldsPolicy::disabled(),
+        None,
+        None,
+        test_settings().with_management_upstream_url(Some(upstream.to_string())),
+    )
+    .await
+    else {
+        return;
+    };
+    let owner = Wallet::random();
+    let world = owned_world(&f, &owner).await;
+    let name = world.display();
+    let app = Router::new().merge(f.app.clone()).nest(NEST, f.app.clone());
+    let scenes = entity_ids(&f, &world).await;
+    let settings_path = format!("/world/{name}/settings");
+    let before = expect(&f.app, Case::new("get", &settings_path), 200).await;
+
+    for path in [
+        format!("/entities/{name}"),
+        format!("/world/{name}/scenes/0,0"),
+        format!("/worlds-content-server/entities/{name}"),
+        format!("/worlds-content-server/world/{name}/scenes/0,0"),
+    ] {
+        let reply = expect(&app, Case::new("delete", path).signed(&owner).await, 409).await;
+        assert!(reply["message"].as_str().unwrap().contains(upstream));
+    }
+    assert_eq!(entity_ids(&f, &world).await, scenes);
+
+    let reply = put_settings(&f, &world, &owner, &[("title", None, b"Shared title")], 409).await;
+    assert!(reply["message"].as_str().unwrap().contains(upstream));
+    let (body, content_type) = multipart_body(&[("description", None, b"Shared description")]);
+    let reply = expect(
+        &app,
+        Case::new("put", format!("{NEST}{settings_path}"))
+            .signed(&owner)
+            .await
+            .body(body, &content_type),
+        409,
+    )
+    .await;
+    assert!(reply["message"].as_str().unwrap().contains(upstream));
+    let reply = put_settings(
+        &f,
+        &world,
+        &owner,
+        &[
+            ("realm_name_override", None, b"local-preview"),
+            ("spawn_coordinates", None, b"0,1"),
+        ],
+        409,
+    )
+    .await;
+    assert!(reply["message"].as_str().unwrap().contains(upstream));
+    let settings = expect(&f.app, Case::new("get", &settings_path), 200).await;
+    assert_eq!(settings, before);
+
+    let updated = put_settings(
+        &f,
+        &world,
+        &owner,
+        &[
+            ("realm_name_override", None, b"local-preview"),
+            ("preview_wearable_urns", None, b"null"),
+        ],
+        200,
+    )
+    .await;
+    assert_eq!(updated["settings"]["realm_name_override"], "local-preview");
+    assert_eq!(updated["settings"]["preview_wearable_urns"], json!([]));
+}
+
+#[tokio::test]
 async fn a_settings_thumbnail_is_stored_only_for_an_authorized_writer() {
     let Some(f) = fixture().await else { return };
     let (owner, stranger) = (Wallet::random(), Wallet::random());

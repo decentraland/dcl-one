@@ -225,6 +225,24 @@ pub(super) async fn worlds_states(
         );
     }
     let non_empty = Config::non_empty;
+    let self_hosts = content::own_hosts(config);
+    let management_upstream_url = non_empty(&config.worlds.worlds_management_upstream_url)
+        .map(|raw| {
+            const VAR: &str = "WORLDS_MANAGEMENT_UPSTREAM_URL";
+            shared::upstream::check_upstream(VAR, &raw, &self_hosts)?;
+            let url = url::Url::parse(&raw).with_context(|| format!("{VAR} is not a URL"))?;
+            anyhow::ensure!(
+                url.scheme() == "https"
+                    && url.username().is_empty()
+                    && url.password().is_none()
+                    && url.path() == "/"
+                    && url.query().is_none()
+                    && url.fragment().is_none(),
+                "{VAR} must be an HTTPS origin without credentials, a path, query or fragment"
+            );
+            Ok::<_, anyhow::Error>(url.origin().ascii_serialization())
+        })
+        .transpose()?;
 
     let core = Arc::new(
         worlds::core::CoreState::new(
@@ -256,6 +274,7 @@ pub(super) async fn worlds_states(
                     .with_public_url(&worlds::Settings::from_config(config).public_url)
                     .with_max_file_count(config.worlds.max_file_count)
                     .with_realm_name(worlds::node_realm_name(config))
+                    .with_management_upstream_url(management_upstream_url)
                     .with_access_caps(
                         config.worlds.access_max_wallets,
                         config.worlds.access_max_communities,
@@ -310,7 +329,7 @@ pub(super) async fn worlds_states(
             config,
             pool,
             storage,
-            &content::own_hosts(config),
+            &self_hosts,
             jobs,
         )?),
     );

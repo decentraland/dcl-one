@@ -98,6 +98,12 @@ pub struct WorldsConfig {
     #[arg(long, env = "WORLDS_FORWARD_UPSTREAM_URL")]
     pub worlds_forward_upstream_url: Option<String>,
 
+    /// The public HTTPS Worlds management origin. When set, creator undeploys
+    /// and shared settings edits must go there. Independent of publish
+    /// forwarding. Unset keeps local management.
+    #[arg(long, env = "WORLDS_MANAGEMENT_UPSTREAM_URL")]
+    pub worlds_management_upstream_url: Option<String>,
+
     /// Bearer of the worlds `/admin/*` routes and the federation refresh/veto
     /// routes (or CATALYRST_WORLDS_ADMIN_TOKEN_FILE); unset refuses them.
     #[arg(long, env = "CATALYRST_WORLDS_ADMIN_TOKEN", hide_env_values = true)]

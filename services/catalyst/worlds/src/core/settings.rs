@@ -24,7 +24,7 @@ use crate::shared::signed_fetch::SignedPath;
 use super::SharedState;
 use super::auth::{map_auth_error_api, require_verified};
 use super::deploy_validate::{MAX_PARCEL_COORDINATE, MIN_PARCEL_COORDINATE};
-use super::http::ApiError;
+use super::http::{ApiError, require_local_management};
 use super::permissions::parse_world;
 use super::settings_policy::{
     DESCRIPTION_MAX_LENGTH, DESCRIPTION_MIN_LENGTH, MAX_CATEGORIES, TITLE_MAX_LENGTH,
@@ -206,6 +206,7 @@ pub async fn update_world_settings(
     let received = Arc::new(AtomicU64::new(0));
     let multipart = read_multipart(request, received.clone()).await?;
     let timeout_ms = limits.multipart_upload_timeout_ms;
+    let management_upstream = state.settings.management_upstream_url.as_deref();
     let (mut input, thumbnail) = tokio::time::timeout(
         Duration::from_millis(timeout_ms),
         parse_multipart(
@@ -214,6 +215,7 @@ pub async fn update_world_settings(
             limits.max_in_flight_upload_files,
             &mut bytes_lease,
             &mut files_lease,
+            management_upstream,
         ),
     )
     .await
@@ -391,6 +393,7 @@ async fn parse_multipart(
     max_in_flight_files: u64,
     bytes_lease: &mut upload_limits::InFlightBytesGuard,
     files_lease: &mut upload_limits::InFlightFilesGuard,
+    management_upstream: Option<&str>,
 ) -> Result<(WorldSettingsUpdate, Option<Vec<u8>>), SettingsError> {
     let mut fields: HashMap<String, Vec<String>> = HashMap::new();
     let mut seen: HashMap<String, bool> = HashMap::new();
@@ -413,6 +416,16 @@ async fn parse_multipart(
         };
         let name = field.name().unwrap_or("").to_string();
         let is_file = field.file_name().is_some();
+
+        // Reject mixed forms before storing any settings or thumbnail.
+        if is_file
+            || !matches!(
+                name.as_str(),
+                "realm_name_override" | "preview_wearable_urns"
+            )
+        {
+            require_local_management(management_upstream)?;
+        }
 
         part_count += 1;
         if part_count > upload_limits::MAX_MULTIPART_PARTS {
@@ -656,6 +669,9 @@ async fn parse_multipart(
         }
     }
 
+    if !input.realm_name_override_provided && !input.preview_wearable_urns_provided {
+        require_local_management(management_upstream)?;
+    }
     Ok((input, thumbnail))
 }
 
@@ -790,9 +806,55 @@ mod tests {
             u64::MAX,
             &mut bytes_lease,
             &mut files_lease,
+            None,
         )
         .await
         .map(|(input, _)| input)
+    }
+
+    #[tokio::test]
+    async fn managed_settings_forms_allow_only_local_overrides() {
+        const UPSTREAM: &str = "https://worlds.example.org";
+        async fn parse(
+            parts: &[(&str, Option<&str>, &str)],
+        ) -> Result<WorldSettingsUpdate, SettingsError> {
+            let multipart = multipart_from(parts).await;
+            let mut bytes_lease = upload_limits::reserve_in_flight();
+            let mut files_lease = upload_limits::reserve_in_flight_files();
+            parse_multipart(
+                multipart,
+                u64::MAX,
+                u64::MAX,
+                &mut bytes_lease,
+                &mut files_lease,
+                Some(UPSTREAM),
+            )
+            .await
+            .map(|(input, _)| input)
+        }
+
+        for parts in [
+            &[
+                ("realm_name_override", None, "preview"),
+                ("title", None, "Shared Title"),
+            ][..],
+            &[("thumbnail", Some("scene.png"), "not read")][..],
+            &[("realm_name_override", None, "")][..],
+            &[][..],
+        ] {
+            let (status, message) = parser_refusal(parse(parts).await.expect_err("managed form"));
+            assert_eq!(status, 409);
+            assert!(message.contains(UPSTREAM), "{message}");
+        }
+
+        let local = parse(&[
+            ("realm_name_override", None, "preview"),
+            ("preview_wearable_urns", None, "null"),
+        ])
+        .await
+        .expect("local overrides");
+        assert_eq!(local.realm_name_override.as_deref(), Some("preview"));
+        assert_eq!(local.preview_wearable_urns, Some(Vec::new()));
     }
 
     #[tokio::test]
@@ -810,6 +872,7 @@ mod tests {
             u64::MAX,
             &mut bytes_lease,
             &mut files_lease,
+            None,
         )
         .await
         .expect("form parses");
@@ -881,6 +944,7 @@ mod tests {
             u64::MAX,
             &mut bytes_lease,
             &mut files_lease,
+            None,
         )
         .await
         .expect_err("oversized field must be rejected");
@@ -958,6 +1022,7 @@ mod tests {
             u64::MAX,
             &mut bytes_lease,
             &mut files_lease,
+            None,
         )
         .await
         .unwrap();

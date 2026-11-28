@@ -101,6 +101,8 @@ pub const DEFAULT_SCENE_EVICTION_TTL: std::time::Duration =
 pub struct Settings {
     /// `CATALYRST_WORLDS_ADMIN_TOKEN`: the bearer of the `/admin/*` routes; unset refuses them.
     pub admin_token: Option<String>,
+    /// Origin that owns creator undeploys and shared settings for this deployment.
+    management_upstream_url: Option<String>,
     /// `MAX_IN_FLIGHT_UPLOAD_BYTES`, `MAX_CONCURRENT_UPLOADS`,
     /// `MAX_IN_FLIGHT_UPLOAD_FILES`, `MULTIPART_UPLOAD_TIMEOUT_MS`,
     /// `DEPLOYMENT_PROCESSING_TIMEOUT_MS`, `MAX_CONCURRENT_UPLOADS_PER_SOURCE`,
@@ -143,6 +145,7 @@ impl Settings {
     ) -> anyhow::Result<Self> {
         Ok(Self {
             admin_token: admin_token.filter(|t| !t.trim().is_empty()),
+            management_upstream_url: None,
             upload_limits: upload_limits.validate(deploy::MAX_UPLOAD_SIZE_BYTES as u64)?,
             global_scenes_urn: Vec::new(),
             scene_eviction_ttl: DEFAULT_SCENE_EVICTION_TTL,
@@ -201,9 +204,15 @@ impl Settings {
         self
     }
 
+    pub fn with_management_upstream_url(mut self, url: Option<String>) -> Self {
+        self.management_upstream_url = url;
+        self
+    }
+
     pub fn for_tests(admin_token: Option<&str>) -> Self {
         Self {
             admin_token: admin_token.map(str::to_string),
+            management_upstream_url: None,
             upload_limits: UploadLimits::default(),
             global_scenes_urn: Vec::new(),
             scene_eviction_ttl: DEFAULT_SCENE_EVICTION_TTL,
