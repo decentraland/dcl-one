@@ -950,6 +950,124 @@ async fn staging_is_held_to_the_owners_storage_allowance() {
     assert_eq!(pending_count(&f.pool, &v.entity_id).await, 0);
 }
 
+/// A NAME source that names `holder` for every label until `not_current`
+/// is set, then answers that the names index is not current.
+struct Switchable {
+    holder: String,
+    not_current: std::sync::atomic::AtomicBool,
+}
+
+impl Switchable {
+    fn answer<T>(
+        &self,
+        value: T,
+    ) -> Result<crate::chain_index::names::Answer<T>, crate::chain_index::names::NamesError> {
+        if self.not_current.load(std::sync::atomic::Ordering::SeqCst) {
+            return Err(crate::chain_index::names::NamesError::NotEstablished(
+                "the names index is catching up".to_string(),
+            ));
+        }
+        Ok(crate::chain_index::names::Answer {
+            value,
+            observation: None,
+        })
+    }
+}
+
+#[async_trait::async_trait]
+impl crate::chain_index::names::NameAuthority for Switchable {
+    async fn owned_names(
+        &self,
+        _: &str,
+        _: crate::chain_index::names::Purpose,
+    ) -> Result<
+        crate::chain_index::names::Answer<Arc<Vec<crate::chain_index::names::OwnedName>>>,
+        crate::chain_index::names::NamesError,
+    > {
+        self.answer(Arc::default())
+    }
+
+    async fn name_owner(
+        &self,
+        _: &str,
+        _: crate::chain_index::names::Purpose,
+    ) -> Result<
+        crate::chain_index::names::Answer<Option<String>>,
+        crate::chain_index::names::NamesError,
+    > {
+        self.answer(Some(self.holder.clone()))
+    }
+
+    async fn name_owners(
+        &self,
+        labels: &[String],
+        _: crate::chain_index::names::Purpose,
+    ) -> Result<
+        crate::chain_index::names::Answer<std::collections::HashMap<String, Option<String>>>,
+        crate::chain_index::names::NamesError,
+    > {
+        self.answer(
+            labels
+                .iter()
+                .map(|l| (l.clone(), Some(self.holder.clone())))
+                .collect(),
+        )
+    }
+
+    async fn still_current(
+        &self,
+        _: &crate::chain_index::names::Observation,
+        _: crate::chain_index::names::Purpose,
+    ) -> Result<bool, crate::chain_index::names::NamesError> {
+        Ok(!self.not_current.load(std::sync::atomic::Ordering::SeqCst))
+    }
+
+    fn observes(&self) -> bool {
+        true
+    }
+}
+
+/// A resumed batch skips the permission check, so the storage allowance
+/// resolves the world's owner itself: a names index that cannot establish
+/// it is refused as the permission check refuses it, the retryable 503
+/// naming `nft-index`, not an allowance fault. Nothing is published, and
+/// the same batch goes through once the index answers.
+#[tokio::test]
+async fn a_resumed_batch_the_names_index_cannot_answer_is_its_503() {
+    let Some(pool) = crate::db::scratch::pool(2).await else {
+        return;
+    };
+    let owner = Wallet::random();
+    let names = Arc::new(Switchable {
+        holder: owner.address.as_str().to_string(),
+        not_current: Default::default(),
+    });
+    let f = fixture_with_names(
+        pool,
+        PersonalWorldsPolicy::disabled(),
+        None,
+        None,
+        test_settings(),
+        "",
+        Some(names.clone()),
+    )
+    .await;
+    let world = world_name();
+    let u = upload(&world, 2);
+    expect_batch(&f.app, &u, Batch::of(&owner, true, &[0]), 202).await;
+    names
+        .not_current
+        .store(true, std::sync::atomic::Ordering::SeqCst);
+    let body = expect_batch(&f.app, &u, Batch::of(&owner, false, &[1]), 503).await;
+    assert_eq!(body["source"], "nft-index", "{body}");
+    assert_eq!(body["configure"], "MARKETPLACE_NFT_INDEX_ENABLED", "{body}");
+    assert_eq!(world_rows(&f.pool, &world).await, 0);
+    names
+        .not_current
+        .store(false, std::sync::atomic::Ordering::SeqCst);
+    expect_batch(&f.app, &u, Batch::of(&owner, false, &[1]), 200).await;
+}
+
 /// Moves each stored key's modification time `by` into the past.
 async fn age_keys(f: &Fixture, keys: &[&String], by: std::time::Duration) {
     let past = std::time::SystemTime::now() - by;

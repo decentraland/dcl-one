@@ -312,7 +312,9 @@ A difference not listed here is a gap, not a decision.
   publish answers 503 with `source: nft-index` and `Retry-After`. For any
   other fault, an ambiguous label included, it
   answers 403 `Not authorized: could not verify deployment permissions
-  (deploy denied)`. A scoped grantee's owner lookup answers alike. The
+  (deploy denied)`. A scoped grantee's owner lookup answers alike, and so
+  do the storage allowance's NAME reads (the owner a resumed partial batch
+  resolves there, and the NAMEs the owner holds). The
   holder is checked again in the write's transaction, under the names
   publication it holds: a fold withdrawn since validation is the 503, and
   a holder replaced since then is the owner's 400 or a grantee's 409. The

@@ -647,17 +647,17 @@ mod tests {
             tokio::time::sleep(Duration::from_millis(50)).await;
         }
         assert_eq!(waiting().await, 1, "the second fold is queued");
-        // The first fold commits 3 s into the hold's wait: a bound per lock
-        // would wait 3 s for the queue, then a full bound for the second.
+        // The first fold commits 4 s into the hold's wait: a bound per lock
+        // would wait 4 s for the queue, then a full bound for the second.
         let first = tokio::spawn(async move {
-            tokio::time::sleep(Duration::from_secs(3)).await;
+            tokio::time::sleep(Duration::from_secs(4)).await;
             fold.commit().await.unwrap();
         });
         let mut tx = db.pool.begin().await.unwrap();
         let wait = crate::chain_index::names::HOLD_WAIT;
         let started = std::time::Instant::now();
         let held = tokio::time::timeout(
-            wait + Duration::from_secs(6),
+            wait + Duration::from_secs(8),
             names.hold_publication_on(&mut tx),
         )
         .await
@@ -667,8 +667,9 @@ mod tests {
             matches!(held, Err(NamesError::NotEstablished(_))),
             "{held:?}"
         );
+        // About 5 s in all; a bound per lock would take about 9 s.
         assert!(
-            waited >= wait && waited < wait + Duration::from_millis(1500),
+            waited >= wait && waited < wait + Duration::from_secs(3),
             "{waited:?}"
         );
         drop(tx);

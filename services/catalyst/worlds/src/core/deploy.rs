@@ -1051,7 +1051,9 @@ pub(super) async fn validate(
         return Err(failed(file_errors.join(", ")));
     }
     let size: i64 = sizes.values().copied().fold(0, i64::saturating_add);
-    // A staging batch that skipped the permission resolves the owner here; it is refused alike.
+    // A staging batch that skipped the permission resolves the owner here, and
+    // every publish reads the NAMEs its owner holds: a NAME authority that cannot
+    // answer is refused as the permission check refuses it.
     let cap = match conn {
         Some(conn) => {
             state
@@ -1077,7 +1079,12 @@ pub(super) async fn validate(
     }
     .map_err(|e| {
         tracing::warn!(world = %world, error = ?e, "deploy denied: storage allowance undetermined");
-        unavailable("Deployment failed: the storage allowance could not be determined right now")
+        match e {
+            super::quota::CapError::Authority(why) => authority_undetermined(&why),
+            _ => unavailable(
+                "Deployment failed: the storage allowance could not be determined right now",
+            ),
+        }
     })?;
     if size > cap.max {
         return Err(failed(super::quota::too_big(cap.max, size)));
