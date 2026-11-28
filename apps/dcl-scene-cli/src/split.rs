@@ -28,6 +28,8 @@ const MARKER_FILE: &str = "split";
 /// `server`, `network/message-bus-sync` and `testing/assert` by name, and the
 /// `network/events` docstring is upstream's own example import for
 /// `registerMessages`/`getRoom`. Each key costs the chunk one lazy getter.
+///
+/// `@dcl/sdk/cast` is published by an SDK that has it; the pinned archive does not.
 const REGISTRY_KEYS: &[&str] = &[
     "@dcl/sdk",
     "@dcl/sdk/ecs",
@@ -42,6 +44,7 @@ const REGISTRY_KEYS: &[&str] = &[
     "@dcl/sdk/network/message-bus-sync",
     "@dcl/sdk/network/binary-message-bus",
     "@dcl/sdk/server",
+    "@dcl/sdk/cast",
     "@dcl/sdk/ethereum-provider",
     "@dcl/sdk/platform",
     "@dcl/sdk/text-codec",
@@ -118,8 +121,10 @@ pub fn core_registry_keys(project: &Project) -> Vec<&'static str> {
         .iter()
         .copied()
         .filter(|key| {
-            !matches!(*key, "@dcl/sdk/network/events" | "@dcl/sdk/server")
-                || project.node_module(&format!("{key}.js")).is_some()
+            !matches!(
+                *key,
+                "@dcl/sdk/network/events" | "@dcl/sdk/server" | "@dcl/sdk/cast"
+            ) || project.node_module(&format!("{key}.js")).is_some()
                 || project.node_module(&format!("{key}/index.js")).is_some()
         })
         .collect();
@@ -405,6 +410,7 @@ mod tests {
         assert!(old.contains(&"@dcl/sdk"));
         assert!(!old.contains(&"@dcl/sdk/network/events"));
         assert!(!old.contains(&"@dcl/sdk/server"));
+        assert!(!old.contains(&"@dcl/sdk/cast"));
         let sdk = dir.0.join("node_modules/@dcl/sdk");
         std::fs::create_dir_all(sdk.join("network/events")).unwrap();
         std::fs::write(
@@ -413,9 +419,16 @@ mod tests {
         )
         .unwrap();
         std::fs::write(sdk.join("server.js"), "export const Storage = {};").unwrap();
+        std::fs::create_dir_all(sdk.join("cast")).unwrap();
+        std::fs::write(
+            sdk.join("cast/index.js"),
+            "export const openCast = () => null;",
+        )
+        .unwrap();
         let current = core_registry_keys(&project);
         assert!(current.contains(&"@dcl/sdk/network/events"));
         assert!(current.contains(&"@dcl/sdk/server"));
+        assert!(current.contains(&"@dcl/sdk/cast"));
     }
 
     #[test]
