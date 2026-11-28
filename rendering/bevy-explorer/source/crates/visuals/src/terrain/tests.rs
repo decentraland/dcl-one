@@ -44,7 +44,7 @@ fn heightfield_split_matches_unity() {
 #[test]
 fn mesh_split_matches_unity() {
     for mesh in [
-        parcel_mesh(16),
+        ground_mesh(|_| 16, 0),
         ground_mesh(|offset| 16 >> (offset.x.abs() % 3), 2),
     ] {
         let Some(VertexAttributeValues::Float32x3(positions)) =
@@ -320,7 +320,7 @@ fn ground_reaches_the_longest_hill_reach() {
     assert!(ground_extent(GROUND_RINGS) >= hill_reach(LandscapeDistance::MAX) * 1.1);
 }
 
-/// Every terrain vertex shader variant (flat ground and grass shells, main pass, prepasses and
+/// Every terrain vertex shader variant (the ground and a parcel grid, main pass, prepasses and
 /// shadows) compiles. Needs a GPU:
 /// `cargo test -p visuals terrain_vertex_compiles -- --ignored --nocapture`.
 #[test]
@@ -331,7 +331,6 @@ fn terrain_vertex_compiles() {
         log::LogPlugin,
         render::{
             camera::RenderTarget,
-            mesh::MeshTag,
             pipelined_rendering::PipelinedRenderingPlugin,
             render_resource::{
                 CachedPipelineState, PipelineCache, PipelineCacheError, PipelineDescriptor,
@@ -342,7 +341,7 @@ fn terrain_vertex_compiles() {
         winit::WinitPlugin,
     };
 
-    use crate::shell_texturing::{self, ShellTexture};
+    use crate::landscape_textures::{LandscapeTextures, LandscapeTexturesPlugin};
 
     let mut app = App::new();
     app.add_plugins(
@@ -357,17 +356,14 @@ fn terrain_vertex_compiles() {
                 close_when_requested: false,
             }),
     )
-    .add_plugins(assets::EmbedAssetsPlugin)
-    .add_plugins((
-        MaterialPlugin::<TerrainFlatMaterial>::default(),
-        MaterialPlugin::<ShellTexture>::default(),
-    ));
+    .add_plugins((assets::EmbedAssetsPlugin, LandscapeTexturesPlugin))
+    .add_plugins(MaterialPlugin::<TerrainFlatMaterial>::default());
     embed_shaders(&mut app);
-    shell_texturing::embed_shaders(&mut app);
     app.finish();
     app.cleanup();
 
     let world = app.world_mut();
+    let textures = world.resource::<LandscapeTextures>().clone();
     let mut target = Image::new_fill(
         Extent3d {
             width: 64,
@@ -412,8 +408,7 @@ fn terrain_vertex_compiles() {
         Transform::from_xyz(1.0, 2.0, 1.0).looking_at(Vec3::ZERO, Vec3::Y),
     ));
     let mut meshes = world.resource_mut::<Assets<Mesh>>();
-    let ground = meshes.add(ground_mesh(|_| 4, GROUND_RINGS));
-    let parcel = meshes.add(parcel_mesh(4));
+    let ground = meshes.add(ground_mesh(ground_segments, GROUND_RINGS));
     let flat = world
         .resource_mut::<Assets<TerrainFlatMaterial>>()
         .add(TerrainFlatMaterial {
@@ -421,23 +416,9 @@ fn terrain_vertex_compiles() {
                 alpha_mode: AlphaMode::Mask(0.5),
                 ..default()
             },
-            extension: TerrainExtension::default(),
+            extension: TerrainExtension::new(&textures),
         });
-    let shells = world
-        .resource_mut::<Assets<ShellTexture>>()
-        .add(shell_texturing::shell_material(
-            &default(),
-            4,
-            TerrainParams::default(),
-        ));
-    world.spawn((Mesh3d(ground.clone()), MeshMaterial3d(flat)));
-    for mesh in [ground, parcel] {
-        world.spawn((
-            Mesh3d(mesh),
-            MeshMaterial3d(shells.clone()),
-            MeshTag(1 << 16),
-        ));
-    }
+    world.spawn((Mesh3d(ground), MeshMaterial3d(flat)));
     let ShaderRef::Path(path) = terrain_vertex_shader() else {
         unreachable!("the terrain vertex shader is embedded");
     };
@@ -471,11 +452,168 @@ fn terrain_vertex_compiles() {
         let ready = terrain
             .iter()
             .all(|pipeline| matches!(pipeline.state, CachedPipelineState::Ok(_)));
-        // each material's main pass, prepass and shadow pass
-        if seen >= 4 && ready && cache.waiting_pipelines().next().is_none() {
+        // the main pass, the prepass and the shadow pass
+        if seen >= 3 && ready && cache.waiting_pipelines().next().is_none() {
             return;
         }
         std::thread::sleep(std::time::Duration::from_millis(5));
     }
     panic!("the terrain pipelines did not finish compiling ({seen} seen)");
+}
+
+/// The softened sun shadow overrides compile on this machine's adapter, in a renderer with no
+/// window: a rock (`soft_shadows.wgsl`), the ground (`terrain_flat.wgsl`), a cliff
+/// (`coast_cliff.wgsl`) and the ocean (`coast_water.wgsl`) in front of a camera with the
+/// prepasses and a shadowing light. The grass's override is compiled by `grass_wind_compiles`.
+/// Needs a GPU, so `#[ignore]`d; CI runs it in its GPU step, and locally:
+///
+/// ```text
+/// cargo test -p visuals soft_shadow_pipelines_compile -- --ignored --nocapture
+/// ```
+#[test]
+#[ignore = "needs a GPU; run with --ignored"]
+fn soft_shadow_pipelines_compile() {
+    use std::path::Path;
+
+    use bevy::{asset::io::embedded::EmbeddedAssetRegistry, pbr::NotShadowCaster};
+
+    use pipeline_test::{compile_pipelines, fragment_pipelines, spawn_prepass_cameras};
+
+    use crate::{
+        coast::{self, cliff_material, CliffMaterial, WaterExtension, WaterMaterial},
+        landscape_textures::{LandscapeTextures, LandscapeTexturesPlugin},
+        trees::{SoftShadowMaterial, SoftShadows},
+    };
+
+    let mut app = pipeline_test::web_limited_app();
+    app.add_plugins(LandscapeTexturesPlugin);
+    embed_shaders(&mut app);
+    coast::embed_shaders(&mut app);
+    // as `TreesPlugin` embeds it; that plugin needs the scene runner
+    let path = Path::new("visuals").join("soft_shadows.wgsl");
+    app.world()
+        .resource::<EmbeddedAssetRegistry>()
+        .insert_asset(
+            path.clone(),
+            &path,
+            include_str!("../soft_shadows.wgsl").as_bytes(),
+        );
+    app.add_plugins((
+        MaterialPlugin::<SoftShadowMaterial>::default(),
+        MaterialPlugin::<TerrainFlatMaterial>::default(),
+        MaterialPlugin::<CliffMaterial>::default(),
+        MaterialPlugin::<WaterMaterial>::default(),
+    ));
+    app.finish();
+    app.cleanup();
+
+    let world = app.world_mut();
+    let textures = world.resource::<LandscapeTextures>().clone();
+    let mut images = world.resource_mut::<Assets<Image>>();
+    images.insert(TERRAIN_TEXTURE.id(), TerrainSurface::default().image());
+    let ripples = images.add(Image::default());
+    let mut meshes = world.resource_mut::<Assets<Mesh>>();
+    let rock_mesh = meshes.add(Cuboid::new(1.0, 1.0, 1.0));
+    let plane_mesh = meshes.add(Plane3d::default().mesh().size(4.0, 4.0));
+    let rock = world
+        .resource_mut::<Assets<SoftShadowMaterial>>()
+        .add(SoftShadowMaterial {
+            base: StandardMaterial::default(),
+            extension: SoftShadows {},
+        });
+    let ground = world
+        .resource_mut::<Assets<TerrainFlatMaterial>>()
+        .add(TerrainFlatMaterial {
+            base: StandardMaterial {
+                alpha_mode: AlphaMode::Mask(0.5),
+                ..default()
+            },
+            extension: TerrainExtension::new(&textures),
+        });
+    let cliff = world
+        .resource_mut::<Assets<CliffMaterial>>()
+        .add(cliff_material(&textures));
+    let water = world
+        .resource_mut::<Assets<WaterMaterial>>()
+        .add(WaterMaterial {
+            base: StandardMaterial {
+                fog_enabled: false,
+                ..default()
+            },
+            extension: WaterExtension {
+                bounds: NO_COAST,
+                ripples,
+            },
+        });
+    world.spawn((
+        Mesh3d(rock_mesh.clone()),
+        MeshMaterial3d(rock),
+        Transform::from_xyz(1.0, 0.5, 0.0),
+    ));
+    world.spawn((
+        Mesh3d(plane_mesh.clone()),
+        MeshMaterial3d(ground),
+        Transform::from_xyz(-1.0, 0.0, 0.0),
+    ));
+    world.spawn((
+        Mesh3d(rock_mesh),
+        MeshMaterial3d(cliff),
+        Transform::from_xyz(-1.0, 0.5, 1.0),
+    ));
+    world.spawn((
+        Mesh3d(plane_mesh),
+        MeshMaterial3d(water),
+        NotShadowCaster,
+        Transform::from_xyz(0.0, -0.1, 1.0),
+    ));
+
+    spawn_prepass_cameras(&mut app, Vec3::new(0.0, 2.0, 6.0), Vec3::ZERO);
+    compile_pipelines(&mut app);
+    for shader in [
+        "soft_shadows.wgsl",
+        "terrain_flat.wgsl",
+        "coast_cliff.wgsl",
+        "coast_water.wgsl",
+    ] {
+        let path = format!("embedded://visuals/{shader}");
+        assert!(
+            fragment_pipelines(&app, &path) >= 1,
+            "nothing drew with {path}"
+        );
+    }
+}
+
+/// The landscape's systems (terrain, grass, trees, props, coast) fit the explorer's PostUpdate
+/// ordering: the transform and collider sets, which run before the realm's scene lifecycle, and
+/// the realm lifecycle itself. A cycle among them would panic the client at start-up.
+#[test]
+fn landscape_schedule_is_acyclic() {
+    use bevy::ecs::schedule::ScheduleLabel;
+    use common::sets::RealmLifecycle;
+    use scene_runner::{
+        initialize_scene::process_scene_lifecycle,
+        update_world::{transform_and_parent::TransformAndParentPlugin, CrdtExtractors},
+        SceneLoopSchedule,
+    };
+
+    let mut app = App::new();
+    app.add_plugins((MinimalPlugins, AssetPlugin::default()))
+        .init_asset::<Shader>()
+        .init_asset::<Mesh>()
+        .init_asset::<Image>()
+        .init_resource::<CrdtExtractors>()
+        .init_resource::<SceneLoopSchedule>();
+    // the explorer's own order of the transform, collider and camera sets, before the realm's
+    // scene lifecycle
+    TransformAndParentPlugin.build(&mut app);
+    app.add_systems(PostUpdate, process_scene_lifecycle.in_set(RealmLifecycle));
+    TerrainPlugin.build(&mut app);
+    crate::grass::GrassPlugin.build(&mut app);
+    crate::trees::TreesPlugin.build(&mut app);
+    crate::props::PropsPlugin.build(&mut app);
+    crate::coast::CoastPlugin.build(&mut app);
+    let label = PostUpdate.intern();
+    app.world_mut()
+        .schedule_scope(label, |world, schedule| schedule.initialize(world))
+        .unwrap_or_else(|error| panic!("PostUpdate does not build: {error}"));
 }

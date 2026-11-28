@@ -17,9 +17,11 @@ use console::{AddDebugSection, DebugInput, DebugInputKind, DebugSection, DoAddCo
 use serde_json::json;
 
 use crate::{
+    grass::ParcelGrass,
+    landscape_textures::{self, LandscapeTextures},
     lens_flare::{LensFlareSettings, DAY_FLARE},
-    shell_texturing::{Ground, ParcelGrass},
     sky_envmap::{SkyAmbient, SkyEnvmapSettings},
+    terrain::Ground,
     trees::Tree,
     upscale::{Compositor, SceneTarget},
     CloudCover, FogDensity, ShadowBiasOverride, SUN_SHADOW_BIAS,
@@ -161,6 +163,8 @@ impl Plugin for VisualsDebugPanelPlugin {
                 ("Landscape distance (m)", "landscapeDistance"),
                 ("Loaded trees", "treeCount"),
                 ("Grass parcels", "grassParcels"),
+                ("Grass tufts", "grassTufts"),
+                ("Ground and cliff textures", "groundTextures"),
             ],
             actions: &[],
             inputs: &[
@@ -376,8 +380,9 @@ fn landscape_command(
     mut layers: ResMut<LandscapeLayers>,
     load: Res<SceneLoadDistance>,
     landscape: Res<LandscapeDistance>,
+    textures: Res<LandscapeTextures>,
     trees: Query<(), With<Tree>>,
-    grass: Query<(), With<ParcelGrass>>,
+    grass: Query<&ParcelGrass>,
 ) {
     let Some(Ok(args)) = cmd.take() else { return };
     if let (Some(layer), Some(value)) = (args.layer.as_deref(), args.visible) {
@@ -391,8 +396,10 @@ fn landscape_command(
             _ => layers.grass = value,
         }
     }
+    let ground_textures = landscape_textures::load_state(&textures);
     cmd.reply_ok(json!({"ground":layers.ground, "trees":layers.trees, "grass":layers.grass,
-        "treeCount":trees.iter().len(), "grassParcels":grass.iter().len(), "loadDistance":load.load, "landscapeDistance":landscape.0}).to_string());
+        "treeCount":trees.iter().len(), "grassParcels":grass.iter().len(), "grassTufts":grass.iter().map(|grass| grass.tufts).sum::<u32>(),
+        "loadDistance":load.load, "landscapeDistance":landscape.0, "groundTextures":ground_textures}).to_string());
 }
 
 type LandscapeObjects = Or<(With<Ground>, With<Tree>, With<ParcelGrass>)>;

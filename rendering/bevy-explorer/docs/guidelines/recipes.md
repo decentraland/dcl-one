@@ -146,8 +146,13 @@ because CI has no GPU. The `pipeline_test` crate holds the setup these tests sha
 
 1. `headless_app()`: a `DefaultPlugins` app with `WinitPlugin`, `LogPlugin` and
    `PipelinedRenderingPlugin` disabled, no primary window and the embedded assets.
+   `web_limited_app()` is the same held to WebGPU's default limits, with meshes batched on the
+   CPU as on the web, so a material that binds more than the web allows fails natively too.
 2. A camera rendering to `render_target(&mut app)`, with `DepthPrepass` and `NormalPrepass`,
    and a shadowing `DirectionalLight`, so the prepass and shadow variants compile too.
+   `spawn_prepass_cameras(&mut app, from, looking_at)` spawns that camera with a stand-in sky
+   environment map, a second camera with a depth prepass alone (the client's camera with the
+   avatar outline off) and the light.
 3. One entity per material and tag variant the change touches.
 4. `compile_pipelines(&mut app)` updates until the `RenderApp`'s `PipelineCache` has nothing
    pending and panics on a pipeline in an error state. `fragment_pipelines(&app, path)` counts
@@ -155,6 +160,9 @@ because CI has no GPU. The `pipeline_test` crate holds the setup these tests sha
 5. For bind groups the cache does not check, such as those a render graph node builds each
    frame: `gpu_errors(&app)` before the frames, and an assertion that it stayed empty after
    frames that draw with them.
+
+`update_until(&mut app, pending)` waits on the clock, not a frame count, for work off the main
+thread such as asset decoding, which any test can use.
 
 A crate with such a test takes `pipeline_test` and `naga_oil` as dev-dependencies, the latter
 only to enable its `override_any` feature for the crate. Run with

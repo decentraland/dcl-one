@@ -22,7 +22,7 @@ takes `#![expect(dead_code, reason = …)]` with the reason that
   `Without<Playing>` split the work across two queries and make the state visible in the
   inspector; `if thing.playing` hides it.
 - One-shot facts are events. State is components. Bevy `States` are reserved for the handful
-  of platform toggles (microphone, transmitter, parcel grass).
+  of platform toggles (microphone, transmitter).
 - Scene data arrives as proto `Pb*` types and becomes an engine component through `TryFrom`.
   Keep the two apart: the proto type is the wire shape, the component is what systems read.
   Never redeclare a type whose shape already exists in the protocol or SDK crates; import it.

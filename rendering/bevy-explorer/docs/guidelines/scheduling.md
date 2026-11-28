@@ -227,7 +227,7 @@ well, or its writes land a frame late. `crates/avatar/src/point_at_marker.rs` is
     `PostUpdate`.
 - **`Last`**: CEF command drain, livekit room close on app exit, the web engine heartbeat, the
   profiler's frame fold and the benchmark summary.
-- **`OnEnter`/`OnExit`**: a few states (transmitter, receiver, microphone, parcel grass).
+- **`OnEnter`/`OnExit`**: a few states (transmitter, receiver, microphone).
 
 Other named sets: `RealmLifecycle` for systems that react to a realm change, `TerrainSet` in
 `visuals`, `GltfLinkSet` for gltf instance linking, `ConsoleSet` (`ConsoleUI`, `Commands`,

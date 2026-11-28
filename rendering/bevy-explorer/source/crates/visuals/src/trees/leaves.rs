@@ -7,6 +7,7 @@ use bevy::{
 };
 
 use super::geometry::random;
+use crate::mips::byte_mips;
 
 const SIZE: usize = 256;
 
@@ -55,50 +56,14 @@ fn leaf_pixel(p: Vec2) -> [u8; 4] {
 }
 
 pub(super) fn image() -> Image {
-    let mut level: Vec<[u8; 4]> = (0..SIZE * SIZE)
+    let level: Vec<[u8; 4]> = (0..SIZE * SIZE)
         .map(|i| {
             leaf_pixel(Vec2::new((i % SIZE) as f32 + 0.5, (i / SIZE) as f32 + 0.5) / SIZE as f32)
         })
         .collect();
-    let coverage = level.iter().filter(|p| p[3] >= 128).count() as f32 / level.len() as f32;
-    let mut bytes = Vec::new();
-    let mut size = SIZE;
-    loop {
-        bytes.extend(level.iter().flatten().copied());
-        if size == 1 {
-            break;
-        }
-        let next_size = size / 2;
-        let mut next: Vec<[u8; 4]> = (0..next_size * next_size)
-            .map(|pixel| {
-                let origin = pixel / next_size * 2 * size + pixel % next_size * 2;
-                std::array::from_fn(|channel| {
-                    [origin, origin + 1, origin + size, origin + size + 1]
-                        .into_iter()
-                        .map(|i| u32::from(level[i][channel]))
-                        .sum::<u32>()
-                        .div_ceil(4) as u8
-                })
-            })
-            .collect();
-        // Preserve alpha-test area; regular averaging erases distant leaves.
-        let (mut lo, mut hi) = (0.25, 4.0);
-        for _ in 0..10 {
-            let scale = (lo + hi) * 0.5;
-            let visible = next.iter().filter(|p| p[3] as f32 * scale >= 128.0).count() as f32
-                / next.len() as f32;
-            if visible < coverage {
-                lo = scale;
-            } else {
-                hi = scale;
-            }
-        }
-        for pixel in &mut next {
-            pixel[3] = (pixel[3] as f32 * hi).min(255.0) as u8;
-        }
-        level = next;
-        size = next_size;
-    }
+    let mut bytes: Vec<u8> = level.into_iter().flatten().collect();
+    // alpha-tested: the mips keep the first level's leaf area, which plain averaging erases
+    let levels = byte_mips::<4>(&mut bytes, (SIZE, SIZE), Some((3, 128)));
     let mut image = Image::new_fill(
         Extent3d {
             width: SIZE as u32,
@@ -110,7 +75,7 @@ pub(super) fn image() -> Image {
         TextureFormat::Rgba8UnormSrgb,
         RenderAssetUsages::RENDER_WORLD,
     );
-    image.texture_descriptor.mip_level_count = SIZE.ilog2() + 1;
+    image.texture_descriptor.mip_level_count = levels;
     image.data = Some(bytes);
     image.sampler = ImageSampler::Descriptor(ImageSamplerDescriptor {
         mag_filter: ImageFilterMode::Linear,

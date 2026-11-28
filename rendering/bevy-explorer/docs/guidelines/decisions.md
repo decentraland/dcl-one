@@ -1110,6 +1110,75 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   show seams between the slices, so here they are radii, borders and gradients with the sprites'
   colours. The canvas scales by the smaller of width and height, as every menu page does, where
   unity-explorer's scales by width.
+- **The ground, sand and cliff textures** are unity-explorer's own files, and differ in how they
+  reach the GPU.
+  - They ship as JPEG (colour) and PNG (splat, cliff normal) at 1024 by 1024, the ground texture
+    scaled down from Unity's 2048, and the engine builds their mip chains on the CPU as each
+    loads (box filter, colour averaged in linear light, normals renormalised). KTX2 with prebuilt
+    mips is the intended format; its encoder was not available when they were added. Until then
+    they sit uncompressed on the GPU (RGBA8 with mips, about 28 MB for the five), where Unity's
+    import compresses them.
+  - Until a texture has loaded, and for good if it fails to decode, its one-texel stand-in is
+    drawn: the ground flat green, the rock grey. Unity has no such state; its textures ship in
+    the build.
+- **Grass, flowers and reeds** are placed by unity-explorer's scatter rules (its hash, its 16 by
+  16 jittered grid of 256 grass instances a parcel, 16 flowers of each of two kinds where the
+  ground is not sandy, 16 reeds shared out over the sandy 4 m cells), its 256-parcel limit and
+  its wind and fade values, and differ in these ways.
+  - The meshes and the grass mask are built in code, and the wind and colour shader is written
+    from the meaning of the material's values: Unity's grass and flower meshes, textures and
+    shader come from commercial packages that cannot be redistributed. A grass instance is built
+    as Unity's grass card, two crossed quads (0.64 m wide, 0.27 m tall at scale 1) cut out at 0.5
+    by a mask of grass blades, with a mask drawn in code where Unity has a texture. A flower is a
+    stem under a five-petal daisy or a four-petal bell, a reed a stem, a leaf and a seed head.
+  - The scatter runs on the CPU once per parcel, and each parcel draws one mesh of its blades and
+    one of its flowers and reeds, where Unity scatters every frame on the GPU and draws
+    instanced. The vertex shader stands each instance on the terrain, so a change of
+    heights rebuilds nothing. Reeds take the sandy cells in cell order, where Unity's GPU threads
+    list them in whatever order they run, so here a parcel's reeds are the same every time.
+  - The bevy-only grass density setting stays: High is Unity's density, Mid and Low thin the
+    grid to 128 and 64 instances a parcel (flowers and reeds in proportion) by an ordered
+    dither, and Off grows nothing.
+  - Grass grows on the parcels whose square comes within the reach of the player, the nearest
+    256, where Unity takes those in the camera's view out to 180 m. The reach is the distance a
+    parcel is drawn at, 100 m plus half its diagonal, so no parcel is built that is never drawn.
+    Only parcels the realm has confirmed empty and that lie inside the coast carry grass.
+  - Instances stand upright, where Unity tilts each to the terrain's normal. They are lit as
+    the slope they stand on: with the ground material's surface values and the normal of the
+    terrain across 4 m to each side of their root (four more height samples per vertex), so a
+    tuft takes the light of its hillside. The ground's own normal, which Unity's scatter reads
+    1 m to each side, turns so much from one metre to the next that tufts lit by it stood out
+    from their neighbours as light and dark patches; over 4 m the bumps average out and the
+    tufts of a patch share their light, at the price of not following each bump's shading.
+    That light is worked out as if the camera looked straight down the slope's normal, so a
+    tuft looks the same from every angle, as Unity's does with its highlights off: bevy's
+    diffuse light and highlight both change with the view, which showed as a sheen coming and
+    going as the camera turned. The ground keeps bevy's view-dependent light, so seen low it
+    can differ from the grass on it.
+  - A grass instance takes the colour Unity's scatter gives it: the ground and sand textures
+    under the splat's weights, all three read under its root at the splat's 1024 m tiling, so
+    the colour changes over metres and the tufts of a patch share it. A tuft is that colour from
+    root to tip, as Unity draws it: the material's darkening, vertex darkening and colour-map
+    height are not carried (they act through the package's shader, on its meshes' vertex data),
+    and its hue variation is switched off. Unity's grass material has specular highlights and
+    environment reflections switched off; here the grass keeps the ground's surface, whatever
+    that reflects, so that it never differs from the ground. Flowers and reeds blend toward
+    that colour by 0.241 over their lowest 0.178.
+  - Flowers and reeds use the grass material's wind; the flower material's own wind values act
+    through the package's shader, whose meaning is not known here.
+  - Until the splat and both ground textures have loaded, and for good if one fails, no flowers
+    or reeds grow: their one-texel stand-ins would read as sand everywhere and grow reeds on
+    every parcel. Unity's textures ship in the build.
+  - Instances fade out between 50 and 100 m by shrinking toward their roots, so the fade needs
+    no blending, and a parcel more than 100 m plus half its diagonal from the camera is not
+    drawn. Nothing casts shadows, as in Unity; the grass, like the ground, receives the softened
+    sun shadows of the scene materials.
+- **Bevy's procedural cliffs stay and take Unity's cliff rock texture.** Unity places cliff
+  prefabs along the terrain bounds; the procedural cliff keeps its shape and has no uvs, so the
+  rock texture (Unity's cliff material: its colour and normal map, its moss colour on upward
+  faces and its smoothness) is projected along the three world axes, at the texel density of
+  Unity's cliff mesh (17.08 m per repeat). The rock's per-facet grey tint is gone; the sand
+  below keeps bevy's colour and shore effects rather than Unity's beach material.
 - **Jump to Location closes the passport once it has somewhere to go.** unity-explorer's passport
   closes when its header button is clicked, whatever the jump finds, and stays open after the same
   entry of its options menu; here both close it once the friend's parcel or World is
@@ -1321,6 +1390,10 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
 - **Native HUD preferences are persisted by the engine** (`hud-prefs.json`), because CEF's
   `localStorage` does not survive.
 - **Web is Chrome only.**
+- **The ground has no normal maps.** Unity's ground material binds ground and sand normal maps,
+  but its shader variant is built without its normal-map keyword, so they never reach the
+  lighting. Bringing them would make the ground bumpier than Unity's; they stay out until Unity
+  applies them.
 - **HLS plays natively on the web.** A media source is assigned to the element's `src` whatever
   its format; there is no hls.js. Desktop Chrome plays TS and fMP4 HLS, live streams included,
   through a plain `src` with `crossOrigin = "anonymous"`, and its frames copy into a

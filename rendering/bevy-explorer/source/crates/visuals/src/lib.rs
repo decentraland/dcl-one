@@ -4,9 +4,11 @@ mod coast;
 mod day_night;
 mod debug_panel;
 mod environment;
+mod grass;
+mod landscape_textures;
 mod lens_flare;
+mod mips;
 mod props;
-pub mod shell_texturing;
 mod sky_envmap;
 pub use common::sky_preset;
 mod solids;
@@ -51,8 +53,9 @@ use console::DoAddConsoleCommand;
 use crate::{
     coast::CoastPlugin,
     day_night::{day_fraction, DayNightPlugin},
+    grass::GrassPlugin,
+    landscape_textures::LandscapeTexturesPlugin,
     props::PropsPlugin,
-    shell_texturing::ShellTexturingPlugin,
     sky_envmap::{SkyAmbient, SkyEnvmapPlugin, SkyEnvmapSettings},
     sky_preset::{
         ambient_trilight, fog_color, fog_falloff_density, time_to_phase, FOG_DENSITY_PER_METRE,
@@ -77,8 +80,9 @@ impl Plugin for VisualsPlugin {
             .init_resource::<CloudCover>()
             .add_plugins(WireframePlugin::default())
             .add_plugins(DayNightPlugin)
-            .add_plugins(ShellTexturingPlugin)
+            .add_plugins(LandscapeTexturesPlugin)
             .add_plugins(TerrainPlugin)
+            .add_plugins(GrassPlugin)
             .add_plugins(CoastPlugin)
             .add_plugins((TreesPlugin, PropsPlugin, SolidsPlugin))
             .add_systems(
