@@ -8,10 +8,13 @@ use bevy::{
         graph::{AnimationMask, AnimationNodeType},
         RepeatAnimation,
     },
-    ecs::system::SystemParam,
+    ecs::{
+        schedule::ScheduleConfigs,
+        system::{ScheduleSystem, SystemParam},
+    },
     gltf::Gltf,
     math::Vec3Swizzles,
-    platform::collections::{HashMap, HashSet},
+    platform::collections::{hash_map::Entry, HashMap, HashSet},
     prelude::*,
     scene::InstanceId,
 };
@@ -159,18 +162,14 @@ pub struct AvatarAnimationPlugin;
 
 impl Plugin for AvatarAnimationPlugin {
     fn build(&self, app: &mut App) {
-        app.add_event::<PlayerEmoteTriggered>();
+        app.add_event::<PlayerEmoteTriggered>()
+            .init_resource::<PropCache>();
         app.add_systems(
             Update,
             (
                 // `file_emote_downloads` sits between choosing this frame's emotes and starting
                 // their loads, so an emote's hash has its owner when its first request is queued
-                (
-                    animate,
-                    file_emote_downloads,
-                    play_current_emote,
-                    play_masked_emote,
-                )
+                (animate, file_emote_downloads, play_systems())
                     .chain()
                     .after(process_avatar),
                 play_scene_driven_sounds.after(process_avatar),
@@ -190,6 +189,12 @@ impl Plugin for AvatarAnimationPlugin {
             app.add_console_command::<EmoteConsoleCommand, _>(emote_console_command);
         }
     }
+}
+
+/// The play of each avatar's emote slots for the frame: the full-body slot, then the upper-body
+/// overlay over it, then the player's hidden props refilled for the next frames.
+pub(crate) fn play_systems() -> ScheduleConfigs<ScheduleSystem> {
+    (play_current_emote, play_masked_emote, keep_prop_cache).chain()
 }
 
 /// File each avatar's emote downloads under the avatar, as its wearables are: the entity hashes
@@ -1198,6 +1203,7 @@ struct PlayParams<'w, 's> {
     preloaded_gltfs: Query<'w, 's, &'static PreloadedGltf>,
     ipfas: IpfsAssetServer<'w, 's>,
     cached_gltf_handles: Local<'s, HashSet<Handle<Gltf>>>,
+    prop_cache: ResMut<'w, PropCache>,
     time: Res<'w, Time>,
 }
 
@@ -1345,6 +1351,80 @@ fn resolve_playback<'a>(
     Ok((emote, clip, duration))
 }
 
+/// Hidden copies of the props in the emote GLBs scenes preload, one per GLB under the player, made
+/// before a clip asks for one. A clip with a prop then starts on the frame it is asked for, its
+/// prop shown and its sound fired with it, as a clip without one does; a prop spawned on request is
+/// up a frame later at the earliest. Wrapper and scene instance, by avatar and GLB.
+#[derive(Resource, Default)]
+pub(crate) struct PropCache(HashMap<(Entity, AssetId<Gltf>), (Entity, InstanceId)>);
+
+impl PropCache {
+    /// The avatar's copy of the GLB's prop, once it is up; the caller owns it from then on.
+    fn take(
+        &mut self,
+        avatar: Entity,
+        gltf: AssetId<Gltf>,
+        scene_spawner: &SceneSpawner,
+    ) -> Option<(Entity, InstanceId)> {
+        let (_, instance) = self.0.get(&(avatar, gltf))?;
+        if !scene_spawner.instance_is_ready(*instance) {
+            return None;
+        }
+        self.0.remove(&(avatar, gltf))
+    }
+}
+
+/// Keep a hidden copy of each preloaded emote GLB's prop under the player: one made for a GLB that
+/// has none (a scene just preloaded it, or a clip took the copy), and dropped once no scene
+/// preloads the GLB or the avatar is no longer the player. An emote GLB names its avatar clip
+/// `_Avatar`; a scene's other preloaded models are not props.
+fn keep_prop_cache(
+    mut commands: Commands,
+    mut cache: ResMut<PropCache>,
+    mut scene_spawner: ResMut<SceneSpawner>,
+    players: Query<Entity, (With<PrimaryUser>, With<AvatarAnimPlayer>)>,
+    #[cfg(feature = "explorer")] preloaded: Query<&PreloadedGltf>,
+    #[cfg(feature = "explorer")] gltfs: Res<Assets<Gltf>>,
+) {
+    #[cfg(feature = "explorer")]
+    let props: HashMap<AssetId<Gltf>, Handle<Scene>> = preloaded
+        .iter()
+        .filter_map(|preloaded| {
+            let gltf = gltfs.get(preloaded.handle.id())?;
+            if !gltf.named_animations.any_avatar_emote() {
+                return None;
+            }
+            Some((preloaded.handle.id(), Emote::prop_scene_of(gltf)?))
+        })
+        .collect();
+    #[cfg(not(feature = "explorer"))]
+    let props: HashMap<AssetId<Gltf>, Handle<Scene>> = HashMap::new();
+
+    cache.0.retain(|(avatar, gltf), (wrapper, instance)| {
+        if players.contains(*avatar) && props.contains_key(gltf) {
+            return true;
+        }
+        scene_spawner.despawn_instance(*instance);
+        if let Ok(mut commands) = commands.get_entity(*wrapper) {
+            commands.despawn();
+        }
+        false
+    });
+    for avatar in &players {
+        for (gltf, scene) in &props {
+            cache.0.entry((avatar, *gltf)).or_insert_with(|| {
+                let wrapper = commands
+                    .spawn((Transform::default(), Visibility::Hidden, ChildOf(avatar)))
+                    .id();
+                (
+                    wrapper,
+                    scene_spawner.spawn_as_child(scene.clone(), wrapper),
+                )
+            });
+        }
+    }
+}
+
 enum PropState {
     /// No prop, or not known yet.
     None,
@@ -1374,15 +1454,28 @@ fn ensure_prop(
     let Ok(Some(props)) = emote.prop_scene(gltfs) else {
         return PropState::None;
     };
-    let Some(spawned) = extras.get_mut(&avatar) else {
-        let wrapper = commands
-            .spawn((Transform::default(), Visibility::Hidden, ChildOf(avatar)))
-            .id();
-        let scene = params.scene_spawner.spawn_as_child(props, wrapper);
-        let mut spawned = SpawnedExtras::new(urn.clone());
-        spawned.scene = Some((wrapper, scene));
-        extras.insert(avatar, spawned);
-        return PropState::Spawned;
+    let spawned = match extras.entry(avatar) {
+        Entry::Occupied(spawned) => spawned.into_mut(),
+        Entry::Vacant(vacant) => {
+            let mut spawned = SpawnedExtras::new(urn.clone());
+            // A copy made ahead plays now. A new one is up a frame later at the earliest (scenes
+            // spawn after `Update`), and the clip waits for it.
+            let Some(ready) =
+                params
+                    .prop_cache
+                    .take(avatar, emote.gltf.id(), &params.scene_spawner)
+            else {
+                let wrapper = commands
+                    .spawn((Transform::default(), Visibility::Hidden, ChildOf(avatar)))
+                    .id();
+                let scene = params.scene_spawner.spawn_as_child(props, wrapper);
+                spawned.scene = Some((wrapper, scene));
+                vacant.insert(spawned);
+                return PropState::Spawned;
+            };
+            spawned.scene = Some(ready);
+            vacant.insert(spawned)
+        }
     };
     let Some((wrapper, instance)) = spawned.scene else {
         return PropState::Loading;
