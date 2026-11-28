@@ -204,6 +204,34 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   but reaches 120%. The compositor only upscales, so the range is 50–100%. A saved value
   between steps or outside that range moves to the nearest step in it once, when the saved
   settings are migrated, so the slider shows what is rendered.
+- **Auto Graphics decides on frame time, not GPU time, and lowers shadows first.** The setting
+  is off by default. While it is on and no host set a session render scale, a controller
+  (`visuals::auto_graphics`) moves down and up a ladder built from the player's settings: the
+  shadows off (the sun's, and the scene lights' shadow casters: `ShadowSetting::Off` sets
+  both), then the render scale in 10% steps down to 50%, then bloom off, each rung
+  only when the player has that setting on. The order is what measured the most frame time on
+  the web in Genesis Plaza: shadows off took 7 to 9 ms, 50% render scale about 9 ms, bloom
+  off about 5 ms once shadows were off, and fog, imposters, sky reflection, depth of field, lens
+  flare, avatar outline and anti-aliasing less than the run-to-run spread. Lowered values live
+  in `SessionGraphics::auto` and are never saved. The controller reads the median frame time of
+  two-second windows and the CPU timers of the frame-time breakdown; a GPU time is not
+  available, or not reliable, on every platform. With the frame over 110% of its target and
+  the CPU side under 85% of it, it lowers rung by rung until the frame is shorter than at the
+  rung it started from (by 1.5 ms or 6%) or at its target, in two readings in a row, and goes
+  back if the bottom brings neither. It tries one rung up after 30 seconds and keeps it if the
+  frame is at its target or no longer (0.75 ms or 3%). A trial that is undone is not repeated
+  for a hold that doubles from 30 seconds to 10 minutes. The gain is measured across several
+  rungs because frames snap to the display's refresh, so one rung alone may change nothing. Once
+  it has stayed 10 seconds on a rung lower than it has told the player about, the HUD shows a
+  message; a descent stops on several rungs on its way down, so this names where it ended. On the web a
+  frame whose main schedules take longer than one refresh cannot get shorter by lowering
+  graphics, which the CPU check covers only when the CPU side is most of the frame. Where the
+  display's refresh is unknown (the web), a steady frame pinned at a common refresh period and
+  over the target is taken as the display's rate and becomes the effective target, so a target
+  above the display's is not chased; a frame clearly shorter than that period clears it. The
+  controller pauses, and drops its reading, while the viewport is inactive or the window is
+  unfocused. A kept lower rung with the frame well under its target is left again after 5 seconds
+  instead of 30.
 - **Sun shadows keep bevy's default bias.** Unity's `DepthBias` (1.75 or 1.56 texels, times
   URP's soft kernel radius 2.5) is a depth bias, not a normal bias, and carried over as bevy's
   normal bias it offset each lookup about half a metre on Low at 60 m, dropping thin and contact

@@ -240,6 +240,8 @@ pub enum SystemApi {
     SetWorldPassword(Option<world_access::WorldPassword>),
     /// The signed-in wallet's platform ban: now, then again on every change.
     GetPlatformBanStream(RpcStreamSender<PlatformBanNotice>),
+    /// What Auto Graphics lowered, once for each time it settles on lower graphics.
+    GetAutoGraphicsStream(RpcStreamSender<AutoGraphicsNotice>),
     SetInteractableArea(Vec4),
     GetMicState(RpcResultSender<MicState>),
     SetMicEnabled(bool),

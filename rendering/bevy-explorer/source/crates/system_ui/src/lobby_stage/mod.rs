@@ -25,7 +25,7 @@ use bevy::{
 };
 use common::{
     sets::{PostUpdateSets, SceneSets},
-    structs::{sun_cascades, AppConfig, StageCamera, StageLight, MIN_CASCADE},
+    structs::{sun_cascades, AppConfig, SessionGraphics, StageCamera, StageLight, MIN_CASCADE},
 };
 use scene_runner::{initialize_scene::SuperUserScene, renderer_context::RendererSceneContext};
 use system_bridge::{settings::NewCameraEvent, LobbyStage, SystemApi};
@@ -88,6 +88,8 @@ pub struct LobbyStagePlugin;
 impl Plugin for LobbyStagePlugin {
     fn build(&self, app: &mut App) {
         add_materials(app);
+        // the shadow setting in effect (`sync_stage`)
+        app.init_resource::<SessionGraphics>();
         app.add_systems(
             Update,
             (take_requests, sync_stage)
@@ -202,7 +204,7 @@ fn sync_stage(
     asset_server: Res<AssetServer>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut builder: StageAssets,
-    config: Res<AppConfig>,
+    (config, session): (Res<AppConfig>, Res<SessionGraphics>),
 ) {
     let wanted = roots.iter().next().and_then(|(root, request, transform)| {
         let render_layer = render_layer(&cache, root, request.0.layer)?;
@@ -301,7 +303,7 @@ fn sync_stage(
         .id();
     // a change of the setting while the stage is up reaches its light through `apply_shadows`
     let shadows = sun_cascades(
-        config.graphics.shadow_settings,
+        session.shadow_setting(&config),
         config.graphics.shadow_distance,
     )
     .is_some();

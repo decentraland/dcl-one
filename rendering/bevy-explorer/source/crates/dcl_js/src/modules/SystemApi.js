@@ -668,6 +668,22 @@ module.exports.getPlatformBanStream = async function() {
   return streamGenerator();
 }
 
+// what Auto Graphics lowered, once each time it settles on lower graphics
+// type AutoGraphicsNotice = { shadowsOff: bool, renderScalePercent: number | null, bloomOff: bool }
+module.exports.getAutoGraphicsStream = async function() {
+  const rid = await Deno.core.ops.op_get_auto_graphics_stream();
+
+  async function* streamGenerator() {
+    while (true) {
+      const next = await Deno.core.ops.op_read_auto_graphics_stream(rid);
+      if (next === null) break;
+      yield next;
+    }
+  }
+
+  return streamGenerator();
+}
+
 // answer the password prompt; password null = the player gave up
 module.exports.setWorldPassword = function(body) {
     Deno.core.ops.op_set_world_password(body.password ?? null);

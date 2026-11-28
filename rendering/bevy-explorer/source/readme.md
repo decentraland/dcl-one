@@ -350,6 +350,11 @@ the [conventions ADR](../../../docs/adr/2026-11-17-console-command-conventions.m
   reserve, the waits' lateness and the scenes whose relays wake) and `/scene_loop_mode
   <both|relay|deadline|legacy>` switches its mode without a reload
   ([scheduling](../docs/guidelines/scheduling.md)).
+- `/auto_graphics_state`: Auto Graphics' reading (enabled, phase, rung, what it lowered: shadows, render
+  scale, bloom, and the messages raised); `/auto_graphics_notice` raises a sample message (shadows off,
+  70%) without changing any setting. The HUD shows each as a toast with a Dismiss and a `Settings` button
+  (named `Open graphics settings`, opening Settings on the Performance tab), closing itself after 15 s, only while
+  the player is in the world with the HUD's chrome up; a message arriving at any other time is dropped.
 - The HUD, by role and accessible name (`library/explorer-core/lib/hudAutomation.ts`): `/hud_list [role]`,
   `/hud_read`, `/hud_click`, `/hud_fill` (`{"name", "text"}`), `/hud_wait` (`"state"`: `visible`,
   `hidden`, `enabled`, `actionable`, `ready`; `"timeout"` ms). A selector is the name or JSON

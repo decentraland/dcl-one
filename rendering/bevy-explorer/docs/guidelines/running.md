@@ -547,6 +547,10 @@ On the web only:
   reload, as `?sceneLoop=` sets it at load; the engine's loop takes it at its next frame and
   each relay at its next step. The reply names the mode; an unknown name fails with the list.
 
+- `/auto_graphics_state`: Auto Graphics' reading (enabled, phase, rung, the shadows, render scale and bloom it
+  lowered, and the messages raised). `/auto_graphics_notice` raises a sample message (shadows off, 70%)
+  without changing any setting, to check the HUD's Auto Graphics toast.
+
 Movement:
 
 - `/movement_state`: the active locomotion settings, the last completed movement step's

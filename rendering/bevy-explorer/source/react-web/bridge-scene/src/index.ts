@@ -55,6 +55,7 @@ import { registerPortables } from './domains/portables'
 import { registerWorldAccess } from './domains/worldAccess'
 import { registerItemPurchase } from './domains/itemPurchase'
 import { registerPlatformBan } from './domains/platformBan'
+import { registerAutoGraphics } from './domains/autoGraphics'
 import { registerEditor } from './domains/editor'
 
 export function main(): void {
@@ -108,6 +109,7 @@ export function main(): void {
     registerWorldAccess(ctx)
     registerItemPurchase(ctx)
     registerPlatformBan(ctx)
+    registerAutoGraphics(ctx)
     registerEditor(ctx)
     registerAvatarPreview(ctx)
     registerMinimap(ctx)

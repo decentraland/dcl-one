@@ -1111,6 +1111,11 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
       for (let done = 0; done <= total; done++) setTimeout(() => reply(at(done, 'running')), 3000 + done * 500)
       setTimeout(() => reply(at(total, 'ready')), 3000 + (total + 1) * 500)
     }
+    // ?autographics=1 → the Auto Graphics message (shadows off, resolution 70%) once the guest is in the
+    // world; a message that arrives earlier, or with the chrome hidden, is dropped by the HUD.
+    if (new URLSearchParams(location.search).get('autographics') === '1') {
+      setTimeout(() => reply({ kind: 'autoGraphics', notice: { shadowsOff: true, renderScalePercent: 70, bloomOff: false } }), 8000)
+    }
     // ?mockpins=1 → two quest pins on both maps.
     if (new URLSearchParams(location.search).get('mockpins') === '1') reply({ kind: 'mapPins', pins: MOCK_MAP_PINS })
     // ?mockportables=1 → the portables list, so the rail button and its popover are exercisable.

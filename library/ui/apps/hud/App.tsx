@@ -49,6 +49,7 @@ import { StartupFlow } from './features/startup/StartupFlow'
 import { useBeforeWorld, useLoginMusic } from './features/startup/useLoginMusic'
 import { SceneLoadingOverlay } from './features/session/SceneLoadingOverlay'
 import { openTravelError } from './features/session/TravelError'
+import { useAutoGraphicsToast } from './features/autoGraphics/autoGraphicsToast'
 import { usePlatformBanNotices } from './features/session/PlatformBanDialog'
 import { useEngineSession, type EngineSession } from './features/session/useEngineSession'
 import { useWindowKeyDown } from './lib/useWindowKeyDown'
@@ -457,6 +458,8 @@ function Hud({ integratedGpu, host }: { integratedGpu: GpuAdapterInfo | null; ho
   // photo mode shows only its own overlay (and the reticle) over the world; the HideUi key hides
   // the chrome and the reticle and keeps the scene's own UI
   const chrome = !pageOpen && editorMode === 'off' && !session.photoMode.active && !session.hudHidden
+  // the Auto Graphics message shows only in the world with the chrome up, and is dropped otherwise
+  useAutoGraphicsToast(session.autoGraphics, session.phase === 'world' && chrome && !HIDE_HUD, session.settings.openOn)
 
   // Tell the engine how much of the screen the persistent HUD occupies. A full-screen page is
   // transient, so the last in-world value stands while one is open.

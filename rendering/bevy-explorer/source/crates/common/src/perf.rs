@@ -20,6 +20,12 @@ pub enum SamplingPausedReason {
     ViewportInactive,
 }
 
+/// While the web viewport is inactive or the client window lacks focus, the reason; `None`
+/// otherwise. Written once per frame by the frame inputs, read by whatever must not treat the
+/// frames of a pause as a measurement.
+#[derive(Resource, Default, Clone, Copy, Debug, PartialEq, Eq)]
+pub struct FocusPause(pub Option<SamplingPausedReason>);
+
 /// Whether frames are being sampled right now.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]

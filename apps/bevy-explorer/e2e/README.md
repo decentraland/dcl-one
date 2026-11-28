@@ -281,6 +281,7 @@ sets the `Chat Reactions` setting from the bar's switch.
 `specs/ban-block-state.test.ts` reads the engine's ban and block status (`/ban_block_state`), blocks
 and unblocks a second configured account through `/block_user` and `/unblock_user`, and checks the
 "Bans and blocks" debug section is registered. With one account key the blocking scenario is a todo.
+`specs/auto-graphics.test.ts` turns Auto Graphics off on the Settings page's Performance tab (and back on afterwards), waits for no Auto Graphics toast, then raises the sample message (`/auto_graphics_notice`), repeating the command until the toast shows, and presses its `Open graphics settings` button, which opens Settings on the Performance tab.
 `specs/platform-ban.test.ts` reads the platform-ban check against zone, then, on the standalone only,
 boots a second client with `--comms-gatekeeper` pointed at `driver/gatekeeper-stub.ts` (a loopback
 gatekeeper answering as scripted, `DCL_E2E_GATEKEEPER_PORT`, 18745 by default, one shared by

@@ -217,6 +217,7 @@ export function fakeSession(): EngineSession {
     travelError: null,
     dismissTravelError: vi.fn(),
     platformBan: { notice: null, travelRefused: false, dismissTravelRefused: vi.fn() },
+    autoGraphics: { notice: null, dismiss: vi.fn() },
     travellingTo: null,
     fatalError: null,
     reload: vi.fn(),
@@ -226,7 +227,7 @@ export function fakeSession(): EngineSession {
     proximity: [],
     chat: { messages: [], send: vi.fn(), playSound: vi.fn(), react: vi.fn(), sendReaction: vi.fn(), onReaction: vi.fn(() => () => undefined), nearby: [], bubbleText: vi.fn(), channel: 'Nearby', select: vi.fn(), conversations: [], openConversation: vi.fn(), closeConversation: vi.fn(), deleteHistory: vi.fn(), communities: [], openCommunity: vi.fn(), closeCommunity: vi.fn(), open: true, toggle: vi.fn(), members: [], speaking: new Set(), mention: vi.fn(), pendingMention: null, consumeMention: vi.fn(), unread: 0, setActive: vi.fn(), nearbyUnread: 0, focusTick: 0, requestFocus: vi.fn() },
     friends: { available: true, list: [], received: [], sent: [], blocked: [], blockedUsers: [], blockedBy: [], loading: false, open: false, toggle: vi.fn(), act: vi.fn(), pending: new Set(), mutuals: {}, loadMutuals: vi.fn() },
-    settings: { list: [], open: false, toggle: vi.fn(), set: vi.fn(), load: vi.fn(), refresh: vi.fn() },
+    settings: { list: [], open: false, toggle: vi.fn(), openOn: vi.fn(), set: vi.fn(), load: vi.fn(), refresh: vi.fn() },
     bindings: {
       list: [],
       set: vi.fn(),

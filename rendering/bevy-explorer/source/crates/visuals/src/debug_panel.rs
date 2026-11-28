@@ -530,6 +530,7 @@ struct SunShadows;
 fn sun_shadows(
     mut cmd: ConsoleCommand<SunShadows>,
     config: Res<AppConfig>,
+    session: Res<SessionGraphics>,
     bias: Res<ShadowBiasOverride>,
     map: Res<DirectionalLightShadowMap>,
     sun: Query<(&DirectionalLight, &CascadeShadowConfig), Without<StageLight>>,
@@ -543,7 +544,7 @@ fn sun_shadows(
             .find(|(light, _)| light.shadows_enabled)
             .map(|(_, cascades)| cascades.bounds.clone());
         cmd.reply_ok(
-            json!({"quality":format!("{:?}", config.graphics.shadow_settings),
+            json!({"quality":format!("{:?}", session.shadow_setting(&config)),
             "distance":config.graphics.shadow_distance, "mapSize":map.size.to_string(),
             "cascades":cascades, "overridden":bias.0.is_some(), "presetBias":[preset.0, preset.1],
             "depthBias":depth, "normalBias":normal})

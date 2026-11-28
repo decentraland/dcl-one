@@ -8,8 +8,8 @@ use bevy::{
     prelude::*,
 };
 use common::structs::{
-    sun_cascades, AppConfig, PrimaryCameraRes, ShadowSetting, ShadowlessLight, StageLight,
-    SUN_LOW_MAX_DISTANCE,
+    sun_cascades, AppConfig, PrimaryCameraRes, SessionGraphics, ShadowSetting, ShadowlessLight,
+    StageLight, SUN_LOW_MAX_DISTANCE,
 };
 
 use super::{AppSetting, EnumAppSetting, IntAppSetting};
@@ -62,6 +62,10 @@ impl AppSetting for ShadowSetting {
 
     fn load(config: &AppConfig) -> Self {
         config.graphics.shadow_settings
+    }
+
+    fn effective(config: &AppConfig, session: &SessionGraphics) -> Self {
+        session.shadow_setting(config)
     }
 
     fn category() -> super::SettingCategory {
@@ -150,6 +154,7 @@ impl IntAppSetting for ShadowDistanceSetting {
 impl AppSetting for ShadowDistanceSetting {
     type Param = (
         SRes<AppConfig>,
+        SRes<SessionGraphics>,
         SQuery<
             (
                 Write<DirectionalLight>,
@@ -162,11 +167,11 @@ impl AppSetting for ShadowDistanceSetting {
 
     fn apply(
         &self,
-        (config, mut lights): SystemParamItem<Self::Param>,
+        (config, session, mut lights): SystemParamItem<Self::Param>,
         _: Commands,
         _: &HashSet<Entity>,
     ) {
-        apply_shadows(ShadowSetting::load(&config), self.0 as f32, &mut lights);
+        apply_shadows(session.shadow_setting(&config), self.0 as f32, &mut lights);
     }
 
     fn title() -> String {

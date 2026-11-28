@@ -14,17 +14,17 @@ use serde::{Deserialize, Serialize};
 use std::{cell::RefCell, collections::HashMap, marker::PhantomData, rc::Rc, sync::Arc};
 use strum::IntoEnumIterator;
 use system_bridge::{
-    settings::SettingInfo, AnalyticsEvent, AvatarModifierState, BlockUpdateData, BlockedUserData,
-    BlockingStatusData, ChatMessage, ChatReactionData, CommunityMemberConnectivityData,
-    CommunityVoiceUpdate, ConnectivitySnapshot, DmHistoryEntryData, DmUserStateData,
-    FriendConnectivityEvent, FriendData, FriendRequestData, FriendStatusData,
-    FriendshipEventUpdate, HomeScene, HoverEvent, ItemPurchaseRequest, ItemPurchaseState,
-    ListenedCommunity, LiveSceneInfo, LobbyStage, MapPinInfo, OutfitsData, PermanentPermissionItem,
-    PermissionRequestEvent, PhotoModeState, PlatformBanNotice, PortableInfo, ProfileChangedEvent,
-    ProximityEvent, ReactionData, SatelliteView, SceneLoadingUi, SetAvatarData, SetAvatarResult,
-    SetItemPurchaseState, SetPermanentPermission, SetSinglePermission, SystemApi,
-    TextureOptimizationStatus, VoiceChatAction, VoiceChatState, VoiceMessage, WelcomeState,
-    WorldAccessEvent, WorldAccessVerdict,
+    settings::SettingInfo, AnalyticsEvent, AutoGraphicsNotice, AvatarModifierState,
+    BlockUpdateData, BlockedUserData, BlockingStatusData, ChatMessage, ChatReactionData,
+    CommunityMemberConnectivityData, CommunityVoiceUpdate, ConnectivitySnapshot,
+    DmHistoryEntryData, DmUserStateData, FriendConnectivityEvent, FriendData, FriendRequestData,
+    FriendStatusData, FriendshipEventUpdate, HomeScene, HoverEvent, ItemPurchaseRequest,
+    ItemPurchaseState, ListenedCommunity, LiveSceneInfo, LobbyStage, MapPinInfo, OutfitsData,
+    PermanentPermissionItem, PermissionRequestEvent, PhotoModeState, PlatformBanNotice,
+    PortableInfo, ProfileChangedEvent, ProximityEvent, ReactionData, SatelliteView, SceneLoadingUi,
+    SetAvatarData, SetAvatarResult, SetItemPurchaseState, SetPermanentPermission,
+    SetSinglePermission, SystemApi, TextureOptimizationStatus, VoiceChatAction, VoiceChatState,
+    VoiceMessage, WelcomeState, WorldAccessEvent, WorldAccessVerdict,
 };
 use tokio::sync::Notify;
 
@@ -1047,6 +1047,26 @@ pub async fn op_read_platform_ban_stream(
     state: Rc<RefCell<impl State>>,
     rid: u32,
 ) -> Result<Option<PlatformBanNotice>, anyhow::Error> {
+    Ok(read_stream(state, rid).await)
+}
+
+pub async fn op_get_auto_graphics_stream(state: Rc<RefCell<impl State>>) -> u32 {
+    let (sx, rx) = RpcStreamSender::channel();
+    let rid = open_stream(&mut *state.borrow_mut(), rx);
+
+    state
+        .borrow_mut()
+        .borrow_mut::<SuperUserScene>()
+        .send(SystemApi::GetAutoGraphicsStream(sx))
+        .unwrap();
+
+    rid
+}
+
+pub async fn op_read_auto_graphics_stream(
+    state: Rc<RefCell<impl State>>,
+    rid: u32,
+) -> Result<Option<AutoGraphicsNotice>, anyhow::Error> {
     Ok(read_stream(state, rid).await)
 }
 

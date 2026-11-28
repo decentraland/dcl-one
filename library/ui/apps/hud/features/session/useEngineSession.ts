@@ -9,7 +9,7 @@ import type { LaunchHostOptions } from '@explorer-core/engine/engineRpc'
 import { fetchCrowd, recordVisit } from '@explorer-core/features/lobby/lobbyApi'
 import { type GotoTarget, randomParcel, worldOfRealm } from '@explorer-core/features/lobby/goto'
 import { answerItemPurchase, type PurchaseSceneItem } from '../itemPurchase/answer'
-import type { PlatformBanNotice, PortableInfo, PortableState, SatelliteView, WorldAccessVerdict } from '@explorer-core/engine/generated'
+import type { AutoGraphicsNotice, PlatformBanNotice, PortableInfo, PortableState, SatelliteView, WorldAccessVerdict } from '@explorer-core/engine/generated'
 import type { AvatarLook } from '@explorer-core/engine/avatarEquip'
 import { PLATFORM_BANNED_REFUSAL, type UiSound, type EngineViewportRegion, type GiftingPageMessage, type GiftingQueryRequest, type PhotoModeSnapshot, type PhotoModeSource, type PreviewFocus, type PreviewStageFraming, type SituationalReaction } from '@explorer-core/engine/protocol'
 import { clickButton, screenViewed, sessionId, track } from '@explorer-core/lib/analytics'
@@ -51,6 +51,7 @@ import { formatConsoleReply, parseChatCommand, resolveGoto, type GotoHere } from
 import { applyLanguageSetting, clearAutoTranslate } from '@explorer-core/features/chat/translation'
 import { clearPingMode, sendSoundEnabled, shouldPing } from '../chat/ping'
 import { useAskBeforeLeaving } from '../settings/askBeforeLeaving'
+import { setSettingsTab } from '../settings/settingsTab'
 import { risingIds, rowKeys } from '@explorer-core/features/chat/lineIds'
 import { communityChannel, communityIdOf } from '@explorer-core/engine/communityChannel'
 import { mentionName, mentionsName } from '@explorer-core/engine/mention'
@@ -673,6 +674,8 @@ export interface SettingsState {
   list: Setting[]
   open: boolean
   toggle: () => void
+  /** Open the page on a tab (a category such as 'Performance'); one already open only changes tab. */
+  openOn: (tab: string) => void
   set: (name: string, value: number) => void
   /** Fetch the settings without opening the page (once per session). */
   load: () => void
@@ -1225,6 +1228,9 @@ export interface EngineSession {
   /** The signed-in wallet's known platform ban (null when not banned, unknown or failed), and
    *  whether the last travel was refused for it. */
   platformBan: { notice: PlatformBanNotice | null; travelRefused: boolean; dismissTravelRefused: () => void }
+  /** What Auto Graphics last lowered. `id` goes up with each notice, so one with the same content
+   *  shows again. Null after sign-out or `dismiss`. */
+  autoGraphics: { notice: (AutoGraphicsNotice & { id: number }) | null; dismiss: () => void }
   /** The realm a HUD-requested travel is heading to, until the engine reports the outcome. The
    *  loader shows meanwhile. */
   travellingTo: string | null
@@ -1519,6 +1525,9 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
   const [travelError, setTravelError] = useState<string | null>(null)
   const [platformBan, setPlatformBan] = useState<PlatformBanNotice | null>(null)
   const [banRefusedTravel, setBanRefusedTravel] = useState(false)
+  const [autoGraphicsNotice, setAutoGraphicsNotice] = useState<(AutoGraphicsNotice & { id: number }) | null>(null)
+  const autoGraphicsSeq = useRef(0)
+  const dismissAutoGraphics = useCallback(() => setAutoGraphicsNotice(null), [])
   const [editorMode, setEditorModeState] = useState<EditorHudMode>('off')
   const [playerReady, setPlayerReady] = useState(false)
   // Ref twin of playerReady: the destination pick runs in a callback that would close over a
@@ -2905,6 +2914,9 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
         case 'platformBan':
           setPlatformBan(msg.ban.banned ? msg.ban : null)
           break
+        case 'autoGraphics':
+          setAutoGraphicsNotice({ ...msg.notice, id: ++autoGraphicsSeq.current })
+          break
         case 'portables': {
           const before = portableStates.current
           portableStates.current = new Map(msg.portables.map((p) => [portableKey(p), p.state]))
@@ -3459,6 +3471,15 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
   // Re-read on every open: the engine changes settings itself (the DM privacy slot follows the
   // social service), and settings are local, so there is nothing to spare by caching.
   const toggleSettings = useCallback(() => exclusive(setSettingsOpen, () => send('getSettings')), [exclusive, send])
+  const settingsOpenRef = useRef(settingsOpen)
+  settingsOpenRef.current = settingsOpen
+  const openSettingsOn = useCallback(
+    (tab: string) => {
+      setSettingsTab(tab)
+      if (!settingsOpenRef.current) toggleSettings()
+    },
+    [toggleSettings]
+  )
   const toggleProfile = useCallback(() => exclusive(setProfileOpen, () => ensure('getProfile')), [exclusive, ensure])
   const toggleNotifications = useCallback(() => exclusive(setNotificationsOpen, () => send('getNotifications')), [exclusive, send])
   const toggleEmotes = useCallback(() => exclusive(setEmotesOpen, () => ensure('getEmotes')), [exclusive, ensure])
@@ -4711,6 +4732,7 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
     // clears the ban and the refused travel, and retires the travel id and loader in flight
     setPlatformBan(null)
     setBanRefusedTravel(false)
+    setAutoGraphicsNotice(null)
     travelSeq.current++
     setTravellingTo(null)
   }, [closeAllPanels, resetEvents, setUiHidden])
@@ -5537,6 +5559,7 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
     travelError,
     dismissTravelError,
     platformBan: { notice: platformBan, travelRefused: banRefusedTravel, dismissTravelRefused: dismissBanRefusedTravel },
+    autoGraphics: { notice: autoGraphicsNotice, dismiss: dismissAutoGraphics },
     travellingTo,
     fatalError,
     reload: () => location.reload(),
@@ -5597,7 +5620,7 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
       mutuals: mutualFriends,
       loadMutuals: loadMutualFriends
     },
-    settings: { list: settings, open: settingsOpen, toggle: toggleSettings, set: settingSet, load: loadSettings, refresh: refreshSettings },
+    settings: { list: settings, open: settingsOpen, toggle: toggleSettings, openOn: openSettingsOn, set: settingSet, load: loadSettings, refresh: refreshSettings },
     bindings: { list: bindings, set: bindingsSet, reset: bindingsReset, capture: captureBinding },
     profile: {
       data: profile,

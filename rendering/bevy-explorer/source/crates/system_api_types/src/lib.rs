@@ -867,6 +867,19 @@ pub struct PlatformBanNotice {
     pub expires_at: Option<String>,
 }
 
+/// What Auto Graphics has lowered for the session, sent each time it settles on lower graphics.
+/// The player's saved settings are unchanged.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[derive(ts_rs::TS)]
+#[ts(export)]
+pub struct AutoGraphicsNotice {
+    pub shadows_off: bool,
+    /// The render resolution as a percentage; absent when it was not lowered
+    pub render_scale_percent: Option<u32>,
+    pub bloom_off: bool,
+}
+
 /// The engine needs a password to enter a world (see `ipfs::world_access`); answered with
 /// `SetWorldPassword`.
 #[derive(Clone, Debug, Serialize, Deserialize)]

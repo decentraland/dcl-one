@@ -1,5 +1,7 @@
 #![forbid(unsafe_code)]
 
+mod auto_graphics;
+mod auto_graphics_stream;
 mod coast;
 mod day_night;
 mod debug_panel;
@@ -42,8 +44,8 @@ use common::{
     sets::SetupSets,
     structs::{
         sun_cascades, AppConfig, DofConfig, FogSetting, PrimaryCamera, PrimaryCameraRes,
-        PrimaryUser, SceneGlobalLight, StageLight, TimeOfDay, AMBIENT_BRIGHTNESS_DEFAULT,
-        PRIMARY_AVATAR_LIGHT_LAYER,
+        PrimaryUser, SceneGlobalLight, SessionGraphics, StageLight, TimeOfDay,
+        AMBIENT_BRIGHTNESS_DEFAULT, PRIMARY_AVATAR_LIGHT_LAYER,
     },
 };
 use console::DoAddConsoleCommand;
@@ -68,6 +70,8 @@ pub struct VisualsPlugin {
 
 impl Plugin for VisualsPlugin {
     fn build(&self, app: &mut App) {
+        // the shadow setting in effect (`apply_global_light`)
+        app.init_resource::<SessionGraphics>();
         app.add_plugins(debug_panel::VisualsDebugPanelPlugin);
         // texels per cascade, for every shadow setting (see decisions.md); never resized, since a
         // resize reallocates every cascade's map
@@ -77,6 +81,7 @@ impl Plugin for VisualsPlugin {
             .init_resource::<CloudCover>()
             .add_plugins(WireframePlugin::default())
             .add_plugins(DayNightPlugin)
+            .add_plugins(auto_graphics::AutoGraphicsPlugin)
             .add_plugins(ShellTexturingPlugin)
             .add_plugins(TerrainPlugin)
             .add_plugins(CoastPlugin)
@@ -182,7 +187,7 @@ static TRANSITION_TIME: f32 = 1.0;
 
 fn apply_global_light(
     mut commands: Commands,
-    setting: Res<AppConfig>,
+    (setting, session): (Res<AppConfig>, Res<SessionGraphics>),
     mut atmosphere: AtmosphereMut<StylizedSky>,
     mut sun: Query<(
         Entity,
@@ -386,7 +391,7 @@ fn apply_global_light(
         }
 
         let (shadows_enabled, cascade_shadow_config) = match sun_cascades(
-            setting.graphics.shadow_settings,
+            session.shadow_setting(&setting),
             setting.graphics.shadow_distance,
         ) {
             Some(cascades) => (true, cascades),
