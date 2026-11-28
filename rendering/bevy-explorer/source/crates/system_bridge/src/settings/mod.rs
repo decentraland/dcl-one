@@ -41,6 +41,7 @@ use common::{
 };
 use constrain_ui::ConstrainUiSetting;
 use frame_rate::FpsTargetSetting;
+use landscape_distance::LandscapeDistanceSetting;
 use language_setting::LanguageSetting;
 use left_drag_camera::LeftDragCameraSetting;
 use load_distance::{LoadDistanceSetting, UnloadDistanceSetting};
@@ -77,6 +78,7 @@ pub mod dof_setting;
 pub mod fog_settings;
 pub mod frame_rate;
 pub mod imposter_settings;
+pub mod landscape_distance;
 pub mod language_setting;
 mod left_drag_camera;
 pub mod lens_flare_setting;
@@ -208,6 +210,7 @@ impl Plugin for SettingBridgePlugin {
             add_enum_setting::<ImposterSetting>(app, &mut settings, &mut schedule, &config);
         }
         add_enum_setting::<ParcelGrassSetting>(app, &mut settings, &mut schedule, &config);
+        add_int_setting::<LandscapeDistanceSetting>(app, &mut settings, &mut schedule, &config);
         add_enum_setting::<FogSetting>(app, &mut settings, &mut schedule, &config);
         add_enum_setting::<BloomSetting>(app, &mut settings, &mut schedule, &config);
         add_enum_setting::<DofSetting>(app, &mut settings, &mut schedule, &config);

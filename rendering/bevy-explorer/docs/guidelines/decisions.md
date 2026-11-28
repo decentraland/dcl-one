@@ -1136,8 +1136,8 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
 - **A new referral tier opens the site's Referral Rewards tab.** unity-explorer opens
   `profile/accounts/<address>/referral`, which this site does not serve; its profile names the
   same page `/profile/<address>/referral-rewards`.
-- **The hills follow the Landscape Distance.** The distance is the config's `landscape_distance`
-  (default 1000 m), read at startup and held to 500 to 7000 m.
+- **The hills follow the Landscape Distance.** The distance is the Graphics setting
+  Landscape Distance (the config's `landscape_distance`, default 1000 m), held to 500 to 7000 m.
   Unity displaces its whole terrain and its Landscape Distance setting does not drive it. Here the
   ground's rings are displaced out to the Landscape Distance from the player, never less than the
   832 m the parcel-sized rings cover, and the hills flatten over a further tenth of it, so
@@ -1165,17 +1165,17 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   opaque geometry, not by imposters. The flare is off while a scene hides the sun and moon discs.
 - **Graphics presets set fewer settings than Unity's, and four differently.** Low, Medium and High
   carry Unity's values for the frame rate, VSync, render scale, avatar outline, jiggle bones, sun
-  shadow quality, the Low and High shadow distances and scene lights; Medium is the default and
-  the one every saved config migrates to, except jiggle bones, which stay off by default (see the
-  spring bones ADR). Anti-aliasing and depth of field differ (next entry). Every preset keeps
+  shadow quality, the Low and High shadow distances, scene lights and the Landscape Distance
+  (Unity's 500, 1000 and 7000 m, Medium's 1000 m being the engine's default); Medium is the
+  default and the one every saved config migrates to, except jiggle bones, which stay off by
+  default (see the spring bones ADR). Anti-aliasing and depth of field differ (next entry). Every preset keeps
   bloom on, as Unity's Medium and High do; Unity turns bloom off on
   Low. Medium's sun shadow distance is 20 m, not 60 m: Medium
   has one cascade (above), which stops at 40 m, and at 20 m its texels are half as large as at
   40 m. The presets leave out Unity's scene distance (in parcels, where far scenes load as
-  LODs; here imposters draw them and the load distance stays the player's), the landscape
-  distance (read only at startup; its default is Medium's 1000 m), current-scene streams and
-  HDR (always on). The preset is not stored: the HUD reads it off the settings, and any
-  difference shows as Custom.
+  LODs; here imposters draw them and the load distance stays the player's), current-scene
+  streams and HDR (always on). The preset is not stored: the HUD reads it off the settings, and
+  any difference shows as Custom.
 - **Depth of field yields to MSAA.** The fork's transparent focus texture takes the sample count
   of the resolved main texture, so a multisampled transparent pass with depth of field fails
   wgpu validation. While MSAA is on, the camera has no depth of field and the stars draw before
