@@ -808,7 +808,6 @@ pub(super) fn social_states(
         },
         http_client.clone(),
         eip1654.clone(),
-        Some(market.index.clone()),
     ));
 
     if let Some(analytics) = analytics {

@@ -144,7 +144,6 @@ async fn the_notification_fixtures_replay_against_the_mounted_router() {
         },
         Outbound::for_tests(),
         None,
-        None,
     ));
     let app = Router::new().nest("/notifications", router(state));
     let me = Wallet(PrivateKeySigner::random());

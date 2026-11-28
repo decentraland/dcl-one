@@ -2944,16 +2944,38 @@ can cross this threshold. The queue continues to drain when intake is paused or
 fails. The worker claims up to 16 due wears in one statement, ordered by
 `(retry_at, address, urn)`. A two-minute reservation makes interrupted work
 eligible again. It starts at most 50 pages and stops starting items after one
-minute per drain. Each item's marketplace lookup has a 20-second timeout.
+minute per drain. Each item's lookup has a 20-second timeout.
 Losing the job lease cancels the pass.
 
-Failed transport or timed-out lookups retry after the notification delivery
+The lookup reads the node's Shop catalogue
+(`shop::market::catalog::on_sale_item`, wired by `serve`). It asks for the row
+`/v2/catalog?urn=<urn>&network=<its network>&isOnSale=true` answers, so "can
+be bought" follows the catalogue's own rule:
+- the item mints (store-minted with stock, or a v3 mint), or
+- an open legacy order or v3 resale of one of its tokens stands, attributed to
+  the item as the catalogue attributes it (an Ethereum v1 token by its wearable
+  id).
+
+Only collection items (`collections-v1` and `collections-v2` on Ethereum or
+Polygon, `polygon` read as `matic`) are looked up. Third-party, off-chain and
+testnet URNs complete without a lookup, so they spend no retries and pause no
+network. The read needs a node that walks the nft index, which every mainnet
+node on the mirror posture does; elsewhere the lookup answers "nothing to buy"
+at once. On a walking node it reads the book and trades indexes and the
+catalogue rows under the catalog route's readiness, scoped to the URN's
+network. The lookup itself queries no subgraph; where the catalogue is still
+mirrored, the mirror job feeds the rows it reads. A catalogue, book or
+trades copy that cannot answer now is a
+transient failure: the wear is retried, not dropped. An item without a name
+is not notified.
+
+Failed or timed-out lookups retry after the notification delivery
 backoff (30 seconds, doubling per failure). The fifth failure ends the
 obligation. Each drain expires obligations 24 hours after the wear's signed timestamp
 or enqueue time, whichever came first. The worker logs expiry counts and pauses
 in intake. Two consecutive transient failures on one network pause lookups on
-that network for the rest of the drain, leaving the other network eligible. Invalid reader URLs,
-invalid subgraph responses, missing readers, unknown or unbuyable items,
+that network for the rest of the drain, leaving the other network eligible. Lookups the
+catalogue refuses (a 4xx), a node without an item source, unknown or unbuyable items,
 no active friends and suppressed recipients also complete without a notice.
 The wear stays in history after completion. External reads run outside the
 completion transaction. A transaction advisory lock serializes recipient rate

@@ -1818,17 +1818,29 @@ async fn fetch_page(
     is_v2: bool,
     books: Option<&CatalogScope>,
 ) -> Result<(Vec<CatalogItem>, i64), Response> {
+    fetch_page_answering(state, read, f, is_v2, books, catalog_page_error).await
+}
+
+/// [`fetch_page`], a failed page statement answered by `page_error`.
+async fn fetch_page_answering(
+    state: &MarketplaceState,
+    read: &mut CatalogueRead,
+    f: &CatalogFilters,
+    is_v2: bool,
+    books: Option<&CatalogScope>,
+    page_error: fn(sqlx::Error) -> Response,
+) -> Result<(Vec<CatalogItem>, i64), Response> {
     // The read's clock: the trades check decided on the same instant.
     let now = read.now.naive_utc();
     let since = super::trades::mirrored_since(&state.settings, now);
     let ranked = rank_catalog_page(read, f, is_v2, books)
         .await
-        .map_err(catalog_page_error)?;
+        .map_err(page_error)?;
     let (sql, args) = build_catalog_page_query(f, is_v2, now, since, false, books, ranked.as_ref());
     let rows = sqlx::query_with(sqlx::AssertSqlSafe(sql), args)
         .fetch_all(&mut *read.tx)
         .await
-        .map_err(catalog_page_error)?;
+        .map_err(page_error)?;
     let total: i64 = match rows.first() {
         Some(r) => r.get("total"),
         None if clamp_skip(f.skip) > 0 => {
@@ -2006,6 +2018,86 @@ async fn read_book_copy(
     .bind(with_expiry)
     .fetch_all(&mut *read.tx)
     .await
+}
+
+/// The item a first-wear notice names, when it can be bought now: the row
+/// `/v2/catalog?urn=<urn>&network=<its network>&isOnSale=true` answers.
+/// "On sale" is the catalogue's own rule: the item mints (store-minted with
+/// stock, or a v3 mint), or an open legacy order or v3 resale of one of its
+/// tokens stands, each attributed to its item as the catalogue attributes
+/// it (an Ethereum v1 token by its wearable id). Only collection items
+/// (`collections-v1`, `collections-v2`) on the two networks are looked up.
+/// `Ok(None)` covers four cases: anything else, an unknown or unnamed item,
+/// nothing to buy, and a node that does not walk the nft index (it cannot
+/// read the listings). A catalogue, book or trades copy that cannot answer
+/// now, or a failed statement, is the route's envelope (503 or 500).
+pub async fn on_sale_item(
+    state: &MarketplaceState,
+    urn: &str,
+) -> Result<Option<CatalogItem>, Response> {
+    let segments: Vec<&str> = urn.split(':').collect();
+    let (Some(&network), Some(&kind)) = (segments.get(2), segments.get(3)) else {
+        return Ok(None);
+    };
+    if !matches!(kind, "collections-v1" | "collections-v2") {
+        return Ok(None);
+    }
+    let network = match network {
+        "ethereum" | "mainnet" => Network::Ethereum,
+        "matic" | "polygon" => Network::Matic,
+        _ => return Ok(None),
+    };
+    if !super::owned_items::walks_here(state) {
+        return Ok(None);
+    }
+    // The catalogue spells a Polygon item's network `matic`.
+    let mut canonical = segments.clone();
+    if network == Network::Matic {
+        canonical[2] = "matic";
+    }
+    let pairs = [
+        ("urn", canonical.join(":")),
+        ("network", network.wire().to_string()),
+        ("isOnSale", "true".to_string()),
+        ("first", "1".to_string()),
+    ]
+    .map(|(key, value)| (key.to_string(), value));
+    let filters = parse_catalog_filters(&pairs).map_err(IntoResponse::into_response)?;
+    let mut read = catalogue::preflight(
+        state,
+        Purpose::Priced,
+        &[Mirror::Items],
+        Some(network.graph()),
+    )
+    .await?;
+    let scope = catalog_scope(state, &mut read, &filters, true).await?;
+    let networks: Vec<_> = scope
+        .nets
+        .iter()
+        .copied()
+        .filter(|net| scope.v3_mints.contains(net) || scope.v3_resales.contains(net))
+        .collect();
+    if !networks.is_empty() {
+        let now = read.now;
+        super::trades::ready_checked_for_networks_on(state, &mut read.tx, &networks, now)
+            .await
+            .map_err(|error| error.into_response(super::readers::index_read_error))?;
+    }
+    // The filters are fixed, so a failed statement is the database's fault,
+    // never the request's: answered as an index read (503 or 500), not 400.
+    let (items, _) = fetch_page_answering(
+        state,
+        &mut read,
+        &filters,
+        true,
+        Some(&scope),
+        super::readers::index_read_error,
+    )
+    .await?;
+    Ok(items
+        .into_iter()
+        .next()
+        .filter(|item| !item.name.trim().is_empty()))
 }
 
 async fn catalog_inner(

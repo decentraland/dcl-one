@@ -478,7 +478,6 @@ async fn social_domains(pool: &PgPool, writes: bool, token: Option<&str>) -> Dom
         notifications,
         Outbound::for_tests(),
         None,
-        None,
     ));
     let badges = crate::social::badges::Settings {
         admin_token: token,
