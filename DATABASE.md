@@ -5813,30 +5813,43 @@ Invariants:
   clears the live book nor deletes queued repairs when opening. The NFT
   walk publishes as usual and runs alone while the build or its cleanup
   needs the lane.
-- Each private step processes at most 4,096 input rows, creations, or
-  cleanup rows. The initial scan and tail seek by `(block_number, log_index)`
-  on the source primary key. Only order logs enter the indexed build input.
-  One bounded creation page uses indexed next-creation and latest-terminal
-  probes to materialize the private book. The cursors and the rows commit
-  together, so even a single token can span many steps and resume after a
-  crash. If a full-budget private step times out after acquiring the
-  cursor, the lane halves its page and keeps that size across passes for
-  the current writer acquisition. Repairs behind the scanned position
-  enter a separate, revisioned queue that a deployed writer cannot consume. A repair of one token
-  pages its input and output and is requeued if its revision changed.
-- The lane sets its time limits before locking the NFT cursor. The pass
-  allows two minutes, normal transactions get up to 15 seconds, the
-  atomic publish gets up to 90 seconds, and lock waits get at most
-  10 seconds. Under the cursor lock, a drained build at the current
-  checkpoint deletes live keys absent from the shadow, writes inserted
-  or changed rows, and updates its marker in the same transaction. A timeout
-  rolls that transaction back and records a retry delay that starts at 30
-  seconds and grows to 10 minutes. NFT passes continue during that delay.
-  The live indexes and the projection triggers stay attached. The ordinary NFT publication
-  acknowledges the new visible rows, including at the same height.
-  A complete newer publication by a deployed writer can retire a
-  redundant build. Private cleanup runs in bounded steps after publish.
-  The schema object pass creates the new objects without reading the log.
+- Each step processes at most 4,096 rows or order keys. The initial scan
+  and tail seek by `(block_number, log_index)` on the source primary key.
+  Only order logs enter the indexed build input. One creation page uses
+  indexed next-creation and latest-terminal probes to materialize the
+  private book. Repairs behind the scanned position enter a revisioned
+  queue that a deployed writer cannot consume. Replay pages the input and
+  output for a token and repeats if its revision changed.
+- The lane sets its deadlines before locking the NFT cursor. The pass
+  allows two minutes, each transaction gets up to 15 seconds, and lock
+  waits get at most 10 seconds. The rows and their positions commit
+  together, so the next pass resumes after a timeout or crash. A step
+  that runs out of its full budget after acquiring the cursor halves the
+  page size for the current writer acquisition.
+- After the private book catches up, the lane marks only that network's
+  legacy order projection pending. Bounded pages of the live and shadow
+  primary keys discover deletions, insertions and changed rows. A separate
+  queue records live writes from a deployed writer during reconciliation
+  and shadow writes during catch-up after the keyset pass. The live
+  relation and its indexes stay in place.
+- Same-height NFT publications still acknowledge NFT ownership and
+  `nft_order`. The schema keeps `legacy_order` pending through
+  reconciliation and any branch restart. Under the NFT cursor lock, the
+  final step checks that the tail and the queues are caught up, then
+  records the certified book marker. The next ordinary NFT publication
+  acknowledges the complete book. A newer complete publication by a
+  deployed writer can retire the private build before it starts to write
+  live rows. Private cleanup runs in bounded steps. The schema object
+  pass creates the new objects without reading the log.
+
+While the legacy book is unavailable, routes that require it report
+`503` with source `nft-index`. Unfiltered catalogue browsing can omit
+legacy listings. NFT ownership, `/v1/nfts`, direct v3 trade reads and
+reads scoped to the other network can continue publishing and serving.
+The rebuild row's `phase` and `progressed_at` show whether it is
+advancing, and the network's `legacy_order` row in
+`shop.projection_write` shows whether its completed book has been
+acknowledged.
 
 For the earlier full-replacement baseline on local PostgreSQL 17.6 with
 1M synthetic Matic shadow rows, 1,000
@@ -5846,11 +5859,14 @@ Matic book and **56.11 s** when replacing 1M visible Matic rows. The
 replacement insert took 53.56 s. Each transaction preserved the Ethereum
 rows and published exactly 1M Matic rows. This is one local measurement
 per case, without concurrent writer load.
-The differential publish took **40.71 s** on an empty Matic book and
+The earlier single-transaction differential publish took **40.71 s** on an empty Matic book and
 **4.79 s** on a successor with 10,000 changed rows, including 1,000
 replaced keys, with the same row counts. Both runs preserved the 1,000
 Ethereum rows. These are single local measurements without a competing
-writer.
+writer. On the current lane, a local full rebuild of one million Polygon
+orders alongside 142,000 Ethereum rows reached the next acknowledgement
+in **120.03 s**. The shared legacy projection gate was pending for
+**52.40 s**. [Measured rebuild workload](METRICS.md#marketplace-legacy-book-publication)
 
 The page, count and readiness checks share a `REPEATABLE READ, READ ONLY`
 snapshot. An explicit network or chain-bound contract can narrow the NFT

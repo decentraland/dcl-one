@@ -1,5 +1,6 @@
 //! The private legacy order build. The NFT cursor fences both source writers
-//! and these transactions. Only publication writes the live order rows.
+//! and these transactions. Reconciliation writes live rows behind their
+//! publication gate.
 
 use std::sync::atomic::{AtomicI64, Ordering};
 use std::time::{Duration, Instant};
@@ -11,17 +12,14 @@ use crate::market::chain_walk::{self, INDEXER_NFT, Owner};
 
 pub const REBUILD_ROWS_PER_STEP: i64 = 4096;
 const STEP_TIMEOUT: Duration = Duration::from_secs(15);
-const SWAP_TIMEOUT: Duration = Duration::from_secs(90);
 const LOCK_TIMEOUT: Duration = Duration::from_secs(10);
 const STALLED_SECONDS: i32 = 1800;
 const END_LOG: i32 = i32::MAX;
-const PUBLISH_FAILURE_RESERVE: Duration = Duration::from_secs(1);
 type Position = (i64, i32);
 
 pub(crate) struct RebuildLane {
     rows: AtomicI64,
     step_timeout: Duration,
-    publish_timeout: Duration,
 }
 
 impl Default for RebuildLane {
@@ -29,18 +27,16 @@ impl Default for RebuildLane {
         Self {
             rows: AtomicI64::new(REBUILD_ROWS_PER_STEP),
             step_timeout: STEP_TIMEOUT,
-            publish_timeout: SWAP_TIMEOUT,
         }
     }
 }
 
 impl RebuildLane {
     #[cfg(test)]
-    pub(super) fn with_timeouts(step_timeout: Duration, publish_timeout: Duration) -> Self {
+    pub(super) fn with_limits(rows: i64, step_timeout: Duration) -> Self {
         Self {
+            rows: AtomicI64::new(rows),
             step_timeout,
-            publish_timeout,
-            ..Self::default()
         }
     }
 
@@ -77,6 +73,10 @@ struct Build {
     repair_contract: Option<String>,
     repair_token: Option<String>,
     repair_revision: Option<i64>,
+    applying: bool,
+    reconciled: bool,
+    applied_marketplace: Option<String>,
+    applied_order: Option<String>,
 }
 
 #[derive(sqlx::FromRow)]
@@ -112,7 +112,8 @@ ON CONFLICT (network) DO UPDATE SET phase = 'reset', upto = EXCLUDED.upto,
     visible_hash = EXCLUDED.visible_hash, target = EXCLUDED.target,
     scan_block = -1, scan_log = -1, step_block = -1, step_log = -1,
     repair_contract = NULL, repair_token = NULL, repair_revision = NULL,
-    publish_failures = 0, publish_after = NULL,
+    applying = shop.legacy_order_rebuild.applying AND shop.legacy_order_rebuild.phase <> 'cleanup',
+    reconciled = false, applied_marketplace = NULL, applied_order = NULL,
     progressed_at = timezone('UTC', now())";
 
 pub(super) async fn open(conn: &mut PgConnection, net: ChainNet) -> sqlx::Result<bool> {
@@ -127,7 +128,8 @@ pub(super) async fn open(conn: &mut PgConnection, net: ChainNet) -> sqlx::Result
 const READ_BUILD: &str = "
 SELECT phase, upto, upto_hash, anchor_block, anchor_hash, reorg_rewinds, rebuilds,
     visible_through, visible_hash, target, scan_block, scan_log, step_block, step_log,
-    repair_contract::text, repair_token::text, repair_revision
+    repair_contract::text, repair_token::text, repair_revision,
+    applying, reconciled, applied_marketplace::text, applied_order
 FROM shop.legacy_order_rebuild WHERE network = $1 FOR UPDATE";
 
 const READ_CHECKPOINT: &str = "
@@ -515,55 +517,72 @@ async fn tail(
             .execute(conn)
             .await?;
     } else if drain_live_queue(conn, net, rows).await? {
-        update_phase(conn, net, "publish").await?;
+        if build.reconciled {
+            update_phase(conn, net, "publish").await?;
+        } else {
+            // Close the per-network legacy projection before any live page
+            // commits. The acknowledgement trigger keeps it closed on reset
+            // and across publications by binaries that do not know the lane.
+            sqlx::query(
+                "INSERT INTO shop.projection_write (indexer, network, projection, pending, written_through)
+                 VALUES ('nft', $1, 'legacy_order', true, $2)
+                 ON CONFLICT (indexer, network, projection) DO UPDATE
+                 SET pending = true, written_through = EXCLUDED.written_through",
+            )
+            .bind(net.db_name())
+            .bind(checkpoint.last)
+            .execute(&mut *conn)
+            .await?;
+            sqlx::query(
+                "UPDATE shop.legacy_order_rebuild SET applying = true, phase = 'reconcile'
+                 WHERE network = $1",
+            )
+            .bind(net.db_name())
+            .execute(conn)
+            .await?;
+        }
     }
     Ok(())
 }
 
-async fn publish(
+// The first page seeks both primary keys. Truncating each input at the page
+// limit still gives the first distinct keys of their union. Catch-up and
+// deployed writes are replayed by primary key through their own queue.
+enum ApplyPage<'a> {
+    Scan { after: Option<(&'a str, &'a str)> },
+    Dirty,
+}
+
+fn next_keys(after: bool) -> String {
+    let seek = if after {
+        " AND (marketplace_address, order_id) > ($3, $4)"
+    } else {
+        ""
+    };
+    format!(
+        "(SELECT marketplace_address, order_id FROM shop.legacy_order
+          WHERE network = $1{seek} ORDER BY marketplace_address, order_id LIMIT $2)
+         UNION
+         (SELECT marketplace_address, order_id FROM shop.legacy_order_build
+          WHERE network = $1{seek} ORDER BY marketplace_address, order_id LIMIT $2)
+         ORDER BY marketplace_address, order_id LIMIT $2"
+    )
+}
+
+const DIRTY_KEYS: &str = "
+    SELECT marketplace_address, order_id, ctid FROM shop.legacy_order_apply_dirty
+    WHERE network = $1 ORDER BY marketplace_address, order_id LIMIT $2";
+
+const CLEAR_KEYS: &str = "
+), cleared AS (
+    DELETE FROM shop.legacy_order_apply_dirty WHERE ctid = ANY(ARRAY(SELECT ctid FROM page))";
+
+async fn apply_page(
     conn: &mut PgConnection,
     net: ChainNet,
-    build: &Build,
-    checkpoint: &Checkpoint,
-) -> sqlx::Result<()> {
-    let queued: bool = sqlx::query_scalar(
-        "SELECT EXISTS (SELECT 1 FROM shop.legacy_order_build_dirty WHERE network = $1)
-             OR EXISTS (SELECT 1 FROM shop.legacy_order_refold WHERE network = $1)",
-    )
-    .bind(net.db_name())
-    .fetch_one(&mut *conn)
-    .await?;
-    if queued || build.scan() != (checkpoint.last, END_LOG) {
-        return update_phase(conn, net, "tail").await;
-    }
-
-    // One snapshot boundary for old and new readers. Preserve the live
-    // relation and its write triggers, which the ordinary NFT publication
-    // acknowledges, including at an unchanged height.
-    sqlx::query(
-        "DELETE FROM shop.legacy_order o WHERE o.network = $1 AND NOT EXISTS (
-             SELECT 1 FROM shop.legacy_order_build b
-             WHERE (b.network, b.marketplace_address, b.order_id) =
-                   (o.network, o.marketplace_address, o.order_id))",
-    )
-    .bind(net.db_name())
-    .execute(&mut *conn)
-    .await?;
-    write_changes(conn, net).await?;
-    write_marker(conn, net).await?;
-    update_phase(conn, net, "cleanup").await?;
-    tracing::info!(
-        network = net.db_name(),
-        block = checkpoint.last,
-        "legacy order book published"
-    );
-    Ok(())
-}
-
-// Use the same column names for projection, comparison and update. Filter
-// unchanged rows before the upsert so they do not acquire tuple locks or
-// fire the publication trigger.
-async fn write_changes(conn: &mut PgConnection, net: ChainNet) -> sqlx::Result<()> {
+    rows: i64,
+    page: ApplyPage<'_>,
+) -> sqlx::Result<Option<(String, String)>> {
     const VALUES: [&str; 13] = [
         "contract_address",
         "token_id",
@@ -583,25 +602,137 @@ async fn write_changes(conn: &mut PgConnection, net: ChainNet) -> sqlx::Result<(
     let updates = VALUES
         .map(|column| format!("{column} = EXCLUDED.{column}"))
         .join(", ");
-    sqlx::query(sqlx::AssertSqlSafe(format!(
-        "INSERT INTO shop.legacy_order (network, marketplace_address, order_id, {columns})
-         SELECT b.network, b.marketplace_address, b.order_id, {build}
-         FROM shop.legacy_order_build b
-         LEFT JOIN shop.legacy_order o USING (network, marketplace_address, order_id)
-         WHERE b.network = $1 AND (o.network IS NULL OR ({live}) IS DISTINCT FROM ({build}))
-         ON CONFLICT (network, marketplace_address, order_id) DO UPDATE SET {updates}",
+    let scan_keys;
+    let (keys, clear) = match page {
+        ApplyPage::Scan { after } => {
+            scan_keys = next_keys(after.is_some());
+            (scan_keys.as_str(), "")
+        }
+        ApplyPage::Dirty => (DIRTY_KEYS, CLEAR_KEYS),
+    };
+    // The lateral limits keep the lookups indexed even when the full book
+    // is much bigger than a page. The delete and upsert touch disjoint keys.
+    let sql = format!(
+        "WITH page AS MATERIALIZED ({keys}), compared AS MATERIALIZED (
+             SELECT l.ctid AS live_tid, b.*, (l.ctid IS NULL OR ({live}) IS DISTINCT FROM ({build})) AS changed
+             FROM page p
+             LEFT JOIN LATERAL (
+                 SELECT o.ctid, {live_source} FROM shop.legacy_order o
+                 WHERE (o.network, o.marketplace_address, o.order_id) = ($1, p.marketplace_address, p.order_id)
+                 LIMIT 1
+             ) l ON true
+             LEFT JOIN LATERAL (
+                 SELECT b.* FROM shop.legacy_order_build b
+                 WHERE (b.network, b.marketplace_address, b.order_id) = ($1, p.marketplace_address, p.order_id)
+                 LIMIT 1
+             ) b ON true
+         ), removed AS (
+             DELETE FROM shop.legacy_order WHERE ctid = ANY(ARRAY(
+                 SELECT live_tid FROM compared WHERE network IS NULL AND live_tid IS NOT NULL))
+         ), written AS (
+             INSERT INTO shop.legacy_order (network, marketplace_address, order_id, {columns})
+             SELECT network, marketplace_address, order_id, {columns} FROM compared
+             WHERE network IS NOT NULL AND changed
+             ON CONFLICT (network, marketplace_address, order_id) DO UPDATE SET {updates}
+         {clear})
+         SELECT marketplace_address, order_id FROM page
+         ORDER BY marketplace_address DESC, order_id DESC LIMIT 1",
         columns = VALUES.join(", "),
         build = from("b"),
-        live = from("o"),
-    )))
-    .bind(net.db_name())
-    .execute(conn)
-    .await?;
+        live = from("l"),
+        live_source = from("o"),
+    );
+    // These writes already reconcile the current shadow row under the
+    // cursor lock. Queue writes by other transactions as usual.
+    sqlx::query("SELECT set_config('shop.legacy_order_apply', 'on', true)")
+        .execute(&mut *conn)
+        .await?;
+    let mut query = sqlx::query_as(sqlx::AssertSqlSafe(sql))
+        .bind(net.db_name())
+        .bind(rows);
+    if let ApplyPage::Scan {
+        after: Some((marketplace, order)),
+    } = page
+    {
+        query = query.bind(marketplace).bind(order);
+    }
+    let last = query.fetch_optional(&mut *conn).await?;
+    sqlx::query("SELECT set_config('shop.legacy_order_apply', 'off', true)")
+        .execute(conn)
+        .await?;
+    Ok(last)
+}
+
+async fn reconcile(
+    conn: &mut PgConnection,
+    net: ChainNet,
+    build: &Build,
+    rows: i64,
+) -> sqlx::Result<()> {
+    let after = build
+        .applied_marketplace
+        .as_deref()
+        .zip(build.applied_order.as_deref());
+    if let Some((market, order)) = apply_page(conn, net, rows, ApplyPage::Scan { after }).await? {
+        sqlx::query(
+            "UPDATE shop.legacy_order_rebuild SET applied_marketplace = $2, applied_order = $3
+             WHERE network = $1",
+        )
+        .bind(net.db_name())
+        .bind(market)
+        .bind(order)
+        .execute(conn)
+        .await?;
+    } else {
+        sqlx::query(
+            "UPDATE shop.legacy_order_rebuild SET reconciled = true, phase = 'tail'
+             WHERE network = $1",
+        )
+        .bind(net.db_name())
+        .execute(conn)
+        .await?;
+    }
     Ok(())
 }
 
-/// One bounded private step, or one atomic publication. The caller holds the
-/// NFT cursor lock on this transaction.
+async fn publish(
+    conn: &mut PgConnection,
+    net: ChainNet,
+    build: &Build,
+    checkpoint: &Checkpoint,
+    rows: i64,
+) -> sqlx::Result<()> {
+    let queued: bool = sqlx::query_scalar(
+        "SELECT EXISTS (SELECT 1 FROM shop.legacy_order_build_dirty WHERE network = $1)
+             OR EXISTS (SELECT 1 FROM shop.legacy_order_refold WHERE network = $1)",
+    )
+    .bind(net.db_name())
+    .fetch_one(&mut *conn)
+    .await?;
+    if queued || build.scan() != (checkpoint.last, END_LOG) {
+        return update_phase(conn, net, "tail").await;
+    }
+    if apply_page(conn, net, rows, ApplyPage::Dirty)
+        .await?
+        .is_some()
+    {
+        return Ok(());
+    }
+
+    // Both keysets and the replay queue stand at the cursor's exact
+    // checkpoint. The next ordinary NFT publication acknowledges the book.
+    write_marker(conn, net).await?;
+    update_phase(conn, net, "cleanup").await?;
+    tracing::info!(
+        network = net.db_name(),
+        block = checkpoint.last,
+        "legacy order book reconciliation complete"
+    );
+    Ok(())
+}
+
+/// One bounded rebuild step. The caller holds the NFT cursor lock on this
+/// transaction.
 pub async fn rebuild_batch(
     conn: &mut PgConnection,
     net: ChainNet,
@@ -649,7 +780,7 @@ pub async fn rebuild_batch(
         open(conn, net).await?;
         return Ok(RebuildStep::Batched);
     }
-    if old_book_published(conn, net, &build, &checkpoint).await? {
+    if !build.applying && old_book_published(conn, net, &build, &checkpoint).await? {
         update_phase(conn, net, "cleanup").await?;
         return Ok(RebuildStep::Batched);
     }
@@ -678,7 +809,8 @@ pub async fn rebuild_batch(
         }
         "tail" => tail(conn, net, &build, &checkpoint, rows).await?,
         "repair_clear" | "repair_scan" | "repair_build" => repair(conn, net, &build, rows).await?,
-        "publish" => publish(conn, net, &build, &checkpoint).await?,
+        "reconcile" => reconcile(conn, net, &build, rows).await?,
+        "publish" => publish(conn, net, &build, &checkpoint, rows).await?,
         _ => {
             return Err(sqlx::Error::Protocol(
                 "unknown legacy order build phase".into(),
@@ -711,52 +843,8 @@ fn timed_out(error: &anyhow::Error) -> bool {
         })
 }
 
-async fn defer_publish(
-    pool: &PgPool,
-    net: ChainNet,
-    progress: chrono::NaiveDateTime,
-    deadline: Instant,
-) -> anyhow::Result<()> {
-    let remaining = deadline.saturating_duration_since(Instant::now());
-    if remaining.is_zero() {
-        return Ok(());
-    }
-    let failures = tokio::time::timeout(remaining.min(PUBLISH_FAILURE_RESERVE), async {
-        let mut tx = pool.begin().await?;
-        sqlx::query("SET LOCAL lock_timeout = '250ms';")
-            .execute(&mut *tx)
-            .await?;
-        let failures: Option<i32> = sqlx::query_scalar(
-            "UPDATE shop.legacy_order_rebuild
-             SET publish_failures = least(publish_failures, 30) + 1,
-                 publish_after = timezone('UTC', now()) + make_interval(
-                     secs => least(600, 30 * (1 << least(publish_failures, 5))))
-             WHERE network = $1 AND phase = 'publish' AND progressed_at = $2
-             RETURNING publish_failures",
-        )
-        .bind(net.db_name())
-        .bind(progress)
-        .fetch_optional(&mut *tx)
-        .await?;
-        tx.commit().await?;
-        Ok::<_, sqlx::Error>(failures)
-    })
-    .await??;
-    if let Some(failures) = failures {
-        dcl_metrics::counter!("catalyst_legacy_order_publish_timeouts_total",
-            "network" => net.db_name())
-        .increment(1);
-        tracing::error!(
-            network = net.db_name(),
-            failures,
-            "legacy order publication timed out; retry deferred"
-        );
-    }
-    Ok(())
-}
-
 /// Bound pool acquisition and the whole batch as well as the cursor lock.
-/// A swap gets its full budget and leaves time to persist a failed attempt.
+/// Each step, including live reconciliation, uses the same deadline.
 pub(crate) async fn run_rebuild(
     pool: &PgPool,
     net: ChainNet,
@@ -771,9 +859,8 @@ pub(crate) async fn run_rebuild(
         }
         let build = tokio::time::timeout(
             remaining,
-            sqlx::query_as::<_, (String, bool, bool, chrono::NaiveDateTime)>(
-                "SELECT phase, progressed_at <= timezone('UTC', now()) - make_interval(secs => $2),
-                        coalesce(publish_after > timezone('UTC', now()), false), progressed_at
+            sqlx::query_as::<_, (String, bool)>(
+                "SELECT phase, progressed_at <= timezone('UTC', now()) - make_interval(secs => $2)
                  FROM shop.legacy_order_rebuild WHERE network = $1",
             )
             .bind(net.db_name())
@@ -781,24 +868,15 @@ pub(crate) async fn run_rebuild(
             .fetch_optional(pool),
         )
         .await??;
-        let Some((phase, stalled, cooling_down, progress)) = build else {
+        let Some((phase, stalled)) = build else {
             lane.rows.store(REBUILD_ROWS_PER_STEP, Ordering::Relaxed);
             return Ok(true);
         };
         if stalled {
             tracing::error!(network = net.db_name(), %phase, "legacy order book rebuild stalled");
         }
-        let publish = phase == "publish";
         let remaining = deadline.saturating_duration_since(Instant::now());
-        if publish && (cooling_down || remaining < lane.publish_timeout + PUBLISH_FAILURE_RESERVE) {
-            return Ok(false);
-        }
-        let budget = if publish {
-            lane.publish_timeout
-        } else {
-            lane.step_timeout
-        };
-        let timeout = budget.min(remaining);
+        let timeout = lane.step_timeout.min(remaining);
         if timeout.is_zero() {
             return Ok(false);
         }
@@ -837,13 +915,12 @@ pub(crate) async fn run_rebuild(
             Ok(RebuildStep::Idle) => return Ok(true),
             Ok(RebuildStep::Batched) => {}
             Err(error) if started && timed_out(&error) => {
-                if publish {
-                    defer_publish(pool, net, progress, deadline).await?;
-                    return Err(error);
-                }
-                if timeout < budget {
+                if timeout < lane.step_timeout {
                     return Ok(false);
                 }
+                dcl_metrics::counter!("catalyst_legacy_order_rebuild_step_timeouts_total",
+                    "network" => net.db_name())
+                .increment(1);
                 if rows == 1 {
                     return Err(error);
                 }
