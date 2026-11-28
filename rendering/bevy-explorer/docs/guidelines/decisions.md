@@ -668,6 +668,16 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   rejection and on those codes until a new sign-in, which has no counterpart here: the account is
   fixed once in the world. It has no response timeout: it waits, and the server's pre-auth
   deadline ends the attempt with AUTH_TIMEOUT, which it retries.
+- **A scene listener retries a rejected announcement, which the Pulse server documents as
+  terminal.** Codes 15 and 19 (an invalid AoI, or one over the parcel budget) and 16 (an
+  oversized or corrupt packet, such as an oversized announcement) end a player's session for good
+  but send a listener back to the backoff with a 10 s floor (`reconnect.rs`). The server's
+  guidance is not to reconnect, because the same message would be refused again; a listener's is
+  not the same message: each attempt announces the scenes it hosts by then, and the limits the
+  server applies to it, such as a whitelist entry lifting the parcel budget, can change without a
+  restart on either side. A listener refused at the handshake backs off from 10 s to one attempt a
+  minute; one accepted and then refused on an update retries every 10 s, since the acceptance
+  resets the backoff.
 - **Teleports and emotes are paced.** The client lets out 10 a second with a burst of 8, half of
   what both servers allow for them, and keeps only the latest teleport and the latest emote command
   while that is spent. Overrunning the servers' budget ends the session for good, and a scene that

@@ -120,7 +120,8 @@ pub enum PulseDisconnect {
     InvalidTeleportField,
     /// A handshake with the same (wallet, timestamp) was replayed inside the anti-replay window.
     HandshakeReplayRejected,
-    /// `HandshakeRequest` carried a malformed `PlayerInitialState`.
+    /// A handshake carried an invalid field: a `HandshakeRequest`'s malformed `PlayerInitialState`,
+    /// or a `SceneListenerHandshakeRequest`'s AoI (malformed, or over the server's parcel budget).
     InvalidHandshakeField,
     /// Sustained corrupt/oversized packets (buggy client, fuzzer, or amplification probe).
     PacketCorrupted,

@@ -1658,3 +1658,90 @@ fn retry_polling_waits_for_an_established_connection_and_a_link() {
     assert!(driver.outbound.try_recv().is_ok());
     assert_eq!(session.resyncs[0], (0, 1));
 }
+
+/// What a listener asks in the handshake it signs at `now`, pumping until it is sent.
+fn signed_listener_handshake(
+    harness: &mut Harness,
+    now: f64,
+) -> pulse::SceneListenerHandshakeRequest {
+    let deadline = Instant::now() + Duration::from_secs(30);
+    harness.pump_at(now);
+    while !matches!(harness.session().state, Connection::AwaitingResponse { .. }) {
+        assert!(
+            matches!(harness.session().state, Connection::Signing(_)),
+            "the handshake was not sent: the connection is {:?}",
+            harness.session().state
+        );
+        assert!(Instant::now() < deadline, "the handshake was never sent");
+        std::thread::sleep(Duration::from_millis(1));
+        harness.pump_at(now);
+    }
+    let sent = harness.sent();
+    let [(FrameKind::Control, pulse::client_message::Message::SceneListenerHandshake(handshake))] =
+        sent.as_slice()
+    else {
+        panic!("{sent:?}")
+    };
+    handshake.clone()
+}
+
+/// The AoI of one rect from `min` to `max` in `HOME`.
+fn home_aoi(min: IVec2, max: IVec2) -> Vec<pulse::SceneListenerAoi> {
+    vec![pulse::SceneListenerAoi {
+        realm: HOME.to_owned(),
+        parcel_rects: vec![parcel_rect(min, max)],
+    }]
+}
+
+/// A listener retries a rejected announcement, and the next handshake carries the current AoI.
+#[test]
+fn a_listener_rejected_for_its_announcement_retries_with_the_current_aoi() {
+    for reason in [
+        PulseDisconnect::InvalidHandshakeField,
+        PulseDisconnect::PacketCorrupted,
+    ] {
+        let (mut harness, _scenes) = Harness::listener([IVec2::ZERO]);
+        harness.session_mut().state = Connection::AwaitingResponse { timeout_at: 100.0 };
+        harness.session_mut().accepted = false;
+
+        harness.report(PulseStatus::Disconnected(reason));
+        harness.pump_at(5.0);
+        assert_eq!(respawn_at(harness.session()), Some(15.0), "{reason:?}");
+
+        let smaller = home_aoi(IVec2::ZERO, IVec2::new(1, 0));
+        set_listener_aoi(&mut harness.session_mut(), smaller.clone());
+        IoTaskPool::get_or_init(TaskPool::default);
+        let mut wallet = Wallet::default();
+        wallet.finalize_as_guest();
+        harness.world.insert_resource(wallet);
+        harness.redial(Connection::Idle);
+
+        assert_eq!(signed_listener_handshake(&mut harness, 15.0).aoi, smaller);
+    }
+}
+
+/// An update the server rejects on an accepted connection is retried too.
+#[test]
+fn a_listener_rejected_for_an_update_retries() {
+    let (mut harness, _scenes) = Harness::listener([IVec2::ZERO]);
+
+    harness.report(PulseStatus::Disconnected(
+        PulseDisconnect::InvalidSceneListenerField,
+    ));
+    harness.pump_at(5.0);
+
+    assert_eq!(respawn_at(harness.session()), Some(15.0));
+}
+
+/// A player's malformed message would only repeat: it stops.
+#[test]
+fn a_player_rejected_for_a_malformed_handshake_stops() {
+    let mut harness = Harness::player(Connection::AwaitingResponse { timeout_at: 100.0 });
+
+    harness.report(PulseStatus::Disconnected(
+        PulseDisconnect::InvalidHandshakeField,
+    ));
+    harness.pump_at(5.0);
+
+    assert!(matches!(harness.session().state, Connection::Dead));
+}

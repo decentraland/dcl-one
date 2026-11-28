@@ -238,3 +238,100 @@ fn removing_a_scene_drops_its_routing_and_its_transport() {
     assert_eq!(aoi.routed(), routes(&[((5, 5), other)]));
     assert_eq!(aoi.transported(), [other]);
 }
+
+const WORLD: &str = "track.dcl.eth";
+
+/// A ring of parcels around `0,0`-`size,size`: every row but the first and last is two runs.
+fn ring(size: i32) -> Vec<String> {
+    (0..=size)
+        .flat_map(|x| (0..=size).map(move |z| (x, z)))
+        .filter(|&(x, z)| x == 0 || z == 0 || x == size || z == size)
+        .map(|(x, z)| format!("{x},{z}"))
+        .collect()
+}
+
+impl Aoi {
+    fn in_realm(&mut self, hash: &str, realm: &str) {
+        self.app
+            .world_mut()
+            .resource_mut::<SceneRealms>()
+            .0
+            .insert(hash.to_owned(), realm.to_owned());
+    }
+
+    fn rects(&mut self, realm: &str) -> Vec<pulse::ParcelRect> {
+        self.listener()
+            .aoi
+            .iter()
+            .find(|entry| entry.realm == realm)
+            .map(|entry| entry.parcel_rects.clone())
+            .unwrap_or_default()
+    }
+}
+
+/// A world is announced as one rect however irregular its scenes are, while routing stays exact.
+#[test]
+fn a_world_is_announced_as_its_bounding_box() {
+    let mut aoi = Aoi::listening();
+    aoi.in_realm(SCENE, WORLD);
+    aoi.in_realm(OTHER, WORLD);
+    let scene = aoi.context(SCENE, true);
+    aoi.context(OTHER, true);
+    let pointers = ring(20);
+    aoi.definition(
+        SCENE,
+        &pointers.iter().map(String::as_str).collect::<Vec<_>>(),
+    );
+    aoi.definition(OTHER, &["30,-5"]);
+    aoi.update();
+
+    assert_eq!(
+        aoi.rects(WORLD),
+        [parcel_rect(IVec2::new(0, -5), IVec2::new(30, 20))]
+    );
+    let routed = aoi.listener().transport_by_parcel[WORLD].clone();
+    assert_eq!(routed.len(), pointers.len() + 1);
+    // inside the ring, and between the two scenes: in the box, routed to no scene
+    assert!(!routed.contains_key(&IVec2::new(10, 10)));
+    assert!(!routed.contains_key(&IVec2::new(25, 0)));
+    let transport = routed[&IVec2::new(0, 0)];
+    assert_eq!(
+        aoi.app.world().get::<Transport>(transport).unwrap().context,
+        scene
+    );
+}
+
+/// Anything but a world keeps its exact rects: a Genesis City realm's box would take in other
+/// people's scenes.
+#[test]
+fn a_realm_that_is_not_a_world_is_announced_exactly() {
+    let mut aoi = Aoi::listening();
+    aoi.context(SCENE, true);
+    let pointers = ring(4);
+    aoi.definition(
+        SCENE,
+        &pointers.iter().map(String::as_str).collect::<Vec<_>>(),
+    );
+    aoi.update();
+
+    let rects = aoi.rects(REALM);
+    assert!(rects.len() > 1);
+    let area: i64 = rects.iter().map(rect_area).sum();
+    assert_eq!(area as usize, pointers.len());
+}
+
+/// A realm whose only scene has no transport yet has nothing routable, and the server rejects a
+/// realm with no rects, so it waits out of the announcement.
+#[test]
+fn a_realm_without_a_transport_yet_is_not_announced() {
+    let mut aoi = Aoi::listening();
+    aoi.in_realm(OTHER, WORLD);
+    aoi.context(SCENE, true);
+    aoi.context(OTHER, false);
+    aoi.definition(SCENE, &["0,0"]);
+    aoi.definition(OTHER, &["5,5"]);
+    aoi.update();
+
+    let realms: Vec<String> = aoi.listener().aoi.iter().map(|e| e.realm.clone()).collect();
+    assert_eq!(realms, [REALM]);
+}

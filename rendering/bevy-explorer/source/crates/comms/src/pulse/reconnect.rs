@@ -12,7 +12,8 @@
 //! It recovers two ways. A connection that was up and dropped waits a fixed time chosen by the
 //! server's reason. An attempt that never got its handshake accepted backs off, doubling. A refusal
 //! (codes 6, 7, 8, 17 and 18) sets a floor under the wait either way, and a rejected handshake is
-//! retried.
+//! retried. A scene listener also retries a rejected announcement (codes 15, 16 and 19): by the
+//! next attempt the scenes it hosts, or the limits the server applies to it, may have changed.
 
 use rand::Rng as _;
 
@@ -43,6 +44,8 @@ pub const ATTEMPT_BACKOFF_CAP: f64 = 60.0;
 pub const LISTENER_LIMIT_START: f64 = 10.0;
 /// Where the wait after a scene-listener refusal stops: five minutes.
 pub const LISTENER_LIMIT_CAP: f64 = 300.0;
+/// The least wait after the server rejects a scene listener's announcement (codes 15, 16, 19).
+pub const LISTENER_REJECTION_RETRY_DELAY: f64 = 10.0;
 
 /// What went wrong with the connection.
 #[derive(Debug)]
@@ -50,10 +53,13 @@ pub enum Failure {
     /// A failure the driver reported itself (DNS, a connect timeout, an inbound backlog over its
     /// cap, …), before or after the connection came up, or the driver gone without a status.
     Unreached,
-    /// The server's reason; `accepted` is whether this connection's handshake had been accepted.
+    /// The server's reason; `accepted` is whether this connection's handshake had been accepted,
+    /// and `listener` whether the connection is a scene listener's, which retries a rejected
+    /// announcement.
     Disconnected {
         reason: PulseDisconnect,
         accepted: bool,
+        listener: bool,
     },
     /// Rejected (`success = false`), unanswered within the response timeout, or not signable. A
     /// rejection takes the backoff like the others.
@@ -114,7 +120,11 @@ impl ReconnectPolicy {
         // The least wait the reason asks for, whatever the attempt backoff has reached.
         let floor = match failure {
             Failure::Unreached | Failure::HandshakeFailed => 0.0,
-            Failure::Disconnected { reason, accepted } => match reason {
+            Failure::Disconnected {
+                reason,
+                accepted,
+                listener,
+            } => match reason {
                 // The server ended it for good, or the code is one we do not know: a retry would
                 // only repeat it.
                 PulseDisconnect::DuplicateSession
@@ -125,10 +135,16 @@ impl ReconnectPolicy {
                 | PulseDisconnect::InvalidEmoteField
                 | PulseDisconnect::InvalidTeleportField
                 | PulseDisconnect::HandshakeReplayRejected
-                | PulseDisconnect::InvalidHandshakeField
-                | PulseDisconnect::PacketCorrupted
-                | PulseDisconnect::InvalidSceneListenerField
                 | PulseDisconnect::Unknown(_) => return Next::Dead,
+                // A listener's announcement is rebuilt each attempt, so it may pass later.
+                PulseDisconnect::InvalidHandshakeField
+                | PulseDisconnect::PacketCorrupted
+                | PulseDisconnect::InvalidSceneListenerField => {
+                    if !listener {
+                        return Next::Dead;
+                    }
+                    LISTENER_REJECTION_RETRY_DELAY
+                }
                 PulseDisconnect::None
                 | PulseDisconnect::Graceful
                 | PulseDisconnect::AuthTimeout
