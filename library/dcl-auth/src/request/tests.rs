@@ -595,7 +595,7 @@ mod rpc {
                         .and_then(|s| s.as_u64())
                         .unwrap_or(200);
                     (
-                        axum::http::StatusCode::from_u16(status as u16).unwrap(),
+                        axum::http::StatusCode::from_u16(u16::try_from(status).unwrap()).unwrap(),
                         Json(answer),
                     )
                 }

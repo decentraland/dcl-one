@@ -73,8 +73,8 @@ impl VerifyOptions {
 impl Default for VerifyOptions {
     fn default() -> Self {
         Self {
-            expiration_ms: DEFAULT_EXPIRATION.as_millis() as i64,
-            future_ms: Some(DEFAULT_EXPIRATION.as_millis() as i64),
+            expiration_ms: i64::try_from(DEFAULT_EXPIRATION.as_millis()).unwrap_or(i64::MAX),
+            future_ms: Some(i64::try_from(DEFAULT_EXPIRATION.as_millis()).unwrap_or(i64::MAX)),
             max_chain_length: DEFAULT_MAX_CHAIN_LENGTH,
             canonical_metadata_keys: None,
             metadata_validator: None,

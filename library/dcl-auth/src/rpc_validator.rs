@@ -19,6 +19,7 @@ use serde_json::Value;
 
 use super::eip1654::Eip1654Validator;
 use super::error::AuthError;
+use crate::js_date::js_number;
 use dcl_http::{jsonrpc, read_body_capped};
 
 pub const DEFAULT_RPC_TIMEOUT: Duration = Duration::from_secs(30);
@@ -427,8 +428,8 @@ impl<'a> VerificationBlocks<'a> {
     }
 
     async fn select(&mut self, started_ms: i64) -> Result<u64, AuthError> {
-        let target = started_ms as f64 / 1000.0;
-        let lookup_now = chrono::Utc::now().timestamp_millis() as f64 / 1000.0;
+        let target = js_number(started_ms.into()) / 1000.0;
+        let lookup_now = js_number(chrono::Utc::now().timestamp_millis().into()) / 1000.0;
         self.select_at(target, lookup_now).await
     }
 
@@ -502,6 +503,12 @@ fn invalid_block(message: &str) -> AuthError {
     AuthError::Eip1654ValidationFailed(message.into())
 }
 
+#[allow(
+    clippy::cast_precision_loss,
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    reason = "checked first: a non-negative integer below 2^64, which converts exactly"
+)]
 fn block_integer(number: f64) -> Result<u64, AuthError> {
     if !number.is_finite() || number < 0.0 || number.fract() != 0.0 || number >= u64::MAX as f64 {
         return Err(invalid_block(
@@ -518,7 +525,7 @@ fn block_quantity(value: &Value) -> Result<f64, AuthError> {
         .ok_or_else(|| invalid_block("block lookup returned no hex quantity"))?;
     let number = u64::from_str_radix(text, 16)
         .map_err(|_| invalid_block("block lookup returned an invalid quantity"))?;
-    Ok(number as f64)
+    Ok(js_number(number.into()))
 }
 
 /// Why `eth_call` gave no result: the contract reverted, which is its answer that the
