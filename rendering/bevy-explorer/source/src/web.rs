@@ -159,9 +159,11 @@ extern "C" {
     #[wasm_bindgen(js_name = "__engineHeartbeat")]
     fn engine_heartbeat();
 
-    /// Mirror "an engine text field holds keyboard focus" to the page (boot.js stores it
-    /// on window.__engineTextFocus). The react HUD's hotkey handlers see key events before
-    /// the engine does (capture-phase window listener vs the canvas), and an engine-rendered
+    /// Mirror "something claims the keyboard" to the page (boot.js stores it on
+    /// window.__engineTextFocus): an engine text field, press-a-key capture, or the HUD's
+    /// declared text focus.
+    /// The react HUD's hotkey handlers see key events before the engine does
+    /// (capture-phase window listener vs the canvas), and an engine-rendered
     /// text field is invisible to their DOM-focus checks — this flag is how they know to
     /// leave keys alone while the user types into scene UI.
     #[wasm_bindgen(js_name = "__setEngineTextFocus")]

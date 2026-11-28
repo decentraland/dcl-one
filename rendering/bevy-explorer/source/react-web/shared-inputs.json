@@ -5230,6 +5230,10 @@
           "kind": "regular"
         },
         {
+          "name": "sliderKeys.ts",
+          "kind": "regular"
+        },
+        {
           "name": "startupScreen.test.ts",
           "kind": "regular"
         },
@@ -5700,6 +5704,10 @@
         },
         {
           "name": "skybox.test.tsx",
+          "kind": "regular"
+        },
+        {
+          "name": "sliderCancel.test.tsx",
           "kind": "regular"
         },
         {
@@ -10022,7 +10030,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/deploy/web/engine/boot.js",
-      "sha256": "7b629d38b68e6ea08f03a7e68ab0deffd3c7848e557157e8eaf433c8404142f7"
+      "sha256": "c4b06b18dad04f2d550bf75c80003bd398913e70d1d4b922d36369a534f8502a"
     },
     {
       "path": "rendering/bevy-explorer/source/deploy/web/engine/content_cache.js",
@@ -10366,7 +10374,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/bootKeyForwarding.test.ts",
-      "sha256": "7dd86f186db6bbbe9e42414ace562793f0ca7e075488dbe0ef6c31cd1edbd0d3"
+      "sha256": "7658cbc72d38a223fae4dd947cddbcdb887d8367c873d5da89bb49cac999a2eb"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/bootWatchdog.test.ts",
@@ -14196,7 +14204,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/session/useEngineSession.ts",
-      "sha256": "d97915bbc7790460de5c03df0b4305a7ccfb6b3b108f1c40f722d2b4c8845293"
+      "sha256": "9107f3ca1c714e9e182d34241a2e47d372f8ca2436c1e1f816ea36f4319655ef"
     },
     {
       "path": "library/ui/apps/hud/features/settings/KeyBindingsTab.module.css",
@@ -14448,7 +14456,7 @@
     },
     {
       "path": "library/ui/apps/hud/lib/bindingLabels.ts",
-      "sha256": "6e047ced87325a83489442b57dee54a7c92e0d4e54fcd14f14eb91cfa6c91bbf"
+      "sha256": "d122b8b2238cd04f391667a79b31eb2f574ff8be6c409cd0d2a94db1cafc2909"
     },
     {
       "path": "library/ui/apps/hud/lib/hudInset.ts",
@@ -14520,7 +14528,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/editableTarget.test.ts",
-      "sha256": "ac195e251af1365c3ae6d8b13ffe74901757722caecd723669f169729d583976"
+      "sha256": "f62a29884b9830158ce26508a9416d6820d710ac1f3745a8dc2f65e9852bd0d1"
     },
     {
       "path": "library/ui/apps/hud/test/engineViewport.test.tsx",
@@ -14991,6 +14999,10 @@
       "sha256": "f94952f4edcae9b03179db9d739b48ee33194f586c515d37b373b22d1e84a4d9"
     },
     {
+      "path": "library/ui/apps/hud/test/hosted/sliderCancel.test.tsx",
+      "sha256": "2ebf551dc43cd3a286ca3342d1481170721de2d29b8259eb15e9642e21113304"
+    },
+    {
       "path": "library/ui/apps/hud/test/hosted/systemActionShortcuts.test.tsx",
       "sha256": "aff834f2327ebf802090840f6be5285f8e302c0ba9793ca9f9eb18940e11d29f"
     },
@@ -15141,6 +15153,10 @@
     {
       "path": "library/ui/apps/hud/test/signOutOfWorld.test.ts",
       "sha256": "2e3717aca42abcf0c961807281a495d9b33ab16fc7d1735c37d272fcb72cd7be"
+    },
+    {
+      "path": "library/ui/apps/hud/test/sliderKeys.ts",
+      "sha256": "6c8b3628f87727b845f62d4353a68aca0701b3baa4fd58b910c888c9d4cbcdf4"
     },
     {
       "path": "library/ui/apps/hud/test/startupScreen.test.ts",
@@ -45244,6 +45260,21 @@
       "kind": "test:runtime"
     },
     {
+      "from": "library/ui/apps/hud/test/editableTarget.test.ts",
+      "to": "library/ui/apps/hud/test/sliderKeys.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/editableTarget.test.ts",
+      "to": "library/ui/apps/hud/test/sliderKeys.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/editableTarget.test.ts",
+      "to": "library/ui/apps/hud/test/sliderKeys.ts",
+      "kind": "test:runtime"
+    },
+    {
       "from": "library/ui/apps/hud/test/engineViewport.test.tsx",
       "to": "library/ui/apps/hud/features/engine/EngineViewport.tsx",
       "kind": "native:runtime"
@@ -51121,6 +51152,96 @@
     {
       "from": "library/ui/apps/hud/test/hosted/skybox.test.tsx",
       "to": "library/ui/apps/hud/test/harness.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/sliderCancel.test.tsx",
+      "to": "library/explorer-core/lib/inputLock.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/sliderCancel.test.tsx",
+      "to": "library/explorer-core/lib/inputLock.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/sliderCancel.test.tsx",
+      "to": "library/explorer-core/lib/inputLock.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/sliderCancel.test.tsx",
+      "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/sliderCancel.test.tsx",
+      "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/sliderCancel.test.tsx",
+      "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/sliderCancel.test.tsx",
+      "to": "library/ui/apps/hud/lib/bindingLabels.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/sliderCancel.test.tsx",
+      "to": "library/ui/apps/hud/lib/bindingLabels.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/sliderCancel.test.tsx",
+      "to": "library/ui/apps/hud/lib/bindingLabels.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/sliderCancel.test.tsx",
+      "to": "library/ui/apps/hud/test/harness.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/sliderCancel.test.tsx",
+      "to": "library/ui/apps/hud/test/harness.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/sliderCancel.test.tsx",
+      "to": "library/ui/apps/hud/test/harness.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/sliderCancel.test.tsx",
+      "to": "library/ui/apps/hud/test/sliderKeys.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/sliderCancel.test.tsx",
+      "to": "library/ui/apps/hud/test/sliderKeys.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/sliderCancel.test.tsx",
+      "to": "library/ui/apps/hud/test/sliderKeys.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/sliderCancel.test.tsx",
+      "to": "library/ui/index.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/sliderCancel.test.tsx",
+      "to": "library/ui/index.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/sliderCancel.test.tsx",
+      "to": "library/ui/index.ts",
       "kind": "test:runtime"
     },
     {
@@ -67444,6 +67565,11 @@
       "kind": "test:runtime"
     },
     {
+      "from": "rendering/bevy-explorer/source/react-web/src/test/bootKeyForwarding.test.ts",
+      "to": "library/ui/apps/hud/test/sliderKeys.ts",
+      "kind": "test:runtime"
+    },
+    {
       "from": "rendering/bevy-explorer/source/react-web/src/test/bridgeConnectivity.test.tsx",
       "to": "library/ui/apps/hud/design/index.ts",
       "kind": "test:runtime"
@@ -70485,6 +70611,11 @@
     },
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/ui/apps/hud/test/hosted/sliderCancel.test.tsx",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/ui/apps/hud/test/hosted/systemActionShortcuts.test.tsx",
       "kind": "type"
     },
@@ -70671,6 +70802,11 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/ui/apps/hud/test/signOutOfWorld.test.ts",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/ui/apps/hud/test/sliderKeys.ts",
       "kind": "type"
     },
     {

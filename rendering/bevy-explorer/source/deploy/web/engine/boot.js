@@ -36,8 +36,9 @@
 //       heartbeat stops and that is no crash, so the watchdog and the host stand down
 //       (library/explorer-core/engine/bridgeChannel.ts reads it, through each host's engineExited)
 //     __engineHeartbeat / reportEngineError / __rearmCrashWatchdog — crash watchdog plumbing
-//     __engineTextFocus — true while an engine-rendered text field holds keyboard focus (the
-//       wasm keeps it current via __setEngineTextFocus); HUD hotkeys must not fire while set
+//     __engineTextFocus — true while anything claims the keyboard: an engine-rendered text field,
+//       press-a-key capture, or the HUD's own declared `text` focus (the wasm keeps it current via
+//       __setEngineTextFocus); HUD hotkeys must not fire while set
 //     __onEngineCrash(message, source) — OPTIONAL host callback; the watchdog calls it instead of
 //       rendering any overlay (React owns the error UI). The watchdog also posts the engine's
 //       Explorer Error itself (engine_crash_event): the engine can no longer.
@@ -311,9 +312,10 @@ publish()
 const config = window.__bevyBootConfig ?? {}
 
 // ---- engine text focus (CALLED BY THE WASM — src/web.rs update_text_focus) -----------------------
-// True while an engine-rendered text field (e.g. a scene textinput) holds keyboard focus. Those
-// fields live on the canvas, so DOM focus checks can't see them — the HUD's systemAction
-// dispatcher reads this flag instead to leave keys alone while the user is typing.
+// True while anything claims the keyboard: an engine-rendered text field (e.g. a scene
+// textinput), press-a-key capture, or the HUD's declared `text` focus. Engine fields live on the
+// canvas, so DOM focus checks can't see them — the HUD's systemAction dispatcher reads this flag
+// instead to leave keys alone while the user is typing.
 window.__engineTextFocus = false
 window.__setEngineTextFocus = (focused) => {
   window.__engineTextFocus = !!focused
@@ -337,20 +339,39 @@ window.__setShaderCompiling = (on) => {
 // canvas as target, which the target check drops (no loop).
 const ACTIVATION_KEYS = new Set(['Space', 'Enter', 'NumpadEnter'])
 const CONTROLS = 'button, a[href], select, summary, [role="button"], input[type="checkbox"], input[type="radio"]'
-// Inputs that take no text: a focused one (the HUD's switches are checkboxes) leaves every other key
-// to the engine, so Escape still closes its panel. The HUD declares text focus to the engine by the
-// same rule (isEditableTarget, library/ui/apps/hud/lib/bindingLabels.ts): change both together.
+// Which focused element keeps the keys from the engine, one rule with the `text` focus the HUD declares
+// (isEditableTarget, library/ui/apps/hud/lib/bindingLabels.ts, which states it): change both together.
+// A text field keeps every key. So does a slider (a range input): its arrows, Home, End and Page keys
+// adjust it, and the HUD itself closes the top layer on its cancel key, which the engine never hears. An
+// input that takes no text (the HUD's switches are checkboxes) leaves every other key to the engine, so
+// Escape still closes its panel. The rest of a press a field kept (its repeats, its keyup) stays off the
+// engine after the field loses the focus: the engine never heard the press, so a repeat would reach it as
+// a fresh one (a held Escape that left a slider would close a second layer).
 const NON_TEXT_INPUTS = new Set(['checkbox', 'radio'])
 const isTextField = (t) =>
   t instanceof HTMLElement && ((t.tagName === 'INPUT' && !NON_TEXT_INPUTS.has(t.type)) || t.tagName === 'TEXTAREA' || t.isContentEditable)
 // codes whose keydown pressed a control: their keyup stays off the engine too, so Jump is never half-sent
 const pressedControl = new Set()
+// codes whose keydown a text field kept, until their keyup
+const keptByField = new Set()
 const forwardKeyToEngine = (e) => {
   const canvas = document.getElementById('mygame-canvas')
   if (!canvas || e.target === canvas) return
   // the composed path: a field inside a shadow root (the scene editor's UI) is retargeted to its host
   const t = e.composedPath()[0] ?? e.target
-  if (isTextField(t)) return
+  if (isTextField(t)) {
+    if (e.type === 'keydown') keptByField.add(e.code)
+    else keptByField.delete(e.code)
+    return
+  }
+  if (keptByField.has(e.code)) {
+    if (e.type === 'keyup') {
+      keptByField.delete(e.code)
+      return
+    }
+    if (e.repeat) return
+    keptByField.delete(e.code) // a fresh press: its keyup was lost
+  }
   if (e.code === 'Tab') return
   // Space/Enter press a focused control (the HUD's or the scene editor's), not Jump
   if (e.type === 'keydown' && ACTIVATION_KEYS.has(e.code) && t instanceof Element && t.closest(CONTROLS)) {

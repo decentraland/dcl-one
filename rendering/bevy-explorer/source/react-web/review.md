@@ -326,15 +326,19 @@ from HUD-side key matching. The rules:
   messages (dispatcher in `useEngineSession`); add a `case` there. Cancel/close behaviour
   for leaf UI (a lightbox, an open dropdown) = register on the **cancel-layer stack**
   (`library/explorer-core/lib/cancelLayers.ts`) while open — the dispatcher peels popup → layer → panels, one
-  per press, keyboard and gamepad alike.
+  per press, keyboard and gamepad alike. One exception, owned by the session: the cancel key on
+  a focused slider (stated in `library/ui/apps/hud/lib/bindingLabels.ts`). Do not add another.
 - **The only DOM key handling allowed is inside a focused text field** (chat, map search),
   where the engine deliberately resolves nothing (`UiText`). There: match with
   `isCancelKey`, and `stopPropagation()` anything you consumed so the blur rule doesn't
-  also fire on the same press.
+  also fire on the same press. The blur rule's one addition is the slider exception above.
 - **What counts as a text field is one rule in two places**: `isEditableTarget` (the HUD's
-  `text` focus) and the engine page's key forwarding (`isTextField` in
-  `../deploy/web/engine/boot.js`). A checkbox (every switch) or a radio is not one: Escape and
-  movement still reach the engine from it, and Space and Enter press it. Change both together;
+  `text` focus, stated in `library/ui/apps/hud/lib/bindingLabels.ts`) and the engine page's key
+  forwarding (`isTextField` in `../deploy/web/engine/boot.js`). A slider (a range input) keeps
+  its keys like one, so its arrows, Home, End and Page keys never move the avatar; it types
+  nothing, so its cancel key closes the top layer on the first press (the exception above).
+  A checkbox (every switch) or a radio is not one: Escape and movement still reach the engine
+  from it, and Space and Enter press it. Change both together;
   `src/test/bootKeyForwarding.test.ts` fails when they disagree.
 - **A new panel/popup/overlay must be visible to `uiFocus`** — panels via the session's
   `anyPanelOpen`, dialogs via the popup stack (`openPopup`), full-screen input freezes via

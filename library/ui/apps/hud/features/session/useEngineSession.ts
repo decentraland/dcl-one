@@ -37,7 +37,7 @@ import { showTextureOptimization } from '../preview/textureOptimizationToast'
 import { bootMode, IN_WORLD_SHOP, unattendedRun } from '@hud-host'
 import { notificationTimeMs } from '@explorer-core/lib/notificationTime'
 import { showHideUiToast, type UiHidden } from '../hideUi/hideUiToast'
-import { getBindingsSnapshot, isCancelKey, isEditableTarget, keyHintFor, setBindingsSnapshot, useBindingsSnapshot } from '../../lib/bindingLabels'
+import { getBindingsSnapshot, isCancelKey, isEditableTarget, isSliderTarget, keyHintFor, setBindingsSnapshot, useBindingsSnapshot } from '../../lib/bindingLabels'
 import { dispatchCancelLayer } from '@explorer-core/lib/cancelLayers'
 import { isInputLocked, subscribeInputLock } from '@explorer-core/lib/inputLock'
 import { applyProfileEdit } from '@explorer-core/engine/profileEdit'
@@ -137,8 +137,9 @@ import type {
 } from '@explorer-core/engine/protocol'
 
 // Set by the wasm via boot.js __setEngineTextFocus (web) / the CEF relay (native): true while
-// an engine-rendered text field (e.g. a scene textinput) holds keyboard focus. Those fields
-// live on the canvas, so document.activeElement can't see them.
+// anything claims the keyboard: an engine-rendered text field (e.g. a scene textinput),
+// press-a-key capture, or the HUD's own declared `text` focus. Engine fields live on the
+// canvas, so document.activeElement can't see them.
 type EngineFocusWindow = Window & { __engineTextFocus?: boolean }
 
 // Unity's wording (CommunityCardController *_ERROR_MESSAGE); the raw HTTP error only goes to the log.
@@ -1628,7 +1629,8 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
   // Engine hotkey edges arrive on the run-once driver subscription; dispatch through a ref
   // assigned every render so the handler sees current toggles/state without stale closures
   // (same idiom as chatOpenRef).
-  const systemActionRef = useRef<(action: string, pressed: boolean) => void>(() => {})
+  // `heldByHud`: the HUD held the key from the engine itself and acts on it (a slider's cancel key).
+  const systemActionRef = useRef<(action: string, pressed: boolean, heldByHud?: boolean) => void>(() => {})
   // The active press-a-key capture. Only the newest matters: the engine has no capture
   // cancel (a stale request resolves on the NEXT input), so anything but the active id is
   // dropped when an inputCaptured message lands.
@@ -5246,9 +5248,15 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
     const onFocusOut = (): void => void setTimeout(update, 0) // activeElement settles next tick
     // The cancel key blurs a focused text field (fields are otherwise sticky: while one
     // holds focus no actions resolve, so cancel could never escape it). Bubble phase, so a
-    // widget that owns the key — chat's layered Escape — can stopPropagation first.
+    // widget that owns the key — chat's layered Escape — can stopPropagation first. A focused
+    // slider's cancel key also closes the top layer, once per press and only while the engine
+    // reports the claim (the exception bindingLabels states).
     const onKey = (e: KeyboardEvent): void => {
-      if (isCancelKey(e) && isEditableTarget(e.target)) (e.target as HTMLElement).blur()
+      if (!isCancelKey(e) || !isEditableTarget(e.target)) return
+      const field = e.target as HTMLElement
+      field.blur()
+      const engineHoldsKeys = (window as EngineFocusWindow).__engineTextFocus === true
+      if (isSliderTarget(field) && engineHoldsKeys && !e.repeat) systemActionRef.current('Cancel', true, true)
     }
     document.addEventListener('focusin', update, true)
     document.addEventListener('focusout', onFocusOut, true)
@@ -5388,7 +5396,7 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
   // keys fire regardless of where keyboard focus sits. The engine already resolves nothing
   // while `text` focus is declared; the DOM-focus guards stay as defence for the declaration
   // race (a keystroke landing before the uiFocus relay does).
-  systemActionRef.current = (action, pressed) => {
+  systemActionRef.current = (action, pressed, heldByHud = false) => {
     // Scroll edges (both edges — held scrolls continuously) drive the hovered panel via
     // the driver above. Wheel-sourced edges are skipped: the DOM scrolled natively on the
     // wheel event itself, and acting on its echo would double-scroll.
@@ -5402,7 +5410,9 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
     }
     if (!pressed || (phase !== 'world' && phase !== 'lobby') || isInputLocked()) return
     if (isEditableTarget(document.activeElement)) return
-    if ((window as EngineFocusWindow).__engineTextFocus) return
+    // A key the HUD held from the engine itself never reached it: the claim this guard sees is
+    // the slider's own, still being released (the engine reports every keyboard claim).
+    if (!heldByHud && (window as EngineFocusWindow).__engineTextFocus) return
     if (EDITOR_BUILD && !hudActsOn(editorMode, action)) return
     // 'Cancel' is the one action handled even with a popup open: the engine resolved the
     // cancel key or gamepad button, and this is the single layered close — the most recent of

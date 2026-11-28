@@ -972,7 +972,8 @@ fn push_engine_fps(
 
 // Mirror of web.rs update_text_focus for the CEF page: key forwarding to the webview is
 // unconditional (keyboard.rs in cef_offscreen), so while an ENGINE-side text field holds the
-// keyboard (scene textinput, engine text box) the page must be told to treat keys as typing —
+// keyboard (scene textinput, engine text box) the page must be told to treat keys as typing
+// (the claim also covers press-a-key capture and the HUD's own declared text focus) —
 // otherwise useMenuShortcuts fires HUD panels off the typed letters. The shim writes this to
 // `window.__engineTextFocus`, the same signal boot.js provides on web.
 fn push_text_focus(
