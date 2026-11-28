@@ -459,6 +459,8 @@ jobs:
         run: node --test crates/dcl_js/src/modules/Scene.test.cjs
       - name: Test scene signed fetch
         run: node --test crates/dcl_js/src/modules/SignedFetch.test.cjs
+      - name: Test scene credits
+        run: node --test crates/dcl_js/src/modules/SceneCredits.test.cjs
       - name: Test scene topic messaging
         run: node --test crates/dcl_js/src/modules/CommsApi.test.cjs
       - name: Test LiveKit browser bindings

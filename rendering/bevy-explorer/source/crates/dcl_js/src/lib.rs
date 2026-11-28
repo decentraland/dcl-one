@@ -33,6 +33,7 @@ pub mod ethereum_controller;
 pub mod events;
 pub mod fetch;
 pub mod player;
+pub mod scene_credits;
 pub mod system_api;
 pub mod testing;
 

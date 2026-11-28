@@ -37,7 +37,7 @@ use scene_runner::{
 use system_api_types::launch_options::{help_heading::HEADLESS, LaunchOptions};
 use user_input::avatar_movement::AvatarMovementPlugin;
 use wallet::{
-    delegation::{StorageDelegation, StorageDelegations},
+    delegation::{CreditsDelegations, CreditsRefusal, StorageDelegation, StorageDelegations},
     sign_request, Wallet,
 };
 
@@ -232,6 +232,14 @@ enum ControlCommand {
         /// base64 world-storage delegation minted by the orchestrator for this scene
         #[serde(rename = "storageDelegation")]
         storage_delegation: Option<String>,
+        /// The orchestrator's id for this scene's Credits assignment, present when the scene may
+        /// ask for Credits payments. Every renewal names it, so one for an earlier add-scene is refused.
+        #[serde(rename = "creditsAssignment")]
+        credits_assignment: Option<String>,
+        /// base64 Credits delegation for that assignment: the only credential `grantCredits`
+        /// signs with. Absent when the first mint failed; the engine then asks for one.
+        #[serde(rename = "creditsDelegation")]
+        credits_delegation: Option<String>,
         /// The realm this scene belongs to — the same name a client reads from that realm's
         /// `about`. Like `adapter`, it states how the scene is being served, which only the
         /// orchestrator knows. Pulse partitions peer visibility by realm and every world numbers
@@ -251,6 +259,15 @@ enum ControlCommand {
     StorageDelegationResponse {
         #[serde(rename = "sceneId")]
         scene_id: Option<String>,
+        delegation: Option<String>,
+    },
+    /// Credits-delegation renewal: the answer to `credits-delegation-request`. The orchestrator
+    /// renews only scenes whose room it still holds.
+    #[serde(rename = "credits-delegation-response")]
+    CreditsDelegationResponse {
+        #[serde(rename = "sceneId")]
+        scene_id: Option<String>,
+        assignment: Option<String>,
         delegation: Option<String>,
     },
 }
@@ -466,6 +483,8 @@ fn main() -> AppExit {
     if args.orchestrated {
         app.insert_resource(ControlChannel(std::sync::Mutex::new(spawn_stdin_reader())))
             .init_resource::<OrchestratedScenes>()
+            // only an orchestrated server holds Credits delegations, so only it can pay Credits
+            .init_resource::<CreditsDelegations>()
             // structural gate: the engine must never sign gatekeeper handshakes in
             // orchestrated mode — adapters are always minted by the trusted parent
             .insert_resource(comms::DisableSceneRoomGatekeeper(true))
@@ -842,10 +861,12 @@ fn project_server_scene_rooms(
     }
 }
 
-/// Ask the orchestrator for fresh delegations nearing expiry (hammurabi semantics:
-/// 5-minute refresh buffer, at most one request per scene per 30 s).
+/// Ask the orchestrator for fresh delegations nearing expiry (hammurabi semantics: a 5-minute
+/// refresh buffer, at most one request per delegation per 30 s). World storage asks per scene;
+/// Credits asks per assignment, naming it, and also for an assignment whose first mint failed.
 fn request_delegation_renewals(
-    delegations: Res<StorageDelegations>,
+    storage: Res<StorageDelegations>,
+    credits: Res<CreditsDelegations>,
     time: Res<Time>,
     mut last_request: Local<std::collections::HashMap<String, f64>>,
 ) {
@@ -858,24 +879,35 @@ fn request_delegation_renewals(
         .as_millis() as i64;
     let elapsed = time.elapsed_secs_f64();
 
-    // drop throttle state for scenes no longer holding a delegation (removed scenes),
-    // so this map doesn't grow unbounded over the engine's lifetime
-    last_request.retain(|scene, _| delegations.by_scene.contains_key(scene));
-
-    for (scene, delegation) in &delegations.by_scene {
-        if now_ms < delegation.expiration - REFRESH_BUFFER_MS {
-            continue;
-        }
-        let due = last_request
-            .get(scene)
+    // A delegation is asked for at most once per throttle window, by key; the request is built
+    // only when it is sent. Keys of delegations no longer due are dropped afterwards.
+    let mut due = std::collections::HashSet::new();
+    let mut ask = |key: String, request: &dyn Fn() -> serde_json::Value| {
+        let ready = last_request
+            .get(&key)
             .is_none_or(|last| elapsed - last > REQUEST_THROTTLE_SECS);
-        if due {
-            last_request.insert(scene.clone(), elapsed);
-            ctl_emit(&serde_json::json!({
-                "type": "storage-delegation-request", "scene": scene
-            }));
+        if ready {
+            last_request.insert(key.clone(), elapsed);
+            ctl_emit(&request());
+        }
+        due.insert(key);
+    };
+    for (scene, delegation) in &storage.by_scene {
+        if now_ms >= delegation.expiration - REFRESH_BUFFER_MS {
+            ask(
+                format!("storage:{scene}"),
+                &|| serde_json::json!({"type": "storage-delegation-request", "scene": scene}),
+            );
         }
     }
+    for (scene, assignment) in credits.needing_renewal(now_ms, REFRESH_BUFFER_MS) {
+        ask(format!("credits:{assignment}"), &|| {
+            serde_json::json!({
+                "type": "credits-delegation-request", "scene": scene, "assignment": assignment
+            })
+        });
+    }
+    last_request.retain(|key, _| due.contains(key));
 }
 
 // ---------------- orchestrated-mode systems ----------------
@@ -890,8 +922,20 @@ fn drain_control_commands(
     preview: Res<PreviewMode>,
     scenes: Query<&RendererSceneContext>,
     mut delegations: ResMut<StorageDelegations>,
+    mut credits: ResMut<CreditsDelegations>,
     config: Res<AppConfig>,
 ) {
+    let report_credits =
+        |scene_id: &str, result: Result<(), CreditsRefusal>, stored: bool| match result {
+            Ok(()) if stored => {
+                ctl_emit(&serde_json::json!({"type": "credits-delegation-set", "scene": scene_id}))
+            }
+            Ok(()) => {}
+            Err(refusal) => ctl_emit(&serde_json::json!({
+                "type": "error", "scene": scene_id,
+                "error": format!("credits delegation not stored: {refusal}")
+            })),
+        };
     let store_delegation = |scene_id: &str, encoded: &str, delegations: &mut StorageDelegations| {
         match StorageDelegation::parse(encoded, &map_realm_name(&config.home_realm())) {
             Ok(delegation) => {
@@ -929,22 +973,27 @@ fn drain_control_commands(
                 urn,
                 adapter,
                 storage_delegation,
+                credits_assignment,
+                credits_delegation,
                 realm,
             } => {
                 if let Some(encoded) = &storage_delegation {
                     store_delegation(&scene_id, encoded, &mut delegations);
                 }
+                // every add-scene ends the previous Credits assignment, even one refused below
+                credits.remove(&scene_id);
                 scene_realms.0.insert(scene_id.clone(), realm);
                 ctl_emit(&serde_json::json!({"type": "scene-added", "scene": scene_id}));
                 let credential = match adapter {
                     // pre-minted by the trusted orchestrator: never sign anything ourselves
                     Some(adapter) => {
                         if let Err(error) = livekit_address(&adapter) {
-                            // a scene already running keeps its room; a new one never starts
-                            let event = if orch.wanted.contains_key(&scene_id) {
-                                "error"
+                            // a scene already running keeps its room, but not its Credits
+                            // assignment, ended above; a new one never starts
+                            let (event, error) = if orch.wanted.contains_key(&scene_id) {
+                                ("error", format!("{error}; credits assignment dropped"))
                             } else {
-                                "scene-failed"
+                                ("scene-failed", error)
                             };
                             ctl_emit(
                                 &serde_json::json!({"type": event, "scene": scene_id, "error": error}),
@@ -966,6 +1015,13 @@ fn drain_control_commands(
                     // guest identity (mirrors hammurabi's LocalPreview flow)
                     None => RoomCredential::Unminted,
                 };
+                // only an accepted add-scene opens a Credits assignment; without one the scene
+                // cannot ask for Credits payments
+                if let Some(assignment) = credits_assignment {
+                    let result =
+                        credits.assign(&scene_id, assignment, credits_delegation.as_deref());
+                    report_credits(&scene_id, result, credits_delegation.is_some());
+                }
                 orch.wanted
                     .insert(scene_id, WantedScene { urn, credential });
             }
@@ -975,6 +1031,7 @@ fn drain_control_commands(
                 orch.wanted.remove(&scene_id);
                 orch.removed.insert(scene_id.clone());
                 delegations.by_scene.remove(&scene_id);
+                credits.remove(&scene_id);
                 scene_realms.0.remove(&scene_id);
                 // the crdt context is NOT despawned here: the scene tears down over the
                 // following frames and must still resolve it; reap_scene_contexts
@@ -995,6 +1052,17 @@ fn drain_control_commands(
             } => {
                 if let (Some(scene_id), Some(encoded)) = (&scene_id, &delegation) {
                     store_delegation(scene_id, encoded, &mut delegations);
+                }
+            }
+            ControlCommand::CreditsDelegationResponse {
+                scene_id,
+                assignment,
+                delegation,
+            } => {
+                if let (Some(scene_id), Some(assignment), Some(encoded)) =
+                    (&scene_id, &assignment, &delegation)
+                {
+                    report_credits(scene_id, credits.renew(scene_id, assignment, encoded), true);
                 }
             }
         }

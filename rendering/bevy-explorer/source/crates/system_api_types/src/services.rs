@@ -34,6 +34,9 @@ pub enum Service {
     AbgenCdn,
     /// World storage (storage delegation signing)
     Storage,
+    /// Credits server: scene Credits payments, signed with a scene's Credits delegation — headless
+    /// server only
+    Credits,
     /// Ethereum json-rpc websocket
     EthereumRpc,
     /// Social service websocket (friends)
@@ -100,6 +103,7 @@ impl Service {
             Service::AuthPage => ("https", "", "/auth"),
             Service::AbgenCdn => ("https", "abgen-cdn", ""),
             Service::Storage => ("https", "storage", ""),
+            Service::Credits => ("https", "credits", ""),
             Service::EthereumRpc => ("wss", "rpc", ""),
             Service::SocialRpc => ("wss", "rpc-social-service-ea", ""),
             Service::SocialApi => ("https", "social-api", ""),
@@ -135,6 +139,7 @@ impl Service {
             Service::AuthPage => "auth_page",
             Service::AbgenCdn => "abgen_cdn",
             Service::Storage => "storage",
+            Service::Credits => "credits",
             Service::EthereumRpc => "ethereum_rpc",
             Service::SocialRpc => "social_rpc",
             Service::SocialApi => "social_api",
@@ -165,8 +170,12 @@ impl Service {
     /// Whether the web build can point the service elsewhere. The web page signs in at its own
     /// origin's `/auth` and hands the engine the identity, so the browser sign-in services are
     /// not the wasm's to redirect: they have no web param and no row in the HUD's table.
+    /// The web build never pays scene Credits, so Credits has no web side either.
     pub const fn has_web_param(self) -> bool {
-        !matches!(self, Service::AuthApi | Service::AuthPage)
+        !matches!(
+            self,
+            Service::AuthApi | Service::AuthPage | Service::Credits
+        )
     }
 
     pub fn flag(self) -> String {
@@ -236,6 +245,12 @@ pub struct ServiceOverrides {
     /// signed for (the delegation claim must not go out in cleartext)
     #[arg(long, value_name = "url", help_heading = HELP_HEADING)]
     pub storage: Option<String>,
+
+    /// Credits server, which a headless server asks to pay scene Credits; absent =
+    /// `https://credits.<base>`. https only: a request carrying the Credits claim never goes out in
+    /// cleartext
+    #[arg(long, value_name = "url", help_heading = HELP_HEADING)]
+    pub credits: Option<String>,
 
     /// Ethereum json-rpc websocket; absent = `wss://rpc.<base>`
     #[arg(long, value_name = "url", help_heading = HELP_HEADING)]
@@ -325,6 +340,7 @@ impl ServiceOverrides {
             Service::AuthPage => &self.auth_page,
             Service::AbgenCdn => &self.abgen_cdn,
             Service::Storage => &self.storage,
+            Service::Credits => &self.credits,
             Service::EthereumRpc => &self.ethereum_rpc,
             Service::SocialRpc => &self.social_rpc,
             Service::SocialApi => &self.social_api,
@@ -439,6 +455,7 @@ mod tests {
     fn auth_services_have_no_web_side() {
         let table: BTreeSet<_> = service_table().into_iter().map(|d| d.name).collect();
         assert!(!table.contains("authApi") && !table.contains("authPage"));
+        assert!(!table.contains("credits"));
         assert!(table.contains("catalyst"));
     }
 }

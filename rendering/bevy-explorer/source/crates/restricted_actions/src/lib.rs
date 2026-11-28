@@ -6,6 +6,8 @@ mod home;
 mod item_purchase;
 mod map_pins;
 pub mod portables;
+#[cfg(not(target_arch = "wasm32"))]
+mod scene_credits;
 pub mod smart_wearables;
 pub mod teleport;
 pub mod world_access;
@@ -128,6 +130,7 @@ impl Plugin for RestrictedActionsPlugin {
             )
                 .in_set(SceneSets::RestrictedActions),
         );
+        app.add_plugins(SceneCreditsPlugin);
         app.init_resource::<PendingPortableCommands>();
         app.init_resource::<ExplorerUiState>();
         // headless has no InputManagerPlugin; open_explorer_ui still needs the (empty) streams
@@ -1419,6 +1422,37 @@ fn get_user_data(
     });
 }
 
+#[cfg(not(target_arch = "wasm32"))]
+use scene_credits::SceneCreditsPlugin;
+
+/// `~system/SceneCredits` on the web build, which never hosts an authoritative server and so never
+/// pays Credits.
+#[cfg(target_arch = "wasm32")]
+struct SceneCreditsPlugin;
+
+#[cfg(target_arch = "wasm32")]
+impl Plugin for SceneCreditsPlugin {
+    fn build(&self, app: &mut App) {
+        app.add_systems(
+            Update,
+            refuse_grant_credits.in_set(SceneSets::RestrictedActions),
+        );
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+fn refuse_grant_credits(mut events: EventReader<RpcCallEvent>) {
+    for ev in events.read() {
+        if let RpcCall::GrantCredits(request) = &ev.call {
+            request
+                .response
+                .send(common::rpc::GrantCreditsAnswer::refused(
+                    common::rpc::GrantCreditsError::NotAvailable,
+                ));
+        }
+    }
+}
+
 /// Resolves the crdt context (player-presence view) a scene reads. On the client every
 /// scene resolves to the shared context, so every player is visible to every scene; on a
 /// multi-tenant server each scene resolves to its own room's context. An unresolvable
@@ -2323,18 +2357,6 @@ struct SignedFetchMeta {
     hash_payload: Option<String>,
 }
 
-fn delegated_signed_fetch_meta(
-    meta: String,
-    body_hash: Option<String>,
-) -> Result<String, serde_json::Error> {
-    let Some(hash) = body_hash else {
-        return Ok(meta);
-    };
-    let mut value: serde_json::Value = serde_json::from_str(&meta)?;
-    value["hashPayload"] = hash.into();
-    Ok(value.to_string())
-}
-
 fn validate_signed_fetch(
     uri: &str,
     body_hash: Option<&str>,
@@ -2454,10 +2476,15 @@ fn handle_sign_request(
                 let scope_header = delegation.scope_header.clone();
                 let ephemeral = delegation.wallet.clone();
                 let task = IoTaskPool::get().spawn_compat(async move {
-                    let meta = delegated_signed_fetch_meta(meta, hash_payload)?;
-                    let mut headers = sign_request(&method, &uri, &ephemeral, meta).await?;
-                    headers.push(("x-authoritative-scope".to_owned(), scope_header));
-                    Ok(headers)
+                    wallet::delegation::sign_delegated(
+                        &method,
+                        &uri,
+                        &ephemeral,
+                        &meta,
+                        hash_payload,
+                        &scope_header,
+                    )
+                    .await
                 });
                 tasks.push((response.clone(), task));
                 continue;
@@ -3404,25 +3431,6 @@ mod signed_fetch_body_tests {
         }
     }
 
-    #[test]
-    fn delegation_claims_are_preserved_when_body_is_bound() {
-        let original = r#"{"signer":"dcl:authoritative-server","sceneId":"Mixed","parcel":"1,2"}"#;
-        let digest = "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a";
-        let (_, hash_payload) =
-            validate_signed_fetch("https://storage.decentraland.org", Some(digest), false).unwrap();
-        assert_eq!(
-            delegated_signed_fetch_meta(original.to_owned(), None).unwrap(),
-            original
-        );
-        let meta: serde_json::Value = serde_json::from_str(
-            &delegated_signed_fetch_meta(original.to_owned(), hash_payload).unwrap(),
-        )
-        .unwrap();
-        assert_eq!(meta["sceneId"], "Mixed");
-        assert_eq!(meta["signer"], "dcl:authoritative-server");
-        assert_eq!(meta["parcel"], "1,2");
-        assert_eq!(meta["hashPayload"], digest);
-    }
     #[test]
     fn normalizes_fetch_url_before_signing() {
         let (uri, _) = validate_signed_fetch(

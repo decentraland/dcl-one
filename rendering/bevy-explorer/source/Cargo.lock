@@ -10577,6 +10577,7 @@ version = "0.1.0"
 dependencies = [
  "alloy-core",
  "anyhow",
+ "base64 0.22.1",
  "bevy",
  "bevy_console",
  "bevy_dui",
@@ -10599,6 +10600,7 @@ dependencies = [
  "scene_runner",
  "serde",
  "serde_json",
+ "sha2",
  "system_bridge",
  "tokio",
  "ui_core",

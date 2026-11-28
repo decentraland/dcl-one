@@ -183,7 +183,7 @@ const UPSTREAM_OPS: &[&str] = &[
 fn scene_ops(super_user: bool) -> (Vec<OpDecl>, HashMap<&'static str, OpDecl>) {
     let mut ops = vec![op_require(), op_log(), op_error()];
 
-    let op_sets: [Vec<deno_core::OpDecl>; 16] = [
+    let op_sets: [Vec<deno_core::OpDecl>; 17] = [
         op_wrappers::engine::ops(),
         op_wrappers::restricted_actions::ops(),
         op_wrappers::runtime::ops(),
@@ -191,6 +191,7 @@ fn scene_ops(super_user: bool) -> (Vec<OpDecl>, HashMap<&'static str, OpDecl>) {
         op_wrappers::portables::ops(),
         op_wrappers::user_identity::ops(),
         op_wrappers::player::ops(),
+        op_wrappers::scene_credits::ops(),
         op_wrappers::events::ops(),
         op_wrappers::comms::ops(),
         op_wrappers::comms_api::ops(),
@@ -745,6 +746,10 @@ const SYSTEM_MODULES: &[(&str, &str)] = &[
     (
         "~system/SignedFetch",
         include_str!("../../../dcl_js/src/modules/SignedFetch.js"),
+    ),
+    (
+        "~system/SceneCredits",
+        include_str!("../../../dcl_js/src/modules/SceneCredits.js"),
     ),
     (
         "~system/Testing",

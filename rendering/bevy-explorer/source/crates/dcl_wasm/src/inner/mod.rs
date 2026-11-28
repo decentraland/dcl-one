@@ -349,6 +349,9 @@ pub fn builtin_module(state: &WorkerContext, path: &str) -> Result<String, Strin
         "~system/SignedFetch" => {
             Ok(include_str!("../../../dcl_js/src/modules/SignedFetch.js").to_owned())
         }
+        "~system/SceneCredits" => {
+            Ok(include_str!("../../../dcl_js/src/modules/SceneCredits.js").to_owned())
+        }
         "~system/Testing" => Ok(include_str!("../../../dcl_js/src/modules/Testing.js").to_owned()),
         "~system/UserActionModule" => {
             Ok(include_str!("../../../dcl_js/src/modules/UserActionModule.js").to_owned())
