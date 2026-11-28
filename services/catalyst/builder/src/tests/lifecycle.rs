@@ -144,6 +144,7 @@ async fn own_pool() -> Option<PgPool> {
     .execute(&pool)
     .await
     .unwrap();
+    crate::tests::support::publish_registry_index(&mut pool.acquire().await.unwrap(), false).await;
     Some(pool)
 }
 
@@ -1603,12 +1604,12 @@ async fn publish_reads_the_copy_when_it_holds_the_collection() {
 
 #[tokio::test]
 async fn a_standard_publish_opens_the_collections_forum_topic_once() {
-    let forum = super::forum_fake::FakeForum::default();
+    let forum = crate::curation::forum::fake::FakeForum::default();
     let origin = forum.start().await;
     let committee = FakeCommittee::with(&[&address(COMMITTEE_KEY)]);
     let Some(node) = node(Options {
         committee: Some(committee),
-        forum: Some(super::forum_fake::FakeForum::forum(&origin)),
+        forum: Some(crate::curation::forum::fake::FakeForum::forum(&origin)),
         ..Options::default()
     })
     .await
@@ -1848,18 +1849,19 @@ async fn an_amoy_node_saves_publishes_and_names_its_collections_on_amoy() {
         return;
     };
     let saved = Uuid::new_v4();
+    let data = contract::initialize_calldata_based(&address(OWNER_KEY), "Test", AMOY.base_uri);
+    let mut save = collection_save(saved, &short("Amoy", saved));
+    save["data"] = json!(data);
     let (status, body) = call(
         &node.app,
         Some(OWNER_KEY),
         "PUT",
         &format!("/v1/collections/{saved}"),
-        Some(collection_save(saved, &short("Amoy", saved))),
+        Some(save),
     )
     .await;
     assert_eq!(status, 200, "{body}");
-    let calldata =
-        alloy_primitives::hex::decode(&contract::initialize_calldata(&address(OWNER_KEY))[2..])
-            .unwrap();
+    let calldata = alloy_primitives::hex::decode(&data[2..]).unwrap();
     let salt = contract::salt(&saved.to_string());
     let at = contract_of(&node.pool, saved).await;
     assert_eq!(at, contract::address(&AMOY, salt, &calldata));
@@ -1944,6 +1946,66 @@ async fn an_amoy_node_saves_publishes_and_names_its_collections_on_amoy() {
         (status, item["data"]["urn"].clone()),
         (200, json!(item_urn))
     );
+}
+
+/// A standard collection's tokens read their metadata from the base its
+/// `initialize` data names, so a save is kept only when that base is the
+/// network's or the one this node serves at its own address.
+#[tokio::test]
+async fn a_save_names_the_networks_or_the_nodes_token_metadata_base() {
+    use crate::collections::{contract, save};
+    use crate::network::{AMOY, POLYGON};
+    const NODE: &str = "https://node.example.org";
+    const PATH: &str = "/lambdas/collections/standard/erc721/";
+    let Some(node) = node(Options {
+        tune: |state| state.settings.public_url = NODE.into(),
+        ..Options::default()
+    })
+    .await
+    else {
+        return;
+    };
+    let put = |base_uri: String| {
+        let id = Uuid::new_v4();
+        let data = contract::initialize_calldata_based(&address(OWNER_KEY), "Test", &base_uri);
+        let mut body = collection_save(id, &short("Base", id));
+        body["data"] = json!(data);
+        let app = node.app.clone();
+        async move {
+            let path = format!("/v1/collections/{id}");
+            let (status, body) = call(&app, Some(OWNER_KEY), "PUT", &path, Some(body)).await;
+            (id, data, status, body)
+        }
+    };
+    for base_uri in [POLYGON.base_uri.to_string(), format!("{NODE}{PATH}")] {
+        let (id, data, status, body) = put(base_uri).await;
+        assert_eq!(status, 200, "{body}");
+        let calldata = alloy_primitives::hex::decode(&data[2..]).unwrap();
+        assert_eq!(
+            contract_of(&node.pool, id).await,
+            contract::address(&POLYGON, contract::salt(&id.to_string()), &calldata)
+        );
+    }
+    for base_uri in [
+        format!("https://other.example.org{PATH}"),
+        AMOY.base_uri.to_string(),
+        format!("{NODE}{PATH}137/"),
+        String::new(),
+    ] {
+        let (id, _, status, body) = put(base_uri.clone()).await;
+        assert_eq!(
+            (status, body["ok"].clone(), body["error"].clone()),
+            (400, json!(false), json!(save::FOREIGN_BASE_URI)),
+            "{base_uri}: {body}"
+        );
+        let kept: Option<String> =
+            sqlx::query_scalar("SELECT name FROM builder.collections WHERE id = $1")
+                .bind(id)
+                .fetch_optional(&node.pool)
+                .await
+                .unwrap();
+        assert_eq!(kept, None, "{base_uri}");
+    }
 }
 
 #[tokio::test]

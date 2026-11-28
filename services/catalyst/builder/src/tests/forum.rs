@@ -17,8 +17,8 @@ use uuid::Uuid;
 use super::support::{
     FakeCommittee, committee_index, on_chain, scratch_pool, temp_storage, wallet,
 };
+use crate::curation::forum::fake::{API_USERNAME, FakeForum};
 use crate::shared::signed_fetch::test_support::signed_headers_by;
-use crate::tests::forum_fake::{API_USERNAME, FakeForum};
 
 const OWNER_KEY: &str = super::support::OWNER_KEY;
 const STRANGER_KEY: &str = "0x2222222222222222222222222222222222222222222222222222222222222222";
@@ -266,7 +266,7 @@ async fn a_published_collection_gets_one_topic_in_the_nodes_words() {
     let link = format!(
         "{}/t/{}/1001",
         e.origin,
-        crate::tests::forum_fake::slug(&title)
+        crate::curation::forum::fake::slug(&title)
     );
     assert_eq!(body, json!({ "ok": true, "data": link }));
     assert_eq!(
@@ -541,6 +541,7 @@ async fn simultaneous_claims_decide_under_the_collection_lock() {
     };
     sqlx::query("INSERT INTO shop.mirror_state (mirror, network, source_url, last_complete_pass_at, pass_started_at) VALUES ('collections', 'matic', 'https://subgraph.example', timezone('UTC', now()), timezone('UTC', now()))")
         .execute(&pool).await.unwrap();
+    crate::tests::support::publish_registry_index(&mut pool.acquire().await.unwrap(), false).await;
     let e = env_with(pool, true).await;
     let (id, _) = standard(&e.pool, "Simultaneous", true).await;
     sqlx::raw_sql("CREATE FUNCTION builder.delay_forum_claim() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN PERFORM pg_sleep(0.2); RETURN NEW; END $$; CREATE TRIGGER delay_forum_claim BEFORE UPDATE OF forum_claimed_at ON builder.collections FOR EACH ROW EXECUTE FUNCTION builder.delay_forum_claim();")
@@ -788,6 +789,7 @@ async fn no_connection_is_held_while_the_forum_answers() {
     .execute(&pool)
     .await
     .unwrap();
+    crate::tests::support::publish_registry_index(&mut pool.acquire().await.unwrap(), false).await;
     let e = env_with(pool, true).await;
     let (id, _) = standard(&e.pool, "Pooled", true).await;
     e.forum.hold();

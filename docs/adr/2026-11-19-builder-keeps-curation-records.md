@@ -58,8 +58,39 @@ answer as it does upstream.
 - **Deletes.** An item's curations and a collection's curations and events
   go with them; a slot cheque, the record of slots consumed, keeps its
   collection.
-- **Slack notices.** A standard collection's first publication and a
-  third-party publication are announced in the curators' Slack channel
+- **One transition table.** Who may move a curation from one status to
+  another is one table (`services/catalyst/builder/src/curation/transitions.rs`):
+  - a creator (a wallet with a role on the collection) opens a review
+    request when none is pending, and refreshes the content hash of an
+    item's pending curation;
+  - only the committee assigns a review, changes a collection curation's
+    status, or decides an item's curation, and a decided curation reopens
+    only by a new request;
+  - an assignee must be on the committee.
+
+  Each write runs in one transaction that locks the collection row, decides
+  again who may write and reads the newest curation under the lock, so
+  concurrent curators end in one state.
+- **What a decision writes.** A curator's decision records the reviewer, the
+  rejection reasons and message, and a `review.assigned`,
+  `review.approved` or `review.rejected` event; a repeated decision records
+  nothing new, and a rejection resent with other feedback corrects it. Every
+  committee write records its `ops.admin_audit` row in the same transaction.
+- **What an approval pins.** A collection's approval sets each smart
+  wearable's kept video to the `video.mp4` its saved contents name, when the
+  videos route took it; a later save of a published item keeps that video.
+  An item's curation records the item's content hash when it is submitted,
+  and again when its pending curation is refreshed. The committee's
+  approval of an item names the content hash it approves
+  (`curation.contentHash` on `PATCH /v1/items/{id}/curation`): without it the
+  node answers 400, and when the item holds other content, saved after the
+  committee read it, 409 with the current hash; either way it writes
+  nothing. So an approval records only content the approver names, never an
+  edit made between the committee's `approvalData` read and its approval.
+  The item's contents read by its contract and on-chain id stay its latest
+  saved contents.
+- **Slack notices.** A publication, a review request, an assignee change
+  and a new decision are announced in the curators' Slack channel
   (`SLACK_BOT_TOKEN`, `SLACK_CURATION_CHANNEL`), with links to the
   collection's review page and the people's pages on `CREATORS_URL`. A
   notice is sent only after its write commits, in a task of its own with a

@@ -339,6 +339,103 @@ async fn an_item_save_larger_than_the_body_cap_is_refused_before_its_keys_are_re
     assert_eq!(send(&app, &call).await.0, 413);
 }
 
+#[tokio::test]
+async fn each_route_takes_the_body_its_clients_send_and_refuses_more_unread() {
+    let app = app_over(lazy_pool(), |_| ()).await;
+    let padded = |len: usize| {
+        let mut body = br#"{"item":{"id":""#.to_vec();
+        body.resize(len - 3, b'x');
+        body.extend_from_slice(br#""}}"#);
+        body
+    };
+    for mount in ["", "/builder-api"] {
+        let id = Uuid::new_v4();
+        for (method, path, bound) in [
+            (
+                "PUT",
+                format!("{mount}/v1/items/{id}"),
+                crate::ITEM_BODY_LIMIT,
+            ),
+            (
+                "PATCH",
+                format!("{mount}/v1/items/{id}/curation"),
+                crate::BODY_LIMIT,
+            ),
+            (
+                "POST",
+                format!("{mount}/v1/collections/{id}/comments"),
+                crate::BODY_LIMIT,
+            ),
+        ] {
+            for (len, refused) in [(bound, false), (bound + 1, true)] {
+                let call = Call {
+                    method,
+                    path: path.clone(),
+                    key: Some(OWNER_KEY),
+                    source: None,
+                    body: padded(len),
+                };
+                let status = send(&app, &call).await.0;
+                assert_eq!(status == 413, refused, "{method} {path} {len}: {status}");
+            }
+        }
+        for (method, path) in [
+            ("PUT", format!("{mount}/v1/collections/{id}")),
+            ("POST", format!("{mount}/v1/collections/{id}/tos")),
+            ("POST", format!("{mount}/v1/collections/{id}/publish")),
+        ] {
+            let call = Call {
+                method,
+                path: path.clone(),
+                key: Some(OWNER_KEY),
+                source: None,
+                body: padded(crate::LARGE_BODY_LIMIT),
+            };
+            assert_ne!(send(&app, &call).await.0, 413, "{method} {path}");
+        }
+    }
+}
+
+#[tokio::test]
+async fn a_review_caller_over_its_minute_waits_even_with_the_flow_off() {
+    let Some(pool) = super::validator::own_pool().await else {
+        return;
+    };
+    let app = app_over(pool, |_| ()).await;
+    let id = Uuid::new_v4();
+    let write = |key: &'static str, n: usize| Call {
+        method: "POST",
+        path: format!(
+            "/v1/collections/{id}/{}",
+            ["validations", "curation/appeal", "comments"][n % 3]
+        ),
+        key: Some(key),
+        source: None,
+        body: Vec::new(),
+    };
+    for n in 0..crate::limits::REVIEW_WRITES as usize {
+        assert_eq!(send(&app, &write(OWNER_KEY, n)).await.0, 404, "{n}");
+    }
+    let (status, body, retry) = send(&app, &write(OWNER_KEY, 0)).await;
+    assert_eq!(
+        (status, body.as_str(), retry.as_deref()),
+        (429, TOO_MANY, Some("2"))
+    );
+    assert_eq!(send(&app, &write(OTHER_KEY, 0)).await.0, 404);
+
+    let events = |key: &'static str| Call {
+        key: Some(key),
+        ..Call::get(format!("/builder-api/v1/collections/{id}/events"))
+    };
+    for n in 0..crate::limits::REVIEW_READS {
+        assert_eq!(send(&app, &events(OWNER_KEY)).await.0, 404, "{n}");
+    }
+    let (status, _, retry) = send(&app, &events(OWNER_KEY)).await;
+    assert_eq!((status, retry.as_deref()), (429, Some("1")));
+    advance(Duration::seconds(2));
+    assert_eq!(send(&app, &write(OWNER_KEY, 1)).await.0, 404);
+}
+
 async fn seeded(state: &crate::SharedState, n: usize) -> Uuid {
     let owner = super::validator::address(OWNER_KEY);
     let collection = Uuid::new_v4();
@@ -465,9 +562,24 @@ async fn every_item_costs_the_committee_member_by_the_row() {
 }
 
 #[tokio::test]
+async fn the_curations_cost_their_reader_by_the_row() {
+    a_listing_charges_its_rows(|_| "/v1/curations".to_string(), true, false).await;
+}
+
+#[tokio::test]
 async fn an_addresss_collections_cost_their_reader_by_the_row() {
     let owner = super::validator::address(OWNER_KEY);
     a_listing_charges_its_rows(move |_| format!("/v1/{owner}/collections"), false, false).await;
+}
+
+#[tokio::test]
+async fn a_collections_item_curations_cost_their_reader_by_the_row() {
+    a_listing_charges_its_rows(
+        |id| format!("/v1/collections/{id}/itemCurations"),
+        true,
+        true,
+    )
+    .await;
 }
 
 #[tokio::test]
@@ -1070,4 +1182,549 @@ async fn new_drafts_saved_at_once_stay_within_the_wallets_bound() {
         statuses,
         [[200; 3].as_slice(), [413; 9].as_slice()].concat()
     );
+}
+
+/// The bounds table of `services/catalyst/docs/builder.md` states the value
+/// of each constant its rows name and names no constant this test doesn't
+/// check; every numeric constant of the builder crate is a row or listed
+/// here as no bound of the table; and the node's budgets take the
+/// constants' values.
+#[test]
+fn the_builder_doc_states_each_bound_the_code_enforces() {
+    use crate::collections::{listing as cl, publish_third_party, save as cs};
+    use crate::handlers::{curation as hc, newsletter, third_parties as htp, validator as hv};
+    use crate::items::{listing as il, places, save as is, schema, upload, video};
+    use crate::limits as l;
+    fn grouped(n: u64) -> String {
+        let digits = n.to_string();
+        digits
+            .chars()
+            .enumerate()
+            .fold(String::new(), |mut out, (i, digit)| {
+                if i > 0 && (digits.len() - i).is_multiple_of(3) {
+                    out.push(',');
+                }
+                out.push(digit);
+                out
+            })
+    }
+    let count = grouped;
+    let bytes = |n: u64| format!("{} bytes", grouped(n));
+    let binary = |n: u64| {
+        let (unit, size) = [("GiB", 1u64 << 30), ("MiB", 1 << 20), ("KiB", 1 << 10)]
+            .into_iter()
+            .find(|(_, size)| n.is_multiple_of(*size))
+            .unwrap_or(("bytes", 1));
+        format!("{} {unit}", grouped(n / size))
+    };
+    let span = |d: std::time::Duration| {
+        let secs = d.as_secs();
+        let (unit, size) = [("hour", 3_600), ("minute", 60), ("second", 1)]
+            .into_iter()
+            .find(|(_, size)| secs.is_multiple_of(*size))
+            .unwrap();
+        let n = secs / size;
+        format!("{n} {unit}{}", if n == 1 { "" } else { "s" })
+    };
+    let mut ipv6 = axum::http::HeaderMap::new();
+    ipv6.insert("x-real-ip", "2001:db8:5:1::1".parse().unwrap());
+    let block = l::upload_source(&ipv6).unwrap();
+    let request_block = l::source(&ipv6).unwrap();
+    let enforced = [
+        ("limits::SOURCE_READS", count(l::SOURCE_READS.into())),
+        ("limits::SOURCE_WRITES", count(l::SOURCE_WRITES.into())),
+        ("limits::WALLET_READS", count(l::WALLET_READS.into())),
+        ("limits::WALLET_WRITES", count(l::WALLET_WRITES.into())),
+        ("ITEM_BODY_LIMIT", binary(crate::ITEM_BODY_LIMIT as u64)),
+        ("LARGE_BODY_LIMIT", binary(crate::LARGE_BODY_LIMIT as u64)),
+        ("BODY_LIMIT", binary(crate::BODY_LIMIT as u64)),
+        ("limits::WALLET_BYTES", bytes(l::WALLET_BYTES)),
+        ("limits::WALLET_FILES", count(l::WALLET_FILES)),
+        ("limits::NODE_BYTES", bytes(l::NODE_BYTES)),
+        ("limits::NODE_FILES", count(l::NODE_FILES)),
+        ("limits::UNPUBLISHED_KEPT", span(l::UNPUBLISHED_KEPT)),
+        (
+            "limits::SOURCE_UPLOAD_MIB",
+            binary(u64::from(l::SOURCE_UPLOAD_MIB) << 20),
+        ),
+        (
+            "limits::SOURCE_UPLOAD_FILES",
+            count(l::SOURCE_UPLOAD_FILES.into()),
+        ),
+        (
+            "limits::WALLET_UPLOAD_FILES",
+            count(l::WALLET_UPLOAD_FILES.into()),
+        ),
+        (
+            "limits::NEAR_BOUND_PRICE",
+            count(l::NEAR_BOUND_PRICE.into()),
+        ),
+        (
+            "limits::upload_source",
+            format!("/{}", block.rsplit('/').next().unwrap()),
+        ),
+        ("items::upload::MAX_FILES", count(upload::MAX_FILES as u64)),
+        ("items::upload::MAX_BYTES", binary(upload::MAX_BYTES as u64)),
+        ("UPLOAD_BODY_LIMIT", binary(crate::UPLOAD_BODY_LIMIT as u64)),
+        ("items::upload::DEADLINE", span(upload::DEADLINE)),
+        (
+            "storage::gc::SHARED_LOCK_WAIT",
+            span(crate::storage::gc::SHARED_LOCK_WAIT),
+        ),
+        ("FILE_UPLOADS", count(crate::FILE_UPLOADS as u64)),
+        (
+            "FILE_UPLOADS_PER_SIGNER",
+            count(crate::FILE_UPLOADS_PER_SIGNER as u64),
+        ),
+        (
+            "FILE_UPLOADS_PER_SOURCE",
+            count(crate::FILE_UPLOADS_PER_SOURCE as u64),
+        ),
+        (
+            "items::places::RETRY_AFTER_SECS",
+            span(std::time::Duration::from_secs(
+                places::RETRY_AFTER_SECS.into(),
+            )),
+        ),
+        (
+            "items::video::DEFAULT_MAX_BYTES",
+            bytes(video::DEFAULT_MAX_BYTES),
+        ),
+        (
+            "items::video::DEFAULT_DEADLINE",
+            span(video::DEFAULT_DEADLINE),
+        ),
+        (
+            "items::places::IDLE_TIMEOUT",
+            span(crate::items::places::IDLE_TIMEOUT),
+        ),
+        (
+            "items::places::DECLARED_GRACE",
+            span(crate::items::places::DECLARED_GRACE),
+        ),
+        (
+            "items::video::MAX_UPLOADS",
+            count(video::MAX_UPLOADS as u64),
+        ),
+        (
+            "MAX_VIDEO_UPLOADS_SETTING",
+            count(crate::MAX_VIDEO_UPLOADS_SETTING as u64),
+        ),
+        (
+            "items::video::MAX_UPLOADS_PER_SIGNER",
+            count(video::MAX_UPLOADS_PER_SIGNER as u64),
+        ),
+        (
+            "items::video::MAX_UPLOADS_PER_SOURCE",
+            count(video::MAX_UPLOADS_PER_SOURCE as u64),
+        ),
+        (
+            "items::video::WALLET_VIDEO_SECS_A_DAY",
+            span(video::WALLET_VIDEO_SECS_A_DAY),
+        ),
+        (
+            "items::video::SOURCE_VIDEO_SECS_A_DAY",
+            span(video::SOURCE_VIDEO_SECS_A_DAY),
+        ),
+        ("limits::WALLET_ITEMS", count(l::WALLET_ITEMS)),
+        ("limits::WALLET_COLLECTIONS", count(l::WALLET_COLLECTIONS)),
+        (
+            "limits::WALLET_DOCUMENT_BYTES",
+            binary(l::WALLET_DOCUMENT_BYTES),
+        ),
+        (
+            "limits::WALLET_DOCUMENT_KIB",
+            binary(u64::from(l::WALLET_DOCUMENT_KIB) << 10),
+        ),
+        (
+            "limits::SOURCE_DOCUMENT_KIB",
+            binary(u64::from(l::SOURCE_DOCUMENT_KIB) << 10),
+        ),
+        (
+            "limits::DOCUMENT_MIN_KIB",
+            binary(u64::from(l::DOCUMENT_MIN_KIB) << 10),
+        ),
+        (
+            "limits::BYTES_PER_WRITE_TOKEN",
+            binary(l::BYTES_PER_WRITE_TOKEN as u64),
+        ),
+        ("limits::REVIEW_WRITES", count(l::REVIEW_WRITES.into())),
+        ("limits::REVIEW_READS", count(l::REVIEW_READS.into())),
+        (
+            "limits::NEWSLETTER_PER_SOURCE",
+            count(l::NEWSLETTER_PER_SOURCE.into()),
+        ),
+        (
+            "limits::NEWSLETTER_PER_EMAIL",
+            count(l::NEWSLETTER_PER_EMAIL.into()),
+        ),
+        (
+            "limits::NEWSLETTER_PER_NODE",
+            count(l::NEWSLETTER_PER_NODE.into()),
+        ),
+        (
+            "limits::ADDRESSES_TOKENS",
+            count(l::ADDRESSES_TOKENS.into()),
+        ),
+        ("limits::ROWS_PER_TOKEN", count(l::ROWS_PER_TOKEN as u64)),
+        ("limits::BYTES_PER_TOKEN", binary(l::BYTES_PER_TOKEN as u64)),
+        ("limits::LISTING_BYTES", binary(l::LISTING_BYTES as u64)),
+        ("limits::KEYS", count(l::KEYS as u64)),
+        (
+            "limits::UNPUBLISHED_COUNT_TIMEOUT",
+            span(l::UNPUBLISHED_COUNT_TIMEOUT),
+        ),
+        (
+            "limits::source",
+            format!("/{}", request_block.rsplit('/').next().unwrap()),
+        ),
+        ("MIN_SECRET_BYTES", bytes(crate::MIN_SECRET_BYTES as u64)),
+        (
+            "drafts::DRAFTS_CAP",
+            count(crate::drafts::DRAFTS_CAP as u64),
+        ),
+        ("items::listing::ROWS_CAP", count(il::ROWS_CAP as u64)),
+        (
+            "items::listing::EVERY_ITEM_CAP",
+            count(il::EVERY_ITEM_CAP as u64),
+        ),
+        (
+            "collections::listing::COMMITTEE_CAP",
+            count(cl::COMMITTEE_CAP as u64),
+        ),
+        (
+            "collections::listing::ADDRESS_CAP",
+            count(cl::ADDRESS_CAP as u64),
+        ),
+        ("kept::READ_WINDOW", span(crate::kept::READ_WINDOW)),
+        (
+            "committee::MAX_MEMBERS",
+            count(crate::committee::MAX_MEMBERS as u64),
+        ),
+        ("collections::listing::Q_MAX", count(cl::Q_MAX as u64)),
+        (
+            "collections::listing::MAX_ASSIGNEES",
+            count(cl::MAX_ASSIGNEES as u64),
+        ),
+        ("collections::listing::MAX_TAGS", count(cl::MAX_TAGS as u64)),
+        ("collections::listing::TAG_MAX", count(cl::TAG_MAX as u64)),
+        (
+            "curation::rows::MAX_ROWS",
+            count(crate::curation::rows::MAX_ROWS as u64),
+        ),
+        (
+            "collections::publish_third_party::MAX_ITEMS",
+            count(publish_third_party::MAX_ITEMS as u64),
+        ),
+        ("terms::MAX_HASHES", count(crate::terms::MAX_HASHES as u64)),
+        (
+            "terms::MAX_HASH_LEN",
+            count(crate::terms::MAX_HASH_LEN as u64),
+        ),
+        ("items::save::MAX_TAGS", count(is::MAX_TAGS as u64)),
+        ("items::save::MAX_OUTCOMES", count(is::MAX_OUTCOMES as u64)),
+        (
+            "items::schema::MAX_CONTENTS",
+            count(schema::MAX_CONTENTS as u64),
+        ),
+        ("items::schema::LIST_MAX", count(schema::LIST_MAX as u64)),
+        ("items::schema::TEXT_MAX", count(schema::TEXT_MAX as u64)),
+        (
+            "items::schema::REPRESENTATIONS_MAX",
+            count(schema::REPRESENTATIONS_MAX as u64),
+        ),
+        (
+            "items::schema::HIDDEN_MAX",
+            count(schema::HIDDEN_MAX as u64),
+        ),
+        ("items::schema::BONES_MAX", count(schema::BONES_MAX as u64)),
+        (
+            "items::schema::MAX_MAPPINGS",
+            count(schema::MAX_MAPPINGS as u64),
+        ),
+        (
+            "items::schema::MAX_MAPPING_IDS",
+            count(schema::MAX_MAPPING_IDS as u64),
+        ),
+        ("collections::save::NAME_MAX", count(cs::NAME_MAX as u64)),
+        ("collections::save::TEXT_MAX", count(cs::TEXT_MAX as u64)),
+        ("collections::save::LIST_MAX", count(cs::LIST_MAX as u64)),
+        ("collections::save::DATA_MAX", binary(cs::DATA_MAX as u64)),
+        (
+            "handlers::curation::MAX_BULK_ITEMS",
+            count(hc::MAX_BULK_ITEMS as u64),
+        ),
+        (
+            "handlers::newsletter::MAX_BODY",
+            binary(newsletter::MAX_BODY as u64),
+        ),
+        (
+            "handlers::newsletter::MAX_SOURCE",
+            count(newsletter::MAX_SOURCE as u64),
+        ),
+        (
+            "handlers::validator::SMALL_BODY",
+            binary(hv::SMALL_BODY as u64),
+        ),
+        (
+            "handlers::validator::VERDICT_BODY",
+            binary(hv::VERDICT_BODY as u64),
+        ),
+        ("handlers::third_parties::ID_MAX", count(htp::ID_MAX as u64)),
+        ("items::video::BODY_LIMIT", bytes(video::BODY_LIMIT as u64)),
+        ("items::video::FRAMING_BYTES", binary(video::FRAMING_BYTES)),
+        (
+            "items::video::SPOOL_ORPHAN_AGE",
+            span(video::SPOOL_ORPHAN_AGE),
+        ),
+    ];
+    let not_in_table = [
+        "limits::MINUTE",
+        "limits::HOUR",
+        "limits::DAY",
+        "limits::MIB",
+        "limits::UPLOAD_SOURCE_V6_BITS",
+        "items::video::SLICE_BYTES",
+        "handlers::storage::SNIFF_BYTES",
+        "collections::listing::UNPAGINATED_LIMIT",
+        "terms::MAX_ATTEMPTS",
+        "terms::PASS_LIMIT",
+        "access::FILE_PROVIDERS",
+        "access::LOCK_HOLDS",
+        "chain_state::STALE_AFTER",
+        "publication_chain::RECHECK",
+        "collections::deployment::DEPLOYMENT_TTL",
+        "collections::deployment::KEPT_CONTRACTS",
+        "kept::FAILURE_TTL",
+        "kept::FETCH_TIMEOUT",
+        "onchain::MAX_REVIEW_ROWS",
+        "onchain::CURATION_CHUNK",
+        "rarities::RARITIES_TTL",
+        "rarities::MAX_RARITIES",
+        "rarities::NAME_MAX",
+        "rarities::AMOUNT_MAX",
+        "curation::events::JUDGED_RUNS",
+        "curation::forum::TIMEOUT",
+        "curation::forum::MAX_ANSWER",
+        "curation::forum::MAX_LINK",
+        "curation::forum_posts::CLAIM_HOLDS",
+        "curation::forum_posts::ATTEMPT",
+        "curation::forum_posts::MAX_REPLY",
+        "curation::forum_text::MAX_ITEMS",
+        "curation::slack::TIMEOUT",
+        "curation::slack::MAX_NAME",
+        "curation::slack::MAX_QUOTE",
+        "curation::writes::MAX_MESSAGE",
+        "curation::writes::MAX_NOTE",
+        "review::COMMENTS_PER_COLLECTION",
+        "review::COMMENTS_PER_CALLER",
+        "review::APPEALS_PER_COLLECTION",
+        "review::APPEALS_PER_CALLER",
+        "review::MAX_TEXT",
+        "review::DEFAULT_EVENTS",
+        "review::MAX_EVENTS",
+        "review::MAX_PAGE",
+        "publication::MAX_ITEMS",
+        "validator::MAX_ITEMS",
+        "validator::DAILY_REQUESTS",
+        "validator::LEASE",
+        "validator::LEASE_LIMIT",
+        "validator::UNSETTLED_FOR",
+        "validator::KEPT_FOR",
+        "validator::claims::TOKEN",
+        "validator::claims::SHORT_TEXT",
+        "validator::claims::LONG_TEXT",
+        "validator::claims::MAX_FINDINGS",
+        "validator::claims::LOGGED_ERROR",
+    ];
+    let mut wrong = numeric_constants(std::path::Path::new(concat!(
+        env!("DCL_ONE_ROOT"),
+        "/services/catalyst/builder/src"
+    )))
+    .into_iter()
+    .filter(|name| {
+        !enforced.iter().any(|(code, _)| code == name) && !not_in_table.contains(&name.as_str())
+    })
+    .map(|name| format!("{name}: a constant neither in the table nor listed as no bound of it"))
+    .collect::<Vec<_>>();
+    let defaults = l::Limits::default();
+    let now = std::time::Instant::now();
+    for (name, budget, per) in [
+        ("SOURCE_READS", &defaults.source_reads, l::SOURCE_READS),
+        ("SOURCE_WRITES", &defaults.source_writes, l::SOURCE_WRITES),
+        ("WALLET_READS", &defaults.wallet_reads, l::WALLET_READS),
+        ("WALLET_WRITES", &defaults.wallet_writes, l::WALLET_WRITES),
+        ("REVIEW_WRITES", &defaults.review_writes, l::REVIEW_WRITES),
+        ("REVIEW_READS", &defaults.review_reads, l::REVIEW_READS),
+        (
+            "NEWSLETTER_PER_SOURCE",
+            &defaults.newsletter_sources,
+            l::NEWSLETTER_PER_SOURCE,
+        ),
+        (
+            "NEWSLETTER_PER_EMAIL",
+            &defaults.newsletter_emails,
+            l::NEWSLETTER_PER_EMAIL,
+        ),
+        (
+            "NEWSLETTER_PER_NODE",
+            &defaults.newsletter_node,
+            l::NEWSLETTER_PER_NODE,
+        ),
+        (
+            "SOURCE_UPLOAD_MIB",
+            &defaults.source_upload_mib,
+            l::SOURCE_UPLOAD_MIB,
+        ),
+        (
+            "SOURCE_UPLOAD_FILES",
+            &defaults.source_upload_files,
+            l::SOURCE_UPLOAD_FILES,
+        ),
+        (
+            "WALLET_UPLOAD_FILES",
+            &defaults.wallet_upload_files,
+            l::WALLET_UPLOAD_FILES,
+        ),
+        (
+            "SOURCE_DOCUMENT_KIB",
+            &defaults.source_document_kib,
+            l::SOURCE_DOCUMENT_KIB,
+        ),
+        (
+            "WALLET_DOCUMENT_KIB",
+            &defaults.wallet_document_kib,
+            l::WALLET_DOCUMENT_KIB,
+        ),
+    ] {
+        if budget.take_at("probe", per, now).is_err() || budget.take_at("probe", 1, now).is_ok() {
+            wrong.push(format!("{name}: the node's budget holds another value"));
+        }
+    }
+    for (name, held, bound) in [
+        ("WALLET_BYTES", defaults.wallet_bytes, l::WALLET_BYTES),
+        ("WALLET_FILES", defaults.wallet_files, l::WALLET_FILES),
+        ("NODE_BYTES", defaults.node_bytes, l::NODE_BYTES),
+        ("NODE_FILES", defaults.node_files, l::NODE_FILES),
+        (
+            "LISTING_BYTES",
+            defaults.listing_bytes as u64,
+            l::LISTING_BYTES as u64,
+        ),
+    ] {
+        if held != bound {
+            wrong.push(format!("{name}: the node's bound holds {held}"));
+        }
+    }
+    let doc = std::fs::read_to_string(concat!(
+        env!("DCL_ONE_ROOT"),
+        "/services/catalyst/docs/builder.md"
+    ))
+    .unwrap();
+    let rows: Vec<(String, String)> = doc
+        .split_once("\n### Bounds\n")
+        .expect("builder.md has a Bounds table")
+        .1
+        .lines()
+        .take_while(|line| !line.starts_with('#'))
+        .filter_map(|line| {
+            let cells: Vec<&str> = line.split('|').map(str::trim).collect();
+            let code = cells.get(3)?.strip_prefix('`')?.strip_suffix('`')?;
+            Some((code.to_string(), cells[2].to_string()))
+        })
+        .collect();
+    let stated: std::collections::BTreeMap<&str, &str> = rows
+        .iter()
+        .map(|(code, value)| (code.as_str(), value.as_str()))
+        .collect();
+    wrong.extend(
+        enforced
+            .iter()
+            .filter(|(code, value)| stated.get(code) != Some(&value.as_str()))
+            .map(|(code, value)| {
+                format!(
+                    "{code}: the doc states {:?}, the code {value}",
+                    stated.get(code)
+                )
+            }),
+    );
+    wrong.extend(
+        stated
+            .keys()
+            .filter(|code| !enforced.iter().any(|(checked, _)| checked == *code))
+            .map(|code| format!("{code}: no bound of this test")),
+    );
+    if rows.len() != stated.len() {
+        wrong.push("a constant is named by two rows".to_string());
+    }
+    assert!(wrong.is_empty(), "{wrong:#?}");
+}
+
+/// Every numeric constant outside the tests under `dir`, by its path in the
+/// crate: `items::video::MAX_UPLOADS`, `BODY_LIMIT` for `lib.rs`.
+fn numeric_constants(dir: &std::path::Path) -> Vec<String> {
+    const NUMERIC: [&str; 10] = [
+        "u8",
+        "u16",
+        "u32",
+        "u64",
+        "usize",
+        "i32",
+        "i64",
+        "f64",
+        "Duration",
+        "TimeDelta",
+    ];
+    let root = std::path::Path::new(concat!(
+        env!("DCL_ONE_ROOT"),
+        "/services/catalyst/builder/src"
+    ));
+    let mut found = Vec::new();
+    for entry in std::fs::read_dir(dir).unwrap() {
+        let path = entry.unwrap().path();
+        if path.is_dir() {
+            if path.file_name() != Some(std::ffi::OsStr::new("tests")) {
+                found.extend(numeric_constants(&path));
+            }
+            continue;
+        }
+        if path.extension() != Some(std::ffi::OsStr::new("rs")) {
+            continue;
+        }
+        let module = path
+            .strip_prefix(root)
+            .unwrap()
+            .with_extension("")
+            .to_string_lossy()
+            .replace('/', "::");
+        let module = module
+            .strip_suffix("::mod")
+            .or_else(|| module.strip_suffix("lib"))
+            .unwrap_or(&module)
+            .to_string();
+        let source = std::fs::read_to_string(&path).unwrap();
+        let code = source.split("#[cfg(test)]").next().unwrap();
+        for line in code.lines() {
+            let line = line.trim_start();
+            let line = ["pub(crate) ", "pub "]
+                .iter()
+                .find_map(|vis| line.strip_prefix(vis))
+                .unwrap_or(line);
+            let Some((name, kind)) = line
+                .strip_prefix("const ")
+                .and_then(|rest| rest.split_once(": "))
+            else {
+                continue;
+            };
+            let kind = kind.split([' ', '=']).next().unwrap_or("");
+            if NUMERIC.contains(&kind.rsplit("::").next().unwrap_or(kind)) {
+                found.push(if module.is_empty() {
+                    name.to_string()
+                } else {
+                    format!("{module}::{name}")
+                });
+            }
+        }
+    }
+    found
 }

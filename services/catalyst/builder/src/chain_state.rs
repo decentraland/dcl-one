@@ -169,9 +169,16 @@ impl ReadView {
         FROM_COLLECTIONS
     }
 
+    /// The copy joined once as `chain` to a `FROM` item aliased `c` that has
+    /// `builder.collections`' columns.
+    pub fn chain_join(&self) -> &'static str {
+        CHAIN_JOIN
+    }
+
     /// A boolean over [`Self::collections`]: the collection is published (the
     /// copy holds its contract, or the node holds its verified receipt, an
-    /// item's on-chain id or an item curation).
+    /// item's on-chain id or an item curation,
+    /// [`crate::curation::COLLECTION_ITEMS_CURATED`]).
     pub fn published(&self) -> &'static str {
         PUBLISHED
     }
@@ -190,7 +197,7 @@ impl ReadView {
     }
 }
 
-/// The copy joined once as `chain` and [`ReadView::published`] without a view, for
+/// [`ReadView::chain_join`] and [`ReadView::published`] without a view, for
 /// a grant that only "published" opens: the copy never deletes a collection,
 /// so a row of any age shows it on chain, and a stale copy, or one without a
 /// complete pass, can only leave a collection the node holds no record of

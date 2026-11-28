@@ -1,11 +1,15 @@
 //! Builder: the pre-publish draft store behind `builder-api.decentraland.org`:
 //! item and collection drafts, their listings and the committee's
-//! collection listing, uploaded item files and videos, standard collection
-//! publication (Polygon factory parameters prepared here, signed and
-//! submitted by the client, the receipt verified here), the small public
-//! reads (rarities, committee, addresses, item contents, stored files) and
-//! the newsletter opt-in. It keeps no scenes: no projects, manifests, asset
-//! packs or scene files. Schema `builder` (`schemas/50_create.sql`).
+//! collection listing, uploaded item files and videos, the committee's item
+//! curation, standard collection publication (Polygon factory parameters
+//! prepared here, signed and submitted by the client, the receipt verified
+//! here), third-party publication (the items a provider manager submits for
+//! curation with its signed slot cheque, [`cheques`]), the wearable
+//! validator's review requests, which it pulls ([`validator`]), the review
+//! flow creators, curators and the validator share ([`review`]), the small
+//! public reads (rarities, committee, addresses, item contents, stored files)
+//! and the newsletter opt-in. It keeps no scenes: no projects, manifests,
+//! asset packs or scene files. Schema `builder` (`schemas/50_create.sql`).
 //!
 //! What it reuses: the ONE pool; the ONE `http::Outbound` client for the
 //! Polygon RPC, which verifies publication receipts, reads the rarities'
@@ -15,14 +19,16 @@
 //! there, [`items::video`]), which it serves itself (who may read a file is
 //! [`access::read_file`]); signed fetch through `src/auth` and the shared
 //! verifier the explore and social routes use (`shared::signed_fetch`,
-//! [`auth`]); the shop's copy of the Polygon collections subgraph, read by
-//! shared SQL, for a collection's published and approved state
-//! ([`chain_state`]: 503 while the copy can't tell) and the chain facts a
-//! collection's body and listings merge ([`collections`]). The one client
-//! it does not share is [`guarded_client`]: guarded as the shared one, but
-//! it follows no redirect, so a credential it carries never reaches another
-//! host; the terms-of-service forward to the warehouse ([`terms`]), the
-//! newsletter forward, the Slack notices and the forum take it. Every write goes behind
+//! [`auth`]); the marketplace subgraph readers (`marketplace::graph`) for the
+//! curation console's listing ([`onchain`]); the shop's copy of the Polygon
+//! collections subgraph, read by shared SQL, for a collection's published
+//! and approved state ([`chain_state`]: 503 while the copy can't tell) and
+//! the chain facts a collection's body and listings merge ([`collections`]).
+//! The one client it does not share is [`guarded_client`]: guarded as the
+//! shared one, but it follows no redirect, so a credential it carries never
+//! reaches another host; the terms-of-service forward to the warehouse
+//! ([`terms`]), the newsletter forward, the Slack notices and the forum take
+//! it. Every write goes behind
 //! `CREATE_WRITES_ENABLED` ([`writes`], default false, 503 with
 //! `Retry-After`, built the way `social::writes` gates the social writes).
 //!
@@ -30,12 +36,14 @@
 //! item (owner, on-chain manager, current committee member, third-party
 //! manager, as builder-server defines them; 503 when a source it needs can't
 //! tell), and the store functions take the grant it returns. The committee is
-//! [`committee`]'s read of the Polygon collections subgraph. Chain writes
-//! are prepared here and signed and submitted by the client, the receipt
-//! verified over the Polygon RPC; the node never holds a signing key. The
-//! signed-fetch window is the shared verifier's 60 seconds, and
-//! `BUILDER_POLYGON_RPC_URL` must be https to a public host, so a plaintext
-//! verifier can't be fed a fake receipt.
+//! [`committee`]'s read of the Polygon collections subgraph.
+//! The curation routes need the admin bearer (`CATALYRST_BUILDER_ADMIN_TOKEN`,
+//! constant-time, fails closed) or a `BUILDER_ADMIN_ADDRESSES` signer. Chain
+//! writes are prepared here and signed and submitted by the client, the
+//! receipt verified over the Polygon RPC; a slot cheque is verified only;
+//! the node never holds a signing key. The signed-fetch window is the shared
+//! verifier's 60 seconds, and `BUILDER_POLYGON_RPC_URL` must be https to a
+//! public host, so a plaintext verifier can't be fed a fake receipt.
 //!
 //! Mount: `serve` merges [`root_router`] at the root (the
 //! `builder-api.` host's paths) and nests [`router`] under `/builder-api`
@@ -69,8 +77,10 @@ pub mod publication;
 pub mod publication_chain;
 pub mod publication_store;
 pub mod rarities;
+pub mod review;
 pub mod terms;
 pub mod third_parties;
+pub mod validator;
 pub mod writes;
 
 #[cfg(test)]
@@ -81,7 +91,7 @@ use std::sync::Arc;
 use anyhow::{Context as _, bail};
 use axum::Router;
 use axum::extract::DefaultBodyLimit;
-use axum::routing::{get, post};
+use axum::routing::{get, patch, post};
 use sqlx::PgPool;
 
 use crate::chain_index::ChainIndex;
@@ -91,6 +101,7 @@ use dcl_http::{HttpClientCfg, Outbound};
 
 use items::ItemsComponent;
 
+pub const ADMIN_TOKEN_ENV: &str = "CATALYRST_BUILDER_ADMIN_TOKEN";
 /// One 20 MiB upload with its framing.
 pub const UPLOAD_BODY_LIMIT: usize = 21 * 1024 * 1024;
 /// A request body on a route that takes none of the larger ones below.
@@ -151,11 +162,15 @@ pub struct RawSettings {
     /// `ETH_NETWORK`: the Polygon chain it pairs is the builder's
     /// ([`network`]); unset is `mainnet`, `ETH_NETWORK`'s default.
     pub eth_network: Option<String>,
+    /// The address clients reach this node at (`PUBLIC_URL`, else its bind
+    /// address).
+    pub public_url: Option<String>,
     /// `MATIC_COLLECTIONS_SUBGRAPH_URL` as set, empty included; unset reads
     /// the network's collections subgraph.
     pub matic_collections_subgraph_url: Option<String>,
     /// `THIRD_PARTY_REGISTRY_L2_SUBGRAPH_URL` as set, empty included; unset
-    /// reads the network's registry subgraph.
+    /// reads the network's registry subgraph. Read on Amoy only
+    /// ([`State::registry_indexed`]).
     pub third_party_registry_subgraph_url: Option<String>,
     /// `CREATE_WRITES_ENABLED` (false).
     pub writes_enabled: bool,
@@ -164,6 +179,10 @@ pub struct RawSettings {
     /// ([`rarities`]); unset refuses begin/claim/verify and the rarities
     /// routes with 503.
     pub polygon_rpc_url: Option<String>,
+    /// `BUILDER_ADMIN_ADDRESSES`: comma-separated admin wallets.
+    pub admin_addresses: String,
+    /// `CATALYRST_BUILDER_ADMIN_TOKEN`: bearer of the curation routes.
+    pub admin_token: Option<String>,
     pub newsletter_service_url: Option<String>,
     pub newsletter_publication_id: Option<String>,
     pub newsletter_api_key: Option<String>,
@@ -192,6 +211,10 @@ pub struct RawSettings {
     /// `BUILDER_SERVER_URL`: the public origin of these routes, which a
     /// forum post's thumbnails link into.
     pub builder_server_url: Option<String>,
+    /// `WEARABLE_VALIDATOR_CALLBACK_SECRET`: the secret the wearable
+    /// validator signs its calls with; unset, no validation is requested
+    /// and the validator routes refuse.
+    pub validator_secret: Option<String>,
     /// `CORS_ORIGIN`: the origins that may read the answers ([`cors`]).
     pub cors_origin: Option<String>,
     /// `CORS_METHOD`: the methods a preflight allows ([`cors`]).
@@ -208,6 +231,9 @@ pub struct RawSettings {
 pub struct Settings {
     /// The Polygon chain whose contracts, URNs and chain id the builder uses.
     pub network: network::Network,
+    /// This node's own address without a trailing slash, whose token
+    /// metadata base a collection may name; empty names none.
+    pub public_url: String,
     /// The network's collections subgraph, read while
     /// `MATIC_COLLECTIONS_SUBGRAPH_URL` is unset ([`State::collections_subgraph`]).
     pub default_collections_subgraph: Option<String>,
@@ -216,6 +242,8 @@ pub struct Settings {
     pub default_registry_subgraph: Option<String>,
     pub writes_enabled: bool,
     pub polygon_rpc_url: Option<String>,
+    pub admin_addresses: Vec<String>,
+    pub admin_token: Option<String>,
     pub newsletter: Option<NewsletterForward>,
     pub warehouse: Option<WarehouseForward>,
     /// The curators' Slack channel; none sends no notice.
@@ -225,6 +253,8 @@ pub struct Settings {
     pub forum: Option<curation::forum::Forum>,
     /// Where a forum post's thumbnails link to.
     pub builder_server_url: String,
+    /// The wearable validator's secret; none turns validation off.
+    pub validator_secret: Option<validator::Secret>,
     /// Who may read the answers from another origin.
     pub cors: cors::Cors,
     /// The node's bound of unpublished upload bytes, if not the default.
@@ -246,12 +276,15 @@ impl std::fmt::Debug for Settings {
             .field("default_registry_subgraph", &self.default_registry_subgraph)
             .field("writes_enabled", &self.writes_enabled)
             .field("polygon_rpc_url", &self.polygon_rpc_url.is_some())
+            .field("admin_addresses", &self.admin_addresses)
+            .field("admin_token", &self.admin_token.is_some())
             .field("newsletter", &self.newsletter)
             .field("warehouse", &self.warehouse)
             .field("slack", &self.slack)
             .field("links", &self.links)
             .field("forum", &self.forum)
             .field("builder_server_url", &self.builder_server_url)
+            .field("validator_secret", &self.validator_secret)
             .field("cors", &self.cors)
             .field("unpublished_max_bytes", &self.unpublished_max_bytes)
             .field("unpublished_max_files", &self.unpublished_max_files)
@@ -262,6 +295,9 @@ impl std::fmt::Debug for Settings {
 
 /// The most video uploads `BUILDER_VIDEO_UPLOADS_MAX` may set: 64 GB of spool.
 pub const MAX_VIDEO_UPLOADS_SETTING: usize = 256;
+
+/// The shortest admin token or validator secret startup accepts.
+pub const MIN_SECRET_BYTES: usize = 32;
 
 /// The settings of one integration, all set or none; one set without the
 /// others refuses to start, naming the first missing.
@@ -296,6 +332,14 @@ fn non_empty(value: &Option<String>) -> Option<String> {
 }
 
 impl Settings {
+    /// Lowercased, trimmed, blanks dropped.
+    pub fn admin_addresses_from(raw: &str) -> Vec<String> {
+        raw.split(',')
+            .map(|s| s.trim().to_ascii_lowercase())
+            .filter(|s| !s.is_empty())
+            .collect()
+    }
+
     /// The settings from [`RawSettings`]; a configured value the builder
     /// can't use safely (an invalid or unsafe endpoint, a malformed id) is
     /// an error.
@@ -403,6 +447,16 @@ impl Settings {
             }
         }
         let cors = cors::Cors::parse(raw.cors_origin.as_deref(), raw.cors_method.as_deref())?;
+        let validator_secret = non_empty(&raw.validator_secret);
+        let admin_token = non_empty(&raw.admin_token);
+        for (name, secret) in [
+            ("WEARABLE_VALIDATOR_CALLBACK_SECRET", &validator_secret),
+            ("CATALYRST_BUILDER_ADMIN_TOKEN", &admin_token),
+        ] {
+            if secret.as_ref().is_some_and(|s| s.len() < MIN_SECRET_BYTES) {
+                bail!("{name} must be at least {MIN_SECRET_BYTES} bytes");
+            }
+        }
         if raw
             .video_uploads_max
             .is_some_and(|n| !(1..=MAX_VIDEO_UPLOADS_SETTING).contains(&n))
@@ -412,6 +466,9 @@ impl Settings {
         let default_of = |set: &Option<String>, url: &str| set.is_none().then(|| url.to_string());
         Ok(Self {
             network,
+            public_url: non_empty(&raw.public_url)
+                .map(|url| url.trim_end_matches('/').to_string())
+                .unwrap_or_default(),
             default_collections_subgraph: default_of(
                 &raw.matic_collections_subgraph_url,
                 network.collections_subgraph,
@@ -428,8 +485,11 @@ impl Settings {
             links,
             forum,
             builder_server_url: builder_server_url.unwrap_or_default(),
+            validator_secret: validator_secret.map(validator::Secret::from),
             writes_enabled: raw.writes_enabled,
             polygon_rpc_url,
+            admin_addresses: Self::admin_addresses_from(&raw.admin_addresses),
+            admin_token,
             newsletter,
             warehouse,
         })
@@ -468,6 +528,8 @@ pub struct State {
     /// The content sync's state: whether this process is its own content
     /// authority, so an item URN its content lacks is unused.
     pub content_sync: Arc<crate::content::SyncStatus>,
+    /// The wearable validator's calls per source address.
+    pub validator_calls: crate::shared::limits::RateLimiter,
     /// The item video uploads' bounds and those in flight.
     pub videos: items::video::Videos,
     /// The item file uploads in flight, each holding its body in memory:
@@ -537,6 +599,7 @@ impl State {
             notices,
             topics: curation::forum_posts::Topics::default(),
             content_sync: Arc::default(),
+            validator_calls: validator::calls_limiter(),
             videos,
             file_uploads: items::places::Places::new(
                 "file uploads",
@@ -558,7 +621,7 @@ impl State {
             .or_else(|| self.settings.default_collections_subgraph.clone())
     }
 
-    /// The third-party registry subgraph the builder reads:
+    /// The third-party registry subgraph the builder reads on Amoy:
     /// `THIRD_PARTY_REGISTRY_L2_SUBGRAPH_URL` when set, else its network's.
     pub fn registry_subgraph(&self) -> Option<String> {
         self.market
@@ -567,17 +630,25 @@ impl State {
             .or_else(|| self.settings.default_registry_subgraph.clone())
     }
 
+    /// Whether the node reads the third-party registry from the shop's
+    /// published index: on Polygon, the only chain it indexes.
+    pub fn registry_indexed(&self) -> bool {
+        self.settings.network == network::POLYGON
+    }
+
     /// What `serve` logs at startup.
     pub fn sources_label(&self) -> String {
         format!(
-            "polygon_chain={} polygon_rpc={} collections_reader={} newsletter={} warehouse={} slack={} forum={}",
+            "polygon_chain={} polygon_rpc={} collections_reader={} admins={} newsletter={} warehouse={} slack={} forum={} validator={}",
             self.settings.network.chain_id,
             self.settings.polygon_rpc_url.is_some(),
             onchain::configured(self.market.as_deref()),
+            self.settings.admin_addresses.len(),
             self.settings.newsletter.is_some(),
             self.settings.warehouse.is_some(),
             self.settings.slack.is_some(),
             self.settings.forum.is_some(),
+            self.settings.validator_secret.is_some(),
         )
     }
 }
@@ -647,10 +718,31 @@ fn api_routes() -> Router<SharedState> {
             get(handlers::lifecycle::approval_data),
         )
         .route(
+            "/v1/collections/curation",
+            get(handlers::curation::get_curation_collections),
+        )
+        .route("/v1/curations", get(handlers::curation::curations))
+        .route(
+            "/v1/collections/{id}/curation",
+            get(handlers::curation::collection_curation)
+                .patch(handlers::curation::update_collection_curation)
+                .post(handlers::curation::request_collection_curation),
+        )
+        .route(
             "/v1/collections/{id}/curation/post",
             post(handlers::forum::reply),
         )
         .route("/v1/collections/{id}/post", post(handlers::forum::post))
+        .route(
+            "/v1/collections/{id}/itemCurations",
+            get(handlers::curation::collection_item_curations),
+        )
+        .route(
+            "/v1/items/{id}/curation",
+            get(handlers::curation::item_curation)
+                .patch(handlers::curation::update_item_curation)
+                .post(handlers::curation::request_item_curation),
+        )
         .route(
             "/v1/{address}/collections",
             get(handlers::collections::get_address_collections),
@@ -658,6 +750,42 @@ fn api_routes() -> Router<SharedState> {
         .route(
             "/v1/{address}/items",
             get(handlers::collections::get_address_items),
+        )
+        .route(
+            "/v1/collections/{id}/items/{item}/status",
+            patch(handlers::curation::patch_item_status),
+        )
+        .route(
+            "/v1/collections/{id}/items/status",
+            patch(handlers::curation::patch_items_status_bulk),
+        )
+        .route(
+            "/v1/validator/claims",
+            post(handlers::validator::claim)
+                .layer(DefaultBodyLimit::max(handlers::validator::SMALL_BODY)),
+        )
+        .route(
+            "/v1/validator/claims/{id}/lease",
+            post(handlers::validator::lease)
+                .layer(DefaultBodyLimit::max(handlers::validator::SMALL_BODY)),
+        )
+        .route(
+            "/v1/collections/{id}/validations",
+            post(handlers::review::validations),
+        )
+        .route(
+            "/v1/collections/{id}/curation/appeal",
+            post(handlers::review::appeal),
+        )
+        .route("/v1/collections/{id}/events", get(handlers::review::events))
+        .route(
+            "/v1/collections/{id}/comments",
+            post(handlers::review::comments),
+        )
+        .route(
+            "/v1/collections/{id}/validation-result",
+            post(handlers::validator::verdict)
+                .layer(DefaultBodyLimit::max(handlers::validator::VERDICT_BODY)),
         )
         .route("/v1/thirdParties", get(handlers::third_parties::list))
         .route(
@@ -739,10 +867,14 @@ mod router_tests {
     #[test]
     fn settings_parse_the_old_env_rules_and_refuse_unsafe_endpoints() {
         let s = Settings::parse(RawSettings {
+            admin_addresses: " 0xABC, ,0xdef ".into(),
+            admin_token: Some("  ".into()),
             polygon_rpc_url: Some("https://polygon-rpc.com".into()),
             ..RawSettings::default()
         })
         .unwrap();
+        assert_eq!(s.admin_addresses, vec!["0xabc", "0xdef"]);
+        assert_eq!(s.admin_token, None, "a blank token is unset");
         assert!(!s.writes_enabled);
         let err = Settings::parse(RawSettings {
             polygon_rpc_url: Some("http://rpc.example/v3/SECRET".into()),
@@ -890,9 +1022,36 @@ mod router_tests {
     }
 
     #[test]
+    fn a_short_admin_token_or_validator_secret_stops_startup_without_showing_it() {
+        let short = "sk-example-31-bytes-long-secret";
+        let long = "sk-example-32-bytes-long-secret!";
+        assert_eq!((short.len(), long.len()), (31, 32));
+        for (name, raw) in [
+            (
+                "CATALYRST_BUILDER_ADMIN_TOKEN",
+                (|v: &str| RawSettings {
+                    admin_token: Some(v.into()),
+                    ..RawSettings::default()
+                }) as fn(&str) -> RawSettings,
+            ),
+            ("WEARABLE_VALIDATOR_CALLBACK_SECRET", |v: &str| {
+                RawSettings {
+                    validator_secret: Some(v.into()),
+                    ..RawSettings::default()
+                }
+            }),
+        ] {
+            let err = Settings::parse(raw(short)).unwrap_err().to_string();
+            assert!(err.contains(name) && !err.contains(short), "{err}");
+            assert!(Settings::parse(raw(long)).is_ok(), "{name}");
+        }
+    }
+
+    #[test]
     fn no_secret_reaches_the_settings_printout() {
         let settings = Settings::parse(RawSettings {
             polygon_rpc_url: Some("https://rpc.example/v3/sk-example-rpc".into()),
+            admin_token: Some("sk-example-admin-0123456789abcdef".into()),
             newsletter_service_url: Some("https://newsletter.example/v2".into()),
             newsletter_publication_id: Some("pub-example".into()),
             newsletter_api_key: Some("sk-example-newsletter".into()),
@@ -905,16 +1064,19 @@ mod router_tests {
             forum_api_username: Some("builder".into()),
             forum_category: Some("7".into()),
             builder_server_url: Some("https://builder-api.example".into()),
+            validator_secret: Some("sk-example-validator-0123456789abcdef".into()),
             ..RawSettings::default()
         })
         .unwrap();
         let printed = format!("{settings:?}");
         for secret in [
             "sk-example-rpc",
+            "sk-example-admin",
             "sk-example-newsletter",
             "sk-example-warehouse",
             "xoxb-example-slack",
             "sk-example-forum",
+            "sk-example-validator",
         ] {
             assert!(!printed.contains(secret), "{secret} in {printed}");
         }

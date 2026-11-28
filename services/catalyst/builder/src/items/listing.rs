@@ -53,6 +53,21 @@ pub enum ItemsOut {
     Paginated(ItemsPageOut),
 }
 
+impl ItemsOut {
+    /// The items it answers.
+    pub fn len(&self) -> usize {
+        match self {
+            Self::Plain(items) => items.len(),
+            Self::Paginated(page) => page.results.len(),
+        }
+    }
+
+    /// Whether it answers no item.
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+}
+
 #[derive(Debug, Serialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(export, export_to = "builder/"))]
 pub struct ItemsPageOut {

@@ -40,13 +40,13 @@ pub fn address(network: &Network, salt: B256, data: &[u8]) -> String {
     format!("{:#x}", Address::from_slice(&outer[12..]))
 }
 
-/// The bytes of `data` when it is `initialize` calldata naming `creator`, in
-/// its canonical ABI encoding.
-pub fn initialize_for(data: &str, creator: &str) -> Option<Vec<u8>> {
+/// The bytes of `data` and the token metadata base it names, when it is
+/// `initialize` calldata naming `creator`, in its canonical ABI encoding.
+pub fn initialize_for(data: &str, creator: &str) -> Option<(Vec<u8>, String)> {
     let bytes = alloy_primitives::hex::decode(data.strip_prefix("0x")?).ok()?;
     let call = initializeCall::abi_decode(&bytes).ok()?;
     let creator: Address = creator.parse().ok()?;
-    (call.creator == creator && call.abi_encode() == bytes).then_some(bytes)
+    (call.creator == creator && call.abi_encode() == bytes).then_some((bytes, call.baseURI))
 }
 
 /// `initialize` calldata naming `creator`, with no items.
@@ -58,10 +58,16 @@ pub(crate) fn initialize_calldata(creator: &str) -> String {
 /// [`initialize_calldata`] for a collection called `name`.
 #[cfg(test)]
 pub(crate) fn initialize_calldata_named(creator: &str, name: &str) -> String {
+    initialize_calldata_based(creator, name, crate::network::POLYGON.base_uri)
+}
+
+/// [`initialize_calldata_named`] with `base_uri` as its token metadata base.
+#[cfg(test)]
+pub(crate) fn initialize_calldata_based(creator: &str, name: &str, base_uri: &str) -> String {
     let call = initializeCall {
         name: name.into(),
         symbol: "DCL-TST".into(),
-        baseURI: String::new(),
+        baseURI: base_uri.into(),
         creator: creator.parse().unwrap(),
         shouldComplete: true,
         isApproved: false,
@@ -140,7 +146,7 @@ mod tests {
     #[test]
     fn initialize_calldata_is_accepted_only_for_its_creator() {
         let data = "0xd14fee77000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000001400000000000000000000000000000000000000000000000000000000000000180000000000000000000000000c1aba94a79ca07d9d15a62ff5c9b382777e0c70e0000000000000000000000000000000000000000000000000000000000000001000000000000000000000000000000000000000000000000000000000000000000000000000000000000000017113b44fdd661a156cc01b5031e3acf72c32eb30000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000000b566563746f722068617473000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000b44434c2d56435452485453000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000004668747470733a2f2f706565722e646563656e7472616c616e642e6f72672f6c616d626461732f636f6c6c656374696f6e732f7374616e646172642f6572633732312f3133372f00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000001000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000000000000000800000000000000000000000000000000000000000000000000de0b6b3a7640000000000000000000000000000c1aba94a79ca07d9d15a62ff5c9b382777e0c70e00000000000000000000000000000000000000000000000000000000000000c00000000000000000000000000000000000000000000000000000000000000006636f6d6d6f6e0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000001c313a773a566563746f72206861743a3a6861743a426173654d616c6500000000";
-        let bytes = initialize_for(data, OWNER).expect("the owner's calldata");
+        let (bytes, _) = initialize_for(data, OWNER).expect("the owner's calldata");
         assert_eq!(
             address(
                 &crate::network::POLYGON,

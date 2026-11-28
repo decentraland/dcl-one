@@ -587,3 +587,11 @@ mod tests {
         );
     }
 }
+
+/// A loopback Discourse for tests: the calls the node makes, answered as
+/// Discourse answers them, each recorded. The node's own tests and the
+/// conformance replay start it.
+#[cfg(any(test, feature = "test-support"))]
+#[allow(clippy::unwrap_used, reason = "test support")]
+#[path = "../tests/forum_fake.rs"]
+pub mod fake;

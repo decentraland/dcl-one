@@ -213,7 +213,7 @@ Event poster upgrade: run `catalyst schema migrate` before deploying the API. St
 
 Sign-in identity upgrade: run `catalyst schema migrate` before deploying the API. Step `0051_explore_auth_identity_request_id` adds the nullable `auth_request_id` that binds a parked identity to its deep-link request; parked identities stay unbound. Sites binds only Creator Hub sign-ins, whose pickup must then send `x-identity-verifier`.
 
-Curation committee index upgrade: run `catalyst schema migrate` before deploying the API. Step `0052_shop_committee_index` admits the `committee` index in `shop.chain_cursor`. The builder reads the committee from `MATIC_COLLECTIONS_SUBGRAPH_URL`, not from this index.
+Curation committee index upgrade: run `catalyst schema migrate` before deploying the API. Step `0052_shop_committee_index` admits the `committee` index in `shop.chain_cursor`. The builder reads the committee from `MATIC_COLLECTIONS_SUBGRAPH_URL`, not from this index; [what the builder needs](../../services/catalyst/docs/builder.md) lists the rest.
 
 Third-party registry upgrade: run `catalyst schema migrate` before deploying the updated index worker.
 Use the mirror posture or set `MARKETPLACE_THIRD_PARTY_REGISTRY_INDEX_ENABLED=true` and supply a Polygon
@@ -221,6 +221,8 @@ mainnet RPC via `TRADE_RPC_URLS` (chain 137) or, on mainnet, `RPC_ENDPOINT_POLYG
 API replicas can keep their existing `THIRD_PARTY_REGISTRY_L2_SUBGRAPH_URL` to serve provider lists.
 Testnet mirrors default to the Polygon registry subgraph. Once `catalyst index` publishes the full
 registry history, API replicas prefer the native index and can serve manager and slot details.
+On Polygon the builder reads the registry from this index alone, so its third-party routes answer 503
+until the index publishes.
 The NFT worker supplies wallet holdings for open mappings.
 
 The marketplace historical holdings API serves the subgraph worker at

@@ -1,27 +1,35 @@
-//! Third parties: the registry's providers, read live through
-//! [`crate::chain_index::third_parties`], and the virtual third parties
+//! Third parties: the registry's providers and the virtual third parties
 //! (`builder.virtual_third_parties`) that stand for a provider the registry
 //! doesn't have yet, as builder-server keeps them.
+//!
+//! On Polygon the registry is the shop's published index
+//! ([`crate::chain_index::third_party_index`], read by SQL at its published
+//! block); on Amoy, which has no index, the registry subgraph
+//! ([`crate::chain_index::third_parties`]). Either record goes through the
+//! same shape rule, so one that breaks it is a provider nobody manages.
 //!
 //! A write's decision takes only a registry read that started after the
 //! decision began, a read-only one also a read that started up to
 //! [`crate::kept::READ_WINDOW`] before it ([`ThirdParties::registry`],
 //! [`Since`]): one read runs at a time and every request waiting when it
 //! started shares it, so a manager the registry no longer lists loses its
-//! writes as soon as the subgraph has indexed the change, and its reads
-//! within the window. A node with no registry subgraph, or a
-//! read that fails, can't tell: 503, kept [`crate::kept::FAILURE_TTL`], and
-//! never an answer from an older read. No read holds a database connection.
+//! writes as soon as the source holds the change (the index's next
+//! publication, the subgraph's next block), and its reads within the window.
+//! An index with no current publication, a node with no registry subgraph on
+//! Amoy, or a read that fails can't tell: 503, kept
+//! [`crate::kept::FAILURE_TTL`], and never an answer from an older read. No
+//! caller holds a database connection while it waits for the read.
 
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
 use serde_json::{Value, json};
-use sqlx::PgConnection;
+use sqlx::{PgConnection, PgPool};
 
 use crate::chain_index::ChainIndex;
 use crate::chain_index::third_parties::{LinkedContract, Provider};
+use crate::chain_index::third_party_index;
 use crate::http::ApiError;
 use crate::kept::{FETCH_TIMEOUT, Kept, Since};
 
@@ -31,12 +39,16 @@ pub type Registry = Arc<Vec<Provider>>;
 /// The registry read and its single-flight cache.
 pub struct ThirdParties {
     kept: Kept<Registry>,
+    #[cfg(test)]
+    reads: std::sync::atomic::AtomicUsize,
 }
 
 impl Default for ThirdParties {
     fn default() -> Self {
         Self {
             kept: Kept::new(Duration::ZERO),
+            #[cfg(test)]
+            reads: Default::default(),
         }
     }
 }
@@ -47,10 +59,25 @@ impl ThirdParties {
     pub async fn registry(&self, state: &crate::State, since: Since) -> Result<Registry, ApiError> {
         self.kept
             .get_since(since, || {
-                fetch(state.market.clone(), state.registry_subgraph())
+                #[cfg(test)]
+                self.reads.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                fetch(Source::of(state))
             })
             .await
             .ok_or_else(unavailable)
+    }
+}
+
+#[cfg(test)]
+impl ThirdParties {
+    /// Ages the kept read past every read-only decision's window.
+    pub(crate) fn outdate(&self) {
+        self.kept.backdate(crate::kept::READ_WINDOW);
+    }
+
+    /// The registry reads started so far.
+    pub(crate) fn reads(&self) -> usize {
+        self.reads.load(std::sync::atomic::Ordering::SeqCst)
     }
 }
 
@@ -58,20 +85,74 @@ fn unavailable() -> ApiError {
     ApiError::service_unavailable("The third party registry is not available. Try again later.")
 }
 
-async fn fetch(market: Option<Arc<ChainIndex>>, url: Option<String>) -> Option<Registry> {
-    let (market, url) = (market?, url?);
-    let error = match tokio::time::timeout(
-        FETCH_TIMEOUT,
-        crate::chain_index::third_parties::registry(&market, &url),
-    )
-    .await
-    {
+/// Where the node reads the registry.
+#[derive(Clone)]
+enum Source {
+    Index(PgPool),
+    Subgraph(Arc<ChainIndex>, String),
+}
+
+impl Source {
+    fn of(state: &crate::State) -> Option<Self> {
+        if state.registry_indexed() {
+            return Some(Self::Index(state.items.pool().clone()));
+        }
+        Some(Self::Subgraph(
+            state.market.clone()?,
+            state.registry_subgraph()?,
+        ))
+    }
+
+    async fn read(&self) -> Result<Vec<Provider>, String> {
+        match self {
+            Self::Subgraph(market, url) => {
+                crate::chain_index::third_parties::registry(market, url).await
+            }
+            Self::Index(pool) => {
+                let mut providers: Vec<Provider> =
+                    third_party_index::providers(pool, None, None, false)
+                        .await
+                        .map_err(|error| error.to_string())?
+                        .ok_or("the registry index has no current publication")?
+                        .into_iter()
+                        .map(Provider::from)
+                        .collect();
+                providers.sort_by(|a, b| a.id.cmp(&b.id));
+                Ok(providers)
+            }
+        }
+    }
+}
+
+async fn fetch(source: Option<Source>) -> Option<Registry> {
+    let source = source?;
+    let error = match tokio::time::timeout(FETCH_TIMEOUT, source.read()).await {
         Ok(Ok(providers)) => return Some(Arc::new(providers)),
         Ok(Err(error)) => error,
         Err(_) => "timed out".to_string(),
     };
     tracing::warn!(error = %error, "builder third-party registry read failed; third-party decisions answer 503");
     None
+}
+
+/// Whether the registry consumed the slot cheque of `provider` whose digest
+/// is `receipt` (lowercase `0x` hex), read where the registry is read; `Err`
+/// when the node can't tell.
+pub async fn cheque_consumed(
+    state: &crate::State,
+    provider: &str,
+    receipt: &str,
+) -> Result<bool, String> {
+    match Source::of(state).ok_or("no registry subgraph")? {
+        Source::Subgraph(market, url) => {
+            crate::chain_index::third_parties::receipt_exists(&market, &url, receipt).await
+        }
+        Source::Index(pool) => third_party_index::receipts(&pool, provider, receipt)
+            .await
+            .map_err(|error| error.to_string())?
+            .map(|found| !found.is_empty())
+            .ok_or_else(|| "the registry index has no current publication".to_string()),
+    }
 }
 
 /// Locks the provider `id` for the transaction: every write of its virtual

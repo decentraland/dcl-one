@@ -4,13 +4,17 @@
 
 pub(crate) mod support;
 
+mod access_matrix;
+mod cells;
 mod chain_state;
 mod collection_writes;
 mod cors;
+mod curation_auth;
+mod curation_auth_fuzz;
+mod curation_routes;
 mod curations;
 mod draft_persistence;
 mod forum;
-pub(crate) mod forum_fake;
 mod item_files;
 mod item_videos;
 mod items;
@@ -19,8 +23,10 @@ mod limits;
 mod newsletter;
 mod publication_preparation;
 mod publication_transactions;
+mod review_flow;
 mod small_reads;
 mod third_parties;
+mod third_party_matrix;
 mod third_party_publish;
 mod upstream_routes;
 mod validator;
