@@ -12,12 +12,19 @@ import {
 } from 'react'
 import styles from './InputField.module.css'
 
+/**
+ * A field's visible name: text, or elements such as a form's own required mark. Elements are laid out as flex items
+ * so they keep their own type, which drops the space between top-level text and an element: wrap mixed text and
+ * elements in one element.
+ */
+export type FieldLabel = Exclude<ReactNode, undefined | null | boolean>
+
 export type InputFieldProps = Omit<
   InputHTMLAttributes<HTMLInputElement>,
   'size' | 'children' | 'dangerouslySetInnerHTML'
 > & {
-  /** The visible name above the field. A node lets a form put its own content in it, such as a required mark. */
-  label: ReactNode
+  /** The visible name above the field. */
+  label: FieldLabel
   ref?: Ref<HTMLInputElement>
   labelHidden?: boolean
   hint?: string

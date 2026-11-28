@@ -1,6 +1,6 @@
 import { useId, type ComponentProps, type ReactNode } from 'react'
 
-import { FieldChrome, fieldMessageIds, hasLabel } from './InputField'
+import { FieldChrome, fieldMessageIds, hasLabel, type FieldLabel } from './InputField'
 import styles from './InputField.module.css'
 
 /**
@@ -10,8 +10,11 @@ import styles from './InputField.module.css'
  */
 type WebFieldLabel =
   | {
-      /** The visible name above the control. A node lets a form put its own content in it, such as a required mark. */
-      label: Exclude<ReactNode, undefined | null | boolean>
+      /**
+       * The visible name above the control. Keep it always set or never set: adding or removing it changes the
+       * markup around the control, which remounts it (focus and an uncontrolled value are lost).
+       */
+      label: FieldLabel
       labelHidden?: boolean
       description?: string
       error?: string
