@@ -1,23 +1,4 @@
-/* Source's SceneJumpInModal: an 880px panel (at 1920) on the scene-panel radial gradient. Its center
-   stop (#6e31a7 in source) is the nearest brand token, brand purple (#691fa9). */
-.modal {
-  border-radius: var(--dcl-radius-xl);
-  background: radial-gradient(
-    47.39% 84.22% at 42.4% 26.48%,
-    var(--dcl-brand-purple) 0%,
-    var(--dcl-background-web-dark) 100%
-  );
-  box-shadow: 0 4px 25px color-mix(in srgb, var(--dcl-neutrals-white) 25%, transparent);
-}
-
-/* The shared CloseButton, placed over the cover. */
-.close {
-  position: absolute;
-  top: var(--dcl-space-16);
-  right: var(--dcl-space-16);
-  z-index: 2;
-}
-
+/* Source's SceneJumpInModal, drawn on the shared Modal's `scene` card. */
 .heroWrap {
   position: relative;
 }

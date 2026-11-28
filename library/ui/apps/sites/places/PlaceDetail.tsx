@@ -1,10 +1,10 @@
-import type { CSSProperties, KeyboardEvent as ReactKeyboardEvent, ReactNode } from 'react'
+import type { CSSProperties, ReactNode } from 'react'
 import { useEffect, useId, useRef, useState } from 'react'
 import { Button } from '../../../components/Button/Button'
 import { CardActionButton } from '../../../components/CardActionButton/CardActionButton'
-import { CloseButton } from '../../../components/CloseButton/CloseButton'
 import { WebSelect } from '../../../components/InputField/InputFieldWebControls'
 import { JumpInCTA } from '../../../components/JumpInCTA/JumpInCTA'
+import { Modal } from '../../../components/Modal/Modal'
 import { textClasses } from '../../../text-styles'
 import {
   GeneralCopy,
@@ -210,6 +210,8 @@ const coverStyle = (cover?: string | null) =>
       } as CSSProperties)
     : undefined
 
+const noop = () => {}
+
 // The "copied" note of the share button stays for 2 s, the time to read it, then the button shows its label again.
 const COPIED_MS = 2000
 
@@ -234,44 +236,12 @@ function SceneJumpIn({
 }) {
   const [copied, setCopied] = useState(false)
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const dialog = useRef<HTMLDivElement>(null)
   useEffect(
     () => () => {
       if (timer.current) clearTimeout(timer.current)
     },
     []
   )
-  // A modal dialog takes the focus when it opens and gives it back to the control that opened it.
-  useEffect(() => {
-    const opener = document.activeElement instanceof HTMLElement ? document.activeElement : null
-    dialog.current?.querySelector<HTMLElement>('button')?.focus()
-    return () => opener?.focus()
-  }, [])
-  // Tab stays in the dialog: it goes from the last control to the first, and Shift+Tab the other way.
-  const keepFocus = (e: ReactKeyboardEvent<HTMLDivElement>) => {
-    if (e.key !== 'Tab') return
-    const controls = dialog.current?.querySelectorAll<HTMLElement>(
-      'a[href], button:not([disabled])'
-    )
-    if (!controls?.length) return
-    const first = controls[0]!
-    const last = controls[controls.length - 1]!
-    if (e.shiftKey && document.activeElement === first) {
-      e.preventDefault()
-      last.focus()
-    } else if (!e.shiftKey && document.activeElement === last) {
-      e.preventDefault()
-      first.focus()
-    }
-  }
-  useEffect(() => {
-    if (!onClose) return
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose()
-    }
-    document.addEventListener('keydown', onKey)
-    return () => document.removeEventListener('keydown', onKey)
-  }, [onClose])
   const copyLink = () => {
     navigator.clipboard
       ?.writeText(window.location.href)
@@ -284,26 +254,12 @@ function SceneJumpIn({
   }
   const location = place.world ? place.worldName || undefined : place.coords || undefined
   return (
-    <div
-      className={styles.backdrop}
-      onClick={(e) => {
-        if (e.target === e.currentTarget) onClose?.()
-      }}
-    >
-      <div
-        ref={dialog}
-        className={styles.modal}
-        role="dialog"
-        aria-modal="true"
-        aria-label={place.title}
-        onKeyDown={keepFocus}
-      >
-        <CloseButton
-          variant="filled"
-          className={styles.close}
-          aria-label="Close"
-          onClick={onClose}
-        />
+    <Modal
+      layout="scene"
+      pageContent
+      title={place.title}
+      onClose={onClose ?? noop}
+      image={
         <div className={styles.heroWrap}>
           <div className={styles.hero} style={coverStyle(place.image)}>
             <div className={styles.heroFade} />
@@ -336,7 +292,9 @@ function SceneJumpIn({
             )}
           </div>
           <div className={styles.heroText}>
-            <h1 className={styles.modalTitle}>{place.title}</h1>
+            <p className={styles.modalTitle} aria-hidden="true">
+              {place.title}
+            </p>
             <div className={styles.metaRow}>
               {creator?.name && (
                 <div className={styles.creatorRow}>
@@ -374,15 +332,16 @@ function SceneJumpIn({
             {rating}
           </div>
         </div>
-        {detailSlot && <div className={styles.about}>{detailSlot}</div>}
-        {place.description && (
-          <div className={styles.about}>
-            <p className={styles.infoLabel}>What to expect</p>
-            <p className={styles.infoText}>{place.description}</p>
-          </div>
-        )}
-      </div>
-    </div>
+      }
+    >
+      {detailSlot && <div className={styles.about}>{detailSlot}</div>}
+      {place.description && (
+        <div className={styles.about}>
+          <p className={styles.infoLabel}>What to expect</p>
+          <p className={styles.infoText}>{place.description}</p>
+        </div>
+      )}
+    </Modal>
   )
 }
 

@@ -17,14 +17,30 @@ export type ModalProps = Omit<
   | 'aria-labelledby'
 > & {
   title: ReactNode
-  /** Gallery provides a full viewport on mobile and a centered media surface on desktop. */
-  layout?: 'message' | 'gallery'
+  /**
+   * `gallery` fills the screen on a phone and is a centered media surface on a desktop. `detail` is
+   * an 880px card for an event or place detail: `image` is the cover, edge to edge on top, and the
+   * children follow without padding; on a phone it is a full-height sheet below the 64px site
+   * header. `scene` is the same card on the purple scene gradient with 24px corners and a glow,
+   * 680px to 880px wide with the viewport (decentraland.org's place card). `gallery`, `detail` and
+   * `scene` keep the title out of view, so the content draws its own visible heading.
+   */
+  layout?: 'message' | 'gallery' | 'detail' | 'scene'
+  /**
+   * `scene` only: the dialog is the page's main content, such as a place's own page. It is
+   * server-rendered shown, so it paints before the page hydrates, its title is the page's `h1`, and
+   * on a phone (below 600px) it sits in the page flow, without a backdrop or a scroll lock.
+   */
+  pageContent?: boolean
   /** Keeps the title out of view. It still names the dialog. */
   titleHidden?: boolean
   /** The body text. It is the dialog's description. */
   description?: ReactNode
   children?: ReactNode
-  /** A picture or illustration above the title. A decorative one has an empty `alt`. */
+  /**
+   * A picture or illustration above the title. A decorative one has an empty `alt`. In `detail`
+   * and `scene` it is the cover, and may carry the text and actions drawn over it.
+   */
   image?: ReactNode
   checkbox?: CheckboxLabelProps
   /** One or two actions, such as Buttons, the main one last. */
@@ -51,6 +67,9 @@ export type ModalProps = Omit<
   initialFocusRef?: RefObject<HTMLElement | null>
 }
 
+// The width below which a `pageContent` dialog sits in the page instead of above it.
+const PAGE_ON_PHONE = '(max-width: 599.95px)'
+
 function isOutside(dialog: HTMLDialogElement, x: number, y: number) {
   const box = dialog.getBoundingClientRect()
   return x < box.left || x > box.right || y < box.top || y > box.bottom
@@ -60,6 +79,13 @@ function isOutside(dialog: HTMLDialogElement, x: number, y: number) {
 function show(dialog: HTMLDialogElement) {
   if (dialog.open) return
   if (typeof dialog.showModal === 'function') dialog.showModal()
+  else dialog.setAttribute('open', '')
+}
+
+// Shown in the page flow: not modal, so the page stays interactive and scrolls.
+function showInPage(dialog: HTMLDialogElement) {
+  if (dialog.open) return
+  if (typeof dialog.show === 'function') dialog.show()
   else dialog.setAttribute('open', '')
 }
 
@@ -78,6 +104,7 @@ function hide(dialog: HTMLDialogElement) {
 export function Modal({
   title,
   layout = 'message',
+  pageContent = false,
   titleHidden = false,
   description,
   children,
@@ -105,6 +132,20 @@ export function Modal({
     if (dismissible) onClose()
   }
 
+  const inPage = pageContent && layout === 'scene'
+  const detailed = layout === 'detail' || layout === 'scene'
+  // A page's own card names the page too, so its title is the page's main heading.
+  const Heading = inPage ? 'h1' : 'h2'
+  const heading = (
+    <Heading
+      id={titleId}
+      className={styles.title}
+      data-hidden={titleHidden || layout !== 'message' || undefined}
+    >
+      {title}
+    </Heading>
+  )
+
   useEffect(() => {
     const dialog = ref.current
     if (!dialog) return
@@ -112,19 +153,41 @@ export function Modal({
     const returnTo = returnFocusRef?.current ?? opener
     const root = document.documentElement
     const { overflow, paddingRight } = root.style
-    // The scrollbar's width becomes padding, so hiding it does not shift the page.
-    const scrollbar = window.innerWidth - root.clientWidth
-    root.style.overflow = 'hidden'
-    if (scrollbar > 0) root.style.paddingRight = `${scrollbar}px`
-    show(dialog)
-    initialFocusRef?.current?.focus()
-    return () => {
-      hide(dialog)
+    let modal = false
+    const unlock = () => {
       root.style.overflow = overflow
       root.style.paddingRight = paddingRight
+    }
+    const phone =
+      inPage && typeof window.matchMedia === 'function' ? window.matchMedia(PAGE_ON_PHONE) : null
+    // A page dialog arrives shown in the page (server-rendered `open`); above a phone it is reopened modal.
+    const place = () => {
+      if (phone?.matches) {
+        if (modal) hide(dialog)
+        modal = false
+        unlock()
+        showInPage(dialog)
+        return
+      }
+      if (modal) return
+      if (inPage) hide(dialog)
+      modal = true
+      // The scrollbar's width becomes padding, so hiding it does not shift the page.
+      const scrollbar = window.innerWidth - root.clientWidth
+      root.style.overflow = 'hidden'
+      if (scrollbar > 0) root.style.paddingRight = `${scrollbar}px`
+      show(dialog)
+      initialFocusRef?.current?.focus()
+    }
+    place()
+    phone?.addEventListener('change', place)
+    return () => {
+      phone?.removeEventListener('change', place)
+      hide(dialog)
+      unlock()
       if (returnTo?.isConnected) returnTo.focus()
     }
-  }, [returnFocusRef, initialFocusRef])
+  }, [returnFocusRef, initialFocusRef, inPage])
 
   const describedByIds = [description != null ? descriptionId : undefined, describedBy]
     .filter(Boolean)
@@ -135,7 +198,10 @@ export function Modal({
       {...rest}
       ref={ref}
       className={[styles.root, className].filter(Boolean).join(' ')}
-      data-layout={layout === 'gallery' ? 'gallery' : undefined}
+      data-layout={layout === 'message' ? undefined : layout}
+      data-page={inPage || undefined}
+      // A page dialog is server-rendered shown; the effect then decides between the page and the top layer.
+      open={inPage || undefined}
       aria-labelledby={titleId}
       aria-describedby={describedByIds || undefined}
       onKeyDown={(event) => {
@@ -187,29 +253,27 @@ export function Modal({
     >
       {closeButton ? (
         <CloseButton
-          variant="plain"
+          variant={detailed ? 'filled' : 'plain'}
           className={styles.close}
           aria-label={closeLabel}
           onClick={dismiss}
           disabled={!dismissible}
         />
       ) : null}
+      {/* A cover carries its own visible title, so the hidden one is read first, before it. */}
+      {detailed ? heading : null}
       {image != null ? <div className={styles.image}>{image}</div> : null}
       <div className={styles.body}>
-        <div className={styles.text}>
-          <h2
-            id={titleId}
-            className={styles.title}
-            data-hidden={titleHidden || layout === 'gallery' || undefined}
-          >
-            {title}
-          </h2>
-          {description != null ? (
-            <div id={descriptionId} className={styles.description}>
-              {description}
-            </div>
-          ) : null}
-        </div>
+        {detailed && description == null ? null : (
+          <div className={styles.text}>
+            {detailed ? null : heading}
+            {description != null ? (
+              <div id={descriptionId} className={styles.description}>
+                {description}
+              </div>
+            ) : null}
+          </div>
+        )}
         {children != null ? <div className={styles.content}>{children}</div> : null}
         {checkbox ? (
           <div className={styles.checkbox}>

@@ -439,35 +439,6 @@ button.creatorName:focus-visible {
   color: var(--dcl-neutrals-silver);
 }
 
-.backdrop {
-  position: fixed;
-  inset: 0;
-  z-index: 1300;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: var(--dcl-space-24);
-  background-color: rgba(0, 0, 0, 0.8);
-  overflow-y: auto;
-}
-
-.modal {
-  position: relative;
-  width: min(clamp(680px, 45.833vw, 880px), 100%);
-  max-height: 90vh;
-  overflow-y: auto;
-  border-radius: var(--dcl-radius-xl);
-  box-shadow: 0 4px 25px 0 rgba(255, 255, 255, 0.25);
-  background: var(--panel);
-}
-
-.close {
-  position: absolute;
-  top: clamp(14px, 1.042vw, 20px);
-  right: clamp(14px, 1.042vw, 20px);
-  z-index: 2;
-}
-
 .heroWrap {
   position: relative;
 }
@@ -655,24 +626,6 @@ button.creatorName:focus-visible {
   .chatFooter {
     margin: 0 var(--dcl-space-16);
     padding: 10px 0;
-  }
-
-  .backdrop {
-    position: static;
-    padding: 0;
-    background-color: transparent;
-    display: block;
-    overflow-y: visible;
-  }
-
-  .modal {
-    width: 100%;
-    max-width: none;
-    max-height: none;
-    min-height: 60vh;
-    overflow-y: visible;
-    border-radius: 0;
-    box-shadow: none;
   }
 
   .hero {

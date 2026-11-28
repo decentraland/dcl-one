@@ -1,10 +1,9 @@
 import { useEffect, useRef, useState, type MouseEvent } from 'react'
 import { Button } from '../../../components/Button/Button'
-import { CloseButton } from '../../../components/CloseButton/CloseButton'
 import { JumpInCTA } from '../../../components/JumpInCTA/JumpInCTA'
+import { Modal } from '../../../components/Modal/Modal'
 import { GeneralCopy, GeneralMapPin } from '../../../foundations/icons'
 import dclLogo from '../assets/dcl-logo.svg'
-import { Dialog } from './Dialog'
 import type { PlaceCardCreator } from './cards/types'
 import styles from './JumpInModal.module.css'
 
@@ -58,70 +57,73 @@ function JumpInModal({ place, labels, onClose, onJumpIn }: JumpInModalProps) {
 
   const avatar = place.creator?.foundation ? dclLogo : place.creator?.avatarUrl
   return (
-    <Dialog label={place.title} onClose={onClose} className={styles.modal}>
-      <CloseButton
-        variant="filled"
-        className={styles.close}
-        aria-label={labels.close}
-        onClick={onClose}
-      />
-      <div className={styles.heroWrap}>
-        <div className={styles.hero}>
-          {place.image ? <img className={styles.cover} src={place.image} alt="" /> : null}
-          <div className={styles.fade} />
-        </div>
-        <div className={styles.heroText}>
-          <h2 className={styles.title}>{place.title}</h2>
-          <div className={styles.meta}>
-            {place.creator ? (
-              <span className={styles.creatorRow}>
-                {avatar ? <img className={styles.avatar} src={avatar} alt="" /> : null}
-                <span className={styles.by}>
-                  {labels.by} <span className={styles.creator}>{place.creator.name}</span>
+    <Modal
+      layout="scene"
+      title={place.title}
+      closeLabel={labels.close}
+      onClose={onClose}
+      image={
+        <div className={styles.heroWrap}>
+          <div className={styles.hero}>
+            {place.image ? <img className={styles.cover} src={place.image} alt="" /> : null}
+            <div className={styles.fade} />
+          </div>
+          <div className={styles.heroText}>
+            <p className={styles.title} aria-hidden="true">
+              {place.title}
+            </p>
+            <div className={styles.meta}>
+              {place.creator ? (
+                <span className={styles.creatorRow}>
+                  {avatar ? <img className={styles.avatar} src={avatar} alt="" /> : null}
+                  <span className={styles.by}>
+                    {labels.by} <span className={styles.creator}>{place.creator.name}</span>
+                  </span>
+                </span>
+              ) : null}
+              {place.coords ? (
+                <span className={styles.location}>
+                  <GeneralMapPin size={16} aria-hidden="true" />
+                  {place.coords}
+                </span>
+              ) : null}
+            </div>
+            <div className={styles.ctaRow}>
+              {place.jumpHref ? (
+                <JumpInCTA
+                  size="xl"
+                  className={styles.jumpIn}
+                  href={place.jumpHref}
+                  onClick={onJumpIn}
+                  label={labels.jumpIn}
+                />
+              ) : null}
+              <span className={styles.copyWrap}>
+                <Button
+                  iconOnly
+                  variant="outline"
+                  size="lg"
+                  aria-label={labels.copyLink}
+                  onClick={copy}
+                >
+                  <GeneralCopy size={20} aria-hidden="true" />
+                </Button>
+                <span role="status" className={copied ? styles.copied : styles.visuallyHidden}>
+                  {copied ? labels.copied : ''}
                 </span>
               </span>
-            ) : null}
-            {place.coords ? (
-              <span className={styles.location}>
-                <GeneralMapPin size={16} aria-hidden="true" />
-                {place.coords}
-              </span>
-            ) : null}
-          </div>
-          <div className={styles.ctaRow}>
-            {place.jumpHref ? (
-              <JumpInCTA
-                size="xl"
-                className={styles.jumpIn}
-                href={place.jumpHref}
-                onClick={onJumpIn}
-                label={labels.jumpIn}
-              />
-            ) : null}
-            <span className={styles.copyWrap}>
-              <Button
-                iconOnly
-                variant="outline"
-                size="lg"
-                aria-label={labels.copyLink}
-                onClick={copy}
-              >
-                <GeneralCopy size={20} aria-hidden="true" />
-              </Button>
-              <span role="status" className={copied ? styles.copied : styles.visuallyHidden}>
-                {copied ? labels.copied : ''}
-              </span>
-            </span>
+            </div>
           </div>
         </div>
-      </div>
+      }
+    >
       {place.description ? (
         <div className={styles.about}>
           <h3 className={styles.aboutLabel}>{labels.whatToExpect}</h3>
           <p className={styles.aboutText}>{place.description}</p>
         </div>
       ) : null}
-    </Dialog>
+    </Modal>
   )
 }
 

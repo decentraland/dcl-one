@@ -27,7 +27,8 @@ import {
   VoiceBars,
   DclLogo,
   MaskIcon,
-  ScrollThumb
+  ScrollThumb,
+  textClasses
 } from '@dcl/one-ui'
 import { EmbeddedCanvas } from '../embedded'
 import type { GalleryEntry } from '../registry'
@@ -85,6 +86,40 @@ function ModalDemo({ open: initiallyOpen = false, trigger, actions, ...props }: 
         />
       ) : null}
     </>
+  )
+}
+
+// A detail cover draws its own visible title; the dialog's hidden title names it.
+function DetailCover({ title, src }: { title: string; src: string }) {
+  return (
+    <div style={{ position: 'relative', aspectRatio: '880 / 449' }}>
+      <img
+        src={src}
+        alt=""
+        style={{
+          position: 'absolute',
+          inset: 0,
+          width: '100%',
+          height: '100%',
+          objectFit: 'cover'
+        }}
+      />
+      <p
+        aria-hidden="true"
+        className={textClasses.heading3}
+        style={{ position: 'absolute', left: 32, bottom: 24, margin: 0 }}
+      >
+        {title}
+      </p>
+    </div>
+  )
+}
+
+function DetailBody() {
+  return (
+    <p className={textClasses.bodyMd} style={{ margin: 0, padding: 32 }}>
+      What to expect: music, games and friends until the sun goes down.
+    </p>
   )
 }
 
@@ -269,6 +304,34 @@ export const feedbackEntries: GalleryEntry[] = [
             titleHidden
             image={<img src={covers.festival} alt="Festival stage" />}
           />
+        )
+      },
+      {
+        id: 'detail',
+        title: 'Detail layout: an 880px card under an edge-to-edge cover',
+        render: () => (
+          <ModalDemo
+            trigger="Open detail dialog"
+            layout="detail"
+            title="Sunset party"
+            image={<DetailCover title="Sunset party" src={covers.festival} />}
+          >
+            <DetailBody />
+          </ModalDemo>
+        )
+      },
+      {
+        id: 'scene',
+        title: 'Scene layout: the place card on the scene gradient',
+        render: () => (
+          <ModalDemo
+            trigger="Open scene dialog"
+            layout="scene"
+            title="Genesis Plaza"
+            image={<DetailCover title="Genesis Plaza" src={covers.plaza} />}
+          >
+            <DetailBody />
+          </ModalDemo>
         )
       },
       {
