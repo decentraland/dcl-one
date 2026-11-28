@@ -221,10 +221,15 @@ pub fn decode_batch(buf: &[u8]) -> Vec<CrdtMessage> {
     out
 }
 
+/// A CRDT length as its u32 wire field.
 #[allow(
     clippy::cast_possible_truncation,
     reason = "the wire length is u32; a CRDT message stays far below 4 GiB"
 )]
+fn wire_len(n: usize) -> u32 {
+    n as u32
+}
+
 pub fn encode_message(msg: &CrdtMessage, out: &mut Vec<u8>) {
     match msg {
         CrdtMessage::Put {
@@ -244,13 +249,13 @@ pub fn encode_message(msg: &CrdtMessage, out: &mut Vec<u8>) {
             } else {
                 msg_type::APPEND_VALUE
             };
-            let len = (HEADER_LEN + 16 + data.len()) as u32;
+            let len = wire_len(HEADER_LEN + 16 + data.len());
             write_u32(out, len);
             write_u32(out, ty);
             write_u32(out, *entity);
             write_u32(out, *component_id);
             write_u32(out, *timestamp);
-            write_u32(out, data.len() as u32);
+            write_u32(out, wire_len(data.len()));
             out.extend_from_slice(data);
         }
         CrdtMessage::DeleteComponent {
@@ -258,14 +263,14 @@ pub fn encode_message(msg: &CrdtMessage, out: &mut Vec<u8>) {
             component_id,
             timestamp,
         } => {
-            write_u32(out, (HEADER_LEN + 12) as u32);
+            write_u32(out, wire_len(HEADER_LEN + 12));
             write_u32(out, msg_type::DELETE_COMPONENT);
             write_u32(out, *entity);
             write_u32(out, *component_id);
             write_u32(out, *timestamp);
         }
         CrdtMessage::DeleteEntity { entity } => {
-            write_u32(out, (HEADER_LEN + 4) as u32);
+            write_u32(out, wire_len(HEADER_LEN + 4));
             write_u32(out, msg_type::DELETE_ENTITY);
             write_u32(out, *entity);
         }
