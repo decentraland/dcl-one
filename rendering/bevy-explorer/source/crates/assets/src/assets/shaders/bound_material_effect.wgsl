@@ -248,7 +248,10 @@ fn discard_dither(ndc_position: vec2<f32>, world_position: vec3<f32>, fade_targe
     let view_to_frag = position - view.world_position;
     let projection_length = dot(view_to_frag, view_direction);
 
-    if projection_length < depth + 0.35 { // 0.35 = collider radius
+    // nothing behind the camera along the cone's axis is between it and the focus. When the
+    // camera is pulled in beside the focus, the axis points sideways and that side covers much
+    // of the view
+    if projection_length > 0.0 && projection_length < depth + 0.35 { // 0.35 = collider radius
         let cone_distance = 
             // distance from ray to target
             max(0.0, length(position - (view.world_position.xyz + (view_direction * projection_length))) - radius)
