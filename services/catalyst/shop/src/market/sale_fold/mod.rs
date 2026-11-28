@@ -333,6 +333,34 @@ async fn valid(
     )))
 }
 
+/// `net`'s publication as a read on `c` may take it at `now`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Published {
+    /// The block through which it holds every sale.
+    pub through: i64,
+    /// Identity of the published history, stable across append-only advances.
+    pub generation: Uuid,
+    /// The instant its inputs keep it fresh until.
+    pub fresh_until: DateTime<Utc>,
+}
+
+/// `net`'s publication on `c` when it is valid and fresh at `now`: a read on
+/// the caller's own snapshot may take its sales up to its block.
+pub async fn published(
+    c: &mut PgConnection,
+    net: ChainNet,
+    now: DateTime<Utc>,
+) -> anyhow::Result<Option<Published>> {
+    Ok(valid(c, net, now)
+        .await?
+        .filter(|(_, fresh_until)| now <= *fresh_until)
+        .map(|(marker, fresh_until)| Published {
+            through: marker.block_number,
+            generation: marker.generation,
+            fresh_until,
+        }))
+}
+
 /// Of `nets`, those whose `shop.nft_last_sale` a read on `c` may take at
 /// `now`: a valid, fresh publication whose table was built from its input
 /// history and reaches its block.
@@ -791,4 +819,129 @@ pub(super) async fn pass(pool: &PgPool, rpc: &Rpc<'_>, net: ChainNet) -> anyhow:
     }
     tx.commit().await?;
     Ok(())
+}
+
+/// A published sales history written directly, for a test of what a reader
+/// takes from it rather than of the fold that builds it.
+#[cfg(test)]
+pub(crate) mod test_support {
+    use sqlx::PgPool;
+
+    use super::super::chain_walk::ChainNet;
+    use super::super::{listings, sale_history};
+    use super::PUBLICATION_VERSION;
+
+    /// Publishes `net`'s sales history through `block`, as a fold that just
+    /// ran there would: its three input cursors folded at `block` now (an
+    /// existing cursor keeps its position and gains the sales fields), and a
+    /// publication over them, at `block` or at the lowest existing cursor's
+    /// folded block below it. Returns the published block: the rows at or
+    /// below it are the history a reader may take.
+    pub async fn publish(pool: &PgPool, net: ChainNet, block: i64) -> i64 {
+        sqlx::query(
+            "INSERT INTO shop.chain_cursor (indexer, network, chain_id, start_block, last_block, last_block_hash, \
+                 full_history, folded_block, folded_at, sale_input_version, sale_verified_through, sale_covered_rewinds) \
+             SELECT ix, $1, $2, 1, $3, '0x' || repeat('0', 64), true, $3, timezone('UTC', now()), $4, $3, 0 \
+             FROM unnest(ARRAY['nft', 'sales', 'trade_events']) AS ix \
+             ON CONFLICT (indexer, network) DO UPDATE SET \
+                 chain_id = EXCLUDED.chain_id, full_history = true, \
+                 last_block_hash = coalesce(shop.chain_cursor.last_block_hash, EXCLUDED.last_block_hash), \
+                 folded_block = coalesce(shop.chain_cursor.folded_block, EXCLUDED.folded_block), \
+                 folded_at = EXCLUDED.folded_at, sale_input_version = EXCLUDED.sale_input_version, \
+                 sale_verified_through = greatest(shop.chain_cursor.folded_block, EXCLUDED.sale_verified_through), \
+                 sale_covered_rewinds = shop.chain_cursor.reorg_rewinds",
+        )
+        .bind(net.db_name())
+        .bind(net.chain_id())
+        .bind(block)
+        .bind(sale_history::VERSION)
+        .execute(pool)
+        .await
+        .unwrap();
+        sqlx::query_scalar::<_, i64>(
+            "INSERT INTO shop.sale_publication (network, block_number, block_hash, input_version, input_epochs, \
+                 input_revisions, late_collections, published_at) \
+             SELECT $1, least($2, min(folded_block)), '0x' || repeat('0', 64), $3, \
+                 array_agg(sale_input_epoch ORDER BY indexer), array_agg(sale_history_revision ORDER BY indexer), \
+                 (SELECT count(*) FROM shop.nft_contract WHERE network = $1 AND backfill_from_block IS NOT NULL), \
+                 timezone('UTC', now()) \
+             FROM shop.chain_cursor WHERE network = $1 AND indexer IN ('nft', 'sales', 'trade_events') \
+             ON CONFLICT (network) DO UPDATE SET block_number = EXCLUDED.block_number, \
+                 input_version = EXCLUDED.input_version, input_epochs = EXCLUDED.input_epochs, \
+                 input_revisions = EXCLUDED.input_revisions, late_collections = EXCLUDED.late_collections, \
+                 published_at = EXCLUDED.published_at, generation = gen_random_uuid() \
+             RETURNING block_number",
+        )
+        .bind(net.db_name())
+        .bind(block)
+        .bind(PUBLICATION_VERSION)
+        .fetch_one(pool)
+        .await
+        .unwrap()
+    }
+
+    /// One priced sale of one asset, as the fold writes it.
+    #[derive(Clone, Debug)]
+    pub struct Sale {
+        pub net: ChainNet,
+        pub block: i64,
+        pub log: i32,
+        pub ordinal: i32,
+        pub time: i64,
+        /// The execution's kind: `store`, `order`, `bid`, `trade` or `name_fee`.
+        pub execution: &'static str,
+        /// The asset's kind: `mint`, `order` or `bid`.
+        pub kind: &'static str,
+        pub contract: String,
+        pub item_id: Option<String>,
+        pub token_id: Option<String>,
+        pub price: String,
+        /// `None`: the network's MANA.
+        pub currency: Option<String>,
+        pub buyer: String,
+        pub seller: Option<String>,
+    }
+
+    pub async fn insert(pool: &PgPool, sale: &Sale) {
+        let net = sale.net.db_name();
+        let currency = sale
+            .currency
+            .clone()
+            .or_else(|| listings::mana_token(sale.net.chain_id()).map(str::to_string));
+        sqlx::query(
+            "INSERT INTO shop.sale_execution (network, block_number, log_index, tx_hash, venue, kind, block_time) \
+             VALUES ($1, $2, $3, '0x' || lpad(to_hex($2::bigint), 48, '0') || lpad(to_hex($3::int), 16, '0'), $4, $5, $6) \
+             ON CONFLICT DO NOTHING",
+        )
+        .bind(net)
+        .bind(sale.block)
+        .bind(sale.log)
+        .bind("0x0000000000000000000000000000000000000001")
+        .bind(sale.execution)
+        .bind(sale.time)
+        .execute(pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO shop.sale_asset (network, block_number, log_index, ordinal, public_id, beneficiary, kind, \
+                 contract_address, token_id, item_id, seller, buyer, price, currency) \
+             VALUES ($1, $2, $3, $4, $1 || '-' || $2 || '-' || $3 || '-' || $4, $5, $6, $7, $8::text::numeric, \
+                 $9::text::numeric, $10, $5, $11::text::numeric, $12)",
+        )
+        .bind(net)
+        .bind(sale.block)
+        .bind(sale.log)
+        .bind(sale.ordinal)
+        .bind(&sale.buyer)
+        .bind(sale.kind)
+        .bind(&sale.contract)
+        .bind(&sale.token_id)
+        .bind(&sale.item_id)
+        .bind(&sale.seller)
+        .bind(&sale.price)
+        .bind(currency)
+        .execute(pool)
+        .await
+        .unwrap();
+    }
 }

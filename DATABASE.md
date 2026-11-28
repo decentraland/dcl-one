@@ -2675,6 +2675,13 @@ A wallet-filtered sale with an unresolved seller withholds a response only when 
 
 The published sales readers use a 10-second PostgreSQL statement timeout. Recent unfiltered pages select asset keys in timestamp order and obtain the count from published daily rollups. Wallet lookups use indexes on the buyer, seller, payment beneficiary and collection item before enrichment. Filtered sales and proceeds pages cap the returned total at 5,000 or 25,000 for the requested page window. Sorting proceeds and checking unresolved seller evidence may still scan the seller's history. Seller summaries and store totals include the entire published history in scope.
 
+**The trending signal.** `/v1/trendings`, `/v3/catalog/trending`, `/v3/catalog/creators`, the trending floor of `/v3/catalog/suggested` and the collection tiebreak of `/v3/catalog/suggest` rank on recent sales read from the published history (`market::trending_sales`), on the route's own catalogue snapshot:
+- Both networks' sales publications must be valid and fresh. Otherwise the route answers `503 sales-index`, and it does the same when a publication expires during the read. The suggest tiebreak only drops.
+- Per network, Ethereum first, the read takes the newest 1,000 sales after midnight UTC `days` ago, within the published block, latest log first within a block.
+- A sale counts when it sold a catalogue item (an item id: no LAND, estate or NAME) at a positive price in the network's MANA, through the CollectionStore, a legacy order or a bid.
+
+These are the rows the collections subgraphs' `sales` held, read their way. The off-chain marketplace's trades and NAME registration fees are left out. Each network's read walks `sale_execution_read_time` newest first and stops at the cap: on 300,000 synthetic executions over a year it took about 10 ms per network for a 7-, 90- or 365-day window. The creators ranking is memoized under the sales publications' generations as well as the catalogue copy, so a replaced history is ranked again; a warm ranking still checks the publications. The suggest tiebreak reads under a savepoint, so a failed read leaves the snapshot usable.
+
 `/v1/owners/top` ranks a creator's current holders using the NFT folds and current item and collection metadata. Both mainnet sales publications must be ready. The same snapshot supplies MANA spend from the published sales of the creator's items. Ethereum v1 Issue logs identify an item within its collection and Polygon v2 token IDs encode the item ID. The query aggregates and ranks holders before paging, within a five-second statement timeout. The 30-second page cache is keyed by both NFT publications, the sales generations and heights, and the metadata proofs, including native catalogue projection generations and heights. Every request rechecks the publications on its snapshot. One cold owner-ranking request can run concurrently on its own permit. `/v1/items` reads distinct pickers for the returned item IDs using `picks_item_idx`. Picks by the same wallet on multiple lists count once.
 
 Accounts, rankings and volume cache successful answers for 30 seconds across append-only advances. Each request checks the current publication and auxiliary sources in one snapshot. A rewind, replaced source identity, backfilled history or correction to a published sale changes the cache key. A withdrawn or expired required publication returns HTTP 503 even for a cached query. Warm hits bypass the query limits. Cold accounts and other analytics have separate limits of one and two concurrent reads. Sales pages have four. Seller summary, store stats, proceeds and the sales leg of activity share four slots. A request waits up to 250 milliseconds for a seller slot before opening the read transaction. Excess read requests receive HTTP 503. Activity logs when the wait expires and returns its available legs. The accounts address selector accepts up to 50 distinct wallets. Creator rankings check the items and Polygon collections catalogue copies and the Polygon collection log in the published sales snapshot. Each mirror's freshness budget and the index publication deadlines bound cached answers.
@@ -4044,14 +4051,15 @@ The transaction holds a pooled connection, so a reader never waits on
 anything else while it holds it:
 - pool work that reads no catalogue row runs before the transaction opens or
   after it is released; what does read the catalogue reuses the transaction;
-- a route with an external call (the sales reader's subgraph query, the
-  EIP-1654 signer check) first opens a short read for the gate and its page
-  memo, so a refusal or a warm page answers at once. On a miss it releases
-  the read for the call, then opens it again, checking readiness again, and
-  reads the whole page on that read (the suggested feed rebuilds its personal
-  rows there too) and files it under the copy that read saw. The answer's
-  `as_of` comes only from the reads that supplied its rows: the short read on
-  a warm page, the final read on a miss;
+- a route with an external call (the EIP-1654 signer check) first opens a
+  short read for the gate, so a refusal answers at once. It then releases
+  the read for the call, opens it again, checking readiness again, and reads
+  the whole page on that read. The answer's `as_of` comes only from the read
+  that supplied its rows;
+- the trending readers read their sales signal on the catalogue read itself
+  (see "The trending signal"). The creators ranking checks its gate, the
+  sales publications and its memo on one read, and ranks on that read on a
+  miss;
 - a request never waits on another's memo fetch while it holds the
   connection.
 
@@ -4208,7 +4216,7 @@ by default. The collections and items jobs mirror each network until the
 index publishes its ownership. A start or stop block override excludes
 that network from default ownership. An explicit list can keep either
 network mirrored. Both collections subgraph URLs also serve direct readers
-such as `/v1/owners` and `/v1/trendings`. They stay configured after the
+such as `/v1/owners`. They stay configured after the
 projection takes over. Sepolia and Amoy keep both mirrors. Island and
 journey leave ownership empty and their mirrors off.
 

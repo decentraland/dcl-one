@@ -136,6 +136,7 @@ pub mod trade_events;
 pub mod trades;
 pub mod transak;
 pub mod transfer_notices;
+pub mod trending_sales;
 pub mod user_items;
 pub mod users;
 pub mod wert;
@@ -149,6 +150,8 @@ mod lambdas_tests;
 mod market_tests;
 #[cfg(test)]
 pub(crate) mod tests;
+#[cfg(test)]
+mod trending_parity_tests;
 
 use std::sync::Arc;
 use std::time::Duration;

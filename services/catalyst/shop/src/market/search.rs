@@ -611,16 +611,26 @@ pub async fn search_collections(
     Ok(hits.into_iter().take(first).map(|(_, c)| c).collect())
 }
 
-/// Sales per collection in the window, from the sales reader; an
-/// unreachable reader costs the tiebreak, not the answer. A subgraph call:
-/// read before the catalogue's snapshot opens.
-async fn collection_sales(state: &MarketplaceState) -> HashMap<String, i64> {
+/// Sales per collection in the window, from the sales signal on `read`;
+/// an unavailable signal costs the tiebreak, not the answer. It reads under
+/// a savepoint, so a failed read leaves the snapshot usable.
+async fn collection_sales(
+    state: &MarketplaceState,
+    read: &mut CatalogueRead,
+) -> HashMap<String, i64> {
     let mut out = HashMap::new();
-    if let Ok(sales) = items::recent_sales(state, COLLECTION_SALES_WINDOW_DAYS).await {
-        for sale in &sales {
-            if let Some(contract) = sale.get("searchContractAddress").and_then(Value::as_str) {
-                *out.entry(contract.to_lowercase()).or_default() += 1;
+    let Ok(mut savepoint) = sqlx::Connection::begin(&mut *read.tx).await else {
+        return out;
+    };
+    match super::trending_sales::recent(state, &mut savepoint, COLLECTION_SALES_WINDOW_DAYS).await {
+        Ok(sales) => {
+            for sale in sales {
+                *out.entry(sale.contract_address).or_default() += 1;
             }
+            let _ = savepoint.commit().await;
+        }
+        Err(_) => {
+            let _ = savepoint.rollback().await;
         }
     }
     out
@@ -668,12 +678,6 @@ pub async fn get_search_suggest(
         Ok(rate) => rate,
         Err(envelope) => return envelope,
     };
-    // The gate first, on a short read: a refusal answers without waiting on
-    // the sales reader's subgraph call, which runs with no connection held.
-    if let Err(envelope) = items::priced_preflight(&state, None).await {
-        return envelope;
-    }
-    let sales = collection_sales(&state).await;
     // One snapshot answers the items and the collections (the items carry
     // prices); it is opened again, so its readiness is checked again. The
     // creator directory (a display aggregate of stated staleness, filed under
@@ -703,6 +707,7 @@ pub async fn get_search_suggest(
         break (directory, read);
     };
     read.note(&state);
+    let sales = collection_sales(&state, &mut read).await;
     let item_pairs = vec![
         ("search".to_string(), search.clone()),
         ("first".to_string(), items_first.to_string()),

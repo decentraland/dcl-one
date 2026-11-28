@@ -13,10 +13,10 @@
 //! MANA listing uses the economy price snapshot (`items::mana_usd_rate`;
 //! the price envelope without a fresh one).
 //! `/v3/catalog/trending` and `/v3/catalog/creators` rank on the sales
-//! reader (`items::recent_sales`: the last days of `sales` on each
-//! configured collections subgraph, at most 1000 rows per network, 10 min),
-//! so a window longer than those rows cover is truncated to them, and a
-//! creator's `totalSales` is the windowed count rather than all time.
+//! signal (`trending_sales`: the last days of the published sales history,
+//! at most 1000 rows per network, on the request's snapshot), so a window
+//! longer than those rows cover is truncated to them, and a creator's
+//! `totalSales` is the windowed count rather than all time.
 //! `/v3/catalog/suggested` ranks the co-ownership neighbours of a wallet's
 //! holdings and the request's seeds (`neighbours`, built from the nft
 //! index), with the trending floor filling the rest and answering alone
@@ -73,10 +73,10 @@ use super::catalog::{
 use super::catalogue::CatalogueRead;
 use super::items::{
     USD_WEI_PER_CREDIT, mana_usd_rate, priced_preflight, priced_read, rate_to_numeric_string,
-    recent_sales,
 };
 use super::readers::{self, Ttl, memoized_holding};
 use super::search::{CreatorProfile, creator_profiles, directory_snapshot};
+use super::trending_sales::{self, SignalSale};
 use super::wire::{
     ApiError, ChainId, DataTotal, Network, Params, body_shapes_for_genders, emote_play_mode_clause,
     network_and_chain, where_from,
@@ -1227,13 +1227,12 @@ pub struct SaleSignal {
     pub volume: u128,
 }
 
-/// The trending rail over `sales` ([`recent_sales`], a subgraph call the
-/// caller makes before its snapshot opens).
+/// The trending rail over `sales` ([`trending_sales::recent`] on `read`).
 pub async fn trending_items(
     state: &MarketplaceState,
     read: &mut CatalogueRead,
     first: Option<i64>,
-    sales: &[Value],
+    sales: &[SignalSale],
     filters: &UnifiedCatalogFilters,
     rate: ManaUsdRate,
 ) -> Result<Vec<TrendingItem>, Response> {
@@ -1249,26 +1248,28 @@ pub async fn trending_items(
 /// Creators ranked by windowed revenue, attributing each sale to the item's
 /// creator (the reader's `item.creator`) so primary mints count; floors keep
 /// a thin window out of a revenue ranking and a one-hit month with nothing to
-/// browse off the rail. `sales` is [`recent_sales`] over the clamped `days`,
-/// read with no connection held.
+/// browse off the rail. The sales are [`trending_sales`]' over the clamped
+/// `days`, within `published` (taken on `held`), read on `held` when the
+/// ranking is not memoized.
 pub async fn top_creators(
     state: &MarketplaceState,
     held: &mut Option<CatalogueRead>,
     first: Option<i64>,
     days: Option<i64>,
-    sales: &[Value],
+    published: &trending_sales::Published,
 ) -> Result<Option<Vec<TopCreator>>, Response> {
     let copy = held.as_ref().expect("a request holds its read").key();
-    let key = top_creators_key(first, days, &copy);
+    let key = top_creators_key(first, days, &copy, published);
     let first = top_creators_clamp_first(first);
     let days = top_creators_clamp_days(days);
     let min_sales = top_creators_min_sales(days);
     let value = memoized_holding(state, Ttl::M15, key, held, async move |read: &mut CatalogueRead| {
+        let sales = published.sales(&mut read.tx, days).await?;
         let mut ranked: HashMap<String, (u128, i64)> = HashMap::new();
-        for sale in sales {
-            let Some(creator) = readers::at(sale, "item/creator").and_then(Value::as_str) else { continue };
+        for sale in &sales {
+            let Some(creator) = sale.creator.as_deref() else { continue };
             let entry = ranked.entry(creator.to_lowercase()).or_default();
-            entry.0 = entry.0.saturating_add(readers::str_of(sale, "price").parse::<u128>().unwrap_or(0));
+            entry.0 = entry.0.saturating_add(sale.wei());
             entry.1 += 1;
         }
         let creators: Vec<String> = ranked.iter().filter(|(_, (_, sales))| *sales >= min_sales).map(|(c, _)| c.clone()).collect();
@@ -1304,12 +1305,19 @@ pub async fn top_creators(
     value.map(|value| creators_of(&value)).transpose()
 }
 
-/// The creators memo's key for a read of `copy`.
-fn top_creators_key(first: Option<i64>, days: Option<i64>, copy: &str) -> String {
+/// The creators memo's key for a read of `copy` and of the `sales`
+/// histories.
+fn top_creators_key(
+    first: Option<i64>,
+    days: Option<i64>,
+    copy: &str,
+    sales: &trending_sales::Published,
+) -> String {
     format!(
-        "creators:{}:{}:{copy}",
+        "creators:{}:{}:{copy}:{}",
         top_creators_clamp_first(first),
-        top_creators_clamp_days(days)
+        top_creators_clamp_days(days),
+        sales.key()
     )
 }
 
@@ -1486,18 +1494,13 @@ pub async fn get_trending_catalog(
         Ok(rate) => rate,
         Err(envelope) => return envelope,
     };
-    // Refuse unavailable trades before asking the sales reader. The page
-    // checks again after the external read and uses one snapshot.
-    match priced_preflight(&state, None).await {
-        Ok(read) => drop(read),
-        Err(r) => return r,
-    }
-    let sales = match recent_sales(&state, days).await {
-        Ok(sales) => sales,
-        Err(r) => return r,
-    };
     let mut read = match priced_read(&state, None).await {
         Ok(read) => read,
+        Err(r) => return r,
+    };
+    // The sales signal and the page on one snapshot.
+    let sales = match trending_sales::recent(&state, &mut read.tx, days).await {
+        Ok(sales) => sales,
         Err(r) => return r,
     };
     let data = trending_items(&state, &mut read, Some(first), &sales, &req.filters, rate).await;
@@ -1648,45 +1651,31 @@ pub async fn get_suggested_catalog(
         Ok(rows) => rows,
         Err(r) => return r,
     };
-    let mut personalized = !data.is_empty();
-    if data.len() >= limit {
-        // A full personal page answers from this read alone.
-        read.note(&state);
-    } else {
-        // The trending rail needs the sales reader's subgraph call: the read
-        // is released for it and opened again, rechecked, and the whole page,
-        // its personal rows included, is read on that one snapshot.
-        drop(read);
-        let sales = match recent_sales(&state, trending_clamp_days(None)).await {
-            Ok(sales) => sales,
-            Err(r) => return r,
-        };
-        let mut read = match priced_read(&state, None).await {
-            Ok(read) => read,
-            Err(r) => return r,
-        };
-        data = match personal_on(&mut read).await {
-            Ok(rows) => rows,
-            Err(r) => return r,
-        };
-        personalized = !data.is_empty();
-        if data.len() < limit {
-            let trending = match trending_items(
-                &state,
-                &mut read,
-                Some(crate::market::casts::len_i64(limit) * 2),
-                &sales,
-                &filters,
-                rate,
-            )
-            .await
-            {
-                Ok(items) => items,
+    let personalized = !data.is_empty();
+    if data.len() < limit {
+        // The trending floor, from the sales signal on the same snapshot.
+        let sales =
+            match trending_sales::recent(&state, &mut read.tx, trending_clamp_days(None)).await {
+                Ok(sales) => sales,
                 Err(r) => return r,
             };
-            fill_with_trending(&mut data, trending, limit);
-        }
+        let trending = match trending_items(
+            &state,
+            &mut read,
+            Some(crate::market::casts::len_i64(limit) * 2),
+            &sales,
+            &filters,
+            rate,
+        )
+        .await
+        {
+            Ok(items) => items,
+            Err(r) => return r,
+        };
+        fill_with_trending(&mut data, trending, limit);
     }
+    // The whole page answers from this read.
+    read.note(&state);
     (
         [(CACHE_CONTROL, "private, no-store")],
         Json(SuggestionsResponse {
@@ -1765,59 +1754,42 @@ pub async fn get_top_creators(
         finite_i64(p.get_number("first", None)),
         finite_i64(p.get_number("days", None)),
     );
-    // The gate and the ranking memo first, on a short read: a refusal or a
-    // warm ranking answers without waiting on the sales reader's subgraph
-    // call.
-    let read = match priced_preflight(&state, None).await {
-        Ok(read) => read,
-        Err(r) => return r,
-    };
-    let (key, sources) = (top_creators_key(first, days, &read.key()), read.sources());
-    let warm = state.readers.fresh(Ttl::M15, &key);
-    if warm.is_some() {
-        // A warm ranking answers from this read's copy, so its stamp is this one.
-        read.note(&state);
-    }
-    drop(read);
-    let (ranked, directory) = match warm {
-        Some(value) => (
-            creators_of(&value),
-            directory_snapshot(&state, &sources).await,
-        ),
-        None => {
-            // A miss: the sales without a connection, then the read again,
-            // rechecked; the ranking is filed under the copy it read.
-            let sales = match recent_sales(&state, top_creators_clamp_days(days)).await {
-                Ok(sales) => sales,
-                Err(_) => {
-                    return readers::upstream_failed(
-                        "/v3/catalog/creators",
-                        "sales reader unavailable",
-                    );
-                }
-            };
-            // The ranking memo holds the read only in the request that
-            // fetches it; one that waits drops it first, and starts again if
-            // that fetch failed.
-            loop {
-                let read = match priced_preflight(&state, None).await {
-                    Ok(read) => read,
-                    Err(r) => return r,
-                };
-                let (stamp, sources) = (read.stamp(), read.sources());
-                let mut held = Some(read);
-                match top_creators(&state, &mut held, first, days, &sales).await {
-                    Ok(Some(data)) => {
-                        // Released before the directory, which may read the
-                        // pool.
-                        drop(held);
-                        stamp.note(&state);
-                        break (Ok(data), directory_snapshot(&state, &sources).await);
-                    }
-                    Ok(None) => continue,
-                    Err(r) => return r,
-                }
+    // The gate, the sales publications and the ranking memo on one read: a
+    // refusal or a warm ranking answers from it, and a miss ranks on it.
+    let (ranked, directory) = loop {
+        let mut read = match priced_preflight(&state, None).await {
+            Ok(read) => read,
+            Err(r) => return r,
+        };
+        let published = match trending_sales::published(&state, &mut read.tx).await {
+            Ok(published) => published,
+            Err(r) => return r,
+        };
+        let key = top_creators_key(first, days, &read.key(), &published);
+        let (stamp, sources) = (read.stamp(), read.sources());
+        if let Some(value) = state.readers.fresh(Ttl::M15, &key) {
+            // A warm ranking answers from this read's copy, so its stamp is
+            // this one.
+            drop(read);
+            stamp.note(&state);
+            break (
+                creators_of(&value),
+                directory_snapshot(&state, &sources).await,
+            );
+        }
+        // The ranking memo holds the read only in the request that fetches
+        // it; one that waits drops it first, and starts again if that fetch
+        // failed.
+        let mut held = Some(read);
+        match top_creators(&state, &mut held, first, days, &published).await {
+            Ok(Some(data)) => {
+                // Released before the directory, which may read the pool.
+                drop(held);
+                stamp.note(&state);
+                break (Ok(data), directory_snapshot(&state, &sources).await);
             }
+            Ok(None) => continue,
+            Err(r) => return r,
         }
     };
     match ranked {
@@ -2511,7 +2483,12 @@ mod tests {
         let mk = unified_item;
         let sales = |c: &str, i: &str, n: usize, price: &str| {
             (0..n)
-                .map(|_| json!({"searchContractAddress": c, "searchItemId": i, "price": price}))
+                .map(|_| crate::market::trending_sales::SignalSale {
+                    contract_address: c.into(),
+                    item_id: i.into(),
+                    price: price.into(),
+                    creator: None,
+                })
                 .collect::<Vec<_>>()
         };
         let mut all = sales("0xa", "1", 5, "1");
