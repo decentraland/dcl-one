@@ -1374,8 +1374,8 @@ fn creation_error_to_api(e: TradeCreationError) -> ApiError {
     }
 }
 
-/// Trades one signer may post per minute; the map holds enough signers that a
-/// burst of fresh wallets does not force the sweep that resets every bucket.
+/// Trades one signer may post per minute. The larger cap keeps more signers
+/// on individual buckets before routing new signers to shared overflow.
 static TRADE_LIMITER: std::sync::LazyLock<RateLimiter> = std::sync::LazyLock::new(|| {
     RateLimiter::new(30, std::time::Duration::from_secs(60)).with_max_buckets(200_000)
 });

@@ -83,8 +83,20 @@ fn not_established(purpose: Purpose) -> NamesError {
     })
 }
 
+/// A read of the index that did not answer: [`NamesError::Transient`] when
+/// asking again may clear it
+/// ([`crate::chain_index::names::transient_fault`]), else
+/// [`NamesError::Failed`].
 fn failed(e: sqlx::Error) -> NamesError {
-    NamesError::Failed(format!("ethereum nft index: {e}"))
+    failed_reading("ethereum nft index", e)
+}
+
+fn failed_reading(what: &str, e: sqlx::Error) -> NamesError {
+    if crate::chain_index::names::transient_fault(&e) {
+        NamesError::Transient(format!("{what}: {e}"))
+    } else {
+        NamesError::Failed(format!("{what}: {e}"))
+    }
 }
 
 /// The Ethereum nft cursor (`c`) as a NAME read selects it beside its rows,
@@ -143,7 +155,7 @@ pub(crate) async fn check(
     .bind(catalogue.registrar())
     .fetch_all(conn)
     .await
-    .map_err(|e| NamesError::Failed(format!("ethereum nft cursor: {e}")))?;
+    .map_err(|e| failed_reading("ethereum nft cursor", e))?;
     checked(catalogue, cursor_of(&rows)?, purpose, now)
 }
 
@@ -320,7 +332,7 @@ fn sole_holder(label: &str, holders: Option<&Vec<String>>) -> Result<Option<Stri
     match holders.map(Vec::as_slice) {
         None | Some([]) => Ok(None),
         Some([owner]) => Ok(Some(owner.clone())),
-        Some(_) => Err(NamesError::NotEstablished(format!(
+        Some(_) => Err(NamesError::Ambiguous(format!(
             "the DCL NAME {label} has more than one holder in the nft index once lowercased: its owner cannot be established"
         ))),
     }
@@ -383,6 +395,23 @@ impl NameAuthority for IndexNames {
         purpose: Purpose,
     ) -> Result<Answer<Option<String>>, NamesError> {
         name_owner_on(self.catalogue, conn, label, purpose).await
+    }
+
+    /// The Ethereum nft cursor held `FOR SHARE`
+    /// ([`crate::chain_index::names::hold_index_publication`]). No cursor is
+    /// no publication to authorize under, and a fold holding it past the
+    /// bounded wait is the index not being current yet: both are
+    /// [`NamesError::NotEstablished`], a retryable refusal.
+    async fn hold_publication_on(&self, conn: &mut PgConnection) -> Result<(), NamesError> {
+        use crate::chain_index::names::{PublicationHold, hold_index_publication};
+        match hold_index_publication(conn).await {
+            Ok(PublicationHold::Held) => Ok(()),
+            Ok(PublicationHold::Unpublished) => Err(not_established(Purpose::Authorize)),
+            Ok(PublicationHold::Busy) => Err(NamesError::NotEstablished(
+                "the ethereum nft index is publishing a fold: the DCL NAME publication cannot be held now".to_string(),
+            )),
+            Err(e) => Err(failed(e)),
+        }
     }
 
     /// An ambiguous label is left out of the map: unknown, never `None`.
@@ -504,6 +533,214 @@ mod tests {
         Some((db, names))
     }
 
+    /// A held publication holds back the walker: a cursor update (a fold's
+    /// publication, a withdrawal) waits for the holder's commit and commits
+    /// right after it. No cursor is no publication to hold.
+    #[tokio::test]
+    async fn a_held_publication_holds_back_the_walker_until_commit() {
+        let Some((db, names)) = published().await else {
+            return;
+        };
+        let mut tx = db.pool.begin().await.unwrap();
+        names.hold_publication_on(&mut tx).await.unwrap();
+        let pool = db.pool.clone();
+        let walker = tokio::spawn(async move {
+            sqlx::query(
+                "UPDATE shop.chain_cursor SET folded_block = NULL, folded_at = NULL \
+                 WHERE indexer = 'nft' AND network = 'ethereum'",
+            )
+            .execute(&pool)
+            .await
+            .unwrap();
+        });
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        assert!(!walker.is_finished(), "the withdrawal waits for the hold");
+        tx.commit().await.unwrap();
+        tokio::time::timeout(Duration::from_secs(2), walker)
+            .await
+            .expect("the withdrawal commits right after the hold ends")
+            .unwrap();
+        sqlx::query("DELETE FROM shop.chain_cursor WHERE indexer = 'nft' AND network = 'ethereum'")
+            .execute(&db.pool)
+            .await
+            .unwrap();
+        let mut conn = db.pool.acquire().await.unwrap();
+        assert!(matches!(
+            names.hold_publication_on(&mut conn).await,
+            Err(NamesError::NotEstablished(_))
+        ));
+        drop(conn);
+        db.drop().await;
+    }
+
+    /// A fold that holds the publication longer than the bounded wait leaves
+    /// the hold refused as the index not being current yet (retryable),
+    /// never a failed read, and the caller holds nothing past the wait.
+    #[tokio::test]
+    async fn a_fold_holding_the_publication_past_the_wait_is_not_established() {
+        let Some((db, names)) = published().await else {
+            return;
+        };
+        let mut fold = db.pool.begin().await.unwrap();
+        sqlx::query("SELECT 1 FROM shop.chain_cursor WHERE indexer = 'nft' AND network = 'ethereum' FOR UPDATE")
+            .execute(&mut *fold)
+            .await
+            .unwrap();
+        let mut tx = db.pool.begin().await.unwrap();
+        let wait = crate::chain_index::names::HOLD_WAIT;
+        let started = std::time::Instant::now();
+        let held = tokio::time::timeout(
+            wait + Duration::from_secs(3),
+            names.hold_publication_on(&mut tx),
+        )
+        .await
+        .expect("the hold gives up after its bounded wait");
+        let waited = started.elapsed();
+        assert!(
+            matches!(held, Err(NamesError::NotEstablished(_))),
+            "{held:?}"
+        );
+        assert!(
+            waited >= wait && waited < wait + Duration::from_secs(3),
+            "{waited:?}"
+        );
+        drop(tx);
+        fold.rollback().await.unwrap();
+        db.drop().await;
+    }
+
+    /// The wait is bounded in all, not per lock: a share queued behind
+    /// another fold's `FOR UPDATE` waits first for that fold's place in the
+    /// queue, then for the fold itself once it has the row, and gives up
+    /// within [`crate::chain_index::names::HOLD_WAIT`] of starting, not a
+    /// bound per wait.
+    #[tokio::test]
+    async fn a_hold_queued_behind_another_fold_gives_up_within_the_wait() {
+        let Some((db, names)) = published().await else {
+            return;
+        };
+        const ROW: &str = "SELECT 1 FROM shop.chain_cursor WHERE indexer = 'nft' AND network = 'ethereum' FOR UPDATE";
+        let mut fold = db.pool.begin().await.unwrap();
+        sqlx::query(ROW).execute(&mut *fold).await.unwrap();
+        // A second fold queues behind the first, then keeps the row once
+        // the first commits, until released.
+        let (release, released) = tokio::sync::oneshot::channel::<()>();
+        let pool = db.pool.clone();
+        let queued = tokio::spawn(async move {
+            let mut next = pool.begin().await.unwrap();
+            sqlx::query(ROW).execute(&mut *next).await.unwrap();
+            let _ = released.await;
+            next.rollback().await.unwrap();
+        });
+        let waiting = || async {
+            sqlx::query_scalar::<_, i64>(
+                "SELECT count(*) FROM pg_stat_activity WHERE datname = current_database() AND wait_event_type = 'Lock'",
+            )
+            .fetch_one(&db.pool)
+            .await
+            .unwrap()
+        };
+        for _ in 0..40 {
+            if waiting().await == 1 {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+        assert_eq!(waiting().await, 1, "the second fold is queued");
+        // The first fold commits 4 s into the hold's wait: a bound per lock
+        // would wait 4 s for the queue, then a full bound for the second.
+        let first = tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_secs(4)).await;
+            fold.commit().await.unwrap();
+        });
+        let mut tx = db.pool.begin().await.unwrap();
+        let wait = crate::chain_index::names::HOLD_WAIT;
+        let started = std::time::Instant::now();
+        let held = tokio::time::timeout(
+            wait + Duration::from_secs(8),
+            names.hold_publication_on(&mut tx),
+        )
+        .await
+        .expect("the hold gives up");
+        let waited = started.elapsed();
+        assert!(
+            matches!(held, Err(NamesError::NotEstablished(_))),
+            "{held:?}"
+        );
+        // About 5 s in all; a bound per lock would take about 9 s.
+        assert!(
+            waited >= wait && waited < wait + Duration::from_secs(3),
+            "{waited:?}"
+        );
+        drop(tx);
+        first.await.unwrap();
+        release.send(()).unwrap();
+        queued.await.unwrap();
+        db.drop().await;
+    }
+
+    /// A hold that got the row leaves the transaction's own statement bound
+    /// as it found it: the write that follows it runs under that bound, not
+    /// the hold's.
+    #[tokio::test]
+    async fn a_hold_restores_the_statement_bound() {
+        let Some((db, names)) = published().await else {
+            return;
+        };
+        let mut tx = db.pool.begin().await.unwrap();
+        sqlx::query("SET LOCAL statement_timeout = '42s'")
+            .execute(&mut *tx)
+            .await
+            .unwrap();
+        names.hold_publication_on(&mut tx).await.unwrap();
+        let bound: String = sqlx::query_scalar("SELECT current_setting('statement_timeout')")
+            .fetch_one(&mut *tx)
+            .await
+            .unwrap();
+        assert_eq!(bound, "42s");
+        tx.rollback().await.unwrap();
+        db.drop().await;
+    }
+
+    /// A read the database cuts short (here its statement bound, while a
+    /// migration holds the cursor table) is a transient fault, which a
+    /// write refuses as retryable, not a failed read. A failure asking
+    /// again cannot clear stays a failure.
+    #[tokio::test]
+    async fn a_read_the_database_cuts_short_is_transient() {
+        let Some((db, _)) = published().await else {
+            return;
+        };
+        let bounded = sqlx::postgres::PgPoolOptions::new()
+            .max_connections(2)
+            .connect_with(
+                (*db.pool.connect_options())
+                    .clone()
+                    .options([("statement_timeout", "300")]),
+            )
+            .await
+            .unwrap();
+        let names = IndexNames::new(bounded.clone());
+        let mut migration = db.pool.begin().await.unwrap();
+        sqlx::query("LOCK TABLE shop.chain_cursor IN ACCESS EXCLUSIVE MODE")
+            .execute(&mut *migration)
+            .await
+            .unwrap();
+        for purpose in [Purpose::Authorize, Purpose::Display] {
+            let read = names.name_owner("alice", purpose).await;
+            assert!(matches!(read, Err(NamesError::Transient(_))), "{read:?}");
+        }
+        migration.rollback().await.unwrap();
+        sqlx::query("ALTER TABLE shop.nft RENAME TO nft_gone")
+            .execute(&db.pool)
+            .await
+            .unwrap();
+        let read = names.name_owner("alice", Purpose::Authorize).await;
+        assert!(matches!(read, Err(NamesError::Failed(_))), "{read:?}");
+        bounded.close().await;
+        db.drop().await;
+    }
+
     /// An authorization waits for the fold: a pass that walked a transfer
     /// and has not folded it establishes no holder (the fold still names the
     /// former one) and withdraws every observation read before it; a display
@@ -601,7 +838,7 @@ mod tests {
         mint(&db.pool, 3, B, "solo").await;
         assert!(matches!(
             names.name_owner("twin", Purpose::Authorize).await,
-            Err(NamesError::NotEstablished(_))
+            Err(NamesError::Ambiguous(_))
         ));
         let labels = ["Twin".to_string(), "solo".into(), "nobody".into()];
         let owners = names

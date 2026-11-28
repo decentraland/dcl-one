@@ -77,6 +77,7 @@ pub(crate) fn market_settings(
                     .as_deref(),
                 config.marketplace.wert_api_url.as_deref(),
                 config.marketplace.wert_api_key.as_deref(),
+                config.marketplace.wert_sign_requests_per_minute,
                 self_hosts,
                 || {
                     let credits_manager = Config::non_empty(&config.shop.credits_manager_contract)

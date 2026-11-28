@@ -602,3 +602,193 @@ async fn graph_orders_filter_both_expiry_units_before_pages_and_counts() {
     assert_eq!(page["data"][1]["id"], "order-4");
     db.drop().await;
 }
+
+#[tokio::test]
+async fn legacy_reconciliation_withholds_only_reads_that_need_the_polygon_book() {
+    use super::super::{
+        chain_walk::{self, ChainNet},
+        legacy_orders,
+        nft_index::{self, NftIndex},
+        owned_items, trade_events,
+    };
+
+    let url = serve_empty_graph().await;
+    let Some((state, db)) = state_over_own(&url, true).await else {
+        return;
+    };
+    let pool = &db.pool;
+    let contract = contract_of(&tag(), 1);
+    let land = crate::land_authz::LAND_REGISTRY_MAINNET;
+    seed_item_row(pool, &contract, "0", WALLET_A).await;
+    sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
+        "UPDATE shop.items SET search_is_collection_approved = true
+         WHERE network = 'matic' AND contract_address = '{contract}';
+         INSERT INTO shop.mirror_state (mirror, network, source_url, last_complete_pass_at)
+         VALUES ('collections','matic','test',now());
+         INSERT INTO shop.nft (network,contract_address,token_id,owner,item_id,issued_id,
+                              minted_block,minted_at,transferred_block,transferred_log,transferred_at)
+         VALUES ('matic','{contract}',1,'{WALLET_A}',0,1,5,5,5,0,5),
+                ('matic','{contract}',2,'{WALLET_A}',0,2,5,5,5,0,5);
+         INSERT INTO shop.legacy_order (network,marketplace_address,order_id,contract_address,token_id,
+             seller,buyer,price,expires_at,status,created_block,created_log,created_at,updated_block,updated_log,updated_at)
+         VALUES ('ethereum','{CREATOR}','ethereum-sale','{land}',77,'{WALLET_A}','{WALLET_B}',1,0,'sold',2,0,2,3,0,3)"
+    )))
+    .execute(pool)
+    .await
+    .unwrap();
+    owned_items::test_support::publish(pool, &ChainNet::ALL, true, Duration::ZERO).await;
+    trade_events::tests::publish_cursors(pool).await;
+    let (trade, _) = insert_trade_on(
+        pool,
+        "MATIC",
+        137,
+        "public_nft_order",
+        WALLET_A,
+        Asset {
+            asset_type: 3,
+            contract: contract.clone(),
+            value: "1".into(),
+        },
+        Asset {
+            asset_type: 1,
+            contract: listings::mana_token(137).unwrap().into(),
+            value: "1000".into(),
+        },
+    )
+    .await;
+    let app = market_router(state);
+    let orders = "/v1/orders?network=MATIC&status=cancelled";
+    let catalog = format!("/v2/catalog?network=MATIC&contractAddress={contract}");
+    let get_nft = |token: u8, on_sale: bool| {
+        let filter = if on_sale { "&isOnSale=true" } else { "" };
+        let path = format!(
+            "/v1/nfts?category=wearable&network=MATIC&contractAddress={contract}&tokenId={token}{filter}"
+        );
+        let router = app.clone();
+        async move { get(router, &path).await }
+    };
+
+    let index = NftIndex::new(ChainNet::Matic);
+    let owner = chain_walk::test_owner(pool, &index, &chain_walk::IndexSettings::default()).await;
+    assert_eq!(get(app.clone(), orders).await.0, StatusCode::OK);
+
+    sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
+        "INSERT INTO shop.nft_event (network,block_number,log_index,block_time,kind,emitter,contract_address,token_id,
+                                   from_address,amount,expires_at,detail)
+         VALUES ('matic',10,0,10,'order_created','{CREATOR}','{contract}',3,'{WALLET_A}',10,4102444800000,'first'),
+                ('matic',11,0,11,'order_created','{CREATOR}','{contract}',3,'{WALLET_A}',20,4102444800000,'second')"
+    )))
+    .execute(pool)
+    .await
+    .unwrap();
+    let mut tx = pool.begin().await.unwrap();
+    owner.check(&mut tx).await.unwrap();
+    assert_eq!(
+        legacy_orders::fold(&mut tx, ChainNet::Matic, -1)
+            .await
+            .unwrap(),
+        0
+    );
+    tx.commit().await.unwrap();
+
+    let live_count = || {
+        sqlx::query_scalar::<_, i64>(
+            "SELECT count(*) FROM shop.legacy_order WHERE network = 'matic'",
+        )
+        .fetch_one(pool)
+    };
+    for _ in 0..30 {
+        let mut tx = pool.begin().await.unwrap();
+        owner.check(&mut tx).await.unwrap();
+        assert_eq!(
+            legacy_orders::rebuild_batch(&mut tx, ChainNet::Matic, 1)
+                .await
+                .unwrap(),
+            legacy_orders::RebuildStep::Batched
+        );
+        tx.commit().await.unwrap();
+        if live_count().await.unwrap() == 1 {
+            break;
+        }
+    }
+    assert_eq!(live_count().await.unwrap(), 1);
+
+    // Another real NFT fold publishes a newly transferred token while the
+    // legacy book remains partially applied at the previous height.
+    sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
+        "INSERT INTO shop.nft_event (network,block_number,log_index,block_time,kind,emitter,contract_address,token_id,from_address,to_address)
+         VALUES ('matic',101,0,101,'transfer','{contract}','{contract}',2,'{WALLET_A}','{WALLET_B}');
+         UPDATE shop.chain_cursor SET last_block = 101, last_block_hash = '0x' || repeat('1',64)
+         WHERE indexer = 'nft' AND network = 'matic';
+         INSERT INTO shop.chain_checkpoint (indexer,network,block_number,block_hash,block_time)
+         VALUES ('nft','matic',101,'0x' || repeat('1',64),101)"
+    )))
+    .execute(pool)
+    .await
+    .unwrap();
+    let fold = nft_index::fold(pool, ChainNet::Matic, Some(100), &owner)
+        .await
+        .unwrap();
+    assert_eq!((fold.nfts, fold.legacy_orders), (1, 0));
+    chain_walk::record_fold(pool, &owner, 101).await.unwrap();
+    assert!(
+        chain_walk::mark_folded(pool, &index, &owner, 101, chrono::Utc::now())
+            .await
+            .unwrap()
+    );
+
+    for path in [
+        orders.to_owned(),
+        format!("/v1/orders/open-by-items?item={contract}-0"),
+        format!("{catalog}&onlyListing=true"),
+    ] {
+        let (code, body) = get(app.clone(), &path).await;
+        assert_eq!(
+            (code, body["source"].as_str()),
+            (StatusCode::SERVICE_UNAVAILABLE, Some("nft-index")),
+            "{path}: {body}"
+        );
+    }
+    let (code, body) = get(app.clone(), &catalog).await;
+    assert_eq!(code, StatusCode::OK, "{body}");
+    assert_eq!(body["total"], 1, "{body}");
+
+    let (code, nft) = get_nft(2, false).await;
+    assert_eq!(code, StatusCode::OK, "{nft}");
+    assert_eq!(nft["data"][0]["nft"]["owner"], WALLET_B, "{nft}");
+    let (code, nft) = get_nft(1, true).await;
+    assert_eq!(code, StatusCode::OK, "{nft}");
+    assert_eq!(nft["data"][0]["order"]["tradeId"], trade, "{nft}");
+    let (code, data) = get(app.clone(), &format!("/v1/trades/{trade}")).await;
+    assert_eq!(code, StatusCode::OK, "{data}");
+    assert_eq!(data["data"]["id"], trade, "{data}");
+    let (code, eth) = get(app.clone(), "/v1/orders?network=ETHEREUM&status=sold").await;
+    assert_eq!(code, StatusCode::OK, "{eth}");
+    assert_eq!(eth["data"][0]["id"], "ethereum-sale", "{eth}");
+
+    assert!(
+        legacy_orders::run_rebuild(
+            pool,
+            ChainNet::Matic,
+            &owner,
+            std::time::Instant::now() + Duration::from_secs(10),
+            &legacy_orders::RebuildLane::default(),
+        )
+        .await
+        .unwrap()
+    );
+    assert_eq!(live_count().await.unwrap(), 2);
+    assert_eq!(
+        get(app.clone(), orders).await.0,
+        StatusCode::SERVICE_UNAVAILABLE
+    );
+    assert!(
+        chain_walk::mark_folded(pool, &index, &owner, 101, chrono::Utc::now())
+            .await
+            .unwrap()
+    );
+    let (code, body) = get(app, orders).await;
+    assert_eq!(code, StatusCode::OK, "{body}");
+    assert_eq!(body["data"][0]["id"], "first", "{body}");
+    db.drop().await;
+}

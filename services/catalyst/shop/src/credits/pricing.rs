@@ -205,7 +205,7 @@ impl Market for LocalMarket {
         }
         let Some(market) = self.market.as_ref() else {
             return Err(ApiError::service_unavailable(
-                "the item catalogue is not configured on this node (MARKETPLACE_MIRRORS_ENABLED)",
+                "the item catalogue is not configured on this node: credits pricing was built without the marketplace",
             ));
         };
         // What the credits charge is a price: the catalogue's priced read,
@@ -286,7 +286,7 @@ impl Market for LocalMarket {
     ) -> Result<Vec<ListingRow>, ApiError> {
         let Some(market) = self.market.as_ref() else {
             return Err(ApiError::service_unavailable(
-                "the order book is not configured on this node (collections subgraphs)",
+                "the order book is not configured on this node: credits pricing was built without the marketplace",
             ));
         };
         let orders = crate::market::orders::open_orders_by_items(

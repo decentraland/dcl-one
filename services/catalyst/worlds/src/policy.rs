@@ -53,7 +53,7 @@ use crate::comms::world_identity::{Parcel, ParcelSet, SceneId, WorldName};
 use crate::ens::EnsResolver;
 use crate::http::Outbound;
 use crate::land_authz::{self, LandAuthzState};
-use crate::shared::cache::TtlMap;
+use crate::shared::cache::{Coalesce, TtlMap};
 use crate::shared::identity::{
     Address, AuthorityNotEstablished, COMMUNITY_MEMBERSHIP_SQL, PermissionDecision,
 };
@@ -368,14 +368,45 @@ fn owner_answer(
 fn names_unavailable(e: &NamesError) -> AuthorityNotEstablished {
     match e {
         NamesError::NotEstablished(_) => reader_unavailable(NAMES_NOT_CURRENT, &e.to_string()),
+        // A transient database fault is answered as the index not being
+        // current: refused, and retryable. The client gets a fixed reason;
+        // the fault itself is for the log.
+        NamesError::Transient(fault) => {
+            tracing::warn!(error = %fault, "DCL NAME read hit a transient fault; refused as retryable");
+            reader_unavailable(NAMES_NOT_CURRENT, NAMES_READ_INTERRUPTED)
+        }
+        // Not transient: refused like any undetermined owner, not retried.
+        NamesError::Ambiguous(_) => reader_unavailable(NAMES_AMBIGUOUS, &e.to_string()),
         NamesError::Failed(_) => reader_unavailable("DCL NAME source", &e.to_string()),
     }
 }
 
 /// The store a refusal names when the NAME source cannot establish an owner
-/// now (the index not current for an authorization, an ambiguous label):
-/// undetermined, and short-lived.
+/// now (the index not current for an authorization, or a transient database
+/// fault reading it): undetermined, and short-lived.
 const NAMES_NOT_CURRENT: &str = "DCL NAME source (not established)";
+
+/// The reason a refusal gives for a transient fault reading the names index.
+const NAMES_READ_INTERRUPTED: &str = "the ethereum nft index could not be read just now: NAME ownership cannot be established; retry shortly";
+
+/// The store a refusal names when two holders claim the NAME's label once
+/// lowercased: undetermined until a transfer resolves it, not by waiting.
+const NAMES_AMBIGUOUS: &str = "DCL NAME source (ambiguous label)";
+
+/// The names index's reason when `why` is its transient "cannot establish an
+/// owner now" ([`NAMES_NOT_CURRENT`]); `None` for every other refusal, an
+/// ambiguous label ([`NAMES_AMBIGUOUS`]) included. A write answers this
+/// case as the names index being unavailable, a retryable 503, not as a
+/// denial.
+pub fn names_not_current(why: &AuthorityNotEstablished) -> Option<&str> {
+    match why {
+        AuthorityNotEstablished::UndeterminedStoreUnavailable {
+            store: NAMES_NOT_CURRENT,
+            reason_for_operators,
+        } => Some(reason_for_operators),
+        _ => None,
+    }
+}
 
 fn reader_unavailable(store: &'static str, reason: &str) -> AuthorityNotEstablished {
     AuthorityNotEstablished::UndeterminedStoreUnavailable {
@@ -413,6 +444,16 @@ pub struct Policy {
     /// publication it was read under (a hit is served only while that
     /// publication stands and is current), single-flight.
     admission_owners: TtlMap<String, MemoizedOwner>,
+    /// `(world key, the publication its memo entry was read under)` -> the
+    /// re-read in flight once that publication no longer stands: the
+    /// admissions holding the same obsolete entry share it.
+    admission_refreshes: Coalesce<(String, Observation), MemoizedOwner>,
+    /// A publication -> whether it still stands and is current, the check in
+    /// flight: concurrent memo hits under one publication share one read.
+    /// Nothing is kept past the check, so a withdrawal is seen by the next
+    /// check; a hit that joins a check already in flight takes its answer
+    /// (at most one check's duration behind its own).
+    admission_checks: Coalesce<Observation, bool>,
     /// The DAO name deny list and `BLOCKED_WORLD_NAMES`, which
     /// [`AccessPolicy::world_admission`](crate::comms::interfaces::AccessPolicy::world_admission)
     /// applies (upstream `isWorldValid`'s `checkNameDenyList`). ONE list, with ONE memo, shared
@@ -452,6 +493,8 @@ impl Policy {
             ens: None,
             ens_max_size_bytes: DEFAULT_ENS_MAX_SIZE_BYTES,
             admission_owners: TtlMap::bounded(ADMISSION_OWNER_MEMO, ADMISSION_OWNER_MAX_ENTRIES),
+            admission_refreshes: Coalesce::new(),
+            admission_checks: Coalesce::new(),
             names: Arc::default(),
         }
     }
@@ -827,6 +870,41 @@ impl Policy {
         owner_answer(names.name_owner_on(conn, label, Purpose::Authorize).await).0
     }
 
+    /// Inside the transaction on `conn` that writes a publish of `world`,
+    /// after it took the world's locks: the NAME source's publication held
+    /// until that transaction ends ([`NameAuthority::hold_publication_on`]),
+    /// then `holder` confirmed as the NAME's holder under it. The publish
+    /// was authorized before that transaction began, so a fold withdrawn or
+    /// a holder replaced since then refuses the write, and no withdrawal or
+    /// refold commits until the write has. Personal and ENS worlds, and a
+    /// source without publications (the subgraph), have nothing to hold.
+    pub async fn confirm_name_holder_on(
+        &self,
+        conn: &mut sqlx::PgConnection,
+        world: &WorldName,
+        holder: &Address,
+    ) -> Result<(), AuthorityNotEstablished> {
+        if self.personal_worlds.owner_of(world).is_some() || world.is_ens_world() {
+            return Ok(());
+        }
+        let (Some(label), Some(names)) = (dcl_label(world), self.names_reader()) else {
+            return Ok(());
+        };
+        if !names.observes() {
+            return Ok(());
+        }
+        names
+            .hold_publication_on(conn)
+            .await
+            .map_err(|e| names_unavailable(&e))?;
+        match owner_answer(names.name_owner_on(conn, label, Purpose::Authorize).await).0? {
+            Some(owner) if owner == *holder => Ok(()),
+            _ => Err(AuthorityNotEstablished::RefusedLacksAuthority {
+                detail: format!("{holder} no longer holds the NAME of {world}"),
+            }),
+        }
+    }
+
     /// [`Self::live_name_owner`] as a future that owns what it needs, so a
     /// caller that stops waiting leaves it to finish and fill the memo.
     fn name_owner_lookup(&self, world: &WorldName) -> OwnerLookup {
@@ -871,7 +949,10 @@ impl Policy {
     /// validated: one read under a publication is served only while that
     /// publication stands and is current enough to authorize; otherwise the
     /// owner is read again and filed over it (a slot another caller waits on
-    /// is never dropped). The wait, the validation and any re-read share one
+    /// is never dropped). Concurrent validations of one publication share
+    /// one check, and concurrent re-reads of one world over one obsolete
+    /// entry share one read; neither keeps its answer past the read. The
+    /// wait, the validation and any re-read share one
     /// [`ADMISSION_OWNER_TIMEOUT`] deadline.
     async fn admission_owner(
         &self,
@@ -904,28 +985,62 @@ impl Policy {
             let Some(observed) = entry.1 else {
                 return entry;
             };
-            let current = match self.names_reader() {
-                Some(names) => names
-                    .still_current(&observed, Purpose::Authorize)
-                    .await
-                    .unwrap_or(false),
-                None => false,
-            };
-            if current {
+            if self.publication_stands(observed).await {
                 return entry;
             }
-            let (fresh, not_current) =
-                timed_owner_lookup(self.name_owner_lookup(world), left()).await;
-            if !not_current {
-                self.admission_owners.insert(key.clone(), fresh.clone());
-            }
-            fresh
+            // A re-read joined from another admission is served only as the
+            // memo serves one: while the publication it was read under
+            // stands (a newer one may have come while it was in flight).
+            self.admission_refreshes
+                .run_accepting(
+                    (key.clone(), observed),
+                    // The shared re-read has its own budget, not its
+                    // leader's remaining one: each caller's deadline bounds
+                    // its own wait, and a leader that gives up drops the
+                    // re-read for its joiners to read again.
+                    || async {
+                        let (fresh, not_current) = timed_owner_lookup(
+                            self.name_owner_lookup(world),
+                            ADMISSION_OWNER_TIMEOUT,
+                        )
+                        .await;
+                        if !not_current {
+                            self.admission_owners.insert(key.clone(), fresh.clone());
+                        }
+                        fresh
+                    },
+                    |(_, read_under)| async move {
+                        match read_under {
+                            Some(read_under) => self.publication_stands(read_under).await,
+                            None => true,
+                        }
+                    },
+                )
+                .await
         })
         .await
         .unwrap_or_else(|_| (Err("owner lookup timed out".to_string()), None));
         answer
             .0
             .map_err(|e| reader_unavailable("name authority", &e))
+    }
+
+    /// Whether an answer read under `observed` may still authorize: the
+    /// publication stands and is current. Concurrent checks of one
+    /// publication share one read (a caller joining one in flight takes its
+    /// answer), and none is kept past it.
+    async fn publication_stands(&self, observed: Observation) -> bool {
+        let Some(names) = self.names_reader() else {
+            return false;
+        };
+        self.admission_checks
+            .run(observed, || async move {
+                names
+                    .still_current(&observed, Purpose::Authorize)
+                    .await
+                    .unwrap_or(false)
+            })
+            .await
     }
 
     /// Records `owner` as `world`'s holder, an answer the caller just proved,
@@ -2781,6 +2896,12 @@ mod tests {
         entered: tokio::sync::Notify,
         /// A validation that never answers.
         stall: std::sync::atomic::AtomicBool,
+        /// How many validations (`still_current`) were asked.
+        checks: std::sync::atomic::AtomicUsize,
+        /// While set, a validation waits on it before answering
+        /// (`check_entered` tells the test it got there).
+        check_pause: std::sync::Mutex<Option<Arc<tokio::sync::Notify>>>,
+        check_entered: tokio::sync::Notify,
     }
 
     impl Indexed {
@@ -2820,7 +2941,7 @@ mod tests {
 
         fn holder(&self, label: &str) -> Result<Option<String>, NamesError> {
             if self.ambiguous.lock().unwrap().contains(label) {
-                return Err(NamesError::NotEstablished(format!("{label}: two holders")));
+                return Err(NamesError::Ambiguous(format!("{label}: two holders")));
             }
             Ok(self.holders.lock().unwrap().get(label).cloned())
         }
@@ -2895,8 +3016,14 @@ mod tests {
 
         async fn still_current(&self, o: &Observation, _: Purpose) -> Result<bool, NamesError> {
             use std::sync::atomic::Ordering::SeqCst;
+            self.checks.fetch_add(1, SeqCst);
             if self.stall.load(SeqCst) {
                 std::future::pending::<()>().await;
+            }
+            let pause = self.check_pause.lock().unwrap().clone();
+            if let Some(pause) = pause {
+                self.check_entered.notify_one();
+                pause.notified().await;
             }
             Ok(!self.held.load(SeqCst) && o.folded_block == self.block.load(SeqCst))
         }
@@ -3030,6 +3157,115 @@ mod tests {
         pause.notify_waiters();
         assert_eq!(waiter.await.unwrap().unwrap(), Some(b.clone()));
         assert_eq!(leader.await.unwrap().unwrap(), Some(b));
+    }
+
+    /// After a publication, the admissions that hold the world's obsolete
+    /// entry share one re-read (#2219): with the re-read held in flight,
+    /// eight concurrent admissions ask the source once, and every one of
+    /// them is answered the new holder, which the memo then serves.
+    #[tokio::test]
+    async fn admissions_after_a_publication_share_one_refresh() {
+        use crate::comms::interfaces::AccessPolicy;
+        let (p, indexed) = indexed_policy();
+        let p = Arc::new(p);
+        let (world, a, b) = (world_name(), wallet(), wallet());
+        let label = world.owner_label().unwrap().to_string();
+        indexed.publish(&label, Some(&a));
+        assert_eq!(p.world_owner(&world).await.unwrap(), Some(a));
+        indexed.publish(&label, Some(&b));
+        let asked = || indexed.asked.lock().unwrap().len();
+        let before = asked();
+        let pause = Arc::new(tokio::sync::Notify::new());
+        *indexed.pause.lock().unwrap() = Some(pause.clone());
+        let admissions: Vec<_> = (0..8)
+            .map(|_| {
+                let (p, world) = (p.clone(), world.clone());
+                tokio::spawn(async move { p.world_owner(&world).await })
+            })
+            .collect();
+        indexed.entered.notified().await;
+        // The others reach the re-read in flight before it answers.
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        *indexed.pause.lock().unwrap() = None;
+        pause.notify_waiters();
+        for admission in admissions {
+            assert_eq!(admission.await.unwrap().unwrap(), Some(b.clone()));
+        }
+        assert_eq!(asked() - before, 1, "one re-read for every admission");
+        assert_eq!(p.world_owner(&world).await.unwrap(), Some(b));
+        assert_eq!(asked() - before, 1, "the memo serves the re-read");
+    }
+
+    /// A re-read joined from another admission is served only while the
+    /// publication it was read under stands: the re-read reads B under the
+    /// second publication and is held there, a third publishes C, and an
+    /// admission that joined the re-read meanwhile reads again and is
+    /// answered C. The re-read's own caller is answered B, as before.
+    #[tokio::test]
+    async fn a_joined_refresh_is_validated_before_it_is_served() {
+        use crate::comms::interfaces::AccessPolicy;
+        let (p, indexed) = indexed_policy();
+        let p = Arc::new(p);
+        let (world, a, b, c) = (world_name(), wallet(), wallet(), wallet());
+        let label = world.owner_label().unwrap().to_string();
+        indexed.publish(&label, Some(&a));
+        assert_eq!(p.world_owner(&world).await.unwrap(), Some(a));
+        indexed.publish(&label, Some(&b));
+        let pause = Arc::new(tokio::sync::Notify::new());
+        *indexed.pause.lock().unwrap() = Some(pause.clone());
+        let leader = tokio::spawn({
+            let (p, world) = (p.clone(), world.clone());
+            async move { p.world_owner(&world).await }
+        });
+        indexed.entered.notified().await;
+        indexed.publish(&label, Some(&c));
+        let follower = tokio::spawn({
+            let (p, world) = (p.clone(), world.clone());
+            async move { p.world_owner(&world).await }
+        });
+        // The follower joins the re-read in flight before it answers.
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        *indexed.pause.lock().unwrap() = None;
+        pause.notify_waiters();
+        assert_eq!(leader.await.unwrap().unwrap(), Some(b));
+        assert_eq!(follower.await.unwrap().unwrap(), Some(c.clone()));
+        assert_eq!(p.world_owner(&world).await.unwrap(), Some(c));
+    }
+
+    /// Concurrent memo hits under one publication share one validation, and
+    /// none outlives it: a hit after it validates again.
+    #[tokio::test]
+    async fn hits_under_one_publication_share_one_validation() {
+        use crate::comms::interfaces::AccessPolicy;
+        use std::sync::atomic::Ordering::SeqCst;
+        let (p, indexed) = indexed_policy();
+        let p = Arc::new(p);
+        let (world, a) = (world_name(), wallet());
+        indexed.publish(world.owner_label().unwrap(), Some(&a));
+        assert_eq!(p.world_owner(&world).await.unwrap(), Some(a.clone()));
+        let checks = indexed.checks.load(SeqCst);
+        let pause = Arc::new(tokio::sync::Notify::new());
+        *indexed.check_pause.lock().unwrap() = Some(pause.clone());
+        let hits: Vec<_> = (0..8)
+            .map(|_| {
+                let (p, world) = (p.clone(), world.clone());
+                tokio::spawn(async move { p.world_owner(&world).await })
+            })
+            .collect();
+        indexed.check_entered.notified().await;
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        *indexed.check_pause.lock().unwrap() = None;
+        pause.notify_waiters();
+        for hit in hits {
+            assert_eq!(hit.await.unwrap().unwrap(), Some(a.clone()));
+        }
+        assert_eq!(indexed.checks.load(SeqCst) - checks, 1);
+        assert_eq!(p.world_owner(&world).await.unwrap(), Some(a));
+        assert_eq!(
+            indexed.checks.load(SeqCst) - checks,
+            2,
+            "nothing is kept past the check"
+        );
     }
 
     /// The validation of a warm hit is under the admission deadline: a

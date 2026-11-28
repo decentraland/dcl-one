@@ -33,3 +33,5 @@ mod notifier_parity;
 mod social_live;
 #[path = "worlds_mirror.rs"]
 mod worlds_mirror;
+#[path = "worlds_name_publish.rs"]
+mod worlds_name_publish;

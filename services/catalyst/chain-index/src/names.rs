@@ -51,12 +51,46 @@ pub struct Observation {
 pub enum NamesError {
     /// The authority cannot answer now: the index is not current for the
     /// purpose (catching up, an unfolded advance, a withdrawn publication,
-    /// quarantined), two holders claim one label, or no source is selected.
+    /// quarantined), or no source is selected.
     #[error("{0}")]
     NotEstablished(String),
+    /// Two holders claim one label once lowercased: no owner can be named,
+    /// and waiting for the index does not change that (only a transfer
+    /// does), so a write refuses it rather than asking to be retried.
+    #[error("{0}")]
+    Ambiguous(String),
+    /// The source could not answer this time: a transient database fault
+    /// (a statement timeout, a deadlock or serialization failure, a lock
+    /// wait that ran out, a lost connection; [`transient_fault`]). Asking
+    /// again may succeed, so a write refuses it as retryable.
+    #[error("{0}")]
+    Transient(String),
     /// The source failed (a database or subgraph error).
     #[error("{0}")]
     Failed(String),
+}
+
+/// Whether `e` is a database fault that asking again may clear: a lost or
+/// refused connection (SQLSTATE class 08, an I/O error, the pool timing out
+/// or closing), a serialization failure (40001), a deadlock (40P01), a lock
+/// wait that ran out (55P03), a cancelled statement, its statement bound
+/// included (57014), a server shutting down or starting (57P01 to 57P03),
+/// or too many connections (53300).
+pub fn transient_fault(e: &sqlx::Error) -> bool {
+    match e {
+        sqlx::Error::Io(_)
+        | sqlx::Error::PoolTimedOut
+        | sqlx::Error::PoolClosed
+        | sqlx::Error::WorkerCrashed => true,
+        sqlx::Error::Database(d) => d.code().is_some_and(|code| {
+            code.starts_with("08")
+                || matches!(
+                    code.as_ref(),
+                    "40001" | "40P01" | "55P03" | "57014" | "57P01" | "57P02" | "57P03" | "53300"
+                )
+        }),
+        _ => false,
+    }
 }
 
 /// An answer and the publication it was read under (`None` for a source
@@ -164,6 +198,84 @@ pub trait NameAuthority: Send + Sync {
     /// Whether this source reads publications (the index): a memo may then
     /// keep an answer only with its observation.
     fn observes(&self) -> bool;
+
+    /// Holds this source's publication on `conn` until the caller's
+    /// transaction ends: no writer withdraws or replaces it meanwhile, so a
+    /// read on `conn` after this answers under the publication the caller's
+    /// write commits under. A source without publications (the subgraph)
+    /// holds nothing.
+    async fn hold_publication_on(&self, conn: &mut sqlx::PgConnection) -> Result<(), NamesError> {
+        let _ = conn;
+        Ok(())
+    }
+}
+
+/// How long [`hold_index_publication`] waits, in all, for a fold that holds
+/// the names index's publication row: past it the caller is answered as the
+/// index not being current, a retryable refusal, instead of holding its own
+/// locks behind a long refold until its statement bound fails it. It bounds
+/// the whole share statement (`statement_timeout`), so a share queued behind
+/// another waiter (a tuple lock, then the fold's transaction lock) waits no
+/// longer either.
+pub const HOLD_WAIT: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// What [`hold_index_publication`] got.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PublicationHold {
+    /// The publication row is held until the transaction ends.
+    Held,
+    /// There is no publication row: nothing to authorize under.
+    Unpublished,
+    /// A fold held the row past [`HOLD_WAIT`]. The transaction is aborted.
+    Busy,
+}
+
+/// The names index's publication row, the Ethereum `nft` cursor, locked
+/// `FOR SHARE` on `conn` until its transaction ends. The nft fold locks that
+/// row `FOR UPDATE` from its first projection write to its commit, and every
+/// publication, withdrawal or refold of the index updates it, so none of
+/// them commits while the share is held. Take it only inside a short
+/// transaction: a fold waits for its end. The wait for a fold already
+/// holding it is bounded by [`HOLD_WAIT`] in all (`statement_timeout`, set
+/// for this statement and restored after it).
+pub async fn hold_index_publication(
+    conn: &mut sqlx::PgConnection,
+) -> Result<PublicationHold, sqlx::Error> {
+    let previous: String = sqlx::query_scalar("SELECT current_setting('statement_timeout')")
+        .fetch_one(&mut *conn)
+        .await?;
+    sqlx::query("SELECT set_config('statement_timeout', $1, true)")
+        .bind(format!("{}ms", HOLD_WAIT.as_millis()))
+        .execute(&mut *conn)
+        .await?;
+    let held = sqlx::query_scalar::<_, i32>(
+        "SELECT 1 FROM shop.chain_cursor WHERE indexer = 'nft' AND network = 'ethereum' FOR SHARE",
+    )
+    .fetch_optional(&mut *conn)
+    .await;
+    let held = match held {
+        Ok(held) => held,
+        // The bound ran out waiting for the fold (query_canceled), or a
+        // shorter lock wait the session set did (lock_not_available).
+        Err(e)
+            if matches!(
+                e.as_database_error().and_then(|d| d.code()).as_deref(),
+                Some("57014" | "55P03")
+            ) =>
+        {
+            return Ok(PublicationHold::Busy);
+        }
+        Err(e) => return Err(e),
+    };
+    sqlx::query("SELECT set_config('statement_timeout', $1, true)")
+        .bind(previous)
+        .execute(&mut *conn)
+        .await?;
+    Ok(if held.is_some() {
+        PublicationHold::Held
+    } else {
+        PublicationHold::Unpublished
+    })
 }
 
 /// The marketplace subgraph as the NAME source, where the operator selects
@@ -243,5 +355,31 @@ impl NameAuthority for SubgraphNames {
 
     fn observes(&self) -> bool {
         false
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::transient_fault;
+
+    /// A lost or exhausted pool may clear on a retry; a query the schema
+    /// cannot answer or a decode never will.
+    #[test]
+    fn only_faults_a_retry_may_clear_are_transient() {
+        for transient in [
+            sqlx::Error::PoolTimedOut,
+            sqlx::Error::PoolClosed,
+            sqlx::Error::WorkerCrashed,
+            sqlx::Error::Io(std::io::Error::from(std::io::ErrorKind::ConnectionReset)),
+        ] {
+            assert!(transient_fault(&transient), "{transient}");
+        }
+        for lasting in [
+            sqlx::Error::RowNotFound,
+            sqlx::Error::ColumnNotFound("owner".into()),
+            sqlx::Error::Protocol("unexpected message".into()),
+        ] {
+            assert!(!transient_fault(&lasting), "{lasting}");
+        }
     }
 }
