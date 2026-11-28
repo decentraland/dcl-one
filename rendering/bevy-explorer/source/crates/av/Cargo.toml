@@ -45,6 +45,8 @@ web-sys = { workspace = true, optional = true, features = [
   "HtmlVideoElement",
   "HtmlCollection",
   "AudioContext",
+  "AudioContextState",
+  "BaseAudioContext",
   "AudioBuffer",
   "AudioBufferSourceNode",
   "AudioScheduledSourceNode",
@@ -53,6 +55,9 @@ web-sys = { workspace = true, optional = true, features = [
   "AudioDestinationNode",
   "AudioParam",
   "VideoFrame",
+  "Window",
+  "Document",
+  "EventTarget",
 ] }
 wasm-bindgen = { workspace = true, optional = true }
 
