@@ -98,6 +98,26 @@ class AuthStressTests(unittest.TestCase):
         execute.assert_not_called()
 
 
+class CatalystV8Tests(unittest.TestCase):
+    def test_cargo_in_catalyst_links_the_nix_v8_and_nowhere_else(self):
+        archive = "/nix/store/example-librusty_v8.a"
+        with mock.patch.dict(os.environ, {"CATALYST_RUSTY_V8_ARCHIVE": archive}):
+            os.environ.pop("RUSTY_V8_ARCHIVE", None)
+            self.assertEqual(guard.catalyst_env(ROOT / "services/catalyst")["RUSTY_V8_ARCHIVE"], archive)
+            self.assertEqual(guard.catalyst_env(ROOT / "services/catalyst/worlds")["RUSTY_V8_ARCHIVE"], archive)
+            self.assertIsNone(guard.catalyst_env(ROOT))
+            self.assertIsNone(guard.catalyst_env(ROOT / "rendering/bevy-explorer/source"))
+        with mock.patch.dict(os.environ, {"CATALYST_RUSTY_V8_ARCHIVE": ""}):
+            self.assertIsNone(guard.catalyst_env(ROOT / "services/catalyst"))
+
+    def test_run_passes_the_catalyst_environment(self):
+        with mock.patch.dict(os.environ, {"CATALYST_RUSTY_V8_ARCHIVE": "/nix/store/example-librusty_v8.a"}):
+            out = guard.run(["bash", "-c", 'echo "${RUSTY_V8_ARCHIVE-unset}"'], ROOT / "services/catalyst")
+            self.assertEqual(out.strip(), "/nix/store/example-librusty_v8.a")
+            os.environ.pop("RUSTY_V8_ARCHIVE", None)
+            self.assertEqual(guard.run(["bash", "-c", 'echo "${RUSTY_V8_ARCHIVE-unset}"'], ROOT).strip(), "unset")
+
+
 class InventoryTests(unittest.TestCase):
     def test_assignment_fifo_bodies_cannot_disappear_or_be_ignored(self):
         cases = {

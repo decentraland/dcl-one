@@ -489,8 +489,17 @@ def validate_bevy_workflow(workflow):
     require("        working-directory: rendering/bevy-explorer/source\n" in job, "native Bevy workspace default changed")
 
 
+def catalyst_env(cwd):
+    """The environment for a command in `cwd`: in catalyst's workspace it links the nix shell's V8 (flake.nix)."""
+    archive = os.environ.get("CATALYST_RUSTY_V8_ARCHIVE")
+    catalyst = ROOT / "services/catalyst"
+    if not archive or not Path(cwd).resolve().is_relative_to(catalyst):
+        return None
+    return {**os.environ, "RUSTY_V8_ARCHIVE": archive}
+
+
 def run(command, cwd=ROOT):
-    result = subprocess.run(command, cwd=cwd, text=True, stdout=subprocess.PIPE, check=True)
+    result = subprocess.run(command, cwd=cwd, env=catalyst_env(cwd), text=True, stdout=subprocess.PIPE, check=True)
     return result.stdout
 
 

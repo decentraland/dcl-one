@@ -44,6 +44,7 @@ fn capture_prepared(pool: &PgPool, label: &str) {
     std::fs::write(dir.join(format!("v2-{label}-rows-c1fab3991.sql")), dump(&args)).unwrap();
 }
 `
+const CATALYST_CARGO = '[ -z "${CATALYST_RUSTY_V8_ARCHIVE:-}" ] || export RUSTY_V8_ARCHIVE="$CATALYST_RUSTY_V8_ARCHIVE"; exec cargo "$@"'
 let instrumented = original
 const afterMigrate = '.unwrap_or_else(|e| panic!("{e}"));'
 let occurrence = 0
@@ -55,7 +56,8 @@ if (occurrence !== 2) throw Error('Pinned test observation points changed')
 fs.writeFileSync(generated, instrumented + observer)
 try {
   for (const filter of ['a_database_stamped_with_the_closure_base_upgrades_to_head_with_its_rows', 'the_origin_backfill_keeps_local_rows_and_releases_edited_mirrored_events']) {
-    execFileSync('nix', ['develop', '--offline', '--command', 'cargo', 'test', '--manifest-path', 'services/catalyst/Cargo.toml', '--test', 'capture_social_schema_v2', filter, '--', '--nocapture'], { cwd: checkout, stdio: 'inherit', env: { ...process.env, CARGO_TARGET_DIR: captureTarget, CAPTURE_V2_OUTPUT: output } })
+    // The nix shell's prebuilt V8 for catalyst's pin (flake.nix), so the offline build does not download it.
+    execFileSync('nix', ['develop', '--offline', '--command', 'bash', '-c', CATALYST_CARGO, 'bash', 'test', '--manifest-path', 'services/catalyst/Cargo.toml', '--test', 'capture_social_schema_v2', filter, '--', '--nocapture'], { cwd: checkout, stdio: 'inherit', env: { ...process.env, CARGO_TARGET_DIR: captureTarget, CAPTURE_V2_OUTPUT: output } })
   }
   const hash = file => crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex')
   const inputs = [source, 'services/catalyst/db/src/schema_migrate.rs', 'schemas/releases/v2-shop-schema.sql', 'services/catalyst/tests/fixtures/schema/closure-base-c96370f21.sql']
