@@ -6,7 +6,8 @@
  * width is 560px on a desktop and the screen less 16px a side on a phone. The Explorer modals
  * (`ModalSingleCTA`, `ModalPlusCheckbox`, `Modal&Img`) hold the same parts; their 24px radius,
  * 70 by 60px padding and glow artwork are not drawn. The backdrop and the close button's place are
- * not in the design. */
+ * not in the design. The `drawer` layout is not in Figma: it comes from decentraland.org's places
+ * filter drawer. */
 @layer dcl.components {
   .root {
     position: fixed;
@@ -71,6 +72,44 @@
       border-radius: var(--dcl-radius-lg);
       box-shadow: 0 4px 25px var(--dcl-transparencies-white-20);
     }
+  }
+
+  /* A side panel at the right edge: full height, the title beside the close button, then the
+   * content 24px below, on the dark surface of decentraland.org's places filters. */
+  .root[data-layout='drawer'] {
+    inset: 0 0 0 auto;
+    width: min(360px, 85vw);
+    height: 100vh;
+    height: 100dvh;
+    max-height: none;
+    margin: 0;
+    padding: var(--dcl-space-24);
+    border-radius: 0;
+    background: var(--dcl-neutrals-shadow);
+    text-align: start;
+  }
+
+  .root[data-layout='drawer'][open] {
+    align-items: stretch;
+    gap: 0;
+  }
+
+  .root[data-layout='drawer'] > .close {
+    top: var(--dcl-space-24);
+    right: var(--dcl-space-24);
+  }
+
+  .root[data-layout='drawer'] > .body {
+    gap: var(--dcl-space-24);
+  }
+
+  /* The title's row is the close button's height; its end stays clear of the button. */
+  .root[data-layout='drawer'] .title:not([data-hidden]) {
+    display: flex;
+    align-items: center;
+    min-height: var(--dcl-space-32);
+    padding: 0 calc(var(--dcl-space-32) + var(--dcl-space-8)) 0 0;
+    font-size: var(--dcl-font-size-heading-4);
   }
 
   .close {

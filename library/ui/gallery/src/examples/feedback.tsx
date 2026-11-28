@@ -27,7 +27,8 @@ import {
   VoiceBars,
   DclLogo,
   MaskIcon,
-  ScrollThumb
+  ScrollThumb,
+  textClasses
 } from '@dcl/one-ui'
 import { EmbeddedCanvas } from '../embedded'
 import type { GalleryEntry } from '../registry'
@@ -269,6 +270,22 @@ export const feedbackEntries: GalleryEntry[] = [
             titleHidden
             image={<img src={covers.festival} alt="Festival stage" />}
           />
+        )
+      },
+      {
+        id: 'drawer',
+        title: 'Drawer layout: a side panel at the right edge',
+        render: () => (
+          <ModalDemo
+            trigger="Open drawer"
+            layout="drawer"
+            title="Filters"
+            closeLabel="Close filters"
+          >
+            <p className={textClasses.bodyMd} style={{ margin: 0 }}>
+              Category
+            </p>
+          </ModalDemo>
         )
       },
       {

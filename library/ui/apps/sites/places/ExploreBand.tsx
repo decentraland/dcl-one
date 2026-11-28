@@ -1,10 +1,9 @@
 import { forwardRef, useState, type ReactNode, type SVGProps } from 'react'
 import { Button } from '../../../components/Button/Button'
-import { CloseButton } from '../../../components/CloseButton/CloseButton'
 import { Dropdown } from '../../../components/Dropdown/Dropdown'
 import { InputWebCreatorTools } from '../../../components/InputWebCreatorTools/InputWebCreatorTools'
+import { Modal } from '../../../components/Modal/Modal'
 import { GeneralClose } from '../../../foundations/icons'
-import { Dialog } from './Dialog'
 import styles from './ExploreBand.module.css'
 
 type ExploreSection = 'all' | 'favourites' | 'my'
@@ -267,15 +266,12 @@ const ExploreBand = forwardRef<HTMLDivElement, ExploreBandProps>(function Explor
         {children}
       </div>
       {filtersOpen && filtering ? (
-        <Dialog label={labels.filters} placement="drawer" onClose={() => setFiltersOpen(false)}>
-          <div className={styles.drawerHeader}>
-            <h2 className={styles.drawerTitle}>{labels.filters}</h2>
-            <CloseButton
-              variant="plain"
-              aria-label={labels.closeFilters}
-              onClick={() => setFiltersOpen(false)}
-            />
-          </div>
+        <Modal
+          layout="drawer"
+          title={labels.filters}
+          closeLabel={labels.closeFilters}
+          onClose={() => setFiltersOpen(false)}
+        >
           <div className={styles.drawerSection}>
             <span className={styles.drawerLabel} aria-hidden="true">
               {labels.category}
@@ -287,7 +283,7 @@ const ExploreBand = forwardRef<HTMLDivElement, ExploreBandProps>(function Explor
               onChange={onCategory}
             />
           </div>
-        </Dialog>
+        </Modal>
       ) : null}
     </div>
   )

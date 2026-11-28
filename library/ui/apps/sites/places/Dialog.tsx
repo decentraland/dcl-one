@@ -8,8 +8,6 @@ type DialogProps = {
   /** The dialog's accessible name. */
   label: string
   onClose: () => void
-  /** `modal` centers the panel; `drawer` slides it in from the right edge. */
-  placement?: 'modal' | 'drawer'
   className?: string
   children: ReactNode
 }
@@ -19,7 +17,7 @@ type DialogProps = {
  * focus moves inside and stays there, Escape and the backdrop close it, the page behind does not
  * scroll, and focus returns to what opened it.
  */
-function Dialog({ label, onClose, placement = 'modal', className, children }: DialogProps) {
+function Dialog({ label, onClose, className, children }: DialogProps) {
   const panel = useRef<HTMLDivElement>(null)
   const close = useRef(onClose)
   useEffect(() => {
@@ -67,7 +65,7 @@ function Dialog({ label, onClose, placement = 'modal', className, children }: Di
 
   return (
     <div
-      className={`${styles.backdrop} ${placement === 'drawer' ? styles.drawerBackdrop : ''}`}
+      className={styles.backdrop}
       onClick={(event) => {
         if (event.target === event.currentTarget) onClose()
       }}
@@ -78,9 +76,7 @@ function Dialog({ label, onClose, placement = 'modal', className, children }: Di
         aria-modal="true"
         aria-label={label}
         tabIndex={-1}
-        className={[styles.panel, placement === 'drawer' ? styles.drawer : styles.modal, className]
-          .filter(Boolean)
-          .join(' ')}
+        className={[styles.panel, styles.modal, className].filter(Boolean).join(' ')}
         onKeyDown={trap}
       >
         {children}
