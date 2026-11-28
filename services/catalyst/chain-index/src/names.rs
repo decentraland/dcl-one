@@ -226,7 +226,8 @@ pub enum PublicationHold {
     Held,
     /// There is no publication row: nothing to authorize under.
     Unpublished,
-    /// A fold held the row past [`HOLD_WAIT`]. The transaction is aborted.
+    /// A fold held the row past the hold's bound ([`HOLD_WAIT`], or the
+    /// caller's shorter one). The transaction is aborted.
     Busy,
 }
 
@@ -236,16 +237,21 @@ pub enum PublicationHold {
 /// publication, withdrawal or refold of the index updates it, so none of
 /// them commits while the share is held. Take it only inside a short
 /// transaction: a fold waits for its end. The wait for a fold already
-/// holding it is bounded by [`HOLD_WAIT`] in all (`statement_timeout`, set
-/// for this statement and restored after it).
+/// holding it is bounded in all (`statement_timeout`, set for this
+/// statement and restored after it) by [`HOLD_WAIT`], or by the caller's own
+/// statement bound when that is shorter.
 pub async fn hold_index_publication(
     conn: &mut sqlx::PgConnection,
 ) -> Result<PublicationHold, sqlx::Error> {
-    let previous: String = sqlx::query_scalar("SELECT current_setting('statement_timeout')")
-        .fetch_one(&mut *conn)
-        .await?;
+    // `pg_settings` gives the session's current bound in milliseconds (0: none).
+    let (previous, current_ms): (String, i64) = sqlx::query_as(
+        "SELECT current_setting('statement_timeout'), \
+                (SELECT setting::bigint FROM pg_settings WHERE name = 'statement_timeout')",
+    )
+    .fetch_one(&mut *conn)
+    .await?;
     sqlx::query("SELECT set_config('statement_timeout', $1, true)")
-        .bind(format!("{}ms", HOLD_WAIT.as_millis()))
+        .bind(format!("{}ms", hold_bound_ms(current_ms)))
         .execute(&mut *conn)
         .await?;
     let held = sqlx::query_scalar::<_, i32>(
@@ -276,6 +282,16 @@ pub async fn hold_index_publication(
     } else {
         PublicationHold::Unpublished
     })
+}
+
+/// The share's statement bound: [`HOLD_WAIT`], or a shorter nonzero bound
+/// the caller already runs under.
+fn hold_bound_ms(current_ms: i64) -> i64 {
+    let wait = i64::try_from(HOLD_WAIT.as_millis()).unwrap_or(i64::MAX);
+    match current_ms {
+        0 => wait,
+        current => current.min(wait),
+    }
 }
 
 /// The marketplace subgraph as the NAME source, where the operator selects
@@ -360,7 +376,16 @@ impl NameAuthority for SubgraphNames {
 
 #[cfg(test)]
 mod tests {
-    use super::transient_fault;
+    use super::{HOLD_WAIT, hold_bound_ms, transient_fault};
+
+    /// No caller bound or a longer one: the hold's own; a shorter one is kept.
+    #[test]
+    fn the_hold_keeps_a_shorter_caller_bound() {
+        let wait = i64::try_from(HOLD_WAIT.as_millis()).unwrap();
+        assert_eq!(hold_bound_ms(0), wait);
+        assert_eq!(hold_bound_ms(60_000), wait);
+        assert_eq!(hold_bound_ms(1_000), 1_000);
+    }
 
     /// A lost or exhausted pool may clear on a retry; a query the schema
     /// cannot answer or a decode never will.

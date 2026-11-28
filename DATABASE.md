@@ -136,8 +136,8 @@ upload, hashing and validation. A fold's publication waits only for the scene
 writes already in progress when it asks for the row. A publish that arrives
 during a fold waits for that fold's commit, and then reads its publication. The
 whole wait is bounded by `HOLD_WAIT` (5 s, as the share statement's
-`statement_timeout`, restored after it), including a wait queued behind another
-fold. Past it the publish answers the names index's retryable 503, so it never
+`statement_timeout`, restored after it; a caller already under a shorter bound
+keeps it), including a wait queued behind another fold. Past it the publish answers the names index's retryable 503, so it never
 holds the world and store locks behind a long refold. A transient database fault
 reading the names index (a lost connection, a deadlock or serialization failure,
 a cancelled statement) is the same retryable 503, with a fixed message; any other

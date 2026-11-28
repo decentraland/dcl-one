@@ -402,6 +402,15 @@ impl State {
                     message,
                 ))
             }
+            // A transient database fault: retryable, as the index not being
+            // current is. The fault itself is for the log.
+            Err(NamesError::Transient(fault)) => {
+                tracing::warn!(%fault, %wallet, "NAME ownership read hit a transient fault");
+                Err(CommError::Status(
+                    axum::http::StatusCode::SERVICE_UNAVAILABLE,
+                    "the DCL NAME source could not be read just now; retry shortly".into(),
+                ))
+            }
             Err(error) => {
                 tracing::error!(%error, %wallet, "NAME ownership lookup failed");
                 Err(CommError::Internal)

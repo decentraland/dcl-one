@@ -679,6 +679,45 @@ mod tests {
         db.drop().await;
     }
 
+    /// A caller already under a shorter statement bound keeps it: the hold
+    /// behind a fold gives up at that bound, not at
+    /// [`crate::chain_index::names::HOLD_WAIT`].
+    #[tokio::test]
+    async fn a_hold_keeps_a_shorter_caller_bound() {
+        let Some((db, names)) = published().await else {
+            return;
+        };
+        let mut fold = db.pool.begin().await.unwrap();
+        sqlx::query("SELECT 1 FROM shop.chain_cursor WHERE indexer = 'nft' AND network = 'ethereum' FOR UPDATE")
+            .execute(&mut *fold)
+            .await
+            .unwrap();
+        let mut tx = db.pool.begin().await.unwrap();
+        sqlx::query("SET LOCAL statement_timeout = '1s'")
+            .execute(&mut *tx)
+            .await
+            .unwrap();
+        let started = std::time::Instant::now();
+        let held = tokio::time::timeout(
+            crate::chain_index::names::HOLD_WAIT * 2,
+            names.hold_publication_on(&mut tx),
+        )
+        .await
+        .expect("the hold gives up");
+        let waited = started.elapsed();
+        assert!(
+            matches!(held, Err(NamesError::NotEstablished(_))),
+            "{held:?}"
+        );
+        assert!(
+            waited >= Duration::from_secs(1) && waited < Duration::from_secs(4),
+            "{waited:?}"
+        );
+        drop(tx);
+        fold.rollback().await.unwrap();
+        db.drop().await;
+    }
+
     /// A hold that got the row leaves the transaction's own statement bound
     /// as it found it: the write that follows it runs under that bound, not
     /// the hold's.
