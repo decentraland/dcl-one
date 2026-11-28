@@ -599,18 +599,29 @@ class DevelopmentWorkflowTest(unittest.TestCase):
         found = dict(re.findall(r'(?ms)^  ([\w-]+):\n(.*?)(?=^  [\w-]+:|\Z)', source))
         label = "contains(github.event.pull_request.labels.*.name, 'ci:desktop')"
         linux = "contains(github.event.pull_request.labels.*.name, 'ci:linux')"
-        # main always builds; a skipped build is not a failure for the required check.
-        self.assertIn(f"    if: github.event_name != 'pull_request' || {label} || {linux}\n", found['creator-hub'])
+        # main always builds, in its own job; a skipped build is not a failure for the required check.
+        self.assertIn("    if: github.event_name != 'pull_request'\n", found['creator-hub'])
+        self.assertIn(f"    if: github.event_name == 'pull_request' && ({label} || {linux})\n", found['creator-hub-pr'])
         # ci:desktop builds macOS, Windows and Linux, ci:linux builds Linux alone; main builds all three.
-        self.assertIn(f"      macos-windows: ${{{{ github.event_name != 'pull_request' || {label} }}}}\n", found['creator-hub'])
-        self.assertIn(f"      linux: ${{{{ github.ref == 'refs/heads/main' || {label} || {linux} }}}}\n", found['creator-hub'])
+        self.assertIn('      macos-windows: true\n', found['creator-hub'])
+        self.assertIn("      linux: ${{ github.ref == 'refs/heads/main' }}\n", found['creator-hub'])
+        self.assertIn(f'      macos-windows: ${{{{ {label} }}}}\n', found['creator-hub-pr'])
+        self.assertIn('      linux: true\n', found['creator-hub-pr'])
+        # Each event has its own package jobs: main and manual runs publish after the checks and the
+        # drop; a pull request builds after `changes` and the pending comment, without the checks.
+        self.assertIn("    if: github.event_name != 'pull_request'\n", found['asset-packs'])
+        self.assertIn('    needs: [ drop_pre_release ]\n', found['asset-packs'])
+        self.assertIn('    needs: [ changes, test_builds_pending ]\n', found['asset-packs-pr'])
+        self.assertIn("    if: ${{ !cancelled() && github.event_name == 'pull_request' "
+                      "&& needs.changes.outputs.creator-hub == 'true' }}\n", found['asset-packs-pr'])
+        self.assertIn('    needs: [ asset-packs-pr ]\n', found['inspector-pr'])
         self.assertIn('    needs: [ changes, creator-hub ]\n', found['prune_pre_releases'])
-        self.assertIn('creator-hub, prune_pre_releases ]', found['result'])
+        self.assertIn('creator-hub, asset-packs-pr, inspector-pr, creator-hub-pr, prune_pre_releases ]', found['result'])
         self.assertIn('any(.value.result == "failure" or .value.result == "cancelled")', found['result'])
         # No other job reads the label: the checks every pull request needs stay unconditional.
         conditions = {name: re.findall(r'(?m)^    if: (.*)$', job) for name, job in found.items()}
         self.assertEqual([name for name, lines in conditions.items() if any('ci:desktop' in line for line in lines)],
-                         ['creator-hub'])
+                         ['creator-hub-pr'])
         self.assertIn(f'          DESKTOP: ${{{{ {label} }}}}\n', found['changes'])
         self.assertIn('Add the ci:desktop label', found['changes'])
 
@@ -624,11 +635,13 @@ class DevelopmentWorkflowTest(unittest.TestCase):
         # Every job that publishes, or deletes a published pre-release, follows that decision.
         dry_run = "      dry-run: ${{ needs.changes.outputs.release != 'true' }}\n"
         self.assertEqual([name for name, job in found.items() if 'dry-run:' in job],
-                         ['drop_pre_release', 'creator-hub', 'prune_pre_releases'])
+                         ['drop_pre_release', 'creator-hub', 'creator-hub-pr', 'prune_pre_releases'])
         for name in ('drop_pre_release', 'creator-hub', 'prune_pre_releases'):
             with self.subTest(name=name):
                 self.assertIn(dry_run, found[name])
                 self.assertRegex(found[name], r'(?m)^    needs: \[ changes, ')
+        # The pull request's desktop build never publishes.
+        self.assertIn('      dry-run: true\n', found['creator-hub-pr'])
 
     def test_every_pull_request_runs_the_workflow_tests(self):
         changes = jobs()['changes']
