@@ -151,7 +151,7 @@ pub(crate) async fn check(
 /// now (unix ms): minted spelling, the price of the token's open, unexpired
 /// legacy order when its seller still holds it, and the subgraph's order key
 /// (by NFT id, `<contract>-<token id>` as text). One statement for
-/// [`owned_on`] and [`read_owned_names_of`].
+/// [`owned_on`], [`owned_of_on`] and [`read_owned_names_of`].
 const OWNED_NAMES_SQL: &str = "\
 SELECT n.owner, n.ens_subdomain AS name, n.contract_address AS name_contract, n.token_id::text AS name_token, \
        o.price::text AS price, n.contract_address || '-' || n.token_id::text AS sort_key \
@@ -258,15 +258,61 @@ pub(crate) async fn read_owned_names_of(
     .bind(Utc::now().timestamp_millis())
     .fetch_all(conn)
     .await?;
+    Ok(group_by_owner(&rows))
+}
+
+/// The NAMEs of many `owners` ([`OWNED_NAMES_SQL`]), read on `conn` in one
+/// statement with the cursor: owner (lowercased) -> its NAMEs in the
+/// subgraph's order, every requested owner present.
+async fn owned_of_on(
+    catalogue: Catalogue,
+    conn: &mut PgConnection,
+    owners: &[String],
+    purpose: Purpose,
+) -> Result<Answer<HashMap<String, Arc<Vec<OwnedName>>>>, NamesError> {
+    let now = Utc::now();
+    let mut owners: Vec<String> = owners.iter().map(|o| o.to_lowercase()).collect();
+    owners.sort_unstable();
+    owners.dedup();
+    let rows = sqlx::query(sqlx::AssertSqlSafe(format!(
+        "SELECT {cursor}, x.owner, x.name, x.name_contract, x.name_token, x.price \
+         FROM shop.chain_cursor c \
+         LEFT JOIN LATERAL ({OWNED_NAMES_SQL}) x ON true \
+         WHERE c.indexer = $4 AND c.network = 'ethereum' \
+         ORDER BY x.owner, x.sort_key",
+        cursor = cursor_select("$2")
+    )))
+    .bind(&owners)
+    .bind(catalogue.registrar())
+    .bind(now.timestamp_millis())
+    .bind(INDEXER_NFT)
+    .fetch_all(conn)
+    .await
+    .map_err(failed)?;
+    let observed = checked(catalogue, cursor_of(&rows)?, purpose, now)?;
+    let mut grouped = group_by_owner(&rows);
+    Ok(Answer {
+        value: owners
+            .into_iter()
+            .map(|owner| {
+                let names = grouped.remove(&owner).unwrap_or_default();
+                (owner, Arc::new(names))
+            })
+            .collect(),
+        observation: Some(observed),
+    })
+}
+
+/// [`OWNED_NAMES_SQL`] rows (in owner, then subgraph order) grouped by the
+/// lowercased owner; a row without a NAME (an empty lateral) is skipped.
+fn group_by_owner(rows: &[PgRow]) -> HashMap<String, Vec<OwnedName>> {
     let mut out: HashMap<String, Vec<OwnedName>> = HashMap::new();
-    for r in &rows {
-        if let Some(name) = owned_name(r) {
-            out.entry(r.get::<String, _>("owner").to_lowercase())
-                .or_default()
-                .push(name);
+    for r in rows {
+        if let (Some(owner), Some(name)) = (r.get::<Option<String>, _>("owner"), owned_name(r)) {
+            out.entry(owner.to_lowercase()).or_default().push(name);
         }
     }
-    Ok(out)
+    out
 }
 
 /// One holder per label, or the ambiguity refused.
@@ -312,6 +358,14 @@ impl NameAuthority for IndexNames {
         purpose: Purpose,
     ) -> Result<Answer<Arc<Vec<OwnedName>>>, NamesError> {
         owned_on(self.catalogue, conn, owner, purpose).await
+    }
+
+    async fn owned_names_of(
+        &self,
+        owners: &[String],
+        purpose: Purpose,
+    ) -> Result<Answer<HashMap<String, Arc<Vec<OwnedName>>>>, NamesError> {
+        owned_of_on(self.catalogue, &mut *self.conn().await?, owners, purpose).await
     }
 
     async fn name_owner(
@@ -610,6 +664,50 @@ mod tests {
                 ("zed", "9", Some("5000"))
             ]
         );
+
+        // Many wallets in one read: each list as its own read gives it, a
+        // wallet holding none present and empty, one observation for all.
+        const C: &str = "0xcccc000000000000000000000000000000000003";
+        let many = names
+            .owned_names_of(
+                &[
+                    A.to_uppercase().replace("0X", "0x"),
+                    B.into(),
+                    C.into(),
+                    A.into(),
+                ],
+                Purpose::Display,
+            )
+            .await
+            .unwrap();
+        assert_eq!(many.value.len(), 3);
+        assert_eq!(many.value[A], list);
+        assert_eq!(
+            many.value[B],
+            names.owned_names(B, Purpose::Display).await.unwrap().value
+        );
+        assert!(many.value[C].is_empty());
+        assert_eq!(
+            many.observation,
+            names
+                .owned_names(A, Purpose::Display)
+                .await
+                .unwrap()
+                .observation
+        );
+
+        // The batch is refused as each read is (a publication past the
+        // freshness window), never answered empty.
+        sqlx::query("UPDATE shop.chain_cursor SET folded_at = timezone('UTC', now()) - interval '31 minutes' WHERE indexer = 'nft' AND network = 'ethereum'")
+            .execute(&db.pool)
+            .await
+            .unwrap();
+        assert!(matches!(
+            names
+                .owned_names_of(&[A.into(), C.into()], Purpose::Display)
+                .await,
+            Err(NamesError::NotEstablished(_))
+        ));
         db.drop().await;
     }
 
