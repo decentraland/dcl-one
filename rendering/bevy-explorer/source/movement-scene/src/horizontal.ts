@@ -1,4 +1,4 @@
-import { engine, InputAction, inputSystem, Transform } from '@dcl/sdk/ecs'
+import { engine, InputAction, inputSystem, PointerEventType, Transform } from '@dcl/sdk/ecs'
 import { Quaternion, Vector3 } from '@dcl/sdk/math';
 import {
   AIR_JUMP_IMPULSE, ACCEL_CURVE_END, ACCEL_CURVE_START, AIR_ACCEL, AIR_DRAG, AIR_MAX_ACCEL, EXTERNAL_ENV_DRAG, EXTERNAL_GROUND_FRICTION,
@@ -31,6 +31,19 @@ const input: StepInput = { x: 0, z: 0, limit: 0, grounded: true };
 // The steps that cover the time up to this tick's frame use the previous tick's input.
 const prevInput: StepInput = { x: 0, z: 0, limit: 0, grounded: true };
 
+// Walking is a toggle: each press of the walk key turns it on or off, so the key is never held together with a
+// movement key (on the web, Ctrl+W closes the tab). It stays on through stops until the next press.
+var walkOn = false;
+
+export function toggleWalk(on: boolean, pressed: boolean): boolean {
+  return pressed ? !on : on;
+}
+
+// Sprint, while held, outranks walking; walking comes back when sprint is released.
+export function keysGait(walkOn: boolean, sprintHeld: boolean): 'walk' | 'jog' | 'run' {
+  return sprintHeld ? 'run' : walkOn ? 'walk' : 'jog';
+}
+
 function readInput() {
   const camera = Transform.get(engine.CameraEntity);
   Vector3.rotateToRef(VEC3_FORWARD, camera.rotation, fwd);
@@ -61,9 +74,8 @@ function readInput() {
     input.x = Math.sign(input.x);
     input.z = Math.sign(input.z);
   }
-  const keys = inputSystem.isPressed(InputAction.IA_MODIFIER) ? 'run'
-    : inputSystem.isPressed(InputAction.IA_WALK) ? 'walk'
-    : 'jog';
+  walkOn = toggleWalk(walkOn, inputSystem.isTriggered(InputAction.IA_WALK, PointerEventType.PET_DOWN));
+  const keys = keysGait(walkOn, inputSystem.isPressed(InputAction.IA_MODIFIER));
   input.limit = isGliding ? glidingSpeed : keys === 'run' ? sprintSpeed : keys === 'walk' ? walkSpeed : jogSpeed;
   input.grounded = grounded;
   if (!isGliding) input.limit *= slopeSpeedFactor();

@@ -29,7 +29,7 @@ const GAMEPLAY_ACTIONS: [ActionWire, string][] = [
   [{ Scene: 'IaLeft' }, 'Move Left'],
   [{ Scene: 'IaRight' }, 'Move Right'],
   [{ Scene: 'IaJump' }, 'Jump'],
-  [{ Scene: 'IaWalk' }, 'Walk'],
+  [{ Scene: 'IaWalk' }, 'Toggle Walk'],
   [{ Scene: 'IaModifier' }, 'Sprint / Modifier'],
   [{ Scene: 'IaPointer' }, 'Pointer / Interact'],
   [{ Scene: 'IaPrimary' }, 'Primary Action'],

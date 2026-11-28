@@ -754,6 +754,13 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   D-pad up and down and cycles it with the right stick pressed down. Here the D-pad is the scene's
   actions 1 and 3 and the right stick turns the camera, so the bumpers step the level, as they
   zoomed before, and the cycle is the V key only.
+- **Walking is a toggle.** The walk key (left Ctrl, `IA_WALK`) turns walking on with one press
+  and off with the next; unity-explorer walks only while the key is held. On the web, holding
+  Ctrl while pressing W closes the browser tab, and a page cannot stop that. Walking stays on
+  through stops until the next press; sprint, while held, outranks it, and walking resumes when
+  sprint is released. The engine still reports the key as pressed and released, so scenes that
+  read `IA_WALK` see the key itself; the toggle lives in `movement-scene`. Key bindings name the
+  action Toggle Walk; no indicator shows the state beyond the avatar's pace.
 - **A scene that forces first person on a drone camera keeps the player's aim.** unity-explorer's
   first-person camera then comes back with the aim it had when the player last left first person.
   Here the camera has one aim, so first person looks along the heading and pitch the drone had.
