@@ -250,13 +250,14 @@ fn discard_dither(ndc_position: vec2<f32>, world_position: vec3<f32>, fade_targe
 
     // nothing behind the camera along the cone's axis is between it and the focus. When the
     // camera is pulled in beside the focus, the axis points sideways and that side covers much
-    // of the view
-    if projection_length > 0.0 && projection_length < depth + 0.35 { // 0.35 = collider radius
-        let cone_distance = 
+    // of the view. A capsule whose nearest point is behind the camera by less than its radius
+    // still reaches in front of it, so it stays in the fade rather than popping opaque
+    if projection_length > -radius && projection_length < depth + 0.35 { // 0.35 = collider radius
+        let cone_distance =
             // distance from ray to target
             max(0.0, length(position - (view.world_position.xyz + (view_direction * projection_length))) - radius)
             // shrink to cone, 0 radius at view position, 1 at target position
-            / (projection_length / depth) 
+            / (max(projection_length, 1e-3) / depth)
             // expand cone at further camera distances
             / (1.0 + max(0.0, (projection_length - depth)) / 10.0);
 
