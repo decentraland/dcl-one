@@ -291,6 +291,7 @@ catalyst-price = { path = "price", features = ["test-support"] }
 catalyst-storage = { path = "storage", features = ["test-support"] }
 catalyst-config = { path = "config", features = ["test-support"] }
 catalyst-shared = { path = "shared", features = ["test-support"] }
+catalyst-testing = { path = "testing" }
 tokio = { version = "1", features = ["full", "test-util"] }
 tower = { version = "0.5", features = ["util"] }
 alloy = { version = "2", default-features = false, features = ["std", "signer-local"] }

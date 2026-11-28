@@ -200,7 +200,7 @@ impl Config {
     /// bearers, service tokens, the console's session key): a short one is
     /// guessable or brute-forced offline, so startup refuses it. Bearers this
     /// node sends elsewhere keep their issuer's length.
-    pub const OPERATOR_SECRETS: [&'static str; 27] = [
+    pub const OPERATOR_SECRETS: [&'static str; 26] = [
         "SESSION_SECRET",
         "CATALYRST_CONTENT_ADMIN_TOKEN",
         "COMMUNITIES_ADMIN_TOKEN",
@@ -208,7 +208,6 @@ impl Config {
         "CATALYRST_NOTIFICATIONS_ADMIN_TOKEN",
         "CATALYRST_BADGES_ADMIN_TOKEN",
         "CATALYRST_EVENTS_ADMIN_TOKEN",
-        "CATALYRST_BUILDER_ADMIN_TOKEN",
         "CATALYRST_CAMERA_REEL_ADMIN_TOKEN",
         "CATALYRST_WORLDS_ADMIN_TOKEN",
         "SCENE_HOST_ADMIN_TOKEN",
@@ -283,7 +282,7 @@ impl Config {
         Ok(())
     }
 
-    pub(crate) fn secret_slots(&mut self) -> [(&'static str, &mut Option<String>); 90] {
+    pub(crate) fn secret_slots(&mut self) -> [(&'static str, &mut Option<String>); 88] {
         [
             ("SEGMENT_SIGNING_KEY", &mut self.social.segment_signing_key),
             ("ETH_RPC_URL", &mut self.content.eth_rpc_url),
@@ -385,14 +384,6 @@ impl Config {
             (
                 "EVENTS_FEATURE_FLAGS_USER_ID",
                 &mut self.explore.events_feature_flags_user_id,
-            ),
-            (
-                "CATALYRST_BUILDER_ADMIN_TOKEN",
-                &mut self.create.catalyrst_builder_admin_token,
-            ),
-            (
-                "NEWSLETTER_SERVICE_API_KEY",
-                &mut self.create.newsletter_service_api_key,
             ),
             (
                 "BUILDER_POLYGON_RPC_URL",
@@ -841,10 +832,8 @@ mod tests {
     /// Secret slots that are not this node's own inbound operator secrets: credentials it
     /// sends elsewhere, keys and URLs whose shape another party sets.
     const OTHER_SECRETS: &[&str] = &[
-        // Inbound HMAC key, but Segment issues it: its length is Segment's.
         "SEGMENT_SIGNING_KEY",
         "ETH_RPC_URL",
-        // Outbound flag targeting id the flags service defines.
         "EVENTS_FEATURE_FLAGS_USER_ID",
         "LIVEKIT_API_KEY",
         "LIVEKIT_API_SECRET",
@@ -853,7 +842,6 @@ mod tests {
         "OPEN_AI_API_KEY",
         "SENDGRID_API_KEY",
         "MAGIC_SECRET_KEY",
-        // Signs and checks unsubscribe links: rotating a short key breaks links already sent.
         "SIGNING_KEY",
         "SLACK_WEBHOOK",
         "PLACES_MODERATION_WEBHOOK",
@@ -866,7 +854,6 @@ mod tests {
         "REWARDS_API_KEY_BY_REFERRAL_INVITED_USERS_60",
         "REWARDS_API_KEY_BY_REFERRAL_INVITED_USERS_75",
         "TURNSTILE_SECRET_KEY",
-        "NEWSLETTER_SERVICE_API_KEY",
         "BUILDER_POLYGON_RPC_URL",
         "ENCRYPTION_KEY",
         "SCENE_HOST_AUTHORITATIVE_KEY",
@@ -1318,7 +1305,6 @@ mod tests {
             "--moderator-token",
             "--sendgrid-api-key",
             "--turnstile-secret-key",
-            "--catalyrst-builder-admin-token",
             "--catalyrst-camera-reel-admin-token",
             "--encryption-key",
             "--scene-host-authoritative-key",
@@ -1347,10 +1333,7 @@ mod tests {
             !help.contains("[env: LIVEKIT_API_SECRET="),
             "secret env values must be hidden"
         );
-        assert!(
-            !help.contains("[env: BUILDER_POLYGON_RPC_URL=")
-                && !help.contains("[env: NEWSLETTER_SERVICE_API_KEY=")
-        );
+        assert!(!help.contains("[env: BUILDER_POLYGON_RPC_URL="));
         assert!(
             !help.contains("[env: ENCRYPTION_KEY=")
                 && !help.contains("[env: SCENE_HOST_AUTHORITATIVE_KEY=")

@@ -1,196 +1,132 @@
-use std::collections::BTreeMap;
-
 use axum::Json;
-use axum::extract::{OriginalUri, Path, State};
-use axum::http::{HeaderMap, Uri};
-use serde::Deserialize;
+use axum::extract::{Path, State};
+use axum::http::HeaderMap;
+use bytes::Bytes;
 use serde_json::Value;
 use uuid::Uuid;
 
 use crate::SharedState;
-use crate::auth::{require_signer, signed_path};
-use crate::drafts::{CollectionDraft, CollectionListingOut, ItemDraft};
+use crate::access;
+use crate::auth::Signed;
+use crate::collections::{lifecycle, save};
+use crate::drafts::CollectionListingOut;
 use crate::http::{ApiData, ApiError};
-use crate::items::CollectionMetaOut;
-use crate::publication::PublicationPreparation;
-use crate::shared::signed_fetch::Signer;
+use crate::items::body::FullItemOut;
+use crate::items::{save as item_save, schema};
 
-/// The route's verified signer: the request path first (what a client behind
-/// `/builder-api` signed), the route-local path second.
-pub(super) async fn signer(
-    state: &SharedState,
-    headers: &HeaderMap,
-    method: &str,
-    original: &Uri,
-    local: &Uri,
-) -> Result<Signer, ApiError> {
-    require_signer(
-        headers,
-        method,
-        &signed_path(original, local),
-        state.eip1654.as_deref(),
-    )
-    .await
-}
-
-#[derive(Deserialize)]
-pub struct CollectionBody {
-    collection: CollectionDraft,
-}
-#[derive(Deserialize)]
-pub struct ItemBody {
-    item: ItemDraft,
-}
-
-/// Local drafts use the verified signer; upstream global lists belong to the committee.
+/// `GET /v1/drafts/collections`: the signer's draft collections, charged by
+/// the row.
 pub async fn get_collection_drafts(
     State(state): State<SharedState>,
-    OriginalUri(original): OriginalUri,
-    uri: Uri,
+    Signed(signer): Signed,
     headers: HeaderMap,
 ) -> Result<Json<ApiData<Vec<CollectionListingOut>>>, ApiError> {
-    let owner = signer(&state, &headers, "get", &original, &uri).await?;
-    Ok(Json(ApiData::ok(
-        state.items.collection_drafts(owner.as_str()).await?,
-    )))
+    let drafts = state
+        .items
+        .collection_drafts(&access::managing(&state, &signer).await?)
+        .await?;
+    crate::limits::charge_rows(&state, &headers, Some(signer.as_str()), drafts.len());
+    Ok(Json(ApiData::ok(drafts)))
 }
 
+/// `GET /v1/drafts/items`: the signer's draft items, charged by the row.
 pub async fn get_item_drafts(
     State(state): State<SharedState>,
-    OriginalUri(original): OriginalUri,
-    uri: Uri,
+    Signed(signer): Signed,
     headers: HeaderMap,
 ) -> Result<Json<ApiData<Vec<Value>>>, ApiError> {
-    let owner = signer(&state, &headers, "get", &original, &uri).await?;
-    Ok(Json(ApiData::ok(
-        state.items.item_drafts(owner.as_str()).await?,
-    )))
+    let drafts = state
+        .items
+        .item_drafts(&access::managing(&state, &signer).await?)
+        .await?;
+    crate::limits::charge_rows(&state, &headers, Some(signer.as_str()), drafts.len());
+    Ok(Json(ApiData::ok(drafts)))
 }
 
+/// `PUT /v1/collections/:id` (`upsertCollection`): the body's schema, the
+/// ids, a standard collection's `data`, then who may save it
+/// (`access::edit_collection`), then the `initialize` calldata, the check
+/// that a new address leaves no deployed contract behind
+/// (`collections::lifecycle::guard_address_change`) and the save's own
+/// rules (`collections::save`).
 pub async fn put_collection(
     State(state): State<SharedState>,
-    Path(id): Path<Uuid>,
-    OriginalUri(original): OriginalUri,
-    uri: Uri,
+    Signed(signer): Signed,
+    Path(id): Path<String>,
     headers: HeaderMap,
-    Json(body): Json<CollectionBody>,
-) -> Result<Json<ApiData<CollectionMetaOut>>, ApiError> {
-    let owner = signer(&state, &headers, "put", &original, &uri).await?;
-    body.collection.validate(id, owner.as_str())?;
+    Json(body): Json<Value>,
+) -> Result<Json<ApiData<Value>>, ApiError> {
+    let bytes = serde_json::to_vec(&body).map_or(0, |b| b.len());
+    crate::limits::spend_document(&state, &headers, signer.as_str(), bytes)?;
+    let save = save::parse(&body)?;
+    if save.id != id {
+        return Err(
+            ApiError::bad_request("The body and URL collection ids do not match")
+                .with_data(serde_json::json!({ "urlId": id, "bodyId": save.id })),
+        );
+    }
+    let uuid = Uuid::parse_str(&id).map_err(|_| ApiError::bad_request("Invalid request body"))?;
+    let provider = save
+        .urn
+        .as_deref()
+        .and_then(save::third_party_urn)
+        .map(|(provider, _)| provider);
+    let standard = provider.is_none();
+    if standard {
+        save::standard_request(&save, signer.as_str())?;
+    }
+    let edit = access::edit_collection(&state, &signer, uuid, provider).await?;
+    let deployment = standard
+        .then(|| save::standard_deployment(&state.settings.network, &save, signer.as_str()))
+        .transpose()?;
+    if let Some(deployment) = &deployment {
+        lifecycle::guard_address_change(&state, &edit, deployment.contract_address()).await?;
+    }
     Ok(Json(ApiData::ok(
         state
             .items
-            .save_collection_draft(owner.as_str(), &body.collection)
+            .save_collection(&edit, &save, deployment)
             .await?,
     )))
 }
 
+/// `PUT /v1/items/:idOrURN` (`upsertItem`): the signer, the body's schema
+/// (`items::schema`), the path against the body (`items::save::prepare`),
+/// who may save it (`access::save_item`), then the save.
 pub async fn put_item(
     State(state): State<SharedState>,
-    Path(id): Path<Uuid>,
-    OriginalUri(original): OriginalUri,
-    uri: Uri,
+    Signed(signer): Signed,
+    Path(path): Path<String>,
     headers: HeaderMap,
-    Json(body): Json<ItemBody>,
-) -> Result<Json<ApiData<Value>>, ApiError> {
-    let owner = signer(&state, &headers, "put", &original, &uri).await?;
-    body.item.validate(id, owner.as_str())?;
+    body: Bytes,
+) -> Result<Json<ApiData<FullItemOut>>, ApiError> {
+    crate::limits::spend_document(&state, &headers, signer.as_str(), body.len())?;
+    let input = schema::parse(&body)?;
+    state.items.require_documents_release().await?;
+    let target = item_save::prepare(&state, &path, &input).await?;
+    let grant = access::save_item(&state, &signer, target.id, &target.intent).await?;
     Ok(Json(ApiData::ok(
-        state
-            .items
-            .save_item_draft(owner.as_str(), &body.item)
-            .await?,
+        state.items.save_item(&grant, input, &target.intent).await?,
     )))
 }
 
+/// `DELETE /v1/items/:id` (`deleteItem`): `data` is `true`.
 pub async fn delete_item(
     State(state): State<SharedState>,
-    Path(id): Path<Uuid>,
-    OriginalUri(original): OriginalUri,
-    uri: Uri,
-    headers: HeaderMap,
-) -> Result<Json<ApiData<Value>>, ApiError> {
-    let owner = signer(&state, &headers, "delete", &original, &uri).await?;
-    state.items.delete_item_draft(owner.as_str(), id).await?;
-    Ok(Json(ApiData::ok(serde_json::json!({ "id": id }))))
+    Signed(signer): Signed,
+    Path(id): Path<String>,
+) -> Result<Json<ApiData<bool>>, ApiError> {
+    let change = access::change_item(&state, &signer, &id).await?;
+    state.items.delete_item(&change).await?;
+    Ok(Json(ApiData::ok(true)))
 }
 
+/// `GET /v1/items/:id` (`getItem`).
 pub async fn get_item(
     State(state): State<SharedState>,
-    Path(id): Path<Uuid>,
-    OriginalUri(original): OriginalUri,
-    uri: Uri,
-    headers: HeaderMap,
-) -> Result<Json<ApiData<Value>>, ApiError> {
-    let owner = signer(&state, &headers, "get", &original, &uri).await?;
-    if let Some(collection) = state.items.item_collection(id).await? {
-        let meta = super::collections::synced_collection(&state, &collection).await?;
-        if meta.follows_chain() {
-            if !meta.eth_address.eq_ignore_ascii_case(owner.as_str()) {
-                return Err(ApiError::not_found("Item not found"));
-            }
-            let mut item = state.items.collection_item_draft(collection, id).await?;
-            // The row keeps the previous creator while writes are off.
-            item["eth_address"] = Value::String(meta.eth_address);
-            return Ok(Json(ApiData::ok(item)));
-        }
-    }
-    Ok(Json(ApiData::ok(
-        state.items.item_draft(owner.as_str(), id).await?,
-    )))
-}
-
-pub async fn post_item_files(
-    State(state): State<SharedState>,
-    Path(id): Path<Uuid>,
-    OriginalUri(original): OriginalUri,
-    uri: Uri,
-    headers: HeaderMap,
-    mut multipart: axum::extract::Multipart,
-) -> Result<Json<ApiData<BTreeMap<String, String>>>, ApiError> {
-    let owner = signer(&state, &headers, "post", &original, &uri).await?;
-    state.items.item_draft(owner.as_str(), id).await?;
-    let mut files = Vec::new();
-    let mut size = 0;
-    while let Some(field) = multipart
-        .next_field()
-        .await
-        .map_err(|_| ApiError::bad_request("Invalid multipart upload"))?
-    {
-        let name = field
-            .file_name()
-            .ok_or_else(|| ApiError::bad_request("Filename is required"))?
-            .to_owned();
-        if !crate::drafts::valid_filename(&name) || files.len() >= 100 {
-            return Err(ApiError::bad_request("Invalid filename or too many files"));
-        }
-        let bytes = field
-            .bytes()
-            .await
-            .map_err(|_| ApiError::bad_request("File upload exceeds 20 MB or is incomplete"))?;
-        size += bytes.len();
-        if size > 20 * 1024 * 1024 {
-            return Err(ApiError::bad_request("Upload exceeds 20 MB"));
-        }
-        files.push((name, bytes.to_vec()));
-    }
-    Ok(Json(ApiData::ok(
-        state
-            .items
-            .save_item_files(owner.as_str(), id, files)
-            .await?,
-    )))
-}
-
-pub async fn get_publication(
-    State(state): State<SharedState>,
-    Path(id): Path<Uuid>,
-    OriginalUri(original): OriginalUri,
-    uri: Uri,
-    headers: HeaderMap,
-) -> Result<Json<ApiData<PublicationPreparation>>, ApiError> {
-    let owner = signer(&state, &headers, "get", &original, &uri).await?;
-    Ok(Json(ApiData::ok(
-        state.items.prepare_publication(owner.as_str(), id).await?,
-    )))
+    Signed(signer): Signed,
+    Path(id): Path<String>,
+) -> Result<Json<ApiData<FullItemOut>>, ApiError> {
+    let read = access::read_item(&state, &signer, &id).await?;
+    Ok(Json(ApiData::ok(state.items.item(&read).await?)))
 }

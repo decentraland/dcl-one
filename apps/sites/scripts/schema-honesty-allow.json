@@ -1,11 +1,5 @@
 [
   {
-    "file": "src/data/lib/catalyst/builder/collections-schema.ts",
-    "rule": "fabricated-default",
-    "text": "z.boolean().nullish().transform((v) => v ?? false)",
-    "why": "`pending` marks a publish that is in flight. It is written onto a row only while one is, so its absence is the fact and not a gap: catalyrst-builder/src/ports/marketplace.rs:218 emits `false` for every on-chain row, and 7 of the 8 rows in src/fixtures/builder-collections.json omit the key entirely. The single consumer, `toCollectionCard`, writes `pending: c.pending || undefined` and renders nothing for it, so absent and false are the same value to every caller. The measurement fields on this row -- `count` and `thumbs` -- are required precisely because they are not like this one."
-  },
-  {
     "file": "src/data/lib/catalyst/marketplace/credit-quotes.ts",
     "rule": "fabricated-default",
     "text": "quoteCreditPrices(\n        { items: items.slice(start, start + MAX_QUOTE_ITEMS) },\n        opts,\n      ).catch(\n        (): PriceQuotes => ({\n          items: items\n            .slice(start, start + MAX_QUOTE_ITEMS)\n            .map((r) => ({ ...r, credits: null })),\n          amounts: [],\n        }),\n      )",

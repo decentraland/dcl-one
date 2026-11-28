@@ -1,6 +1,6 @@
 //! Root HTTP server settings.
 use crate::social::communities;
-use crate::{comms, config::Config, explore, shared, shop};
+use crate::{builder, comms, config::Config, explore, shared, shop};
 use anyhow::Context;
 use std::time::Duration;
 
@@ -139,6 +139,26 @@ pub(super) fn comms_settings(config: &Config) -> anyhow::Result<comms::gatekeepe
     .context("LIVEKIT_* / COMMS_* configuration")
 }
 
+/// The builder's settings: its own `CREATE_*`, `BUILDER_*` and `CORS_*` settings.
+pub(super) fn builder_settings(config: &Config) -> anyhow::Result<builder::Settings> {
+    builder::Settings::parse(builder::RawSettings {
+        eth_network: Some(config.node.eth_network.clone()),
+        matic_collections_subgraph_url: config
+            .market_upstreams
+            .matic_collections_subgraph_url
+            .clone(),
+        third_party_registry_subgraph_url: config
+            .validator
+            .third_party_registry_l2_subgraph_url
+            .clone(),
+        writes_enabled: config.create.create_writes_enabled,
+        polygon_rpc_url: config.create.builder_polygon_rpc_url.clone(),
+        cors_origin: config.create.cors_origin.clone(),
+        cors_method: config.create.cors_method.clone(),
+    })
+    .context("BUILDER_* / CORS_* configuration")
+}
+
 /// The referral settings `social_states` passes on, including the backend
 /// proxies trusted to supply `X-Real-IP` for referral quotas.
 pub(super) fn referral_settings(config: &Config) -> communities::referral::Settings {
@@ -197,8 +217,66 @@ pub(super) fn referral_settings(config: &Config) -> communities::referral::Setti
 
 #[cfg(test)]
 mod tests {
-    use super::comms_settings;
+    use super::{builder_settings, comms_settings};
     use crate::config::Config;
+
+    #[test]
+    fn the_builder_works_on_the_polygon_chain_eth_network_pairs() {
+        let settings = |extra: &[(&'static str, &'static str)]| {
+            let mut vars = vec![("DATABASE_URL", "postgres:///catalyst")];
+            vars.extend_from_slice(extra);
+            builder_settings(&Config::parse_env_for_tests(vars).unwrap())
+        };
+        assert_eq!(
+            settings(&[]).unwrap().network,
+            crate::builder::network::POLYGON
+        );
+        assert_eq!(
+            settings(&[("ETH_NETWORK", "sepolia")]).unwrap().network,
+            crate::builder::network::AMOY
+        );
+        let err = format!("{:#}", settings(&[("ETH_NETWORK", "goerli")]).unwrap_err());
+        assert!(err.contains("ETH_NETWORK=goerli"), "{err}");
+    }
+
+    #[test]
+    fn the_builder_reads_its_networks_subgraphs_unless_a_setting_names_one() {
+        let subgraphs = |extra: &[(&'static str, &'static str)]| {
+            let mut vars = vec![("DATABASE_URL", "postgres:///catalyst")];
+            vars.extend_from_slice(extra);
+            let settings = builder_settings(&Config::parse_env_for_tests(vars).unwrap()).unwrap();
+            (
+                settings.default_collections_subgraph,
+                settings.default_registry_subgraph,
+            )
+        };
+        let some = |url: &str| Some(url.to_string());
+        assert_eq!(
+            subgraphs(&[]),
+            (
+                some("https://subgraph.decentraland.org/collections-matic-mainnet"),
+                some("https://subgraph.decentraland.org/tpr-matic-mainnet")
+            )
+        );
+        assert_eq!(
+            subgraphs(&[("ETH_NETWORK", "sepolia")]),
+            (
+                some("https://subgraph.decentraland.org/collections-matic-amoy"),
+                some("https://subgraph.decentraland.org/tpr-matic-amoy")
+            )
+        );
+        for value in ["https://subgraph.example/set", ""] {
+            assert_eq!(
+                subgraphs(&[
+                    ("ETH_NETWORK", "sepolia"),
+                    ("MATIC_COLLECTIONS_SUBGRAPH_URL", value),
+                    ("THIRD_PARTY_REGISTRY_L2_SUBGRAPH_URL", value),
+                ]),
+                (None, None),
+                "{value:?} is set: the node's settings answer"
+            );
+        }
+    }
 
     #[test]
     fn dev_only_lease_entries_count_only_on_a_test_network() {

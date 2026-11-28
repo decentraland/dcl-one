@@ -46,6 +46,17 @@ pub mod validator;
 /// JSON preserving decoded property insertion order, with JavaScript index-key enumeration.
 /// Literal user objects are never interpreted as serializer number markers.
 pub type OrderedJson = validator::jsjson::JsValue<false>;
+
+/// JSON as JavaScript's `JSON.parse` holds it: insertion order, a repeated key at its first
+/// position with its last value, every number a double.
+pub type JsJson = validator::jsjson::JsValue<true>;
+
+/// `JSON.stringify` of `value`.
+pub fn js_stringify(value: &JsJson) -> String {
+    let mut out = String::new();
+    validator::jsjson::write(value, &mut out);
+    out
+}
 pub mod wire_types;
 
 // The write path peer sync drives: remote entity fetch + hash proof, auth-chain

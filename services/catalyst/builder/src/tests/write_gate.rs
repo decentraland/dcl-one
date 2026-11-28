@@ -16,19 +16,6 @@ const WRITES: &[(&str, &str)] = &[
     ("PUT", "/v1/collections/{id}"),
     ("PUT", "/v1/items/{id}"),
     ("DELETE", "/v1/items/{id}"),
-    ("POST", "/v1/items/{id}/files"),
-    ("POST", "/v1/newsletter"),
-    ("POST", "/v1/collections/{id}/publication"),
-    ("PUT", "/v1/collections/{id}/publication"),
-    ("PATCH", "/v1/collections/{id}/publication"),
-    ("DELETE", "/v1/collections/{id}/publication"),
-    ("POST", "/v1/collections/{id}/linked-publication"),
-    ("PUT", "/v1/collections/{id}/linked-publication"),
-    ("PATCH", "/v1/collections/{id}/linked-publication"),
-    ("DELETE", "/v1/collections/{id}/linked-publication"),
-    ("POST", "/v1/collections/{id}/linked-publication/verify"),
-    ("PATCH", "/v1/collections/{id}/items/{id}/status"),
-    ("PATCH", "/v1/collections/{id}/items/status"),
 ];
 
 async fn send(app: &Router, method: &str, path: &str) -> (StatusCode, Option<String>, String) {
@@ -73,8 +60,9 @@ async fn with_writes_off_every_write_is_refused_on_both_mounts_and_reads_answer(
             let (status, retry_after, body) = send(&app, method, &path).await;
             let refused = status == StatusCode::SERVICE_UNAVAILABLE
                 && retry_after.is_some()
-                && serde_json::from_str::<serde_json::Value>(&body)
-                    .is_ok_and(|v| v["ok"] == false && v["message"] == DISABLED_MESSAGE);
+                && serde_json::from_str::<serde_json::Value>(&body).is_ok_and(|v| {
+                    v == serde_json::json!({ "ok": false, "data": {}, "error": DISABLED_MESSAGE })
+                });
             if !refused {
                 answered.push(format!("{method} {path}: {status} {body}"));
             }
@@ -84,6 +72,10 @@ async fn with_writes_off_every_write_is_refused_on_both_mounts_and_reads_answer(
 
     let (status, _, body) = send(&app, "GET", "/builder-api/ping").await;
     assert_eq!((status, body.as_str()), (StatusCode::OK, "pong"));
-    let (status, _, _) = send(&app, "GET", "/v1/storage/contents/not-a-hash").await;
-    assert_eq!(status, StatusCode::NOT_FOUND, "a read is not gated");
+    let (status, _, _) = send(&app, "GET", "/v1/collections/not-an-id").await;
+    assert_ne!(
+        status,
+        StatusCode::SERVICE_UNAVAILABLE,
+        "a read is not gated"
+    );
 }

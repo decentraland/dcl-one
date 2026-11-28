@@ -767,7 +767,6 @@ fn island_sets_every_upstream_empty_and_every_follower_switch_off() {
         "OPENSEA_IPFS_GATEWAYS",
         "OPENSEA_CRYPTOKITTIES_API",
         "LEASE_AUTHORIZATIONS_URL",
-        "BUILDER_FOUNDATION_URL",
         "WORLDS_CONTENT_MIRROR_SOURCE",
         "COMMUNITIES_MIRROR_THUMBNAIL_URL",
         "MAP_SATELLITE_BASE_URL",
@@ -812,7 +811,6 @@ fn only_the_mirror_row_names_decentraland() {
         assert!(c.explore.world_manifest_upstream_url.is_empty());
         assert!(c.social.communities_upstream_url.is_empty());
         assert!(c.social.lease_authorizations_url.is_empty());
-        assert!(c.create.builder_foundation_url.is_empty());
         assert!(c.price.price_fallback_sources.is_empty());
         assert!(!c.social.media_convert_remote_sources);
     }

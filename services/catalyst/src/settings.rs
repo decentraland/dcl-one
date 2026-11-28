@@ -85,9 +85,12 @@ pub(crate) fn market_settings(
                         })
                         .transpose()?
                         .map(|address| (ChainId(config.economy.collections_chain_id), address));
-                    let publication_manager =
-                        EvmAddress::parse(catalyst_builder::publication::COLLECTION_MANAGER)
-                            .context("Builder's Polygon CollectionManager")?;
+                    let publication_manager = EvmAddress::parse(
+                        catalyst_builder::network::for_eth_network(&config.node.eth_network)
+                            .unwrap_or_default()
+                            .collection_manager,
+                    )
+                    .context("Builder's Polygon CollectionManager")?;
                     shop::market::wert::WertPolicy::new(
                         credits_manager,
                         publication_manager,

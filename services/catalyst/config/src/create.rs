@@ -5,46 +5,27 @@ use clap::Args;
 /// The creator plane: builder and camera_reel.
 #[derive(Args, Clone, Debug)]
 pub struct CreateConfig {
-    // create: the creator plane (builder and camera_reel, the old
-    // catalyrst-create bundle). Like the social writes, drafts, uploads,
-    // curation, publication state and photos are local authority peer sync
-    // does not back up, so every creator write answers 503 until the operator
-    // opens it (DATABASE.md, "Bootstrap, schema versions and local writes").
+    /// Opens the creator plane's writes; off, each builder and camera reel
+    /// write answers 503 with `Retry-After`.
     #[arg(long, env = "CREATE_WRITES_ENABLED", default_value_t = false, action = clap::ArgAction::Set)]
     pub create_writes_enabled: bool,
 
-    /// Public http(s) URL of the item content bucket; unset, a storage miss
-    /// answers 404 instead of the 301.
-    #[arg(long, env = "BUILDER_CONTENT_BUCKET_URL")]
-    pub builder_content_bucket_url: Option<String>,
-
-    /// The Foundation's builder API a linked publication is verified against
-    /// (the mirror posture's: Decentraland's); empty answers that route 503.
-    #[arg(long, env = "BUILDER_FOUNDATION_URL", default_value = "")]
-    pub builder_foundation_url: String,
-
-    /// Polygon JSON-RPC (https to a public host) that verifies publication
-    /// receipts; unset, publication begin/claim/verify answer 503.
+    /// Polygon JSON-RPC (https to a public host) the builder asks whether a
+    /// collection's address holds its contract; unset, a save that moves a
+    /// collection off its stored address answers 503.
     #[arg(long, env = "BUILDER_POLYGON_RPC_URL", hide_env_values = true)]
     pub builder_polygon_rpc_url: Option<String>,
 
-    /// Comma-separated admin wallets (curation routes, non-owner collection reads).
-    #[arg(long, env = "BUILDER_ADMIN_ADDRESSES", default_value = "")]
-    pub builder_admin_addresses: String,
+    /// The origins that may read the builder routes' answers: `;`-separated,
+    /// `regex:` entries matched as patterns, `*` any origin, others exactly;
+    /// unset, the Decentraland front-ends and `http://localhost:<port>`.
+    #[arg(long, env = "CORS_ORIGIN")]
+    pub cors_origin: Option<String>,
 
-    /// Bearer of the curation routes; unset fails closed.
-    #[arg(long, env = "CATALYRST_BUILDER_ADMIN_TOKEN", hide_env_values = true)]
-    pub catalyrst_builder_admin_token: Option<String>,
-
-    /// The newsletter forward is configured only when all three are set.
-    #[arg(long, env = "NEWSLETTER_SERVICE_URL")]
-    pub newsletter_service_url: Option<String>,
-
-    #[arg(long, env = "NEWSLETTER_PUBLICATION_ID")]
-    pub newsletter_publication_id: Option<String>,
-
-    #[arg(long, env = "NEWSLETTER_SERVICE_API_KEY", hide_env_values = true)]
-    pub newsletter_service_api_key: Option<String>,
+    /// The methods a builder route's preflight allows, `,`-separated; unset
+    /// or `*`, every method the routes answer.
+    #[arg(long, env = "CORS_METHOD")]
+    pub cors_method: Option<String>,
 
     /// Bearer of the moderator routes; unset refuses them.
     #[arg(
@@ -101,17 +82,7 @@ mod tests {
         let cli = parse(&["x", "--database-url", "postgres:///catalyst"]).unwrap();
         let c = cli;
         assert!(!c.create.create_writes_enabled, "creator writes are opt-in");
-        assert!(
-            c.create.builder_content_bucket_url.is_none()
-                && c.create.builder_polygon_rpc_url.is_none()
-        );
-        assert_eq!(c.create.builder_admin_addresses, "");
-        assert!(c.create.catalyrst_builder_admin_token.is_none());
-        assert!(
-            c.create.newsletter_service_url.is_none()
-                && c.create.newsletter_publication_id.is_none()
-                && c.create.newsletter_service_api_key.is_none()
-        );
+        assert!(c.create.builder_polygon_rpc_url.is_none());
         assert!(
             c.create.catalyrst_camera_reel_admin_token.is_none()
                 && c.create.camera_reel_bucket_url.is_none()
@@ -130,20 +101,12 @@ mod tests {
             "postgres:///catalyst",
             "--create-writes-enabled",
             "true",
-            "--builder-admin-addresses",
-            "0xABC",
             "--camera-reel-max-images-per-user",
             "7",
         ])
         .unwrap();
         assert!(cli.create.create_writes_enabled);
-        assert_eq!(
-            (
-                cli.create.builder_admin_addresses.as_str(),
-                cli.create.camera_reel_max_images_per_user
-            ),
-            ("0xABC", 7)
-        );
+        assert_eq!(cli.create.camera_reel_max_images_per_user, 7);
     }
 
     #[test]

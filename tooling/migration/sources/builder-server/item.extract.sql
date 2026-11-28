@@ -1,13 +1,3 @@
--- One row per upstream item. Upstream keeps publication and approval in the
--- subgraph and the curation tables, so they are derived here:
--- - is_published: the item has a blockchain id in a published standard
---   collection (a third-party item has none, so it stays a draft row and its
---   curation carries its state);
--- - urn_suffix: the full urn the node keeps (collections-v2 for a published
---   standard item, third_party_id:collection:item for a third-party item);
--- - curation_status: the newest item_curations row, else 'approved' for a
---   published item of an approved collection, else 'pending';
--- - content_hash: the newest curation's content hash (what upstream serves).
 SELECT i.id,
        i.collection_id,
        i.eth_address,
@@ -19,8 +9,8 @@ SELECT i.id,
        i.rarity,
        i.price,
        i.beneficiary,
-       i.data::jsonb AS data,
-       i.metrics::jsonb AS metrics,
+       i.data,
+       i.metrics,
        i.utility,
        i.mappings::jsonb AS mappings,
        CASE
@@ -33,9 +23,6 @@ SELECT i.id,
        i.blockchain_item_id,
        (c.third_party_id IS NULL AND c.is_published IS TRUE AND c.contract_address IS NOT NULL
         AND i.blockchain_item_id IS NOT NULL) AS is_published,
-       COALESCE(ic.status::text,
-                CASE WHEN c.is_published AND c.is_approved AND i.blockchain_item_id IS NOT NULL
-                     THEN 'approved' ELSE 'pending' END) AS curation_status,
        i.total_supply,
        i.local_content_hash,
        ic.content_hash,
@@ -44,9 +31,14 @@ SELECT i.id,
 FROM items i
 LEFT JOIN collections c ON c.id = i.collection_id
 LEFT JOIN LATERAL (
-    SELECT status, content_hash
+    SELECT content_hash
     FROM item_curations
     WHERE item_id = i.id
     ORDER BY created_at DESC, id DESC
     LIMIT 1
 ) ic ON true
+WHERE NOT EXISTS (
+    SELECT 1
+    FROM json_object_keys(CASE WHEN json_typeof(i.contents) = 'object' THEN i.contents ELSE '{}'::json END) AS f(file)
+    WHERE f.file = '' OR char_length(f.file) > 256 OR position('\' in f.file) > 0
+)

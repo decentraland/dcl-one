@@ -91,7 +91,7 @@ pub struct SyncSettings {
     pub retry_concurrency: usize,
     pub prune_ttl_days: i64,
     /// `SYNC_ITEM_REPLAY_INTERVAL_SECS`: the pause between item history
-    /// replay passes; none turns the replay off.
+    /// replay passes; none turns the replay off, as `CREATE_WRITES_ENABLED=false` does.
     pub item_replay_interval: Option<Duration>,
     /// `SYNC_ITEM_REPLAY_PAGE_PAUSE_MS`: the pause between a pass's pages.
     pub item_replay_page_pause: Duration,
@@ -208,6 +208,7 @@ impl SyncSettings {
             retry_concurrency: config.content.sync_retry_concurrency,
             prune_ttl_days: config.content.retry_failed_prune_ttl_days,
             item_replay_interval: match config.content.sync_item_replay_interval_secs {
+                _ if !config.create.create_writes_enabled => None,
                 0 => None,
                 secs => Some(Duration::from_secs(secs)),
             },
@@ -597,8 +598,10 @@ impl Leader {
 impl Leader {
     /// `item-history-replay` ([`ItemHistoryReplay`]), from the end of the
     /// bootstrap, while this process holds the `sync` lease: none without
-    /// leases (no session to fence its writes on), when the operator turned
-    /// it off (`SYNC_ITEM_REPLAY_INTERVAL_SECS=0`) or when `SYNC_ENTITY_TYPES`
+    /// leases (no session to fence its writes on), on a node without creator
+    /// writes (`CREATE_WRITES_ENABLED=false`, no builder write reads the
+    /// coverage), when the operator turned it off
+    /// (`SYNC_ITEM_REPLAY_INTERVAL_SECS=0`) or when `SYNC_ENTITY_TYPES`
     /// leaves out both wearables and emotes.
     async fn spawn_item_history_replay(
         &self,
@@ -972,18 +975,39 @@ mod tests {
     }
 
     #[test]
+    fn a_node_without_creator_writes_never_runs_the_item_replay() {
+        for interval in ["1200", "600"] {
+            let settings = SyncSettings::from_config(&config(&[
+                "--sync-enabled",
+                "--sync-source",
+                "https://peer.example/content",
+                "--sync-item-replay-interval-secs",
+                interval,
+            ]))
+            .unwrap()
+            .unwrap();
+            assert_eq!(settings.item_replay_interval, None, "{interval}");
+        }
+    }
+
+    #[test]
     fn an_operator_paces_the_item_replay_within_its_bounds() {
         let with = |extra: &[&str]| {
             let mut args = vec![
                 "--sync-enabled",
                 "--sync-source",
                 "https://peer.example/content",
+                "--create-writes-enabled",
+                "true",
             ];
             args.extend_from_slice(extra);
             SyncSettings::from_config(&config(&args))
         };
         let defaults = with(&[]).unwrap().unwrap();
-        assert_eq!(defaults.item_replay_interval, None);
+        assert_eq!(
+            defaults.item_replay_interval,
+            Some(Duration::from_secs(1200))
+        );
         assert_eq!(defaults.item_replay_page_pause, Duration::from_millis(200));
         assert_eq!(defaults.item_replay_concurrency, 8);
         let off = with(&["--sync-item-replay-interval-secs", "0"])
