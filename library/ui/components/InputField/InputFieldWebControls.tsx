@@ -4,16 +4,22 @@ import { FieldChrome, fieldMessageIds } from './InputField'
 import styles from './InputField.module.css'
 
 /**
- * A visible label, description, error and hint, laid out as InputWebCreatorTools lays out its own. Without any
- * of them the control renders alone, and the caller names it.
+ * A visible label, with a description, error and hint, laid out as InputWebCreatorTools lays out its own. The
+ * messages need the label, so whether the field has one decides its markup once: without it the control renders
+ * alone in its frame, and the caller names it.
  */
-type WebFieldProps = {
-  /** The visible name above the control. A node lets a form put its own content in it, such as a required mark. */
-  label?: ReactNode
-  labelHidden?: boolean
-  description?: string
-  error?: string
-  hint?: string
+type WebFieldLabel =
+  | {
+      /** The visible name above the control. A node lets a form put its own content in it, such as a required mark. */
+      label: ReactNode
+      labelHidden?: boolean
+      description?: string
+      error?: string
+      hint?: string
+    }
+  | { label?: undefined; labelHidden?: never; description?: never; error?: never; hint?: never }
+
+type WebFieldProps = WebFieldLabel & {
   /** Placement on the outermost element: the field with its label, or the frame alone. `className` styles the control. */
   rootClassName?: string
 }
@@ -38,17 +44,20 @@ function WebField({
   describedBy,
   invalid,
   control
-}: WebFieldProps & {
+}: {
+  label: ReactNode
+  labelHidden: boolean | undefined
+  description: string | undefined
+  error: string | undefined
+  hint: string | undefined
+  rootClassName: string | undefined
   id: string | undefined
   describedBy: string | undefined
   invalid: WebSelectProps['aria-invalid']
   control: (aria: { id?: string; 'aria-describedby'?: string; 'aria-invalid'?: WebSelectProps['aria-invalid'] }) => ReactNode
 }) {
   const generatedId = useId()
-  const hasChrome =
-    (label != null && typeof label !== 'boolean') ||
-    Boolean(description?.trim() || error?.trim() || hint?.trim())
-  if (!hasChrome) {
+  if (label === undefined) {
     return (
       <div
         className={rootClassName ? `${frameClass} ${rootClassName}` : frameClass}

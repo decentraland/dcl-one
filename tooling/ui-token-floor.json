@@ -425,7 +425,7 @@
   },
   "apps/sites/src/features/social/report/ReportForm.module.css": {
     "primitives": 0,
-    "tokens": 60
+    "tokens": 62
   },
   "apps/sites/src/features/social/report/ReportSuccess.module.css": {
     "primitives": 0,
@@ -434,10 +434,6 @@
   "apps/sites/src/features/social/submit-hangout/FeaturedAssetPicker.module.css": {
     "primitives": 2,
     "tokens": 0
-  },
-  "apps/sites/src/features/social/submit-hangout/FormField.module.css": {
-    "primitives": 0,
-    "tokens": 2
   },
   "apps/sites/src/features/social/submit-hangout/SubmitHangout.module.css": {
     "primitives": 0,

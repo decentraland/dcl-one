@@ -79,10 +79,36 @@ describe('when a shared web field has no label, description, error or hint', () 
     expect(control).not.toHaveAttribute('aria-describedby')
   })
 
-  it('should treat a blank description, error or hint as absent', () => {
-    const { container } = render(<WebSelect aria-label="Reason" description=" " error="" hint="  " />)
+  it('should not accept a description, error or hint without a label', () => {
+    // @ts-expect-error The messages need the label, so a field without one renders the control alone.
+    const { container } = render(<WebSelect aria-label="Reason" error="Choose a reason" />)
     expect(container.querySelector('label')).toBeNull()
-    expect(screen.getByRole('combobox', { name: 'Reason' })).not.toHaveAttribute('aria-invalid')
+    expect(screen.queryByText('Choose a reason')).toBeNull()
+  })
+})
+
+describe('when a labelled shared web field has blank messages', () => {
+  it('should leave out the blank description, error and hint lines', () => {
+    render(<WebSelect label="Reason" description=" " error="" hint="  " />)
+    const select = screen.getByRole('combobox', { name: 'Reason' })
+    expect(select).not.toHaveAttribute('aria-describedby')
+    expect(select).not.toHaveAttribute('aria-invalid')
+    expect(select.parentElement).not.toHaveAttribute('data-invalid')
+  })
+})
+
+describe('when an error appears on a labelled shared web field that has focus', () => {
+  it('should keep the same control focused and describe it with the new error', async () => {
+    const user = userEvent.setup()
+    const { rerender } = render(<WebTextarea label="Details" />)
+    const textarea = screen.getByRole('textbox', { name: 'Details' })
+    await user.click(textarea)
+    rerender(<WebTextarea label="Details" error="Add a few words" />)
+    expect(screen.getByRole('textbox', { name: 'Details', description: 'Add a few words' })).toBe(textarea)
+    expect(textarea).toHaveFocus()
+    rerender(<WebTextarea label="Details" />)
+    expect(textarea).not.toHaveAttribute('aria-invalid')
+    expect(textarea).toHaveFocus()
   })
 })
 
