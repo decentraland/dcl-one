@@ -12,7 +12,7 @@
     clippy::cast_precision_loss
 )]
 
-mod casts;
+pub mod casts;
 pub mod composite_norm;
 pub mod crdt_gen;
 pub mod entity_names;

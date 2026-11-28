@@ -5,7 +5,7 @@
     clippy::cast_possible_truncation,
     reason = "f32 fields round like Float32Array; that is the encoding"
 )]
-pub(crate) fn to_f32(v: f64) -> f32 {
+pub fn to_f32(v: f64) -> f32 {
     v as f32
 }
 
@@ -14,7 +14,7 @@ pub(crate) fn to_f32(v: f64) -> f32 {
     clippy::cast_possible_truncation,
     reason = "float-to-int `as` saturates and maps NaN to 0, the behaviour wanted"
 )]
-pub(crate) fn trunc_i64(v: f64) -> i64 {
+pub fn trunc_i64(v: f64) -> i64 {
     v as i64
 }
 
@@ -24,7 +24,7 @@ pub(crate) fn trunc_i64(v: f64) -> i64 {
     clippy::cast_sign_loss,
     reason = "float-to-int `as` saturates and maps NaN to 0, the behaviour wanted"
 )]
-pub(crate) fn trunc_u64(v: f64) -> u64 {
+pub fn trunc_u64(v: f64) -> u64 {
     v as u64
 }
 
@@ -33,6 +33,6 @@ pub(crate) fn trunc_u64(v: f64) -> u64 {
     clippy::cast_precision_loss,
     reason = "JS numbers are doubles; this is the rounding the JS original does"
 )]
-pub(crate) fn js_number(v: u64) -> f64 {
+pub fn js_number(v: u64) -> f64 {
     v as f64
 }

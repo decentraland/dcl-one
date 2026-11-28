@@ -25,6 +25,7 @@
 //! backstop counts passing tests and never checks for a dirty tree, so an
 //! auto-written golden would report green having asserted nothing.
 #![allow(clippy::unwrap_used, reason = "test support")]
+
 // Unix only: every staged fixture shares the toolchain's node_modules by symlink.
 #![cfg(unix)]
 #![recursion_limit = "256"]

@@ -626,10 +626,8 @@ fn the_rust_encoder_agrees_with_dcl_ecs_on_generated_schemas() {
         eprintln!("skipping: node is not on PATH");
         return;
     }
-    let tmp = Tmp(std::env::temp_dir().join(format!(
-        "dcl-scene-cli-schema-parity-{}",
-        std::process::id()
-    )));
+    let tmp =
+        Tmp(std::env::temp_dir().join(format!("dcl-scene-cli-schema-parity-{}", std::process::id())));
     let _ = std::fs::remove_dir_all(&tmp.0);
     std::fs::create_dir_all(&tmp.0).unwrap();
     assert!(

@@ -3,14 +3,9 @@
 
 use std::time::Duration;
 
-/// A count or size as a float for display; rounding past 2^53 does not show.
-#[allow(
-    clippy::cast_precision_loss,
-    reason = "display and ratio values, exact below 2^53"
-)]
-pub fn approx(n: u64) -> f64 {
-    n as f64
-}
+// A count or size as a float (rounded past 2^53), and a float truncated
+// toward zero (saturating, NaN as 0).
+pub use dcl_scene_authoring::casts::{js_number as approx, trunc_i64};
 
 /// A signed coordinate or timestamp as a float (a JS number).
 #[allow(
@@ -19,15 +14,6 @@ pub fn approx(n: u64) -> f64 {
 )]
 pub fn approx_signed(n: i64) -> f64 {
     n as f64
-}
-
-/// A float truncated toward zero: saturating, NaN as 0.
-#[allow(
-    clippy::cast_possible_truncation,
-    reason = "float-to-int `as` saturates and maps NaN to 0, the behaviour wanted"
-)]
-pub fn trunc_i64(v: f64) -> i64 {
-    v as i64
 }
 
 /// A float rounded to the nearest whole number: saturating, negatives and NaN as 0.

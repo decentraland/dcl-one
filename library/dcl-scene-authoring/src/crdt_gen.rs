@@ -384,7 +384,9 @@ fn put_component(
     let len = u32::try_from(data.len())
         .ok()
         .filter(|len| len.checked_add(CRDT_HEADER_LEN).is_some())
-        .ok_or_else(|| GenError::Invalid("a component is larger than 4 GiB".into()))?;
+        .ok_or_else(|| {
+            GenError::Invalid("a component and its message header exceed 4 GiB".into())
+        })?;
     let words = [
         CRDT_HEADER_LEN + len,
         CRDT_PUT_COMPONENT,
