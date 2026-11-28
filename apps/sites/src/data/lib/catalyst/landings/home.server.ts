@@ -149,11 +149,12 @@ async function loadHomeLiveNow(opts: GetOptions): Promise<HomeLiveData> {
         (await withDeployers(built, bounded).catch(() => null)) ?? built;
       signal.throwIfAborted();
       read.cards = cards;
-      const creators = cards.flatMap((card) =>
-        card.creatorAddress ? [card.creatorAddress] : [],
-      );
+      const people = cards.flatMap((card) => [
+        ...(card.creatorAddress ? [card.creatorAddress] : []),
+        ...(card.attendeeAddresses ?? []),
+      ]);
       const profiles =
-        (await loadProfiles([...creators, ...VIBE_ADDRESSES], bounded).catch(
+        (await loadProfiles([...people, ...VIBE_ADDRESSES], bounded).catch(
           () => null,
         )) ?? {};
       signal.throwIfAborted();

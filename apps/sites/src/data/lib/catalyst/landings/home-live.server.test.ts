@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { loadHomeLive } from "./home.server";
 
 afterEach(() => vi.useRealTimers());
@@ -59,5 +59,65 @@ describe("Home Live Now read", () => {
     expect(result.cards).toHaveLength(1);
     expect(result.profiles).toEqual({});
     expect(result.unreadable).toEqual(["profiles"]);
+  });
+});
+
+describe("when Home reads a live event in a busy scene", () => {
+  const attendee = "0xABCDEF1234567890123456789012345678901234";
+  const occurrence = "2026-11-27T10:00:00.000Z";
+  let fetchImpl: ReturnType<typeof vi.fn<typeof fetch>>;
+  let result: Awaited<ReturnType<typeof loadHomeLive>>;
+
+  beforeEach(async () => {
+    fetchImpl = vi.fn<typeof fetch>(async (url) => {
+      const path = new URL(String(url));
+      if (path.pathname.endsWith("/v1/events")) {
+        return json({ data: [{
+          id: "live",
+          name: "Live event",
+          x: 1,
+          y: 2,
+          start_at: "2026-11-20T10:00:00.000Z",
+          next_start_at: occurrence,
+          latest_attendees: [attendee, null, attendee.toLowerCase(), "invalid-address"],
+          connected_addresses: ["0x9999999999999999999999999999999999999999"],
+        }] });
+      }
+      if (path.pathname.endsWith("/hot-scenes")) {
+        return json([{
+          id: "scene",
+          name: "Scene",
+          baseCoords: [1, 2],
+          usersTotalCount: 8,
+          parcels: [[1, 2]],
+        }]);
+      }
+      return json([]);
+    });
+    result = await loadHomeLive({ base: "https://node.example", fetchImpl });
+  });
+
+  it("should use the public event list without requesting live player identities", () => {
+    const eventRequest = fetchImpl.mock.calls.find(([url]) =>
+      new URL(String(url)).pathname.endsWith("/v1/events"),
+    );
+    expect(eventRequest?.[0]).toEqual(expect.stringContaining("list=live"));
+    expect(eventRequest?.[0]).not.toEqual(expect.stringContaining("with_connected_users"));
+  });
+
+  it("should use the active occurrence and deduplicate public RSVP addresses", () => {
+    expect(result.cards[0]).toMatchObject({
+      id: "live",
+      startedAt: occurrence,
+      attendeeAddresses: [attendee.toLowerCase()],
+    });
+  });
+
+  it("should batch the public attendee's profile with the other Home profiles", () => {
+    const profileRequest = fetchImpl.mock.calls.find(([url]) =>
+      String(url).endsWith("/lambdas/profiles"),
+    );
+    expect(profileRequest?.[1]?.body).toEqual(expect.stringContaining(attendee.toLowerCase()));
+    expect(profileRequest?.[1]?.body).not.toEqual(expect.stringContaining("0x9999999999999999999999999999999999999999"));
   });
 });

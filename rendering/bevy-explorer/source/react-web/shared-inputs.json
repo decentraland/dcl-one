@@ -16484,11 +16484,11 @@
     },
     {
       "path": "library/ui/apps/sites/home/WhatsOn.module.css",
-      "sha256": "97faf0e515e2656898d832d965c7ebc017204148293600baef82e11639bf129d"
+      "sha256": "d8f5a1aec4ef043989950568ebb3a2c7f479a4dfc3e044efa21d8177ba9ad86e"
     },
     {
       "path": "library/ui/apps/sites/home/WhatsOn.tsx",
-      "sha256": "0b43a8fb06cc39b87f6d279f7f13e6a71ee074b1c55391d191318f5f3641c567"
+      "sha256": "a6a05f811250d4b740732901fbcc2de403a004d4f534b19d8c914e51641a247c"
     },
     {
       "path": "library/ui/apps/sites/index.ts",
@@ -58130,6 +58130,21 @@
     },
     {
       "from": "library/ui/apps/sites/home/WhatsOn.tsx",
+      "to": "library/ui/components/CopyFeedback/CopyFeedback.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/sites/home/WhatsOn.tsx",
+      "to": "library/ui/components/CopyFeedback/CopyFeedback.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/sites/home/WhatsOn.tsx",
+      "to": "library/ui/components/CopyFeedback/CopyFeedback.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/sites/home/WhatsOn.tsx",
       "to": "library/ui/components/JumpInCTA/JumpInCTA.tsx",
       "kind": "native:runtime"
     },
@@ -58141,6 +58156,36 @@
     {
       "from": "library/ui/apps/sites/home/WhatsOn.tsx",
       "to": "library/ui/components/JumpInCTA/JumpInCTA.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/sites/home/WhatsOn.tsx",
+      "to": "library/ui/components/ProfilePic/ProfilePic.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/sites/home/WhatsOn.tsx",
+      "to": "library/ui/components/ProfilePic/ProfilePic.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/sites/home/WhatsOn.tsx",
+      "to": "library/ui/components/ProfilePic/ProfilePic.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/sites/home/WhatsOn.tsx",
+      "to": "library/ui/foundations/icons/index.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/sites/home/WhatsOn.tsx",
+      "to": "library/ui/foundations/icons/index.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/sites/home/WhatsOn.tsx",
+      "to": "library/ui/foundations/icons/index.ts",
       "kind": "test:runtime"
     },
     {

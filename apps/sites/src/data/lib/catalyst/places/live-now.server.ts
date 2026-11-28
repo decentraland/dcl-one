@@ -20,6 +20,10 @@ const LiveEvent = z.object({
   y: z.number(),
   user: z.string().nullish(),
   user_name: z.string().nullish(),
+  start_at: z.string().nullish().catch(undefined),
+  next_start_at: z.string().nullish().catch(undefined),
+  recurrent: z.boolean().nullish().catch(undefined),
+  latest_attendees: z.array(z.unknown()).nullish().catch(undefined),
 });
 export type LiveEvent = z.infer<typeof LiveEvent>;
 const LiveEvents = z.object({ data: z.array(z.unknown()) });
@@ -28,6 +32,8 @@ export type { HotScene };
 
 /** A hot scene with fewer people than this is not live. */
 const MIN_USERS = 5;
+/** A card shows a sample of the public RSVP list. */
+const MAX_ATTENDEE_FACES = 3;
 
 const Places = z.object({
   data: z.array(
@@ -44,7 +50,7 @@ const Places = z.object({
 const PLACES_LIMIT = 100;
 
 const ETH_ADDRESS = /^0x[0-9a-fA-F]{40}$/;
-const isEthAddress = (value: string | null | undefined): value is string => !!value && ETH_ADDRESS.test(value);
+const isEthAddress = (value: unknown): value is string => typeof value === "string" && ETH_ADDRESS.test(value);
 export const formatEthAddress = (address: string) => `${address.slice(0, 6)}…${address.slice(-4)}`;
 
 const ActiveEntity = z.object({ id: z.string(), pointers: z.array(z.string()) });
@@ -76,6 +82,8 @@ export type LiveNowCard = {
   creatorName?: string;
   /** The live event's `user_name`, which the reference's events page shows before any profile name. */
   userName?: string;
+  startedAt?: string;
+  attendeeAddresses?: string[];
   isGenesisPlaza: boolean;
   /** A scene card (true) or a live event card (false). */
   place: boolean;
@@ -130,6 +138,16 @@ export function joinLiveNow(liveEvents: LiveEvent[], hotScenes: HotScene[]): Liv
         coordinates: coordsKey(event.x, event.y),
         creatorAddress: event.user ?? undefined,
         userName: event.user_name || undefined,
+        startedAt: event.next_start_at ?? (event.recurrent === false ? event.start_at ?? undefined : undefined),
+        attendeeAddresses: event.latest_attendees
+          ? [
+              ...new Set(
+                event.latest_attendees
+                  .filter(isEthAddress)
+                  .map((address) => address.toLowerCase()),
+              ),
+            ].slice(0, MAX_ATTENDEE_FACES)
+          : undefined,
         isGenesisPlaza: false,
         place: false,
       });

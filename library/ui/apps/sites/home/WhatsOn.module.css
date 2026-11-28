@@ -97,12 +97,15 @@
   z-index: 2;
   display: flex;
   gap: var(--dcl-space-8);
+  flex-wrap: wrap;
   align-items: center;
   pointer-events: none;
 }
 
 .live,
-.users {
+.users,
+.attendees,
+.elapsed {
   display: flex;
   align-items: center;
   height: 26px;
@@ -139,9 +142,18 @@
   }
 }
 
+.users,
+.attendees,
+.elapsed {
+  background-color: var(--dcl-neutrals-shadow);
+}
+
 .users {
   gap: 6px;
-  background-color: var(--dcl-neutrals-shadow);
+}
+
+.attendees {
+  gap: var(--dcl-space-4);
 }
 
 .dot {
@@ -306,6 +318,9 @@ a.creator:focus-visible {
 .jumpBox {
   position: relative;
   z-index: 2;
+  display: flex;
+  align-items: center;
+  gap: var(--dcl-space-8);
   margin-top: var(--dcl-space-8);
 }
 
