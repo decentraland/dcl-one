@@ -338,28 +338,29 @@ mod tests {
     }
 
     #[test]
-    fn the_op_maps_its_targets_through_the_shared_move() {
-        let camera = vector(8.0, 1.75, 16.0);
-        let avatar = vector(0.0, 0.0, 8.0);
-        for (camera_target, avatar_target) in [
-            (None, None),
-            (Some(camera), None),
-            (None, Some(avatar)),
-            (Some(camera), Some(avatar)),
+    fn the_op_moves_to_its_position_facing_its_targets() {
+        // Decentraland's z is bevy's -z
+        let to = Vec3::new(8.0, 0.0, -8.0);
+        // ahead of the player at its feet' height, and to its west
+        let (camera, camera_bevy) = (vector(8.0, 0.0, 16.0), Vec3::new(8.0, 0.0, -16.0));
+        let (avatar, avatar_bevy) = (vector(0.0, 0.0, 8.0), Vec3::new(0.0, 0.0, -8.0));
+        for (camera_target, avatar_target, looking_at, camera_looks) in [
+            (None, None, None, None),
+            // the avatar faces the camera target when it has no target of its own
+            (Some(camera), None, Some(camera_bevy), Some(Vec3::NEG_Z)),
+            (None, Some(avatar), Some(avatar_bevy), None),
+            (Some(camera), Some(avatar), Some(avatar_bevy), Some(Vec3::NEG_Z)),
         ] {
-            let point = |v: DclVector3| [v.x, v.y, v.z];
-            let expected = RpcCall::move_player(
-                [8.0, 0.0, 8.0],
-                camera_target.map(point),
-                avatar_target.map(point),
-                None,
-                None,
-            );
-            assert_eq!(
-                parts(pushed(camera_target, avatar_target)),
-                parts(expected),
-                "{camera_target:?} {avatar_target:?}"
-            );
+            let case = format!("{camera_target:?} {avatar_target:?}");
+            let (pushed_to, pushed_looking_at, rotation) = parts(pushed(camera_target, avatar_target));
+            assert_eq!((pushed_to, pushed_looking_at), (to, looking_at), "{case}");
+            let looks = rotation.map(|rotation: Quat| rotation * Vec3::NEG_Z);
+            match (looks, camera_looks) {
+                (Some(looks), Some(expected)) => {
+                    assert!(looks.distance(expected) < 1e-5, "{case}: {looks}")
+                }
+                (looks, expected) => assert_eq!(looks, expected, "{case}"),
+            }
         }
     }
 }

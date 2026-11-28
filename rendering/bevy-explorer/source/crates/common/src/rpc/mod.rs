@@ -5,7 +5,7 @@ mod tests;
 
 use crate::{
     profile::{CompactProfile, SerializedProfile},
-    structs::{EmoteMask, PermissionType, CAMERA_FOCUS_HEIGHT},
+    structs::{EmoteMask, PermissionType},
 };
 use alloy_core::primitives::Address;
 use bevy::{platform::collections::HashMap, prelude::*};
@@ -398,10 +398,9 @@ pub enum RpcCall {
 impl RpcCall {
     /// The move `movePlayerTo` asks for, from a scene's op and the console's `/move_player_to`
     /// alike: the player to `position`, turned to face `avatar_target` (`camera_target` when there
-    /// is none), and the camera aimed at `camera_target` from its focus,
-    /// [`CAMERA_FOCUS_HEIGHT`] above `position`, the point the first-person camera sits at and the
-    /// orbiting ones turn around. Points are Decentraland coordinates: relative to the scene's base
-    /// parcel from a scene, in the world from the engine.
+    /// is none), and the camera turned to the direction from `position` to `camera_target`. Points
+    /// are Decentraland coordinates: relative to the scene's base parcel from a scene, in the world
+    /// from the engine.
     pub fn move_player(
         position: [f32; 3],
         camera_target: Option<[f32; 3]>,
@@ -411,14 +410,13 @@ impl RpcCall {
     ) -> Self {
         let bevy = |point| DclTranslation(point).to_bevy_translation();
         let to = bevy(position);
-        let focus = to + Vec3::Y * CAMERA_FOCUS_HEIGHT;
         RpcCall::MovePlayer {
             to,
             looking_at: avatar_target.or(camera_target).map(bevy),
             duration,
             camera_rotation: camera_target.map(|target| {
                 Transform::IDENTITY
-                    .looking_at(bevy(target) - focus, Vec3::Y)
+                    .looking_at(bevy(target) - to, Vec3::Y)
                     .rotation
             }),
             response,

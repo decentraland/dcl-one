@@ -3478,7 +3478,7 @@ mod signed_fetch_body_tests {
 mod player_move_tests {
     use std::f32::consts::FRAC_PI_2;
 
-    use common::structs::{AppConfig, PermissionUsed, PrimaryPlayerRes, CAMERA_FOCUS_HEIGHT};
+    use common::structs::{AppConfig, PermissionUsed, PrimaryPlayerRes};
     use scene_runner::{
         initialize_scene::{LiveScenes, PortableScenes, ScenePointers},
         permissions::PermissionManager,
@@ -3516,10 +3516,8 @@ mod player_move_tests {
         (app, player, camera)
     }
 
-    #[test]
-    fn the_engine_moves_the_player_and_turns_its_camera_as_a_scene_does() {
-        let (mut app, player, camera) = app();
-        // a scene the player is not in may not turn the camera; the engine's turn still lands
+    /// A camera turn from a scene the player is not in.
+    fn turn_from_elsewhere(app: &mut App) {
         let elsewhere = app.world_mut().spawn_empty().id();
         app.world_mut().send_event(RpcCallEvent {
             origin: RpcOrigin::Scene {
@@ -3530,11 +3528,18 @@ mod player_move_tests {
                 facing: Quat::from_rotation_y(1.0),
             },
         });
+    }
+
+    #[test]
+    fn the_engine_moves_the_player_and_turns_its_camera_as_a_scene_does() {
+        let (mut app, player, camera) = app();
+        // a scene the player is not in may not turn the camera; the engine's turn still lands
+        turn_from_elsewhere(&mut app);
         let (response, mut moved) = RpcResultSender::<bool>::channel();
         app.world_mut()
             .send_event(RpcCallEvent::engine(RpcCall::move_player(
                 [8.0, 0.0, 8.0],
-                Some([18.0, CAMERA_FOCUS_HEIGHT, 8.0]),
+                Some([18.0, 0.0, 8.0]),
                 Some([8.0, 0.0, 18.0]),
                 None,
                 Some(response),
@@ -3548,8 +3553,15 @@ mod player_move_tests {
         let facing = transform.forward().as_vec3();
         assert!(facing.distance(Vec3::NEG_Z) < 1e-5, "{facing}");
         // the camera looks east, level
-        let camera = app.world().get::<PrimaryCamera>(camera).unwrap();
-        assert!((camera.yaw + FRAC_PI_2).abs() < 1e-5, "{}", camera.yaw);
-        assert!(camera.pitch.abs() < 1e-5, "{}", camera.pitch);
+        let primary = app.world().get::<PrimaryCamera>(camera).unwrap();
+        assert!((primary.yaw + FRAC_PI_2).abs() < 1e-5, "{}", primary.yaw);
+        assert!(primary.pitch.abs() < 1e-5, "{}", primary.pitch);
+
+        // alone in its frame, the refused turn leaves the camera as it is
+        turn_from_elsewhere(&mut app);
+        app.update();
+        let primary = app.world().get::<PrimaryCamera>(camera).unwrap();
+        assert!((primary.yaw + FRAC_PI_2).abs() < 1e-5, "{}", primary.yaw);
+        assert!(primary.pitch.abs() < 1e-5, "{}", primary.pitch);
     }
 }

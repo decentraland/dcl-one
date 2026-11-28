@@ -985,8 +985,8 @@ export class Explorer {
   }
 
   /** Move straight to a world position (Decentraland coordinates) as a scene's `movePlayerTo`
-   *  does: `cameraTarget` aims the camera at a point and `avatarTarget` turns the avatar to face
-   *  one (the camera target without it). Resolves once the player has landed and is still, or after
+   *  does: `cameraTarget` turns the camera along the line from the new position (the feet) to a
+   *  point and `avatarTarget` turns the avatar to face one (the camera target without it). Resolves once the player has landed and is still, or after
    *  `timeoutSeconds` (10 by default) with `settled: false`. The engine has `/move_player_to` in
    *  preview only. */
   moveTo(

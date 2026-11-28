@@ -566,17 +566,17 @@ Movement:
 - `/move_player_to <x> <y> <z> [duration] [--camera-target x y z] [--avatar-target x y z] [--wait
   [--timeout-seconds S]]` (preview only): moves the player to a Decentraland world point, over
   `duration` seconds or at once, as a scene's `movePlayerTo` does and through the same mapping
-  (`RpcCall::move_player`): `--camera-target` aims the camera at a point from its focus, 1.75 m
-  above the new position, and `--avatar-target` turns the avatar to face one (the camera target
-  without it). The first-person camera then centres the point; the third-person and drone
-  cameras turn to its heading and keep their own framing of the player. Without `--wait` it
-  replies `moved to (x, y, z)` or, with a duration, `arrived at (x, y, z)`. With `--wait` it
-  replies JSON once the player has moved, stands on the ground and has been still (under 0.3
-  m/s) for 0.25 s: `position` (Decentraland world coordinates), `parcel`, `settled`, `settleMs`.
-  A move to a point in the air has not settled until the player lands. When `--timeout-seconds`
-  runs out first, `settled` is `false` and `warning` names what it waited for: the move, the
-  landing or the stillness. It defaults to 10 s after the duration and takes at most 300. A move another move replaces
-  fails with `move cancelled` either way.
+  (`RpcCall::move_player`): `--camera-target` turns the camera along the line from the new position
+  (the feet) to a point, and `--avatar-target` turns the avatar to face one (the camera target
+  without it). The camera takes that direction in every mode, so the point is not centred from the
+  eyes or from an orbiting camera. Without `--wait` it replies `moved to (x, y, z)` or, with a
+  duration, `arrived at (x, y, z)`. With `--wait` it replies JSON once the player has moved, stands
+  on the ground and has been still (under 0.3 m/s) for 0.25 s: `position` (Decentraland world
+  coordinates), `parcel`, `settled`, `settleMs`. A move to a point in the air has not settled until
+  the player lands. When `--timeout-seconds` runs out first, `settled` is `false` and `warning`
+  names what it waited for: the move, the landing or the stillness. It defaults to 10 s after the
+  duration and takes at most 300. A move another move replaces fails with `move cancelled` either
+  way.
 - `/camera_mode first_person|third_person|drone`: sets the player's zoom level, as zooming in or
   out does (the drone level is third person to scenes). It replies JSON at once, `before`, `after`
   and `changed`; the camera then blends to the level as it does after a zoom (`/camera_state`

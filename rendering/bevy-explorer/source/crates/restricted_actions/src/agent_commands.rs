@@ -559,7 +559,7 @@ mod tests {
         let (mut app, _) = app();
         send(
             &mut app,
-            "8 -1 -8 2.5 --camera-target -1 1.75 2 --avatar-target 3 0 -4",
+            "8 -1 -8 2.5 --camera-target 8 9 2 --avatar-target 3 0 -4",
         );
         let Some(RpcCall::MovePlayer {
             to,
@@ -571,25 +571,14 @@ mod tests {
         else {
             panic!("a move");
         };
-        let RpcCall::MovePlayer {
-            to: op_to,
-            looking_at: op_looking_at,
-            camera_rotation: op_camera_rotation,
-            ..
-        } = RpcCall::move_player(
-            [8.0, -1.0, -8.0],
-            Some([-1.0, 1.75, 2.0]),
-            Some([3.0, 0.0, -4.0]),
-            Some(2.5),
-            None,
-        )
-        else {
-            panic!("a move");
-        };
-        assert_eq!(
-            (to, looking_at, duration, camera_rotation),
-            (op_to, op_looking_at, Some(2.5), op_camera_rotation)
-        );
+        // Decentraland world points, so bevy's z is their -z
+        assert_eq!(to, Vec3::new(8.0, -1.0, 8.0));
+        assert_eq!(looking_at, Some(Vec3::new(3.0, 0.0, 4.0)));
+        assert_eq!(duration, Some(2.5));
+        // the camera turns along the line from the new position to its target: 10 up, 10 ahead
+        let looks = camera_rotation.expect("an aim") * Vec3::NEG_Z;
+        let expected = Vec3::new(0.0, 1.0, -1.0).normalize();
+        assert!(looks.distance(expected) < 1e-5, "{looks}");
     }
 
     #[test]
