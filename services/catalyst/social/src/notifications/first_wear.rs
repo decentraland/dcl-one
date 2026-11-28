@@ -234,8 +234,8 @@ pub enum ItemLookupError {
 }
 
 /// Where the producer looks up a worn item: the node's Shop catalogue, read
-/// as its `/v1/items` and `/v1/orders` routes read it. `Ok(None)`: unknown,
-/// or nothing to buy.
+/// as `/v2/catalog?urn=<urn>&network=<its network>&isOnSale=true` reads it.
+/// `Ok(None)`: unknown, or nothing to buy.
 #[async_trait::async_trait]
 pub trait ItemSource: Send + Sync {
     async fn buyable_item(&self, urn: &str) -> Result<Option<BuyableItem>, ItemLookupError>;
@@ -1173,7 +1173,10 @@ mod pg_tests {
             return;
         };
         let wear = queued_wear(&pool, "urn:decentraland:matic:collections-v2:0xeee:1").await;
-        let friend = fresh_address();
+        // A friend the experiment notifies (not bucketed into its `off` arm).
+        let friend = std::iter::repeat_with(fresh_address)
+            .find(|f| FfwExperiment::default().rule_for(f.as_str()) != FfwRule::Off)
+            .unwrap();
         sqlx::query(
             "INSERT INTO social.friendships (id, address_requester, address_requested, is_active, last_action, last_actor) \
              VALUES ($1, $2, $3, true, 'accept', $3)",
@@ -1355,7 +1358,7 @@ mod pg_tests {
         assert_eq!(
             run_once(&pool, None, &settings).await.unwrap(),
             0,
-            "no marketplace reader: nothing resolves as buyable"
+            "no item source: nothing resolves as buyable"
         );
         assert_eq!(
             worn(&pool, &a).await.len(),

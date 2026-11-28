@@ -1243,6 +1243,13 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
     social
         .notifications
         .set_item_source(Arc::new(adapters::ShopBuyableItems(market.clone())));
+    if social.notifications.settings.first_wear_enabled
+        && !shop::market::owned_items::walks_here(&market)
+    {
+        tracing::warn!(
+            "FIRST_WEAR_ENABLED on a node that does not walk the nft index (MARKETPLACE_NFT_INDEX_ENABLED): it cannot read listings, so every first wear completes without a notice"
+        );
+    }
     social
         .communities
         .set_explorer_flags(explorer_api.flags.clone());

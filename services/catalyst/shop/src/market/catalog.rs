@@ -1818,17 +1818,29 @@ async fn fetch_page(
     is_v2: bool,
     books: Option<&CatalogScope>,
 ) -> Result<(Vec<CatalogItem>, i64), Response> {
+    fetch_page_answering(state, read, f, is_v2, books, catalog_page_error).await
+}
+
+/// [`fetch_page`], a failed page statement answered by `page_error`.
+async fn fetch_page_answering(
+    state: &MarketplaceState,
+    read: &mut CatalogueRead,
+    f: &CatalogFilters,
+    is_v2: bool,
+    books: Option<&CatalogScope>,
+    page_error: fn(sqlx::Error) -> Response,
+) -> Result<(Vec<CatalogItem>, i64), Response> {
     // The read's clock: the trades check decided on the same instant.
     let now = read.now.naive_utc();
     let since = super::trades::mirrored_since(&state.settings, now);
     let ranked = rank_catalog_page(read, f, is_v2, books)
         .await
-        .map_err(catalog_page_error)?;
+        .map_err(page_error)?;
     let (sql, args) = build_catalog_page_query(f, is_v2, now, since, false, books, ranked.as_ref());
     let rows = sqlx::query_with(sqlx::AssertSqlSafe(sql), args)
         .fetch_all(&mut *read.tx)
         .await
-        .map_err(catalog_page_error)?;
+        .map_err(page_error)?;
     let total: i64 = match rows.first() {
         Some(r) => r.get("total"),
         None if clamp_skip(f.skip) > 0 => {
@@ -2018,7 +2030,7 @@ async fn read_book_copy(
 /// `Ok(None)` covers four cases: anything else, an unknown or unnamed item,
 /// nothing to buy, and a node that does not walk the nft index (it cannot
 /// read the listings). A catalogue, book or trades copy that cannot answer
-/// now is the route's envelope.
+/// now, or a failed statement, is the route's envelope (503 or 500).
 pub async fn on_sale_item(
     state: &MarketplaceState,
     urn: &str,
@@ -2071,11 +2083,21 @@ pub async fn on_sale_item(
             .await
             .map_err(|error| error.into_response(super::readers::index_read_error))?;
     }
-    let (items, _) = fetch_page(state, &mut read, &filters, true, Some(&scope)).await?;
+    // The filters are fixed, so a failed statement is the database's fault,
+    // never the request's: answered as an index read (503 or 500), not 400.
+    let (items, _) = fetch_page_answering(
+        state,
+        &mut read,
+        &filters,
+        true,
+        Some(&scope),
+        super::readers::index_read_error,
+    )
+    .await?;
     Ok(items
         .into_iter()
         .next()
-        .filter(|item| !item.name.is_empty()))
+        .filter(|item| !item.name.trim().is_empty()))
 }
 
 async fn catalog_inner(

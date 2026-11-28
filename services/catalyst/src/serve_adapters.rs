@@ -497,7 +497,7 @@ impl social::notifications::first_wear::ItemSource for ShopBuyableItems {
         Option<social::notifications::first_wear::BuyableItem>,
         social::notifications::first_wear::ItemLookupError,
     > {
-        use social::notifications::first_wear::{BuyableItem, ItemLookupError};
+        use social::notifications::first_wear::BuyableItem;
         match shop::market::catalog::on_sale_item(&self.0, urn).await {
             Ok(item) => Ok(item.map(|item| BuyableItem {
                 item_id: item.id,
@@ -510,17 +510,25 @@ impl social::notifications::first_wear::ItemSource for ShopBuyableItems {
                 let body = axum::body::to_bytes(response.into_body(), 4096)
                     .await
                     .unwrap_or_default();
-                let why = format!(
-                    "the shop catalogue answered {status}: {}",
-                    String::from_utf8_lossy(&body)
-                );
-                Err(if status.is_client_error() {
-                    ItemLookupError::Invalid(why)
-                } else {
-                    ItemLookupError::Transient(why)
-                })
+                Err(lookup_error(status, &String::from_utf8_lossy(&body)))
             }
         }
+    }
+}
+
+/// A catalogue envelope as the producer reads it: a refused request (4xx)
+/// is final; anything else (not ready, a timeout, a database fault) is
+/// retried.
+fn lookup_error(
+    status: axum::http::StatusCode,
+    body: &str,
+) -> social::notifications::first_wear::ItemLookupError {
+    use social::notifications::first_wear::ItemLookupError;
+    let why = format!("the shop catalogue answered {status}: {body}");
+    if status.is_client_error() {
+        ItemLookupError::Invalid(why)
+    } else {
+        ItemLookupError::Transient(why)
     }
 }
 
@@ -556,5 +564,168 @@ mod shop_buyable_items_tests {
         );
         assert_eq!(items(false).buyable_item(urn).await, Ok(None));
         db.drop().await;
+    }
+
+    /// End to end through the producer: the catalogue's readiness passes,
+    /// the final page read hits a database fault, and the wear stays queued
+    /// (never discarded as a refused lookup); once the database recovers,
+    /// the retry notifies the friend once.
+    #[tokio::test]
+    async fn a_fault_on_the_final_read_keeps_the_wear_queued() {
+        use crate::db::scratch::{OwnedDatabase, Schema};
+        use social::notifications::first_wear::{
+            FIRST_WEAR_TYPE, FfwExperiment, FfwRule, FirstWearSettings, run_once,
+        };
+        let Some(db) = OwnedDatabase::new("first_wear_fault", Schema::Full, 4).await else {
+            return;
+        };
+        let pool = &db.pool;
+        let exec = |sql: &'static str| async move {
+            sqlx::query(sql).execute(pool).await.unwrap();
+        };
+        // The nft index and its legacy book published on both networks, the
+        // catalogue's mirror passes, the trade-events folds.
+        exec(
+            "INSERT INTO shop.chain_cursor (indexer, network, start_block, last_block, last_block_hash, fold_through, folded_block, folded_at, full_history, chain_id) \
+             SELECT 'nft', n, 1, 100, '0x' || repeat('0', 64), 100, 100, timezone('UTC', now()), true, c \
+             FROM (VALUES ('ethereum', 1), ('matic', 137)) AS v(n, c)",
+        )
+        .await;
+        exec(
+            "INSERT INTO shop.chain_checkpoint (indexer, network, block_number, block_hash, block_time) \
+             SELECT 'nft', n, 100, '0x' || repeat('0', 64), 0 FROM unnest(ARRAY['ethereum', 'matic']) n",
+        )
+        .await;
+        exec(
+            "INSERT INTO shop.legacy_order_cursor (network, folded_through, through_hash) \
+             SELECT n, 100, '0x' || repeat('0', 64) FROM unnest(ARRAY['ethereum', 'matic']) n",
+        )
+        .await;
+        exec(
+            "INSERT INTO shop.mirror_state (mirror, network, source_url, last_complete_pass_at) \
+             SELECT m, n, 'test', timezone('UTC', now()) \
+             FROM unnest(ARRAY['items', 'collections']) m CROSS JOIN unnest(ARRAY['ethereum', 'matic']) n",
+        )
+        .await;
+        exec(
+            "INSERT INTO shop.chain_cursor (indexer, network, start_block, last_block, fold_through, folded_block, folded_at, full_history, chain_id) \
+             SELECT 'trade_events', n, 0, 10, 10, 10, timezone('UTC', now()), true, c \
+             FROM (VALUES ('ethereum', 1), ('matic', 137)) AS v(n, c)",
+        )
+        .await;
+        // A store-minted Polygon item with stock.
+        exec(
+            "INSERT INTO shop.collections (network, contract_address, chain_id, name, creator, owner, urn, is_completed, is_approved, is_editable, created_at, updated_at, reviewed_at, mirrored_at) \
+             VALUES ('matic', '0x00000000000000000000000000000000000000c1', 137, 'Hats', '0x00000000000000000000000000000000000000c0', '0x00000000000000000000000000000000000000c0', \
+                     'urn:decentraland:matic:collections-v2:0x00000000000000000000000000000000000000c1', true, true, false, 0, 0, 0, now())",
+        )
+        .await;
+        exec(
+            "INSERT INTO shop.items (network, contract_address, item_id, chain_id, item_type, urn, creator, rarity, total_supply, max_supply, available, price, image, name, category, \
+                                     search_is_store_minter, search_is_collection_approved, created_at, updated_at, reviewed_at, mirrored_at) \
+             VALUES ('matic', '0x00000000000000000000000000000000000000c1', 1, 137, 'wearable_v2', 'urn:decentraland:matic:collections-v2:0x00000000000000000000000000000000000000c1:1', \
+                     '0x00000000000000000000000000000000000000c0', 'common', 0, 10, 10, 0, '', 'Hat', 'hat', true, true, 0, 0, 0, now())",
+        )
+        .await;
+        // The wearer's first wear, queued, and one active friend.
+        exec(
+            "INSERT INTO social.worn_history (address, urn, first_seen) \
+             VALUES ('0x00000000000000000000000000000000000000a1', 'urn:decentraland:matic:collections-v2:0x00000000000000000000000000000000000000c1:1', timezone('UTC', now()))",
+        )
+        .await;
+        exec(
+            "INSERT INTO social.first_wear_outbox (address, urn, wearer) \
+             VALUES ('0x00000000000000000000000000000000000000a1', 'urn:decentraland:matic:collections-v2:0x00000000000000000000000000000000000000c1:1', 'Wearer')",
+        )
+        .await;
+        // A friend the experiment notifies (not bucketed into its `off` arm).
+        let friend = (1..=99)
+            .map(|n| format!("0x{n:040x}"))
+            .find(|f| FfwExperiment::default().rule_for(f) != FfwRule::Off)
+            .unwrap();
+        sqlx::query(
+            "INSERT INTO social.friendships (id, address_requester, address_requested, is_active, last_action, last_actor) \
+             VALUES (gen_random_uuid(), '0x00000000000000000000000000000000000000a1', $1, true, 'accept', $1)",
+        )
+        .bind(&friend)
+        .execute(pool)
+        .await
+        .unwrap();
+        // The catalogue is mirrored here: its proof names a configured
+        // source, which the lookup itself never queries.
+        let mut settings = shop::market::Settings::for_tests();
+        settings.market.indexes.nft_enabled = true;
+        settings.eth_collections_subgraph_url = Some("http://127.0.0.1:9/unused".into());
+        settings.matic_collections_subgraph_url = Some("http://127.0.0.1:9/unused".into());
+        // Local trades are accepted: `shop.trades` has a source.
+        settings.data_writes_enabled = true;
+        let items = ShopBuyableItems(Arc::new(shop::market::MarketplaceState::new(
+            pool.clone(),
+            crate::http::Outbound::for_tests(),
+            settings,
+        )));
+        let urn =
+            "urn:decentraland:matic:collections-v2:0x00000000000000000000000000000000000000c1:1";
+        let queued = || async {
+            sqlx::query_scalar::<_, i32>("SELECT attempts FROM social.first_wear_outbox")
+                .fetch_all(pool)
+                .await
+                .unwrap()
+        };
+        let notices = || async {
+            sqlx::query_scalar::<_, i64>(
+                "SELECT count(*) FROM social.notifications WHERE address = $1 AND type = $2",
+            )
+            .bind(&friend)
+            .bind(FIRST_WEAR_TYPE)
+            .fetch_one(pool)
+            .await
+            .unwrap()
+        };
+
+        // Only the page read selects the beneficiary: readiness passes, then
+        // the page read fails, as an index read (500), not a refused one.
+        exec("ALTER TABLE shop.items RENAME COLUMN beneficiary TO beneficiary_away").await;
+        let fault = items.buyable_item(urn).await;
+        assert!(
+            matches!(&fault, Err(ItemLookupError::Transient(why)) if why.contains("500")),
+            "{fault:?}"
+        );
+        let emitted = run_once(pool, Some(&items), &FirstWearSettings::default())
+            .await
+            .unwrap();
+        assert_eq!(emitted, 0);
+        assert_eq!(queued().await, vec![1], "kept for a retry, not discarded");
+        assert_eq!(notices().await, 0);
+
+        exec("ALTER TABLE shop.items RENAME COLUMN beneficiary_away TO beneficiary").await;
+        exec("UPDATE social.first_wear_outbox SET retry_at = timezone('UTC', now())").await;
+        let emitted = run_once(pool, Some(&items), &FirstWearSettings::default())
+            .await
+            .unwrap();
+        assert_eq!(emitted, 1);
+        assert!(queued().await.is_empty());
+        assert_eq!(notices().await, 1);
+        db.drop().await;
+    }
+
+    /// Only a refused request is final; an index read's 500 or 503 is
+    /// retried.
+    #[test]
+    fn only_a_refused_request_is_final() {
+        use axum::http::StatusCode;
+        assert!(matches!(
+            lookup_error(StatusCode::BAD_REQUEST, "refused"),
+            ItemLookupError::Invalid(_)
+        ));
+        for status in [
+            StatusCode::INTERNAL_SERVER_ERROR,
+            StatusCode::SERVICE_UNAVAILABLE,
+        ] {
+            assert!(matches!(
+                lookup_error(status, "not now"),
+                ItemLookupError::Transient(_)
+            ));
+        }
     }
 }
