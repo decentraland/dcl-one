@@ -43,6 +43,7 @@ import { SessionProvider } from './features/session/SessionContext'
 import type { PurchaseSceneItem } from './features/itemPurchase/answer'
 import { bootMode, hostEntryParams, isNativeHud, unrecognisedEntryParams, untrustedLaunchParams } from '@hud-host'
 import { FpsMeter } from './features/debug/FpsMeter'
+import { UnderEngineWindow } from './features/engine/UnderEngineWindow'
 import { DebugPanelHost } from './features/debug/DebugPanel'
 import { BootProgress } from './features/engine/BootProgress'
 import { StartupFlow } from './features/startup/StartupFlow'
@@ -482,6 +483,7 @@ function Hud({ integratedGpu, host }: { integratedGpu: GpuAdapterInfo | null; ho
   return (
     <SessionProvider value={session}>
       {rpc && <EngineHost rpc={rpc} />}
+      <UnderEngineWindow>
       {MODE === 'engine' && <BootProgress flow={session.login} />}
       {(session.phase === 'login' || session.phase === 'welcome') && <StartupFlow flow={session.login} music={loginMusic} />}
       {session.phase === 'picking' && <PlacesPicker account={discoveryAccount} onPick={session.pickDestination} />}
@@ -583,6 +585,7 @@ function Hud({ integratedGpu, host }: { integratedGpu: GpuAdapterInfo | null; ho
           </Suspense>
         </SurfaceBoundary>
       )}
+      </UnderEngineWindow>
       {/* Popups (imperative overlay stack) live inside the session provider so popup-mounted surfaces
           — the world <ProfileCard> — can read useSession(). */}
       <PopupHost />

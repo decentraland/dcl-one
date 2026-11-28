@@ -1,6 +1,9 @@
 import { describe, it, expect, vi, afterEach } from 'vitest'
+import { useContext, useLayoutEffect } from 'react'
 import { render, screen, fireEvent, act } from '@testing-library/react'
 import { PopupHost, openPopup, closeTopPopup, hasOpenPopup, showConfirm, showDialog, resetPopups } from '../design'
+import { PopupIdContext } from '../design/popups'
+import { setEngineWindow } from '../lib/engineWindow'
 
 // The popup layer keeps the stack, the focus and the close rules, and draws each layer with the shared
 // ModalBackdrop. These tests pin what the layer owns across that seam: the order stacked dialogs close in,
@@ -349,5 +352,45 @@ describe('a close guard', () => {
     expect(screen.queryByRole('dialog', { name: 'Above' })).toBeNull()
     cancel()
     expect(screen.getByText('form')).toBeInTheDocument()
+  })
+})
+
+// A popup that shows something the engine draws under the page (the passport's avatar) says where
+// (lib/engineWindow). The layer opens that spot in the popups under it, whole, and in the owner's own
+// scrim alone, whose class draws it from --popup-hole; a popup over the owner stays whole.
+describe('when a popup shows the engine through the page', () => {
+  function Owner(): React.JSX.Element {
+    const popup = useContext(PopupIdContext)
+    useLayoutEffect(() => {
+      setEngineWindow({ popup, rect: { x: 100, y: 50, width: 200, height: 400 }, round: { topLeft: 10 } })
+      return () => setEngineWindow(null)
+    }, [popup])
+    return <div>owner</div>
+  }
+
+  it('should cut the window out of the popups under it and out of its own scrim only', () => {
+    render(<PopupHost />)
+    act(() => {
+      openPopup(() => <div>under</div>)
+      openPopup(() => <Owner />)
+      openPopup(() => <div>over</div>)
+    })
+    const [under, owner, over] = backdrops()
+    expect(under.style.clipPath).toContain('polygon(evenodd')
+    expect(under.style.clipPath).toContain('300px 50px')
+    expect(owner.style.clipPath).toBe('')
+    expect(owner.style.getPropertyValue('--popup-hole')).toContain('polygon(evenodd')
+    expect(over.style.clipPath).toBe('')
+    expect(over.style.getPropertyValue('--popup-hole')).toBe('')
+  })
+
+  it('should close the layers again when the window goes', () => {
+    render(<PopupHost />)
+    act(() => {
+      openPopup(() => <div>under</div>)
+      openPopup(() => <Owner />)
+    })
+    cancel()
+    expect(backdrops()[0].style.clipPath).toBe('')
   })
 })

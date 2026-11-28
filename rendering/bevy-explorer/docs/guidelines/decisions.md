@@ -1119,6 +1119,18 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
 - **The passport offers no Call to a blocked user.** unity-explorer's passport shows Call
   whatever the block state; here Call follows Chat, hidden for a user you blocked and for one who
   blocked you.
+- **The passport's live avatar stays inside its column, is lit flat and stands on a fixed
+  background.** As in unity-explorer the passport draws the player's avatar live: it turns under a
+  left drag and coasts, waves once when it first shows, is hidden on the Badges tab and fades in
+  over half a second after a spinner, at the same size and place, with the glow behind it and the
+  shadow under its feet. Three things differ. unity-explorer's avatar picture runs under the
+  right-hand sections, so a wide emote reaches past the column; here the engine draws under the
+  page through an opening the width of the column, so the avatar is cut at its edge. The avatar is
+  lit as the Backpack's is, with no key light or cast shadow. The panel keeps its fixed
+  gradient where unity-explorer's drifts in the name colour. When the avatar cannot be drawn (its
+  look fails to load, or the page has no engine) the column shows the profile's full-body picture,
+  then its face; unity-explorer has no such picture. One avatar is live at a time: the Backpack's,
+  the Shop's or the lobby's keeps its last frame under an open passport.
 - **ACCEPT FRIEND on the passport shows its result.** As in unity-explorer, the click accepts;
   here "Accepting Friend Request" and then the result show over the passport.
 - **The passport menu's profile entry is a row with no copy buttons.** unity-explorer's entry

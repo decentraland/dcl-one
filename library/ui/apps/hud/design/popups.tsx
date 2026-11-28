@@ -1,8 +1,10 @@
-import { Component, useRef, useSyncExternalStore, type ReactNode } from 'react'
+import { Component, createContext, useLayoutEffect, useRef, useState, useSyncExternalStore, type ReactNode } from 'react'
 import { ModalShell } from './Modal'
 import { useFocusTrap } from '../lib/useFocusTrap'
 import { isInputLocked, subscribeInputLock } from '@explorer-core/lib/inputLock'
 import { nextLayerOrder } from '@explorer-core/lib/cancelLayers'
+import { subscribeHudScale } from '@explorer-core/lib/hudScale'
+import { useEngineWindow, windowClip, type EngineWindow } from '../lib/engineWindow'
 import { Button, ModalBackdrop } from '@dcl/one-ui'
 
 /** A popup is a render function given its own `close` callback; it returns the overlay to render. */
@@ -146,10 +148,33 @@ const getSnapshot = (): typeof stack => stack
 /** One rendered popup layer. The topmost popup with a backdrop owns the focus trap: it focuses itself
  *  on open, cycles Tab/Shift+Tab within its content, and restores focus to the opener on close — so no
  *  popup needs its own trap. A `backdrop:false` popup renders bare, with no trap of its own. */
-function PopupLayer({ node, isTop, locked }: { node: PopupNode; isTop: boolean; locked: boolean }): React.JSX.Element {
+/** The popup a component is rendered in (its id in the stack); -1 outside one. */
+export const PopupIdContext = createContext(-1)
+
+/** `hole`: the engine's window (lib/engineWindow) cut out of this layer whole (`under`: a popup
+ *  below the one that owns the window) or out of its scrim alone (`own`: the owner's, whose content over the
+ *  window keeps the pointer). The owner's scrim class draws it from `--popup-hole`. */
+function PopupLayer({ node, isTop, locked, hole }: { node: PopupNode; isTop: boolean; locked: boolean; hole?: { window: EngineWindow; own: boolean } }): React.JSX.Element {
   const ref = useRef<HTMLDivElement>(null)
+  const [cut, setCut] = useState<string>()
+  // The scrim is the reference canvas, scaled from the screen's top left: the window, in screen pixels,
+  // is cut in the layer's own.
+  useLayoutEffect(() => {
+    const el = ref.current
+    if (hole == null || el == null) {
+      setCut(undefined)
+      return
+    }
+    const measure = (): void => {
+      const box = el.getBoundingClientRect()
+      setCut(windowClip(hole.window, { x: box.left, y: box.top }, el.offsetWidth > 0 ? box.width / el.offsetWidth : 1))
+    }
+    measure()
+    return subscribeHudScale(measure)
+  }, [hole?.window, hole == null])
+  const holeStyle = cut == null || hole == null ? undefined : hole.own ? ({ '--popup-hole': cut } as React.CSSProperties) : { clipPath: cut }
   const close = (): void => requestCloseById(node.id)
-  const content = node.render(close)
+  const content = <PopupIdContext.Provider value={node.id}>{node.render(close)}</PopupIdContext.Provider>
 
   // Only the top backdrop popup traps focus (bare content, if any, has no ref → the hook no-ops).
   // Stands down while a fatal error modal holds input: it registers its own Tab-cycling trap after
@@ -168,6 +193,7 @@ function PopupLayer({ node, isTop, locked }: { node: PopupNode; isTop: boolean; 
       tone={tone}
       fixed={node.options.fixed}
       className={node.options.className}
+      style={holeStyle}
       tabIndex={-1}
       onClick={() => { if (closesOnBackdrop(node.options)) close() }}
     >
@@ -200,6 +226,8 @@ class PopupBoundary extends Component<{ id: number; children: ReactNode }, { fai
 export function PopupHost(): React.JSX.Element {
   const snap = useSyncExternalStore(subscribe, getSnapshot)
   const locked = useSyncExternalStore(subscribeInputLock, isInputLocked)
+  const engineWindow = useEngineWindow()
+  const owner = engineWindow == null ? -1 : snap.findIndex((n) => n.id === engineWindow.popup)
   // No DOM cancel handler here: the cancel key flows to the engine like any other input,
   // resolves to the 'Cancel' system action, and the session closes the top popup from the
   // action stream (one layered close for keyboard and gamepad alike). Pre-world, where the
@@ -208,7 +236,7 @@ export function PopupHost(): React.JSX.Element {
     <>
       {snap.map((n, i) => (
         <PopupBoundary key={n.id} id={n.id}>
-          <PopupLayer node={n} isTop={i === snap.length - 1} locked={locked} />
+          <PopupLayer node={n} isTop={i === snap.length - 1} locked={locked} hole={engineWindow != null && i <= owner ? { window: engineWindow, own: i === owner } : undefined} />
         </PopupBoundary>
       ))}
     </>

@@ -3,7 +3,7 @@ import { Button } from '../Button/Button'
 import rarityStyles from '../WearableCard/rarity.module.css'
 import styles from './EquippedItemCard.module.css'
 
-export type EquippedItemCardProps = {
+type EquippedItemCardBase = {
   thumbnail?: string
   name?: string
   /**
@@ -26,10 +26,21 @@ export type EquippedItemCardProps = {
   pinShop?: boolean
 }
 
+export type EquippedItemCardProps = EquippedItemCardBase &
+  (
+    | {
+        /** What a click on the card does (an emote's card plays it): the picture is then a button. */
+        onAction: () => void
+        actionLabel: string
+      }
+    | { onAction?: undefined; actionLabel?: undefined }
+  )
+
 /**
- * An item a profile shows, for display only: the thumbnail on its rarity's colour with a corner flap,
- * then the name on one line, the rarity tag and an optional price. With `shopUrl`, hovering frames
- * and lifts the card and shows a link to the item's sale.
+ * An item a profile shows: the thumbnail on its rarity's colour with a corner flap, then the name on
+ * one line, the rarity tag and an optional price. With `shopUrl`, hovering frames and lifts the card
+ * and shows a link to the item's sale. With `onAction` the picture is a button named by `actionLabel`,
+ * and a click anywhere on the card but its link runs the action.
  */
 export function EquippedItemCard({
   thumbnail,
@@ -39,25 +50,42 @@ export function EquippedItemCard({
   shopLabel = 'Shop',
   price,
   categoryIcon,
-  pinShop = false
+  pinShop = false,
+  onAction,
+  actionLabel
 }: EquippedItemCardProps) {
   // The picture that failed to load: a new one is tried again.
   const [failedSrc, setFailedSrc] = useState<string>()
   const failed = failedSrc != null && failedSrc === thumbnail
   const shop = shopUrl == null ? undefined : pinShop ? styles.pinnedShop : styles.hasShop
+  const picture = (
+    <>
+      {thumbnail && !failed ? (
+        <img className={styles.thumb} src={thumbnail} alt="" onError={() => setFailedSrc(thumbnail)} />
+      ) : (
+        <span className={styles.placeholder} />
+      )}
+      {categoryIcon != null && <span className={styles.corner}>{categoryIcon}</span>}
+    </>
+  )
   return (
     <div
       className={[styles.card, rarityStyles.tone, shop].filter(Boolean).join(' ')}
       data-rarity={rarity ?? 'base'}
+      data-action={onAction != null ? '' : undefined}
+      // The whole card answers the pointer; the picture's button is the same action for the keyboard.
+      onClick={onAction == null ? undefined : (e) => {
+        if (e.target instanceof Element && e.target.closest('a, button') != null) return
+        onAction()
+      }}
     >
-      <div className={styles.thumbWrap}>
-        {thumbnail && !failed ? (
-          <img className={styles.thumb} src={thumbnail} alt="" onError={() => setFailedSrc(thumbnail)} />
-        ) : (
-          <span className={styles.placeholder} />
-        )}
-        {categoryIcon != null && <span className={styles.corner}>{categoryIcon}</span>}
-      </div>
+      {onAction != null ? (
+        <button type="button" className={styles.thumbWrap} aria-label={actionLabel} onClick={onAction}>
+          {picture}
+        </button>
+      ) : (
+        <div className={styles.thumbWrap}>{picture}</div>
+      )}
       <span className={styles.name} title={name}>
         {name}
       </span>

@@ -11,7 +11,7 @@ import { type GotoTarget, randomParcel, worldOfRealm } from '@explorer-core/feat
 import { answerItemPurchase, type PurchaseSceneItem } from '../itemPurchase/answer'
 import type { PlatformBanNotice, PortableInfo, PortableState, SatelliteView, WorldAccessVerdict } from '@explorer-core/engine/generated'
 import type { AvatarLook } from '@explorer-core/engine/avatarEquip'
-import { PLATFORM_BANNED_REFUSAL, type UiSound, type EngineViewportRegion, type GiftingPageMessage, type GiftingQueryRequest, type PhotoModeSnapshot, type PhotoModeSource, type PreviewFocus, type PreviewStageFraming, type SituationalReaction } from '@explorer-core/engine/protocol'
+import { PLATFORM_BANNED_REFUSAL, type UiSound, type EngineViewportRegion, type GiftingPageMessage, type GiftingQueryRequest, type PassportPreviewMessage, type PhotoModeSnapshot, type PhotoModeSource, type PreviewFocus, type PreviewStageFraming, type SituationalReaction } from '@explorer-core/engine/protocol'
 import { clickButton, screenViewed, sessionId, track } from '@explorer-core/lib/analytics'
 import { useStoredProfile } from '../login/useStoredProfile'
 import { inShell, postToShell } from '@explorer-core/lib/shell'
@@ -1205,6 +1205,12 @@ export interface EngineSession {
   /** The engine has drawn the Backpack's avatar in its preview, so the page can open its hole onto it
    *  (or the wait for it ran out). False while the preview is closed. */
   avatarPreviewReady: boolean
+  /** The passport's avatar, which the scene draws (see PassportPreviewRequest): `send` passes its messages
+   *  on, and `state` is the scene's latest word on the avatar it was asked for. */
+  passportPreview: {
+    send: (msg: PassportPreviewMessage) => void
+    state: { id: number; state: 'ready' | 'failed' } | null
+  }
   /** The persisted home destination the lobby's landing card shows (null before the engine knows). */
   homeScene: () => { realm: string | null; parcel: string; pinned: boolean } | null
   /** Post-jump-in Places picker: choose where to spawn (or null to skip → Genesis Plaza). False
@@ -2697,6 +2703,9 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
           break
         case 'signinStageReady':
           setSigninStageReady(true)
+          break
+        case 'passportPreviewState':
+          setPassportPreviewState({ id: msg.id, state: msg.state })
           break
         case 'avatarPreviewReady':
           previewReadyFallback.clear()
@@ -4251,6 +4260,11 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
   const rotatePreview = useCallback((degrees: number) => {
     driverRef.current?.send({ kind: 'previewRotate', degrees })
   }, [])
+  const [passportPreviewState, setPassportPreviewState] = useState<{ id: number; state: 'ready' | 'failed' } | null>(null)
+  const sendPassportPreview = useCallback((msg: PassportPreviewMessage) => {
+    driverRef.current?.send(msg)
+  }, [])
+  const passportPreview = useMemo(() => ({ send: sendPassportPreview, state: passportPreviewState }), [sendPassportPreview, passportPreviewState])
   const turnLobbyAvatar = useCallback((degrees: number) => {
     driverRef.current?.send({ kind: 'previewRotate', degrees, stage: 'lobby' })
   }, [])
@@ -5519,6 +5533,7 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
     homeScene,
     avatarPreviewRect,
     avatarPreviewReady,
+    passportPreview,
     pickDestination,
     welcome: {
       terms: welcome?.terms ?? false,

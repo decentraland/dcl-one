@@ -14,6 +14,7 @@ import { equippedSlots } from './emoteSlots'
 import { officialWallets } from './gallery'
 import type { Badge, Profile, ProfileInfo, SaveProfileRequest } from '@explorer-core/engine/protocol'
 import type { SetAvatarData } from '@explorer-core/engine/generated'
+import type { AvatarLook } from '@explorer-core/engine/avatarEquip'
 // Not via the generated barrel: it only re-exports the top-level files, not serde_json/.
 import type { JsonValue } from '@explorer-core/engine/generated/serde_json/JsonValue'
 import { BevyApi } from '../bevy-api'
@@ -55,6 +56,12 @@ export type SerializedProfile = {
   birthdate?: number
   avatar?: {
     snapshots?: { face256?: string; body?: string }
+    /** What the avatar is drawn from (`common::profile::AvatarWireFormat`). */
+    bodyShape?: string
+    eyes?: { color?: { r: number; g: number; b: number } }
+    hair?: { color?: { r: number; g: number; b: number } }
+    skin?: { color?: { r: number; g: number; b: number } }
+    forceRender?: string[]
     /** Deployed equipped-wearables urns — resolved into the passport's Equipped Wearables section. */
     wearables?: string[]
     /** Deployed equipped-emotes wheel slots — resolved into the passport's Equipped Emotes section. */
@@ -125,6 +132,21 @@ export const httpOrUndef = (s?: string | null): string | undefined => (typeof s 
 const withAddressTag = (name: string, address: string, claimed: boolean): string =>
   claimed || name.includes('#') ? name : `${name}#${address.slice(-4)}`
 
+/** What a profile's avatar wears, as the passport's avatar is drawn from it; none without a body shape. */
+export function lookOf(av: SerializedProfile | undefined): AvatarLook | undefined {
+  const avatar = av?.avatar
+  if (avatar?.bodyShape == null || avatar.bodyShape === '') return undefined
+  return {
+    bodyShape: avatar.bodyShape,
+    eyes: avatar.eyes?.color ?? null,
+    hair: avatar.hair?.color ?? null,
+    skin: avatar.skin?.color ?? null,
+    wearables: avatar.wearables ?? [],
+    emotes: (avatar.emotes ?? []).map(({ urn }) => urn),
+    forceRender: avatar.forceRender ?? []
+  }
+}
+
 function toProfile(av: SerializedProfile | undefined, address: string, isGuest: boolean, fallbackName: string): Profile {
   const snaps = av?.avatar?.snapshots
   const claimed = av?.hasClaimedName ?? !fallbackName.includes('#')
@@ -133,6 +155,7 @@ function toProfile(av: SerializedProfile | undefined, address: string, isGuest: 
     name: withAddressTag(av?.name != null && av.name !== '' ? av.name : fallbackName, address, claimed),
     picture: httpOrUndef(snaps?.face256),
     bodyImage: httpOrUndef(snaps?.body),
+    look: lookOf(av),
     hasClaimedName: claimed,
     nameColor: claimed ? av?.nameColor : undefined,
     isGuest,

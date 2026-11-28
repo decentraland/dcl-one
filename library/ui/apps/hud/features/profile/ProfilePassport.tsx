@@ -1,9 +1,9 @@
 // Passport — the full-screen profile view opened from the chat profile menu's
 // "View Profile". Header (name, wallet, copy, mutual friends, then the friendship button, Chat,
 // Call, Jump to Location and the options menu),
-// OVERVIEW / BADGES / PHOTOS / CREATIONS tabs, the avatar as the catalyst full-body
-// snapshot (2D, falling back to the face), then badges + about-me + fields + links.
-// (No engine/3D render here — that's only the Backpack's avatar preview.)
+// OVERVIEW / BADGES / PHOTOS / CREATIONS tabs, the avatar down the left (the engine's live one
+// when its host gives the `avatar` slot, see PassportAvatar; else the catalyst full-body snapshot,
+// falling back to the face), then badges + about-me + fields + links.
 
 import { Button, DclLogo, EmptyState, EquippedItemCard, MaskIcon, ScrollThumb, Spinner, Tooltip, type EquippedItemCardProps } from '@dcl/one-ui'
 import { useCallback, useEffect, useRef, useState } from 'react'
@@ -16,7 +16,7 @@ import { fetchCreations, marketplaceUrl, type CreationItem, type Creations } fro
 import { nativeProfileImage } from '@hud-host'
 import { CategoryIcon } from '../backpack/categoryIcons'
 import { catalystThumbUrl, shortWallet, splitName, userColor } from '@explorer-core/lib/identity'
-import type { Badge, Emote, Profile, ProfileEdit, Wearable } from '@explorer-core/engine/protocol'
+import type { Badge, Emote, PassportBackground, Profile, ProfileEdit, Wearable } from '@explorer-core/engine/protocol'
 import { PROFILE_FIELDS } from '@explorer-core/features/profile/profileFields'
 import { ProfileEditForm } from './ProfileEditForm'
 import type { Relationship } from '../chat/ProfileCardPresentation'
@@ -27,6 +27,16 @@ import { inviteSubmenuItem } from '../communities/InviteToCommunity'
 import styles from './ProfilePassport.module.css'
 
 export type PassportTab = 'overview' | 'badges' | 'photos' | 'creations'
+/** What the live avatar is given: the panel's background behind it, whether it waves once loaded (the
+ *  first time the passport shows it), what the column shows in its place when it cannot be drawn, and
+ *  where to say that it is being drawn, so the panel opens its background over the column. */
+export type PassportAvatarSlot = {
+  background: PassportBackground
+  wave: boolean
+  picture: React.ReactNode
+  onLive: (live: boolean) => void
+  onReady: (ready: boolean) => void
+}
 type Tab = PassportTab
 const PASSPORT_TABS: TabItem<Tab>[] = (['overview', 'badges', 'photos', 'creations'] as const).map((t) => ({ id: t, label: t.toUpperCase() }))
 // A single selected-but-disabled tab: the same bar, holding the same height, with nothing to switch to.
@@ -234,16 +244,19 @@ const wearableTile = (w: Wearable): EquippedTile => ({
   categoryIcon: <CategoryIcon category={w.category} size={15} />
 })
 
-const emoteTile = (e: Emote): EquippedTile => ({
-  // Keyed by slot too: the same emote can sit in more than one wheel slot (the equipped set is
-  // deduped, the wheel isn't), and a duplicate key drops the second tile.
-  key: `${e.urn}:${e.slot}`,
-  thumbnail: e.thumbnail ?? catalystThumbUrl(e.urn),
-  name: e.name,
-  rarity: e.rarity,
-  shopUrl: e.shopUrl,
-  categoryIcon: <Icon name="emotes" size={15} />
-})
+const emoteTile = (e: Emote, onPlay?: (urn: string) => void): EquippedTile => {
+  const tile = {
+    // Keyed by slot too: the same emote can sit in more than one wheel slot (the equipped set is
+    // deduped, the wheel isn't), and a duplicate key drops the second tile.
+    key: `${e.urn}:${e.slot}`,
+    thumbnail: e.thumbnail ?? catalystThumbUrl(e.urn),
+    name: e.name,
+    rarity: e.rarity,
+    shopUrl: e.shopUrl,
+    categoryIcon: <Icon name="emotes" size={15} />
+  }
+  return onPlay != null ? { ...tile, onAction: () => onPlay(e.urn), actionLabel: `Play ${e.name}` } : tile
+}
 
 function EquippedRow({ tiles }: { tiles: EquippedTile[] }): React.JSX.Element {
   return (
@@ -380,7 +393,10 @@ export function ProfilePassport({
   onClose,
   onDirtyChange,
   photoActions,
-  initialTab = 'overview'
+  initialTab = 'overview',
+  avatar,
+  avatarPending = false,
+  onPlayEmote
 }: {
   profile: Profile
   /** Relationship of the local user to this profile — drives the header friendship button. */
@@ -418,6 +434,13 @@ export function ProfilePassport({
   photoActions?: PassportPhotoActions
   /** The tab the passport opens on. */
   initialTab?: PassportTab
+  /** The engine's live avatar for the left column, on every tab but Badges. Without it the column shows the
+   *  profile's picture. */
+  avatar?: (slot: PassportAvatarSlot) => React.ReactNode
+  /** The avatar is not known yet: the column waits with a spinner instead of showing the picture. */
+  avatarPending?: boolean
+  /** Makes the equipped emotes' tiles buttons that play them. */
+  onPlayEmote?: (urn: string) => void
 }): React.JSX.Element {
   const [tab, setTab] = useState<Tab>(initialTab)
   // The Badges tab's selection: a badge id and, for tiered badges, a tier id. Both fall back —
@@ -431,6 +454,14 @@ export function ProfilePassport({
   const selectedBadge = badges.find((b) => b.id === picked.badge) ?? badges[0]
   const selectedTier = selectedBadge?.tiers?.some((t) => t.id === picked.tier) ? picked.tier : selectedBadge != null ? defaultTier(selectedBadge) : undefined
   const [editMode, setEditMode] = useState(false)
+  const [liveAvatar, setLiveAvatar] = useState(false)
+  const [avatarReady, setAvatarReady] = useState(false)
+  // It waves the first time this passport shows it, not when it comes back from the Badges tab.
+  const waved = useRef(false)
+  const firstShow = !waved.current
+  useEffect(() => {
+    if (avatar != null && !avatarPending && tab !== 'badges') waved.current = true
+  })
   const canEdit = isSelf && editing != null
   // Someone you blocked stays "blocked" even if they blocked you too: UNBLOCK is still yours to use.
   const theyBlockedYou = blockedBy && relationship !== 'blocked'
@@ -542,21 +573,32 @@ export function ProfilePassport({
     setEditMode(true)
   }
 
+  const showsBadge = tab === 'badges' && !editMode && selectedBadge != null
+  // the live avatar is hidden on the Badges tab, badge picked or not
+  const showsAvatar = !showsBadge && !(avatar != null && tab === 'badges' && !editMode)
+  const picture = profile.bodyImage ? (
+    <img className={styles.avatarImg} src={nativeProfileImage(profile.bodyImage)} alt={base} />
+  ) : (
+    <Avatar src={profile.picture} name={base} color={nameColor} size={180} />
+  )
+
   return (
     // The dimmed scrim + click-outside-to-close are owned by the popup layer (openPassport →
     // PopupHost); this is just the panel. stopPropagation keeps a click inside it (tabs, copy, links)
     // from reaching the scrim and closing the passport.
-    <div className={styles.panel} data-tab={tab} onClick={(e) => e.stopPropagation()}>
+    <div className={styles.panel} data-tab={tab} data-passport-panel="" data-live-avatar={liveAvatar && showsAvatar ? '' : undefined} onClick={(e) => e.stopPropagation()}>
           {/* --- left: the avatar — the catalyst full-body snapshot,
                   falling back to the 2D face if the body render isn't available. --- */}
-          <div className={styles.avatarCol} data-passport-avatar={tab === 'badges' && !editMode && selectedBadge != null ? undefined : ''}>
-            {tab === 'badges' && !editMode && selectedBadge != null ? (
+          <div className={styles.avatarCol} data-passport-avatar={showsBadge ? undefined : ''}>
+            {showsBadge ? (
               <BadgeDetail badge={selectedBadge} tierId={selectedTier} isSelf={isSelf} onSelectTier={(tier) => setPicked({ badge: selectedBadge.id, tier })} />
-            ) : profile.bodyImage ? (
-              <img className={styles.avatarImg} src={nativeProfileImage(profile.bodyImage)} alt={base} />
-            ) : (
-              <Avatar src={profile.picture} name={base} color={nameColor} size={180} />
-            )}
+            ) : avatarPending ? (
+              <Spinner variant="thin" size={70} className={styles.avatarPending} />
+            ) : avatar == null ? (
+              picture
+            ) : showsAvatar ? (
+              avatar({ background: tab === 'photos' || tab === 'creations' ? tab : 'overview', wave: firstShow, picture, onLive: setLiveAvatar, onReady: setAvatarReady })
+            ) : null}
           </div>
 
           <div className={styles.main}>
@@ -780,7 +822,7 @@ export function ProfilePassport({
                   <section className={styles.card}>
                     {/* One grid, wearables then emotes. */}
                     <h2 className={styles.cardTitle}>Equipped Items</h2>
-                    <EquippedRow tiles={[...wearables.map(wearableTile), ...(profile.equippedEmotes ?? []).map(emoteTile)]} />
+                    <EquippedRow tiles={[...wearables.map(wearableTile), ...(profile.equippedEmotes ?? []).map((e) => emoteTile(e, avatarReady && showsAvatar ? onPlayEmote : undefined))]} />
                   </section>
                 )}
                 {hasBadges && (

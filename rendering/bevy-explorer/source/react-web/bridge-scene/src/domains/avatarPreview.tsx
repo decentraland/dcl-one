@@ -451,6 +451,29 @@ let parkedLobby: PreviewState | null = null
 type TextureCameraValue = NonNullable<Parameters<typeof TextureCamera.create>[1]>
 let parkedCamera: TextureCameraValue | null = null
 
+// The passport's avatar is drawn over whatever stage is up (./passportPreview): that stage's camera comes
+// off while it is, so the engine draws one preview at a time and the stage keeps its last frame.
+let heldCamera: { entity: Entity; value: TextureCameraValue } | null = null
+
+export function holdPreview(): void {
+  // its stage was dropped, replaced or set aside meanwhile: that camera is never put back from here
+  if (heldCamera != null && heldCamera.entity !== cameraEntity) heldCamera = null
+  if (heldCamera != null || cameraEntity == null) return
+  const camera = TextureCamera.getOrNull(cameraEntity)
+  if (camera == null) return
+  heldCamera = { entity: cameraEntity, value: JSON.parse(JSON.stringify(camera)) as TextureCameraValue }
+  TextureCamera.deleteFrom(cameraEntity)
+}
+
+export function releasePreview(): void {
+  const held = heldCamera
+  heldCamera = null
+  // a stage dropped or replaced meanwhile took its camera with it
+  if (held == null || held.entity !== cameraEntity || TextureCamera.has(held.entity)) return
+  TextureCamera.createOrReplace(held.entity, held.value)
+  fitCamera()
+}
+
 function takeState() {
   return { rect, dpr, avatarEntity, standbyEntity, cameraEntity, podiumEntities, lastShapeKey, cheerPending, stageUp, idleEmotes, greeted, flavourIn, shownKey, standbyKey, turn, shownYaw, swapReady, wanted, standbyWanted, showLoad, standbyLoad, shownLoaded, zoom, zoomShift }
 }
@@ -465,6 +488,10 @@ function parkLobby(): void {
   if (cameraEntity != null && camera != null) {
     parkedCamera = JSON.parse(JSON.stringify(camera)) as TextureCameraValue
     TextureCamera.deleteFrom(cameraEntity)
+  } else if (heldCamera != null && heldCamera.entity === cameraEntity) {
+    // an open passport took the camera off already: the lobby keeps it for its return
+    parkedCamera = heldCamera.value
+    heldCamera = null
   }
   clearPreview()
   rect = null

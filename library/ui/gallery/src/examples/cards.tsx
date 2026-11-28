@@ -626,6 +626,31 @@ export const cardEntries: GalleryEntry[] = [
             <EquippedItemCard rarity="unique" price="120 MANA" />
           </div>
         )
+      },
+      {
+        id: 'action',
+        title: 'With an action: the picture is a button, and a click anywhere on the card runs it',
+        render: () => (
+          <div className={layout.itemCards}>
+            <EquippedItemCard
+              name="Disco"
+              thumbnail={covers.wearable}
+              rarity="epic"
+              categoryIcon={glyph}
+              onAction={() => undefined}
+              actionLabel="Play Disco"
+            />
+            <EquippedItemCard
+              name="Disco, on sale"
+              thumbnail={covers.wearable}
+              rarity="rare"
+              shopUrl="#item"
+              categoryIcon={glyph}
+              onAction={() => undefined}
+              actionLabel="Play Disco, on sale"
+            />
+          </div>
+        )
       }
     ]
   },
