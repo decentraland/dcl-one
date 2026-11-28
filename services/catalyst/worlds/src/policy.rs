@@ -924,29 +924,27 @@ impl Policy {
             }
             // A re-read joined from another admission is served only as the
             // memo serves one: while the publication it was read under
-            // stands (a newer one may have come while it was in flight).
+            // stands (a newer one may have come while it was in flight). A
+            // joined failure is read again rather than spread, as the shop's
+            // joined reads are: the leader's fault or timeout (bounded by
+            // the leader's deadline, which runs the re-read) does not deny a
+            // joiner that has time of its own left.
             self.admission_refreshes
                 .run_accepting(
                     (key.clone(), observed),
-                    // The shared re-read has its own budget, not its
-                    // leader's remaining one: each caller's deadline bounds
-                    // its own wait, and a leader that gives up drops the
-                    // re-read for its joiners to read again.
                     || async {
-                        let (fresh, not_current) = timed_owner_lookup(
-                            self.name_owner_lookup(world),
-                            ADMISSION_OWNER_TIMEOUT,
-                        )
-                        .await;
+                        let (fresh, not_current) =
+                            timed_owner_lookup(self.name_owner_lookup(world), left()).await;
                         if !not_current {
                             self.admission_owners.insert(key.clone(), fresh.clone());
                         }
                         fresh
                     },
-                    |(_, read_under)| async move {
-                        match read_under {
-                            Some(read_under) => self.publication_stands(read_under).await,
-                            None => true,
+                    |(answer, read_under)| async move {
+                        match (answer, read_under) {
+                            (Err(_), _) => false,
+                            (Ok(_), Some(read_under)) => self.publication_stands(read_under).await,
+                            (Ok(_), None) => true,
                         }
                     },
                 )
@@ -2836,6 +2834,9 @@ mod tests {
         /// (`check_entered` tells the test it got there).
         check_pause: std::sync::Mutex<Option<Arc<tokio::sync::Notify>>>,
         check_entered: tokio::sync::Notify,
+        /// While set, an owner read fails once past its pause (a source
+        /// going down mid-read).
+        fail_after_pause: std::sync::atomic::AtomicBool,
     }
 
     impl Indexed {
@@ -2926,6 +2927,12 @@ mod tests {
             if let Some(pause) = pause {
                 self.entered.notify_one();
                 pause.notified().await;
+            }
+            if self
+                .fail_after_pause
+                .swap(false, std::sync::atomic::Ordering::SeqCst)
+            {
+                return Err(NamesError::Failed("the test source went down".into()));
             }
             Ok(answer)
         }
@@ -3093,6 +3100,54 @@ mod tests {
         assert_eq!(leader.await.unwrap().unwrap(), Some(b));
     }
 
+    /// Resolves once `coalesce` has seen `n` joins, or fails the test.
+    async fn joined<K, O>(coalesce: &crate::shared::cache::Coalesce<K, O>, n: u64)
+    where
+        K: Eq + std::hash::Hash + Clone,
+        O: Clone,
+    {
+        tokio::time::timeout(
+            std::time::Duration::from_secs(10),
+            coalesce.until(|c| c.joins() >= n),
+        )
+        .await
+        .expect("the callers joined the read in flight");
+    }
+
+    /// A failed re-read is not spread to the admissions that joined it: the
+    /// source goes down during the re-read, its own caller gets the fault,
+    /// and a joiner reads again and is answered the new holder.
+    #[tokio::test]
+    async fn a_joined_refresh_failure_is_read_again() {
+        use crate::comms::interfaces::AccessPolicy;
+        let (p, indexed) = indexed_policy();
+        let p = Arc::new(p);
+        let (world, a, b) = (world_name(), wallet(), wallet());
+        let label = world.owner_label().unwrap().to_string();
+        indexed.publish(&label, Some(&a));
+        assert_eq!(p.world_owner(&world).await.unwrap(), Some(a));
+        indexed.publish(&label, Some(&b));
+        let pause = Arc::new(tokio::sync::Notify::new());
+        *indexed.pause.lock().unwrap() = Some(pause.clone());
+        indexed
+            .fail_after_pause
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+        let leader = tokio::spawn({
+            let (p, world) = (p.clone(), world.clone());
+            async move { p.world_owner(&world).await }
+        });
+        indexed.entered.notified().await;
+        let follower = tokio::spawn({
+            let (p, world) = (p.clone(), world.clone());
+            async move { p.world_owner(&world).await }
+        });
+        joined(&p.admission_refreshes, 1).await;
+        *indexed.pause.lock().unwrap() = None;
+        pause.notify_waiters();
+        assert!(leader.await.unwrap().is_err(), "the re-read's own caller");
+        assert_eq!(follower.await.unwrap().unwrap(), Some(b));
+    }
+
     /// After a publication, the admissions that hold the world's obsolete
     /// entry share one re-read (#2219): with the re-read held in flight,
     /// eight concurrent admissions ask the source once, and every one of
@@ -3118,8 +3173,7 @@ mod tests {
             })
             .collect();
         indexed.entered.notified().await;
-        // The others reach the re-read in flight before it answers.
-        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        joined(&p.admission_refreshes, 7).await;
         *indexed.pause.lock().unwrap() = None;
         pause.notify_waiters();
         for admission in admissions {
@@ -3157,8 +3211,7 @@ mod tests {
             let (p, world) = (p.clone(), world.clone());
             async move { p.world_owner(&world).await }
         });
-        // The follower joins the re-read in flight before it answers.
-        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        joined(&p.admission_refreshes, 1).await;
         *indexed.pause.lock().unwrap() = None;
         pause.notify_waiters();
         assert_eq!(leader.await.unwrap().unwrap(), Some(b));
@@ -3187,7 +3240,7 @@ mod tests {
             })
             .collect();
         indexed.check_entered.notified().await;
-        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        joined(&p.admission_checks, 7).await;
         *indexed.check_pause.lock().unwrap() = None;
         pause.notify_waiters();
         for hit in hits {

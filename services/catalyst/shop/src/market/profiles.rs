@@ -1435,6 +1435,7 @@ mod tests {
         }
         assert_eq!(reads.load(std::sync::atomic::Ordering::SeqCst), 1);
         assert_eq!(state.profile_flights.reads_started(), 1);
+        assert_eq!(state.profile_flights.joins(), 7, "the others joined it");
         assert_eq!(state.profile_flights.in_flight(), 0);
         assert_eq!(
             fetch_profile_for_id(&state, &address)
@@ -1474,6 +1475,11 @@ mod tests {
             assert_eq!(request.await.unwrap(), StatusCode::NOT_FOUND);
         }
         assert_eq!(state.lambdas.outfit_flights.reads_started(), 1);
+        assert_eq!(
+            state.lambdas.outfit_flights.joins(),
+            7,
+            "the others joined it"
+        );
         assert_eq!(state.lambdas.outfit_flights.in_flight(), 0);
         let _ = std::fs::remove_dir_all(tmp);
     }

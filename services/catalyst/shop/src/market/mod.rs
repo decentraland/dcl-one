@@ -886,8 +886,6 @@ impl MarketplaceState {
                 .is_some_and(|images| images.derives_faces())
     }
 
-    /// Warms the faces of these profile entities when they point at this
-    /// node's `/profile-images` (no `PROFILE_CDN_BASE_URL`).
     /// Waits on [`Self::test_hold`]'s gate, when one is set.
     #[cfg(test)]
     pub(crate) async fn test_hold_after_ownership(&self) {
@@ -913,6 +911,8 @@ impl MarketplaceState {
         }
     }
 
+    /// Warms the faces of these profile entities when they point at this
+    /// node's `/profile-images` (no `PROFILE_CDN_BASE_URL`).
     pub(crate) fn warm_faces(&self, entities: impl IntoIterator<Item = String>) {
         if self.settings.profile_cdn_base_url.is_some() {
             return;
