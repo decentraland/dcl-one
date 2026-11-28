@@ -101,38 +101,7 @@
 .dots {
   position: relative;
   z-index: 3;
-  display: flex;
-  justify-content: center;
-  gap: var(--dcl-space-8);
   padding-top: var(--dcl-space-24);
-}
-
-/* Source's 8px dot; the pseudo-element keeps a 24px hit target around it. */
-.dot {
-  position: relative;
-  width: var(--dcl-space-8);
-  height: var(--dcl-space-8);
-  padding: 0;
-  border: 0;
-  border-radius: var(--dcl-radius-full);
-  background: var(--dcl-transparencies-white-40);
-  cursor: pointer;
-  transition: background-color 0.3s ease;
-}
-
-.dot::after {
-  content: '';
-  position: absolute;
-  inset: calc(-1 * var(--dcl-space-8));
-}
-
-.dotActive {
-  background: var(--dcl-neutrals-white);
-}
-
-.dot:focus-visible {
-  outline: 2px solid var(--dcl-neutrals-snow);
-  outline-offset: 2px;
 }
 
 /* Source's sm breakpoint: neighbours fade and shrink, masked at their outer edge; the current slide

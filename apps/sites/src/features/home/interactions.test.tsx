@@ -308,6 +308,52 @@ describe("carousel pointer lifecycle", () => {
       expect(screen.getByRole("group", { name: "1 of 2" })).toBeTruthy();
     });
   });
+
+  describe("when a page dot is pressed", () => {
+    beforeEach(() => {
+      renderCarousel();
+    });
+
+    it("should mark the first slide's dot as current before any press", () => {
+      expect(
+        screen.getByRole("button", { name: "Slide 1" }).getAttribute("aria-current"),
+      ).toBe("true");
+      expect(
+        screen.getByRole("button", { name: "Slide 2" }).getAttribute("aria-current"),
+      ).toBeNull();
+    });
+
+    it("should show that slide and move the current mark to its dot", () => {
+      fireEvent.click(screen.getByRole("button", { name: "Slide 2" }));
+      expect(
+        screen
+          .getByRole("group", { name: "2 of 2" })
+          .querySelector("a")
+          ?.getAttribute("href"),
+      ).toBe("/two");
+      expect(
+        screen.getByRole("button", { name: "Slide 2" }).getAttribute("aria-current"),
+      ).toBe("true");
+      expect(
+        screen.getByRole("button", { name: "Slide 1" }).getAttribute("aria-current"),
+      ).toBeNull();
+    });
+  });
+
+  describe("when the carousel has a single slide", () => {
+    it("should render no page dots", () => {
+      render(
+        <Carousel
+          labelledBy="rituals"
+          items={["one"]}
+          getKey={(s) => s}
+          labels={labels}
+          renderSlide={(s) => <a href={`/${s}`}>{s}</a>}
+        />,
+      );
+      expect(screen.queryByRole("button", { name: "Slide 1" })).toBeNull();
+    });
+  });
 });
 
 describe("carousel autoplay", () => {

@@ -1,7 +1,7 @@
 import { useId } from 'react'
 import { UpcomingCard } from './cards'
 import type { UpcomingEventCardProps } from './types'
-import { PageDots, useScrollPages } from './Rail'
+import { RailDots, useScrollPages } from './Rail'
 import { useEventsCopy } from './locale'
 import styles from './Upcoming.module.css'
 
@@ -27,7 +27,7 @@ function Upcoming({ cards }: { cards: readonly UpcomingEventCardProps[] }) {
         ))}
       </ul>
       <div className={styles.dots}>
-        <PageDots pages={pages} active={active} label={text('Upcoming')} onSelect={goTo} />
+        <RailDots pages={pages} active={active} label={text('Upcoming')} onSelect={goTo} />
       </div>
     </section>
   )

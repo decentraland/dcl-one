@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { GeneralLeftArrow, GeneralRightArrow } from '../../../foundations/icons'
 import { Button } from '../../../components/Button/Button'
+import { PaginationDots } from '../../../components/PaginationDots/PaginationDots'
 import { useEventsCopy } from './locale'
 import styles from './Rail.module.css'
 
@@ -50,8 +51,8 @@ function useScrollPages<T extends HTMLElement = HTMLDivElement>(count: number) {
   return { ref, ...paging, sync, goTo }
 }
 
-/** One dot per page; the current one is marked for assistive technology. */
-function PageDots({
+/** One dot per page, named for the rail's section; the current one is marked for assistive technology. */
+function RailDots({
   pages,
   active,
   label,
@@ -63,24 +64,16 @@ function PageDots({
   onSelect: (page: number) => void
 }) {
   const { text } = useEventsCopy()
-  if (pages <= 1) return null
   return (
-    <div
+    <PaginationDots
       className={styles.dots}
-      role="group"
-      aria-label={text('{section} pages', { section: label })}
-    >
-      {Array.from({ length: pages }, (_, page) => (
-        <button
-          key={page}
-          type="button"
-          className={styles.dot}
-          aria-label={text('Page {page} of {pages}', { page: page + 1, pages })}
-          aria-current={page === active ? 'true' : undefined}
-          onClick={() => onSelect(page)}
-        />
-      ))}
-    </div>
+      appearance="plain"
+      count={pages}
+      current={active}
+      onSelect={onSelect}
+      label={text('{section} pages', { section: label })}
+      pageLabel={(page, count) => text('Page {page} of {pages}', { page, pages: count })}
+    />
   )
 }
 
@@ -136,9 +129,9 @@ function Rail({
           </div>
         ) : null}
       </div>
-      <PageDots pages={pages} active={active} label={label} onSelect={goTo} />
+      <RailDots pages={pages} active={active} label={label} onSelect={goTo} />
     </div>
   )
 }
 
-export { PageDots, Rail, useScrollPages }
+export { Rail, RailDots, useScrollPages }

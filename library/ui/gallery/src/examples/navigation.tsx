@@ -24,6 +24,7 @@ import {
   type TitleBarSection,
   PagedRail,
   Pager,
+  PaginationDots,
   BrowseControl,
   BrowseLoading,
   BrowsePanel,
@@ -769,6 +770,20 @@ export const navigationEntries: GalleryEntry[] = [
         render: () => <PagerExample />
       }
     ]
+  },
+  {
+    name: 'PaginationDots',
+    group: 'Navigation',
+    summary: 'A dot per page under a carousel or a rail; the current page is marked.',
+    components: ['PaginationDots'],
+    examples: [
+      {
+        id: 'appearances',
+        title: 'The two appearances, on the second of four pages',
+        note: 'Press a dot to move the current page. The plain look is the one decentraland.org draws under its carousels.',
+        render: () => <PaginationDotsExample />
+      }
+    ]
   }
 ]
 
@@ -778,6 +793,26 @@ function railCards(count: number) {
       Card {index + 1}
     </div>
   ))
+}
+
+function PaginationDotsExample() {
+  const [page, setPage] = useState(1)
+  return (
+    <div className={layout.rows}>
+      <div className={layout.strip}>
+        <PaginationDots count={4} current={page} onSelect={setPage} label="Default pages" />
+      </div>
+      <div className={layout.strip}>
+        <PaginationDots
+          appearance="plain"
+          count={4}
+          current={page}
+          onSelect={setPage}
+          label="Plain pages"
+        />
+      </div>
+    </div>
+  )
 }
 
 function PagerExample() {

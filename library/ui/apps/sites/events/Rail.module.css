@@ -42,40 +42,10 @@
   }
 }
 
+/* The dots sit 24px under the cards, with 8px below them. */
 .dots {
-  display: flex;
-  justify-content: center;
-  gap: var(--dcl-space-8);
-  margin-top: var(--dcl-space-16);
-}
-
-/* A 24px target around the 8px dot. */
-.dot {
-  position: relative;
-  width: var(--dcl-space-24);
-  height: var(--dcl-space-24);
-  padding: 0;
-  border: 0;
-  background: none;
-  cursor: pointer;
-}
-
-.dot::before {
-  content: '';
-  position: absolute;
-  inset: var(--dcl-space-8);
-  border-radius: var(--dcl-radius-full);
-  background: var(--dcl-transparencies-white-40);
-}
-
-.dot[aria-current='true']::before {
-  background: var(--dcl-neutrals-white);
-}
-
-.dot:focus-visible {
-  outline: 2px solid var(--dcl-neutrals-snow);
-  outline-offset: 0;
-  border-radius: var(--dcl-radius-full);
+  margin-top: var(--dcl-space-24);
+  margin-bottom: var(--dcl-space-8);
 }
 
 @media (prefers-reduced-motion: reduce) {
