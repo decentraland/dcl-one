@@ -41,6 +41,7 @@ describe('when Sites renders the shared Blog cards', () => {
     expect(pill).toHaveAttribute('data-size', 'md')
     const picture = container.querySelector('img[src="/jane.png"]')!
     expect(picture).toHaveAttribute('alt', '')
+    expect(picture).toHaveAttribute('loading', 'lazy')
     expect(picture.closest('[data-size]')).toHaveAttribute('data-size', '28')
     expect(screen.getByText('Jane Doe')).toBeInTheDocument()
   })

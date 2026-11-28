@@ -38,6 +38,7 @@ export function BlogPostCard(props: BlogPostCardProps) {
               alt=""
               size={28}
               fallback="gradient"
+              loading="lazy"
             />
             {props.post.author.name}
           </>

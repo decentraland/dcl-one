@@ -235,9 +235,15 @@ describe('when a default ProfilePic uses the gradient fallback', () => {
     expect(container.textContent).toBe('')
   })
 
-  it('should show nothing for a blank name instead of a mark', () => {
-    const { container } = render(<ProfilePic name="   " alt="" size={56} fallback="gradient" />)
-    expect(container.textContent).toBe('')
+  it('should show a mark for a blank name, hidden from assistive technology without a text alternative', () => {
+    const { container } = render(<ProfilePic name="   " size={56} fallback="gradient" />)
+    expect(container.textContent).toBe('?')
+    expect(screen.queryByRole('img')).toBeNull()
+  })
+
+  it('should keep a flag and an accented letter whole', () => {
+    render(<ProfilePic name={'🇦🇷 e\u0301lan'} alt="Flag" size={56} fallback="gradient" />)
+    expect(screen.getByRole('img', { name: 'Flag' }).textContent).toBe('🇦🇷E\u0301')
   })
 
   it('should show the picture over the gradient, and the initials after it fails to load', () => {
@@ -255,5 +261,19 @@ describe('when a default ProfilePic uses the gradient fallback', () => {
     const { container } = render(<ProfilePic name="jane doe" size={56} />)
     expect(container.firstElementChild).not.toHaveAttribute('data-fallback')
     expect(screen.getByRole('img', { name: 'jane doe' })).toHaveTextContent(/^J$/)
+  })
+})
+
+describe('when a default ProfilePic loads its picture lazily', () => {
+  it('should ask the browser to defer and decode it asynchronously', () => {
+    const { container } = render(<ProfilePic name="Ana" alt="" src="/ana.png" size={28} loading="lazy" />)
+    expect(container.querySelector('img')).toHaveAttribute('loading', 'lazy')
+    expect(container.querySelector('img')).toHaveAttribute('decoding', 'async')
+  })
+
+  it('should set neither attribute by default', () => {
+    const { container } = render(<ProfilePic name="Ana" alt="" src="/ana.png" size={28} />)
+    expect(container.querySelector('img')).not.toHaveAttribute('loading')
+    expect(container.querySelector('img')).not.toHaveAttribute('decoding')
   })
 })

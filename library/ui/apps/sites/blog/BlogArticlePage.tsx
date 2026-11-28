@@ -69,6 +69,7 @@ export function BlogArticlePage({ post, shareUrl, related, categories }: BlogArt
                 size={56}
                 ring={false}
                 fallback="gradient"
+                loading="lazy"
               />
               {post.author.slug ? (
                 <BlogLink className={styles.authorName} href={blogAuthorHref(post.author.slug)}>

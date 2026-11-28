@@ -175,8 +175,9 @@ describe('when a post category is shown as a pill', () => {
 })
 
 describe('when another variant is given a tone or a size', () => {
-  it('should ignore them', () => {
+  it('should reject them when compiling and ignore them at run time', () => {
     render(
+      // @ts-expect-error: tone and size belong to the category variant only.
       <Tag variant="role" tone="ruby" size="lg">
         Owner
       </Tag>

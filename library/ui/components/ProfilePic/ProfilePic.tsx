@@ -31,11 +31,13 @@ type DefaultLook = {
   /** The white 60% ring around the picture (default). Without it the picture fills the whole size. */
   ring?: boolean
   /**
-   * Not in Figma: `gradient` puts the brand gradient behind the picture in place of the name colour, and the
-   * name's initials (up to two) on it from 48px up; below 48px the disc stays blank, for a picture shown beside the
-   * name. `initial` (default) is the name's first letter on the name colour.
+   * Not in Figma: `gradient` puts the brand gradient behind the picture in place of the name colour (`nameColor` is
+   * not drawn), and the name's initials (up to two) on it from 48px up; below 48px the disc stays blank, for a
+   * picture shown beside the name. `initial` (default) is the name's first letter on the name colour.
    */
   fallback?: 'initial' | 'gradient'
+  /** `lazy` defers the picture until it nears the viewport and decodes it off the main thread. Eager by default. */
+  loading?: 'lazy' | 'eager'
 }
 
 /**
@@ -61,15 +63,21 @@ function initialOf(name: string): string {
   return '?'
 }
 
-/** The first letters of the name's first two words, upper case. */
+const graphemes =
+  typeof Intl !== 'undefined' && 'Segmenter' in Intl
+    ? new Intl.Segmenter(undefined, { granularity: 'grapheme' })
+    : undefined
+
+/** A word's first user-perceived character: a flag or an accented letter stays whole. */
+function firstCharacter(word: string): string {
+  if (graphemes) for (const { segment } of graphemes.segment(word)) return segment
+  return Array.from(word)[0] ?? ''
+}
+
+/** The first characters of the name's first two words, upper case; `?` for a blank name. */
 function initialsOf(name: string): string {
-  return name
-    .trim()
-    .split(/\s+/)
-    .filter(Boolean)
-    .slice(0, 2)
-    .map((word) => Array.from(word)[0]!.toUpperCase())
-    .join('')
+  const words = name.trim().split(/\s+/).filter(Boolean).slice(0, 2)
+  return words.length ? words.map((word) => firstCharacter(word).toUpperCase()).join('') : '?'
 }
 
 /** The HUD's initial: the first letter or digit, past a leading `@` or `#`. */
@@ -146,6 +154,7 @@ function DefaultProfilePic({
   statusLabel,
   ring = true,
   fallback = 'initial',
+  loading,
   nameColor,
   onPictureLoad,
   onPictureError,
@@ -179,6 +188,8 @@ function DefaultProfilePic({
             src={src}
             alt={alt}
             draggable={false}
+            loading={loading}
+            decoding={loading === 'lazy' ? 'async' : undefined}
             onLoad={onPictureLoad}
             onError={() => {
               setFailed(src)
@@ -188,7 +199,7 @@ function DefaultProfilePic({
         ) : (
           <span
             className={styles.initial}
-            {...(alt ? { role: 'img', 'aria-label': alt } : { 'aria-hidden': true })}
+            {...(alt.trim() ? { role: 'img', 'aria-label': alt } : { 'aria-hidden': true })}
           >
             {fallback === 'gradient' ? (size >= 48 ? initialsOf(name) : null) : initialOf(name)}
           </span>

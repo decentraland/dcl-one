@@ -229,10 +229,11 @@
   /* Figma `category-tag`: a 24px pill, 26px from 1024px, with 12px semibold capitals 8px from its ends. The
    * communities wine (the Event Live surface EventCard also uses) has no token, and the updates and about pills
    * carry black text where Figma draws white, for contrast. Not in Figma: the `lg` pill, 16px bold capitals inside
-   * 8px, 16px and 7px of padding, on a brand colour. The pill keeps its own width in a column. */
+   * 8px, 16px and 7px of padding, on a brand colour, black on orange for contrast. The pill keeps its own width in
+   * a column. */
   .root[data-variant='category'] {
     align-self: flex-start;
-    min-height: 24px;
+    min-height: var(--dcl-space-24);
     padding: 0 var(--dcl-space-8);
     border-radius: var(--dcl-radius-full);
     font-size: var(--dcl-font-size-label-xs-caps);
@@ -272,6 +273,7 @@
   }
 
   .root[data-tone='ruby'] {
+    /* a11y exception tag-category-ruby-contrast (docs/ui-standards.md): snow on ruby is 3.6:1. */
     background: var(--dcl-brand-ruby);
   }
 
@@ -281,6 +283,7 @@
 
   .root[data-tone='orange'] {
     background: var(--dcl-brand-orange);
+    color: var(--dcl-neutrals-black);
   }
 
   @media (forced-colors: active) {
@@ -289,6 +292,11 @@
       background: Canvas;
       color: CanvasText;
       forced-color-adjust: none;
+    }
+
+    .root[data-variant='category'] {
+      background: Canvas;
+      color: CanvasText;
     }
 
     .root[data-variant='live'],

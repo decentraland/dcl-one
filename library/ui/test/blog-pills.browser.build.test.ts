@@ -139,3 +139,32 @@ describe('when a category Tag renders', () => {
     ]).toEqual([31, 'rgb(255, 45, 85)', 'rgb(252, 252, 252)', '16px', '700', '0.64px'])
   })
 })
+
+describe('when colours are forced', () => {
+  it('should draw every category pill in the system colours', async () => {
+    await open(1440)
+    await browser.session.send('Emulation.setEmulatedMedia', {
+      features: [{ name: 'forced-colors', value: 'active' }]
+    })
+    try {
+      const system = await browser.evaluate<{ canvas: string; text: string }>(`(()=>{
+        const probe = document.createElement('span')
+        probe.style.forcedColorAdjust = 'none'
+        document.body.append(probe)
+        probe.style.color = 'Canvas'
+        const canvas = getComputedStyle(probe).color
+        probe.style.color = 'CanvasText'
+        const text = getComputedStyle(probe).color
+        probe.remove()
+        return { canvas, text }
+      })()`)
+      expect(system.canvas).not.toBe(system.text)
+      for (const id of ['tag-md', 'tag-communities', 'tag-about', 'tag-lg']) {
+        const tag = await box(id)
+        expect([id, tag.background, tag.color]).toEqual([id, system.canvas, system.text])
+      }
+    } finally {
+      await browser.session.send('Emulation.setEmulatedMedia', { features: [] })
+    }
+  })
+})

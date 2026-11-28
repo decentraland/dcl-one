@@ -39,27 +39,35 @@ export type TagVariant =
  */
 export type TagTone = 'updates' | 'communities' | 'about' | 'ruby' | 'violet' | 'orange'
 
-export type TagProps = Omit<HTMLAttributes<HTMLSpanElement>, 'children'> & {
-  variant: TagVariant
+type TagCommon = Omit<HTMLAttributes<HTMLSpanElement>, 'children'> & {
   appearance?: 'emphasized'
   /**
    * The text. `live`, `listening`, `voiceStream`, `featured`, `public`, `private` and the age
-   * ratings have an English default; pass the localized word. `location`, `role` and `realm` show
-   * what the caller gives; `online` and `streaming` show their status text when the count is absent.
+   * ratings have an English default; pass the localized word. `location`, `role`, `realm` and
+   * `category` show what the caller gives; `online` and `streaming` show their status text when the
+   * count is absent.
    */
   children?: ReactNode
   /** The number after the players mark of `online`, `streaming`, `voiceStream` and `realm`. */
   count?: ReactNode
   /** What the count means, for assistive technology: "24 players". Without it the number is read alone. */
   countLabel?: string
-  /** The `category` pill's colour. `about` by default. */
-  tone?: TagTone
-  /**
-   * The `category` pill's size. `md` (default) is Figma's `category-tag`: 24px high, 26px from 1024px, 12px
-   * capitals. `lg` is not in Figma: 31px high, 16px bold capitals.
-   */
-  size?: 'md' | 'lg'
 }
+
+export type TagProps = TagCommon &
+  (
+    | {
+        variant: 'category'
+        /** The pill's colour. `about` by default. */
+        tone?: TagTone
+        /**
+         * The pill's size. `md` (default) is Figma's `category-tag`: 24px high, 26px from 1024px, 12px capitals.
+         * `lg` is not in Figma: 31px high, 16px bold capitals.
+         */
+        size?: 'md' | 'lg'
+      }
+    | { variant: Exclude<TagVariant, 'category'>; tone?: never; size?: never }
+  )
 
 const DEFAULT_TEXT: Partial<Record<TagVariant, string>> = {
   live: 'Live',
