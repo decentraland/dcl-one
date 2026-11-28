@@ -1,5 +1,5 @@
-// TODO(figma-ds): replace with the generated ShareButtons component when the DCL UI library lands
 import { useEffect, useId, useState } from 'react'
+import { Button } from '../../../components/Button/Button'
 import { SocialLink, SocialLinkedin, SocialX } from '../../../foundations/icons/social'
 import { blogShareLinks } from './blogModel'
 import styles from './BlogShare.module.css'
@@ -43,27 +43,40 @@ export function BlogShare({ title, url }: BlogShareProps) {
       <span className={styles.label} id={labelId}>
         Share
       </span>
-      <a
-        className={styles.button}
+      <Button
+        variant="outline"
+        iconOnly
+        round={34}
+        iconSize={16}
         href={links.x}
         target="_blank"
         rel="noopener noreferrer"
         aria-label="Share on X (opens in a new tab)"
       >
-        <SocialX size={16} aria-hidden="true" />
-      </a>
-      <a
-        className={styles.button}
+        <SocialX aria-hidden="true" />
+      </Button>
+      <Button
+        variant="outline"
+        iconOnly
+        round={34}
+        iconSize={16}
         href={links.linkedin}
         target="_blank"
         rel="noopener noreferrer"
         aria-label="Share on LinkedIn (opens in a new tab)"
       >
-        <SocialLinkedin size={16} aria-hidden="true" />
-      </a>
-      <button type="button" className={styles.button} aria-label="Copy link" onClick={copyLink}>
-        <SocialLink size={16} aria-hidden="true" />
-      </button>
+        <SocialLinkedin aria-hidden="true" />
+      </Button>
+      <Button
+        variant="outline"
+        iconOnly
+        round={34}
+        iconSize={16}
+        aria-label="Copy link"
+        onClick={copyLink}
+      >
+        <SocialLink aria-hidden="true" />
+      </Button>
       <span className={styles.status} role="status">
         {MESSAGE[copy]}
       </span>

@@ -86,7 +86,40 @@ type DefaultLook = {
   contentLayout?: 'intrinsic' | 'fill'
 } & ({ iconOnly?: false } | ({ iconOnly: true } & AccessibleName)) &
   ({ variant?: Exclude<Variant, 'iconOnly'> } | ({ variant: 'iconOnly' } & AccessibleName)) &
-  ({ tone?: never } | { tone?: 'danger'; variant?: 'primary' | 'outline'; iconOnly?: false })
+  ({ tone?: never } | { tone?: 'danger'; variant?: 'primary' | 'outline'; iconOnly?: false }) &
+  (
+    | { round?: never }
+    | {
+        /**
+         * A small round icon-only button this many pixels across, set beside text or on a picture.
+         * It takes no `size` or `viewport`, and three looks: `text` (no fill, the secondary text
+         * colour), `outline` (the surface fill with a hairline border) and `dark` (the brand surface
+         * fill with a faint 2px ring, for a picture on a dialog). Figma's `button-icon` set draws
+         * round icons at 16, 22, 32, 40, 48 and 56px without a border, so these sizes and looks
+         * follow the Sites controls instead.
+         */
+        round: ButtonRound
+        iconOnly: true
+        variant: 'text' | 'outline' | 'dark'
+        size?: never
+        viewport?: never
+        tone?: never
+      }
+  ) &
+  (
+    | { iconSize?: never }
+    | {
+        /** Not in Figma: the width and height of an icon-only Button's icon, whatever the icon's own size. */
+        iconSize: ButtonIconSize
+        iconOnly: true
+      }
+    | { iconSize: ButtonIconSize; variant: 'iconOnly' }
+  )
+
+/** The diameters of a `round` icon-only Button. */
+export type ButtonRound = 24 | 28 | 34
+/** The icon sizes an icon-only Button can force. */
+export type ButtonIconSize = 14 | 16 | 20 | 24
 
 /** The fill of the Explorer HUD's icon control. */
 export type ButtonHudControlVariant = 'ghost' | 'solid' | 'dark' | 'faint'
@@ -246,6 +279,8 @@ function DefaultButton(props: DefaultProps) {
     startIcon,
     endIcon,
     iconOnly = false,
+    round,
+    iconSize,
     forceState,
     className,
     contentLayout = 'intrinsic',
@@ -296,6 +331,8 @@ function DefaultButton(props: DefaultProps) {
     'data-size': size,
     'data-viewport': viewport,
     'data-icon-only': compact || undefined,
+    'data-round': (compact && round) || undefined,
+    'data-icon-size': (compact && iconSize) || undefined,
     'data-force-state': forceState,
     'aria-busy': loading || native['aria-busy'],
     'aria-disabled': unavailable || native['aria-disabled']

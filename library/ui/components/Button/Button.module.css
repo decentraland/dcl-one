@@ -201,6 +201,78 @@
     min-width: var(--button-height);
     min-height: var(--button-height);
   }
+  /* A small round icon-only button (`round`), set beside text or on a picture. Figma's `button-icon` set has no
+     24, 28 or 34px circle and no bordered one, so its looks come from the Sites controls it replaced (the address
+     copy, the blog's share buttons, the community picture's edit). */
+  .root[data-icon-only='true'][data-round] {
+    --button-height: var(--button-round);
+    width: var(--button-round);
+    height: var(--button-round);
+    min-width: var(--button-round);
+    min-height: var(--button-round);
+    padding: var(--dcl-space-0);
+    border-radius: var(--dcl-radius-full);
+  }
+  .root[data-round='24'] {
+    --button-round: 24px;
+  }
+  .root[data-round='28'] {
+    --button-round: 28px;
+  }
+  .root[data-round='34'] {
+    --button-round: 34px;
+  }
+  .root[data-icon-only='true'][data-round][data-variant='text'] {
+    --button-background: transparent;
+    --button-color: var(--dcl-text-secondary);
+    --button-hover: var(--dcl-bg-hover);
+    --button-pressed: var(--dcl-bg-hover);
+    border-width: 0;
+  }
+  .root[data-icon-only='true'][data-round][data-variant='outline'] {
+    --button-background: var(--dcl-bg-surface);
+    --button-border: var(--dcl-border-default);
+    --button-color: var(--dcl-text-primary);
+    --button-hover: var(--dcl-bg-surface-raised);
+    --button-pressed: var(--dcl-bg-surface-raised);
+  }
+  .root[data-icon-only='true'][data-round][data-variant='outline'],
+  .root[data-icon-only='true'][data-round][data-variant='outline']:is(
+      :hover,
+      :active,
+      [data-force-state='hover'],
+      [data-force-state='pressed']
+    ) {
+    box-shadow: none;
+  }
+  .root[data-icon-only='true'][data-round][data-variant='dark'] {
+    --button-background: var(--dcl-bg-surface-brand);
+    --button-border: var(--dcl-transparencies-white-40);
+    --button-color: var(--dcl-text-primary);
+    --button-hover: var(--dcl-bg-hover);
+    --button-pressed: var(--dcl-bg-hover);
+    border-width: 2px;
+  }
+  .root[data-icon-only='true'][data-round]:is(:focus-visible, [data-force-state='focus']) {
+    outline-color: var(--dcl-text-primary);
+    outline-offset: 2px;
+  }
+  .root[data-icon-only='true'][data-icon-size='14'] {
+    --button-icon-size: 14px;
+  }
+  .root[data-icon-only='true'][data-icon-size='16'] {
+    --button-icon-size: 16px;
+  }
+  .root[data-icon-only='true'][data-icon-size='20'] {
+    --button-icon-size: 20px;
+  }
+  .root[data-icon-only='true'][data-icon-size='24'] {
+    --button-icon-size: 24px;
+  }
+  .root[data-icon-only='true'][data-icon-size] .label svg {
+    width: var(--button-icon-size);
+    height: var(--button-icon-size);
+  }
   .content {
     display: inline-flex;
     align-items: center;

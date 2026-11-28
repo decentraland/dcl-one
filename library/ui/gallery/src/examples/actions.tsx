@@ -9,6 +9,7 @@ import {
   GeneralAdd,
   GeneralBell,
   GeneralCopy,
+  GeneralEdit,
   GeneralRightArrow,
   HintsButton,
   KeyCap,
@@ -21,6 +22,7 @@ import {
   JumpInIcon,
   ProfilePic,
   RailButton,
+  SocialLink,
   type FriendCTAStatus
 } from '@dcl/one-ui'
 import type { GalleryEntry } from '../registry'
@@ -115,6 +117,27 @@ export const actionEntries: GalleryEntry[] = [
             </Button>
             <Button size="md" loading>
               Loading
+            </Button>
+          </div>
+        )
+      },
+      {
+        id: 'round',
+        title: 'Round icon-only and icon size',
+        note: 'round is 24, 28 or 34px across, in the text, outline or dark look; iconSize forces the icon of an icon-only Button to 14, 16, 20 or 24px.',
+        render: () => (
+          <div className={layout.row}>
+            <Button variant="text" iconOnly round={24} iconSize={16} aria-label="Copy address">
+              <GeneralCopy />
+            </Button>
+            <Button variant="dark" iconOnly round={28} iconSize={14} aria-label="Edit picture">
+              <GeneralEdit />
+            </Button>
+            <Button variant="outline" iconOnly round={34} iconSize={16} aria-label="Copy link">
+              <SocialLink />
+            </Button>
+            <Button variant="text" size="sm" iconOnly iconSize={20} aria-label="Copy">
+              <GeneralCopy />
             </Button>
           </div>
         )
