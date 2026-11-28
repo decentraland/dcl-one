@@ -969,9 +969,10 @@ fn resolve_pointer_target(
 }
 
 /// Show or hide the pointer target in the debug overlay (toggle without an argument), and answer,
-/// as JSON, with what the pointer targets now: kind (scene_entity, ui, avatar, world or nothing),
-/// crdtEntityId, scene, mesh, hitPoint, distanceToPlayer, distanceToCamera, hasPointerEvents,
-/// withinRange, hoverText, entries, cursorLocked, rayFromScreenCenter, aimedByCommand and ray
+/// as JSON, with what the pointer targets now: kind (scene_entity, ui, avatar or nothing),
+/// container, scene, mesh, inPlayerScene, hitPoint, playerDistance, cameraDistance,
+/// hasPointerEvents, withinRange, hoverText, entries, cursorLocked, rayFromScreenCenter,
+/// aimedByCommand and ray
 #[derive(clap::Parser, ConsoleCommand)]
 #[command(name = "/debug_pointer")]
 struct DebugPointerCommand {
@@ -994,8 +995,11 @@ fn debug_pointer_command(
     }
 }
 
-/// What the pointer targets now, read from the target and the ray the pipeline resolved this
-/// frame, as `/debug_pointer` answers it.
+/// What the pointer targets now, read from the last target and ray the pipeline resolved, as
+/// `/debug_pointer` answers it. The ray is cast in `PreUpdate` and the target resolved in
+/// `SceneSets::Input`, which the console commands are not ordered against, so the target can
+/// trail the ray by a frame; and with the cursor outside the window the ray is `None` while the
+/// target keeps the last one.
 #[derive(SystemParam)]
 struct PointerReading<'w, 's> {
     target: Res<'w, PointerTarget>,
@@ -1033,18 +1037,21 @@ impl PointerReading<'_, '_> {
                 Some(info) => match info.ty {
                     PointerTargetType::Ui => "ui",
                     PointerTargetType::Avatar => "avatar",
-                    PointerTargetType::World if info.in_scene => "scene_entity",
-                    PointerTargetType::World => "world",
+                    // every world target is a scene's collider, whether or not the player
+                    // stands in that scene: `inPlayerScene` says which
+                    PointerTargetType::World => "scene_entity",
                 },
             },
-            "crdtEntityId": container.and_then(|c| c.container_id.as_proto_u32()),
+            "container": container.and_then(|c| c.container_id.as_proto_u32()),
             "scene": container
                 .and_then(|c| self.scenes.get(c.root).ok())
                 .map(|scene| scene.title.clone()),
             "mesh": info.and_then(|info| info.mesh_name.clone()),
+            // the cursor entries reach only a target in a scene the player stands in
+            "inPlayerScene": info.map(|info| info.in_scene),
             "hitPoint": info.and_then(|info| info.position).map(point),
-            "distanceToPlayer": info.map(|info| reply::round(info.distance.0)),
-            "distanceToCamera": info.map(|info| reply::round(info.camera_distance.0)),
+            "playerDistance": info.map(|info| reply::round(info.distance.0)),
+            "cameraDistance": info.map(|info| reply::round(info.camera_distance.0)),
             "hasPointerEvents": !entries.is_empty(),
             "withinRange": entries.iter().any(|entry| entry.enabled),
             // that of an entry in reach before that of one out of reach
@@ -2239,15 +2246,17 @@ mod debug_pointer_tests {
     fn with_no_target_the_pointer_reads_nothing() {
         let reading = read(&mut World::new());
         assert_eq!(reading["kind"], "nothing");
-        assert!(reading["crdtEntityId"].is_null());
-        assert!(reading["distanceToPlayer"].is_null());
+        assert!(reading["container"].is_null());
+        assert!(reading["inPlayerScene"].is_null());
+        assert!(reading["playerDistance"].is_null());
         assert!(reading["ray"].is_null());
         assert_eq!(reading["hasPointerEvents"], false);
         assert_eq!(reading["rayFromScreenCenter"], false);
     }
 
-    #[test]
-    fn a_scene_entity_reads_with_its_entries_and_hover_text_in_scene_axes() {
+    /// A world with the pointer on entity 512 of a scene, carrying a `PetDown` entry in reach
+    /// at 2 m; `in_scene` says whether the player stands in that scene.
+    fn pointing_at_a_scene_entity(in_scene: bool) -> World {
         let mut world = World::new();
         let root = world.spawn_empty().id();
         let pointer_events = PointerEvents::from(PbPointerEvents {
@@ -2273,7 +2282,7 @@ mod debug_pointer_tests {
             mesh_name: None,
             distance: FloatOrd(2.0),
             camera_distance: FloatOrd(4.5),
-            in_scene: true,
+            in_scene,
             position: Some(Vec3::new(1.0, 2.0, -3.0)),
             normal: None,
             face: None,
@@ -2281,19 +2290,37 @@ mod debug_pointer_tests {
         })));
         world.insert_resource(PointerRay(Some(Ray3d::new(Vec3::ZERO, Dir3::NEG_Z))));
 
+        world
+    }
+
+    #[test]
+    fn a_scene_entity_reads_with_its_entries_and_hover_text_in_scene_axes() {
+        let mut world = pointing_at_a_scene_entity(true);
         let reading = read(&mut world);
         assert_eq!(reading["kind"], "scene_entity");
-        assert_eq!(reading["crdtEntityId"], 512);
+        assert_eq!(reading["container"], 512);
+        assert_eq!(reading["inPlayerScene"], true);
         // the root carries no scene context here
         assert!(reading["scene"].is_null());
         assert_eq!(reading["hitPoint"], json!({ "x": 1.0, "y": 2.0, "z": 3.0 }));
-        assert_eq!(reading["distanceToPlayer"], 2.0);
-        assert_eq!(reading["distanceToCamera"], 4.5);
+        assert_eq!(reading["playerDistance"], 2.0);
+        assert_eq!(reading["cameraDistance"], 4.5);
         assert_eq!(reading["hasPointerEvents"], true);
         assert_eq!(reading["withinRange"], true);
         assert_eq!(reading["hoverText"], "Open");
         assert_eq!(reading["entries"][0]["button"], "IaPrimary");
         assert_eq!(reading["ray"]["direction"]["z"], 1.0);
+    }
+
+    #[test]
+    fn a_neighbouring_scenes_entity_is_still_a_scene_entity_out_of_the_cursors_reach() {
+        let reading = read(&mut pointing_at_a_scene_entity(false));
+        assert_eq!(reading["kind"], "scene_entity");
+        assert_eq!(reading["container"], 512);
+        assert_eq!(reading["inPlayerScene"], false);
+        assert_eq!(reading["hasPointerEvents"], true);
+        assert_eq!(reading["withinRange"], false);
+        assert_eq!(reading["entries"][0]["tooFar"], false);
     }
 }
 

@@ -617,8 +617,8 @@ The HUD and input:
   [Interaction](interaction.md) has every option and reply field.
 - `/debug_pointer [true|false]` (preview only): show, hide or (without an argument) toggle the
   pointer target in the debug overlay, and reply JSON with what the pointer targets now: `kind`
-  (`scene_entity`, `ui`, `avatar`, `world`, `nothing`), `crdtEntityId`, `scene`, `mesh`,
-  `hitPoint`, `distanceToPlayer`, `distanceToCamera`, `hasPointerEvents`, `withinRange`,
+  (`scene_entity`, `ui`, `avatar`, `nothing`), `container`, `scene`, `mesh`, `inPlayerScene`,
+  `hitPoint`, `playerDistance`, `cameraDistance`, `hasPointerEvents`, `withinRange`,
   `hoverText`, `entries`, `cursorLocked`, `rayFromScreenCenter`, `aimedByCommand` and `ray`. It
   presses and hovers nothing ([Interaction](interaction.md#reading-the-pointer-target)).
 - `/raycast_stats` (JSON: the capped tier's `budgetMs`, `ran`, `deferred` and `spentMs`, and the

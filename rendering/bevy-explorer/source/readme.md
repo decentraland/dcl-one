@@ -379,7 +379,8 @@ the [conventions ADR](../../../docs/adr/2026-11-17-console-command-conventions.m
   (`docs/guidelines/running.md`). A hover lasts at most 1800 frames (`--frames`) and is never cut
   short by `--timeout-frames`. `/debug_pointer [true|false]` (preview only) shows or hides the
   pointer target in the debug overlay and replies JSON with what the pointer targets now: its
-  `kind`, `crdtEntityId`, distances, entries, `hoverText`, `withinRange` and the `ray`.
+  `kind`, `container`, `inPlayerScene`, distances, entries, `hoverText`, `withinRange` and the
+  `ray`.
 - Scenes: `/teleport x y [realm] --wait [--timeout-seconds S]` and `/reload --current --wait`
   answer once the parcel's scene runs, shows its content (past tick 5, nothing blocking it) and a
   frame with it was presented (`settled`, `sceneState`, `ticksWaited`, `renderedFrames`,
