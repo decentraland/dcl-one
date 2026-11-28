@@ -2,6 +2,16 @@
   "version": 1,
   "components": [
     {
+      "name": "asset-packs::Placeholder",
+      "data": {
+        "0": {
+          "json": {
+            "src": "{assetPath}/particle_system.glb"
+          }
+        }
+      }
+    },
+    {
       "name": "core-schema::Name",
       "data": {
         "0": {
