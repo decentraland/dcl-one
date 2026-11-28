@@ -16552,19 +16552,19 @@
     },
     {
       "path": "library/ui/apps/sites/places/Dialog.module.css",
-      "sha256": "cdfb71904229b806ace079c7eaa62955d7bbae70c269f887c37c29efb1db65f8"
+      "sha256": "d74b6002d7b990df140ebfc44dbd77b32e515bfdd5fa5852e45b5fe762629802"
     },
     {
       "path": "library/ui/apps/sites/places/Dialog.tsx",
-      "sha256": "64ed5b290b4d8724b5d9504f1ae8ed1a8ba8e5732ae1044154e9719befcb2ce2"
+      "sha256": "c29baeb7fc1abb0c674d1cf71fa904e0e39767dc33e533fc763df759e15f47ff"
     },
     {
       "path": "library/ui/apps/sites/places/ExploreBand.module.css",
-      "sha256": "219b4b5ad4799880d83168841b542aa44a435bfd743d5596c1dcd96b81e8d456"
+      "sha256": "b984cabb10b6b15374426d3fc9c53cf6bafecbb2363ca21efed068d6ff7dd886"
     },
     {
       "path": "library/ui/apps/sites/places/ExploreBand.tsx",
-      "sha256": "71ebf667932cdff6cdec978017611eccfc954516bff32c52fa5921ddb1a724e3"
+      "sha256": "2dda3dbb050799161c4a433ce67819d1e02d543c130d61c833524d77648f0ac4"
     },
     {
       "path": "library/ui/apps/sites/places/JumpInModal.module.css",
@@ -17236,11 +17236,11 @@
     },
     {
       "path": "library/ui/components/Modal/Modal.module.css",
-      "sha256": "9611af22de2a4c0393fbd9c9df34b050ed179c92c5e2131a8b8c6910df328edd"
+      "sha256": "7717b0a25e0cb7a16ecd8e25f5ca9978b31608ee9431f7e233d98daca38387f7"
     },
     {
       "path": "library/ui/components/Modal/Modal.tsx",
-      "sha256": "d6a246f557cb0cb70c38192ad1b7cc61b54e0c7842212e5fe14dfafac9fc3250"
+      "sha256": "248f7dda28ce5051a1c2975cc756a95819e6e38bc1966ad5f04f7ba0d256f9b6"
     },
     {
       "path": "library/ui/components/ModalCard/ModalCard.module.css",
@@ -60530,21 +60530,6 @@
     },
     {
       "from": "library/ui/apps/sites/places/ExploreBand.tsx",
-      "to": "library/ui/apps/sites/places/Dialog.tsx",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/sites/places/ExploreBand.tsx",
-      "to": "library/ui/apps/sites/places/Dialog.tsx",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/sites/places/ExploreBand.tsx",
-      "to": "library/ui/apps/sites/places/Dialog.tsx",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/sites/places/ExploreBand.tsx",
       "to": "library/ui/apps/sites/places/ExploreBand.module.css",
       "kind": "native:runtime"
     },
@@ -60575,21 +60560,6 @@
     },
     {
       "from": "library/ui/apps/sites/places/ExploreBand.tsx",
-      "to": "library/ui/components/CloseButton/CloseButton.tsx",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/sites/places/ExploreBand.tsx",
-      "to": "library/ui/components/CloseButton/CloseButton.tsx",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/sites/places/ExploreBand.tsx",
-      "to": "library/ui/components/CloseButton/CloseButton.tsx",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/sites/places/ExploreBand.tsx",
       "to": "library/ui/components/Dropdown/Dropdown.tsx",
       "kind": "native:runtime"
     },
@@ -60616,6 +60586,21 @@
     {
       "from": "library/ui/apps/sites/places/ExploreBand.tsx",
       "to": "library/ui/components/InputWebCreatorTools/InputWebCreatorTools.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/sites/places/ExploreBand.tsx",
+      "to": "library/ui/components/Modal/Modal.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/sites/places/ExploreBand.tsx",
+      "to": "library/ui/components/Modal/Modal.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/sites/places/ExploreBand.tsx",
+      "to": "library/ui/components/Modal/Modal.tsx",
       "kind": "test:runtime"
     },
     {

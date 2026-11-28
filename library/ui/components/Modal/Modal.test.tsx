@@ -405,3 +405,35 @@ describe('when the browser lacks showModal', () => {
     expect(screen.getByRole('button', { name: 'Last' })).toHaveFocus()
   })
 })
+
+describe('when the modal is a side drawer', () => {
+  it('should draw the drawer layout with its visible title and the plain close button', () => {
+    const onClose = vi.fn()
+    render(
+      <Modal layout="drawer" title="Filters" closeLabel="Close filters" onClose={onClose}>
+        <p>Category</p>
+      </Modal>
+    )
+    const drawer = screen.getByRole('dialog', { name: 'Filters' })
+    expect(drawer).toHaveAttribute('data-layout', 'drawer')
+    expect(within(drawer).getByRole('heading', { level: 2, name: 'Filters' })).not.toHaveAttribute(
+      'data-hidden'
+    )
+    const close = within(drawer).getByRole('button', { name: 'Close filters' })
+    expect(close).toHaveAttribute('data-variant', 'plain')
+    fireEvent.click(close)
+    expect(onClose).toHaveBeenCalledTimes(1)
+  })
+
+  it('should still hide its title when the caller asks', () => {
+    render(<Modal layout="drawer" title="Filters" titleHidden onClose={vi.fn()} />)
+    expect(screen.getByRole('heading', { name: 'Filters' })).toHaveAttribute('data-hidden')
+  })
+
+  it('should close on a press on the backdrop', () => {
+    const onClose = vi.fn()
+    render(<Modal layout="drawer" title="Filters" onClose={onClose} />)
+    pressBackdrop(screen.getByRole('dialog'))
+    expect(onClose).toHaveBeenCalledTimes(1)
+  })
+})

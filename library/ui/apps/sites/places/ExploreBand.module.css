@@ -155,17 +155,6 @@
   margin-bottom: var(--dcl-space-16);
 }
 
-.drawerHeader {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-}
-
-.drawerTitle {
-  composes: text68656164696e672f34 from '../../../foundations/typography/text-styles.module.css';
-  margin: 0;
-}
-
 .drawerSection {
   display: flex;
   flex-direction: column;

@@ -17,8 +17,12 @@ export type ModalProps = Omit<
   | 'aria-labelledby'
 > & {
   title: ReactNode
-  /** Gallery provides a full viewport on mobile and a centered media surface on desktop. */
-  layout?: 'message' | 'gallery'
+  /**
+   * `gallery` fills the screen on a phone and is a centered media surface on a desktop. `drawer`
+   * is a side panel at the right edge, full height and up to 360px wide (85% of a phone), its
+   * title at the top beside the close button and the children below, start-aligned.
+   */
+  layout?: 'message' | 'gallery' | 'drawer'
   /** Keeps the title out of view. It still names the dialog. */
   titleHidden?: boolean
   /** The body text. It is the dialog's description. */
@@ -135,7 +139,7 @@ export function Modal({
       {...rest}
       ref={ref}
       className={[styles.root, className].filter(Boolean).join(' ')}
-      data-layout={layout === 'gallery' ? 'gallery' : undefined}
+      data-layout={layout === 'message' ? undefined : layout}
       aria-labelledby={titleId}
       aria-describedby={describedByIds || undefined}
       onKeyDown={(event) => {
