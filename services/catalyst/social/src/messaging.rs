@@ -36,13 +36,13 @@ use base64::Engine;
 use chrono::NaiveDateTime;
 use serde::Deserialize;
 use serde_json::{Value, json};
-use sqlx::PgPool;
+use sqlx::{Connection, PgPool};
 
 use crate::Address;
 use crate::auth::eip1654::Eip1654Validator;
 use crate::auth::request::{RequestAuthError, RequestParts};
 use crate::comms::gatekeeper::errors::{ApiError, forbidden, service_unavailable, unauthorized};
-use crate::comms::limits::{RateLimitDecision, RateLimiter};
+use crate::comms::limits::{RateLimitDecision, RateLimitReceipt, RateLimiter};
 use crate::mls;
 use crate::shared::now_utc;
 use crate::shared::signed_fetch::SignedPath;
@@ -158,17 +158,16 @@ static BLOB_BUDGET: LazyLock<RateLimiter> =
     LazyLock::new(|| RateLimiter::new(16 * 1024, Duration::from_secs(3600)));
 
 /// Spends the signer's blob budget for `bytes` before anything is stored;
-/// answers the KiB spent, refunded when the write does not land.
-fn spend_blob_budget(signer: &str, bytes: usize) -> Result<u32, ApiError> {
+/// the receipt can refund that spend when the write does not land.
+fn spend_blob_budget(signer: &str, bytes: usize) -> Result<RateLimitReceipt<'static>, ApiError> {
     let kib = u32::try_from(bytes.div_ceil(1024)).unwrap_or(u32::MAX);
-    match BLOB_BUDGET.check_cost(signer, kib) {
-        RateLimitDecision::Allow => Ok(kib),
-        RateLimitDecision::Deny => Err(ApiError::labeled(
+    BLOB_BUDGET.reserve(signer, kib).map_err(|_| {
+        ApiError::labeled(
             429,
             "rate limit exceeded",
             "message store budget exhausted for this wallet; retry later",
-        )),
-    }
+        )
+    })
 }
 
 fn opaque(bytes: Vec<u8>, what: &str) -> Result<Vec<u8>, ApiError> {
@@ -217,13 +216,13 @@ macro_rules! member_exists {
 const MEMBER_EXISTS: &str = member_exists!("$1", "$2");
 
 /// Key-package claims per claimer (sized for opening a large channel) and,
-/// spent only by a package actually handed out, per owner and per
-/// (claimer, owner) pair, so one claimer cannot spend an owner's whole budget.
+/// per owner and (claimer, owner) pair for packages that could have committed.
+/// One claimer cannot spend an owner's whole budget.
 static CLAIMS_BY_CLAIMER: LazyLock<RateLimiter> =
     LazyLock::new(|| RateLimiter::new(500, Duration::from_secs(3600)));
 static CLAIMS_OF_OWNER: LazyLock<RateLimiter> =
     LazyLock::new(|| RateLimiter::new(60, Duration::from_secs(3600)));
-// Pair keys grow as claimers x owners: a larger map keeps an overflow from resetting them.
+// Pair keys grow as claimers x owners. A larger map keeps more pairs exact.
 static CLAIMS_OF_PAIR: LazyLock<RateLimiter> =
     LazyLock::new(|| RateLimiter::new(10, Duration::from_secs(3600)).with_max_buckets(200_000));
 
@@ -231,21 +230,37 @@ fn claim_pair(claimer: &str, owner: &str) -> String {
     format!("{claimer}:{owner}")
 }
 
-/// Whether the owner's or this pair's handed-out budget is spent.
-fn claim_budget_spent(claimer: &str, owner: &str) -> bool {
-    CLAIMS_OF_OWNER.is_rate_limited(owner)
-        || CLAIMS_OF_PAIR.is_rate_limited(&claim_pair(claimer, owner))
+struct ClaimBudget {
+    owner: RateLimitReceipt<'static>,
+    pair: RateLimitReceipt<'static>,
 }
 
-/// Charges one handed-out package to the owner and the pair.
-fn spend_claim(claimer: &str, owner: &str) {
-    CLAIMS_OF_OWNER.check(owner);
-    CLAIMS_OF_PAIR.check(&claim_pair(claimer, owner));
+impl ClaimBudget {
+    fn reserve(claimer: &str, owner: &str) -> Result<Self, ApiError> {
+        let owner_spend = CLAIMS_OF_OWNER
+            .reserve(owner, 1)
+            .map_err(|_| claim_rate_limited())?;
+        match CLAIMS_OF_PAIR.reserve(&claim_pair(claimer, owner), 1) {
+            Ok(pair) => Ok(Self {
+                owner: owner_spend,
+                pair,
+            }),
+            Err(_) => {
+                owner_spend.refund();
+                Err(claim_rate_limited())
+            }
+        }
+    }
+
+    fn refund(self) {
+        self.pair.refund();
+        self.owner.refund();
+    }
 }
 
 /// Owners with a claim in flight on this node. One claim per owner runs at a
-/// time, so the owner's budget is read and spent atomically; a concurrent
-/// claim is refused at once instead of queueing on a pooled connection.
+/// time through the database outcome. A concurrent claim for that owner is
+/// refused at once instead of queueing on a pooled connection.
 static CLAIMS_IN_FLIGHT: LazyLock<parking_lot::Mutex<std::collections::HashSet<String>>> =
     LazyLock::new(Default::default);
 
@@ -364,18 +379,19 @@ fn authorized_community_binding(
 }
 
 /// The blob budget a request spent, and whether any of its blobs was created.
-struct BlobSpend<'a> {
-    signer: &'a str,
-    kib: u32,
+struct BlobSpend {
+    receipt: Option<RateLimitReceipt<'static>>,
     wrote: bool,
 }
 
-impl BlobSpend<'_> {
+impl BlobSpend {
     /// Gives the budget back unless a blob was created: a write that loses
     /// its race after creating one keeps its budget spent.
-    fn refund_unwritten(&self) {
-        if !self.wrote {
-            BLOB_BUDGET.refund(self.signer, self.kib);
+    fn refund_unwritten(&mut self) {
+        if !self.wrote
+            && let Some(receipt) = self.receipt.take()
+        {
+            receipt.refund();
         }
     }
 }
@@ -388,7 +404,7 @@ async fn store_blob(
     tx: &mut sqlx::PgConnection,
     state: &MessagingState,
     bytes: Vec<u8>,
-    spend: &mut BlobSpend<'_>,
+    spend: &mut BlobSpend,
 ) -> Result<String, ApiError> {
     let stored = store_blob_bytes(tx, state, bytes, &mut spend.wrote).await;
     if stored.is_err() {
@@ -531,33 +547,14 @@ pub async fn claim_key_package(
     if CLAIMS_BY_CLAIMER.check(&claimer) == RateLimitDecision::Deny {
         return Err(claim_rate_limited());
     }
-    // The owner's budget is spent only by a package handed out.
-    let Some(_slot) = ClaimSlot::take(&owner) else {
-        return Err(claim_rate_limited());
-    };
-    if claim_budget_spent(&claimer, &owner) {
-        return Err(claim_rate_limited());
-    }
-    // A block either way answers as an empty stock.
-    let row: Option<(String, Vec<u8>, i32)> = sqlx::query_as(
-        "UPDATE social.mls_key_packages SET consumed_at = $2 \
-         WHERE id = ( \
-            SELECT id FROM social.mls_key_packages \
-            WHERE owner = $1 AND consumed_at IS NULL \
-              AND NOT EXISTS (SELECT 1 FROM social.blocks \
-                    WHERE (blocker_address = $1 AND blocked_address = $3) \
-                       OR (blocker_address = $3 AND blocked_address = $1)) \
-            ORDER BY created_at ASC LIMIT 1 FOR UPDATE SKIP LOCKED \
-         ) RETURNING ref_hash, key_package, ciphersuite",
+    let row = claim_from_stock(
+        &state.pool,
+        claimer,
+        owner.clone(),
+        #[cfg(test)]
+        None,
     )
-    .bind(&owner)
-    .bind(now_utc())
-    .bind(&claimer)
-    .fetch_optional(&state.pool)
     .await?;
-    if row.is_some() {
-        spend_claim(&claimer, &owner);
-    }
     match row {
         Some((ref_hash, kp, cs)) => Ok(Json(
             json!({ "owner": owner, "ref": ref_hash, "ciphersuite": cs, "key_package": b64(&kp) }),
@@ -569,6 +566,126 @@ pub async fn claim_key_package(
             format!("no key package available for {owner}"),
         )),
     }
+}
+
+type ClaimedPackage = (String, Vec<u8>, i32);
+
+/// A PostgreSQL rejection of COMMIT that proves the transaction aborted.
+/// Transport failures and unknown-outcome SQLSTATEs keep both charges.
+fn definite_commit_rollback(error: &sqlx::Error) -> bool {
+    error
+        .as_database_error()
+        .and_then(|db| db.code())
+        .is_some_and(|code| code.starts_with("23") || matches!(code.as_ref(), "40001" | "40P01"))
+}
+
+#[cfg(test)]
+enum ClaimProbe {
+    BeforeTask(ClaimPause),
+    AfterCommit(ClaimPause),
+    LoseCommitReply,
+}
+
+#[cfg(test)]
+struct ClaimPause {
+    reached: tokio::sync::oneshot::Sender<()>,
+    resume: tokio::sync::oneshot::Receiver<()>,
+}
+
+#[cfg(test)]
+impl ClaimPause {
+    async fn wait(self) {
+        let _ = self.reached.send(());
+        let _ = self.resume.await;
+    }
+}
+
+async fn claim_from_stock(
+    pool: &PgPool,
+    claimer: String,
+    owner: String,
+    #[cfg(test)] mut probe: Option<ClaimProbe>,
+) -> Result<Option<ClaimedPackage>, ApiError> {
+    let slot = ClaimSlot::take(&owner).ok_or_else(claim_rate_limited)?;
+    let mut conn = pool.acquire().await?;
+    #[cfg(test)]
+    if let Some(ClaimProbe::BeforeTask(pause)) =
+        probe.take_if(|p| matches!(p, ClaimProbe::BeforeTask(_)))
+    {
+        pause.wait().await;
+    }
+
+    // The checked-out connection bounds the number of tasks. A cancelled
+    // HTTP request drops only the join handle, so the task still owns the
+    // slot and reservations until the database operation finishes.
+    tokio::spawn(async move {
+        let _slot = slot;
+        let charge = ClaimBudget::reserve(&claimer, &owner)?;
+        let mut tx = match conn.begin().await {
+            Ok(tx) => tx,
+            Err(error) => {
+                charge.refund();
+                return Err(error.into());
+            }
+        };
+        // A block either way answers as an empty stock.
+        let row = sqlx::query_as(
+            "UPDATE social.mls_key_packages SET consumed_at = $2 \
+             WHERE id = ( \
+                SELECT id FROM social.mls_key_packages \
+                WHERE owner = $1 AND consumed_at IS NULL \
+                  AND NOT EXISTS (SELECT 1 FROM social.blocks \
+                         WHERE (blocker_address = $1 AND blocked_address = $3) \
+                            OR (blocker_address = $3 AND blocked_address = $1)) \
+                ORDER BY created_at ASC LIMIT 1 FOR UPDATE SKIP LOCKED \
+             ) RETURNING ref_hash, key_package, ciphersuite",
+        )
+        .bind(&owner)
+        .bind(now_utc())
+        .bind(&claimer)
+        .fetch_optional(&mut *tx)
+        .await;
+        let package = match row {
+            Ok(Some(row)) => row,
+            Ok(None) => {
+                charge.refund();
+                tx.rollback().await?;
+                return Ok(None);
+            }
+            Err(error) => {
+                if tx.rollback().await.is_ok() {
+                    charge.refund();
+                }
+                return Err(error.into());
+            }
+        };
+        let committed = tx.commit().await;
+        #[cfg(test)]
+        let committed = match (committed, probe) {
+            (Ok(()), Some(ClaimProbe::AfterCommit(pause))) => {
+                pause.wait().await;
+                Ok(())
+            }
+            // The package really committed. Simulate losing only the
+            // acknowledgement before the worker classifies the outcome.
+            (Ok(()), Some(ClaimProbe::LoseCommitReply)) => {
+                Err(sqlx::Error::Io(std::io::ErrorKind::ConnectionReset.into()))
+            }
+            (result, _) => result,
+        };
+        if let Err(error) = committed {
+            if definite_commit_rollback(&error) {
+                charge.refund();
+            }
+            return Err(error.into());
+        }
+        Ok(Some(package))
+    })
+    .await
+    .map_err(|error| {
+        tracing::error!(%error, "mls key package claim task failed");
+        ApiError::internal("Internal Server Error")
+    })?
 }
 
 pub async fn key_package_count(
@@ -663,8 +780,7 @@ pub async fn create_group(
         return Err(ApiError::http(409, "group already exists"));
     }
     let mut spend = BlobSpend {
-        signer: &creator,
-        kib: 0,
+        receipt: None,
         wrote: false,
     };
     let mut tx = state.pool.begin().await?;
@@ -679,10 +795,10 @@ pub async fn create_group(
                 .as_deref()
                 .map(|w| decode_b64(w, "welcome").and_then(|w| opaque(w, "welcome")))
                 .transpose()?;
-            spend.kib = spend_blob_budget(
+            spend.receipt = Some(spend_blob_budget(
                 &creator,
                 commit_bytes.len() + welcome_bytes.as_ref().map_or(0, Vec::len),
-            )?;
+            )?);
             let commit_hash = mls::content_hash(&commit_bytes);
             let commit_cid = store_blob(&mut tx, &state, commit_bytes, &mut spend).await?;
             let welcome_cid = match welcome_bytes {
@@ -847,11 +963,10 @@ pub async fn submit_commit(
     };
     check_roster_change(&state.pool, &group, &signer, &added, &removed).await?;
     let mut spend = BlobSpend {
-        signer: &signer,
-        kib: spend_blob_budget(
+        receipt: Some(spend_blob_budget(
             &signer,
             commit_bytes.len() + welcome_bytes.as_ref().map_or(0, Vec::len),
-        )?,
+        )?),
         wrote: false,
     };
     let commit_hash = mls::content_hash(&commit_bytes);
@@ -1127,8 +1242,7 @@ pub async fn send_message(
         format!("{group_id}:{}:{signer}:{ciphertext_hash}", routing.epoch).as_bytes(),
     );
     let mut spend = BlobSpend {
-        signer: &signer,
-        kib: spend_blob_budget(&signer, ciphertext.len())?,
+        receipt: Some(spend_blob_budget(&signer, ciphertext.len())?),
         wrote: false,
     };
     let mut tx = state.pool.begin().await?;
@@ -1287,6 +1401,146 @@ mod tests {
     use crate::comms::interfaces::test_support::{StubPolicy, StubScenes};
     use crate::http::Outbound;
     use crate::shared::test_keys::{address_of, random_key, signed};
+
+    async fn claim_fixture(pool: &PgPool) -> (String, String) {
+        let claimer = address_of(&random_key());
+        let owner = address_of(&random_key());
+        sqlx::query(
+            "INSERT INTO social.mls_key_packages (owner, ref_hash, ciphersuite, key_package) \
+             VALUES ($1, $1, 1, decode('01', 'hex'))",
+        )
+        .bind(&owner)
+        .execute(pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            CLAIMS_OF_OWNER.check_cost(&owner, 59),
+            RateLimitDecision::Allow
+        );
+        assert_eq!(
+            CLAIMS_OF_PAIR.check_cost(&claim_pair(&claimer, &owner), 9),
+            RateLimitDecision::Allow
+        );
+        (claimer, owner)
+    }
+
+    async fn assert_claim(pool: &PgPool, claimer: &str, owner: &str, available: i64, spent: bool) {
+        let stock: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM social.mls_key_packages WHERE owner = $1 AND consumed_at IS NULL",
+        )
+        .bind(owner)
+        .fetch_one(pool)
+        .await
+        .unwrap();
+        assert_eq!(stock, available);
+        assert_eq!(CLAIMS_OF_OWNER.is_rate_limited(owner), spent);
+        assert_eq!(
+            CLAIMS_OF_PAIR.is_rate_limited(&claim_pair(claimer, owner)),
+            spent
+        );
+    }
+
+    #[tokio::test]
+    async fn claim_cancellation_keeps_the_slot_only_while_the_database_task_owns_it() {
+        let Some(pool) = crate::db::scratch::isolated_pool(4).await else {
+            eprintln!("SKIP: MLS cancellation needs CATALYST_TEST_DATABASE_URL");
+            return;
+        };
+        let (claimer, owner) = claim_fixture(&pool).await;
+        for after_commit in [false, true] {
+            let (reached, checkpoint) = tokio::sync::oneshot::channel();
+            let (release, resume) = tokio::sync::oneshot::channel();
+            let pause = ClaimPause { reached, resume };
+            let probe = if after_commit {
+                ClaimProbe::AfterCommit(pause)
+            } else {
+                ClaimProbe::BeforeTask(pause)
+            };
+            let request = tokio::spawn({
+                let (pool, claimer, owner) = (pool.clone(), claimer.clone(), owner.clone());
+                async move { claim_from_stock(&pool, claimer, owner, Some(probe)).await }
+            });
+            tokio::time::timeout(Duration::from_secs(5), checkpoint)
+                .await
+                .unwrap()
+                .unwrap();
+            assert!(ClaimSlot::take(&owner).is_none());
+            request.abort();
+            assert!(matches!(request.await, Err(error) if error.is_cancelled()));
+            if after_commit {
+                assert!(ClaimSlot::take(&owner).is_none());
+                assert_claim(&pool, &claimer, &owner, 0, true).await;
+                release.send(()).unwrap();
+                tokio::time::timeout(Duration::from_secs(5), async {
+                    while ClaimSlot::take(&owner).is_none() {
+                        tokio::task::yield_now().await;
+                    }
+                })
+                .await
+                .unwrap();
+            } else {
+                assert!(ClaimSlot::take(&owner).is_some());
+                assert_claim(&pool, &claimer, &owner, 1, false).await;
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn claim_refunds_empty_stock_and_definite_rollback_but_keeps_an_unknown_commit() {
+        let Some(pool) = crate::db::scratch::isolated_pool(4).await else {
+            eprintln!("SKIP: MLS commit outcomes need CATALYST_TEST_DATABASE_URL");
+            return;
+        };
+        let (claimer, owner) = claim_fixture(&pool).await;
+        sqlx::raw_sql(
+            "CREATE FUNCTION social.test_reject_claim() RETURNS trigger LANGUAGE plpgsql AS $$
+                 BEGIN RAISE EXCEPTION 'forced rollback' USING ERRCODE = '23514'; END;
+             $$;
+             CREATE CONSTRAINT TRIGGER test_reject_claim AFTER UPDATE
+                 ON social.mls_key_packages DEFERRABLE INITIALLY DEFERRED
+                 FOR EACH ROW EXECUTE FUNCTION social.test_reject_claim();",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        assert!(
+            claim_from_stock(&pool, claimer.clone(), owner.clone(), None)
+                .await
+                .is_err()
+        );
+        assert_claim(&pool, &claimer, &owner, 1, false).await;
+
+        sqlx::query("DROP TRIGGER test_reject_claim ON social.mls_key_packages")
+            .execute(&pool)
+            .await
+            .unwrap();
+        assert!(
+            claim_from_stock(
+                &pool,
+                claimer.clone(),
+                owner.clone(),
+                Some(ClaimProbe::LoseCommitReply)
+            )
+            .await
+            .is_err()
+        );
+        assert_claim(&pool, &claimer, &owner, 0, true).await;
+        assert!(ClaimSlot::take(&owner).is_some());
+
+        let (claimer, owner) = claim_fixture(&pool).await;
+        sqlx::query("DELETE FROM social.mls_key_packages WHERE owner = $1")
+            .bind(&owner)
+            .execute(&pool)
+            .await
+            .unwrap();
+        assert!(
+            claim_from_stock(&pool, claimer.clone(), owner.clone(), None)
+                .await
+                .unwrap()
+                .is_none()
+        );
+        assert_claim(&pool, &claimer, &owner, 0, false).await;
+    }
 
     struct Member {
         key: String,
@@ -1452,18 +1706,19 @@ mod tests {
     #[test]
     fn the_blob_budget_refuses_a_wallet_past_its_hourly_bytes() {
         let (heavy, light) = (address_of(&random_key()), address_of(&random_key()));
-        for _ in 0..64 {
-            spend_blob_budget(&heavy, MAX_OPAQUE_BYTES).unwrap();
+        let refund = spend_blob_budget(&heavy, MAX_OPAQUE_BYTES).unwrap();
+        for _ in 0..63 {
+            drop(spend_blob_budget(&heavy, MAX_OPAQUE_BYTES).unwrap());
         }
-        BLOB_BUDGET.refund(&heavy, 256);
-        spend_blob_budget(&heavy, MAX_OPAQUE_BYTES).unwrap();
+        refund.refund();
+        drop(spend_blob_budget(&heavy, MAX_OPAQUE_BYTES).unwrap());
         assert_eq!(
             spend_blob_budget(&heavy, MAX_OPAQUE_BYTES)
                 .unwrap_err()
                 .code,
             429
         );
-        spend_blob_budget(&light, MAX_OPAQUE_BYTES).unwrap();
+        drop(spend_blob_budget(&light, MAX_OPAQUE_BYTES).unwrap());
     }
 
     /// A store refused on the store lock (the collector holds it) answers
@@ -1479,11 +1734,10 @@ mod tests {
         let state = MessagingState::new(pool.clone(), storage, None, Settings::default());
         let signer = address_of(&random_key());
         for _ in 0..63 {
-            spend_blob_budget(&signer, MAX_OPAQUE_BYTES).unwrap();
+            drop(spend_blob_budget(&signer, MAX_OPAQUE_BYTES).unwrap());
         }
         let mut spend = BlobSpend {
-            signer: &signer,
-            kib: spend_blob_budget(&signer, MAX_OPAQUE_BYTES).unwrap(),
+            receipt: Some(spend_blob_budget(&signer, MAX_OPAQUE_BYTES).unwrap()),
             wrote: false,
         };
         let collector = gc::lock_store_exclusive(&pool).await.unwrap();
@@ -1494,8 +1748,10 @@ mod tests {
         assert_eq!(refused.code, 503);
         drop(tx);
         collector.rollback().await.unwrap();
-        spend_blob_budget(&signer, MAX_OPAQUE_BYTES)
-            .expect("the refused store gave its budget back");
+        drop(
+            spend_blob_budget(&signer, MAX_OPAQUE_BYTES)
+                .expect("the refused store gave its budget back"),
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -1504,11 +1760,10 @@ mod tests {
         let owner = address_of(&random_key());
         let (heavy, other) = (address_of(&random_key()), address_of(&random_key()));
         for _ in 0..10 {
-            assert!(!claim_budget_spent(&heavy, &owner));
-            spend_claim(&heavy, &owner);
+            drop(ClaimBudget::reserve(&heavy, &owner).unwrap());
         }
-        assert!(claim_budget_spent(&heavy, &owner));
-        assert!(!claim_budget_spent(&other, &owner));
+        assert!(ClaimBudget::reserve(&heavy, &owner).is_err());
+        ClaimBudget::reserve(&other, &owner).unwrap().refund();
     }
 
     /// Unset `FED_PEER_ID` falls back to the id schema apply minted (the old
