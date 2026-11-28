@@ -36,6 +36,8 @@ const DEFAULT_TIMEOUT_MS = 120_000;
 const CLOSE_TIMEOUT_MS = 5_000;
 const POLL_MS = 100;
 const PRESENT_TIMEOUT_MS = 5_000;
+// how long one `ready` probe of a frame's context may take before the next poll asks again
+const PROBE_TIMEOUT_MS = 2_000;
 /** A frame's viewport, as JSON. */
 const VIEWPORT = 'JSON.stringify([window.innerWidth, window.innerHeight])';
 /** Resolves with true once the frame has run two animation frames. */
@@ -603,15 +605,22 @@ class Driver {
       : `typeof window.engine_console_command === 'function'`;
     for (const context of [...this.#contexts.values()]) {
       if (!acceptsBinding(context, this.#origin)) continue;
-      const answer = await this.#send(
-        'Runtime.evaluate',
-        {
-          expression: `${hasConsole} && typeof window.${BINDING} === 'function'`,
-          contextId: context.id,
-          returnByValue: true
-        },
-        context.session
-      ).catch(() => null); // a context that went away while asking
+      // An out-of-process frame held at start (or one its process is still bringing up on a
+      // browser's first start) answers nothing until it runs; a probe it never answers would
+      // hold `ready` past its deadline, so a slow one counts as "not yet" and the next poll asks
+      // again.
+      const answer = await Promise.race([
+        this.#send(
+          'Runtime.evaluate',
+          {
+            expression: `${hasConsole} && typeof window.${BINDING} === 'function'`,
+            contextId: context.id,
+            returnByValue: true
+          },
+          context.session
+        ).catch(() => null), // a context that went away while asking
+        sleep(PROBE_TIMEOUT_MS).then(() => null)
+      ]);
       // a start-screen match is not kept: a later call without the opt-in waits for the console
       if (answer?.result?.value === true) return startScreen ? context : (this.#app = context);
     }

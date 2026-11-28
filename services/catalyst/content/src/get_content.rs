@@ -1,9 +1,12 @@
 use axum::body::Body;
 use axum::extract::{Path, Query, State};
-use axum::http::{HeaderMap, Method, StatusCode};
+use axum::http::header::ACCEPT_ENCODING;
+use axum::http::{Extensions, HeaderMap, Method, StatusCode, Version};
 use axum::response::{IntoResponse, Response};
 use bytes::Bytes;
 use serde::Deserialize;
+use tower_http::compression::predicate::Predicate;
+use tower_http::compression::{CompressionLayer, CompressionLevel};
 
 use super::errors::{AppError, AppResult};
 use super::file_type::{SAMPLE, Window, catalyst, file_type};
@@ -79,6 +82,83 @@ fn inert(mime: &'static str) -> &'static str {
     } else {
         mime
     }
+}
+
+/// Marks a `/contents/{hash}` response [`compression_layer`] may compress on the
+/// wire: a whole file (not a range, a 304, a HEAD or an X-Accel hand-off) of at
+/// least [`MIN_COMPRESSED_SIZE`], asked for by a client that accepts br or gzip,
+/// whose head is not an already-compressed format. Nothing else is compressed:
+/// the layer sits on the content routes only, and these bodies are public,
+/// immutable blobs with nothing of the requester's echoed into them, which is
+/// what a BREACH-style length oracle needs.
+#[derive(Clone, Copy, Debug)]
+pub struct Compressible;
+
+/// Below this a compressed body saves too little to pay for the framing.
+const MIN_COMPRESSED_SIZE: u64 = 1024;
+
+/// The client offers an encoding [`compression_layer`] produces. Only gates the
+/// head read; the layer itself negotiates (q-values included).
+fn accepts_compression(headers: &HeaderMap) -> bool {
+    headers
+        .get_all(ACCEPT_ENCODING)
+        .iter()
+        .filter_map(|v| v.to_str().ok())
+        .flat_map(|v| v.split(','))
+        .filter_map(|coding| coding.split(';').next())
+        .map(str::trim)
+        .any(|name| {
+            name.eq_ignore_ascii_case("br") || name.eq_ignore_ascii_case("gzip") || name == "*"
+        })
+}
+
+/// A head that is not an already-compressed format: compressing PNG, JPEG,
+/// WebP, KTX2, audio, video or archives costs CPU for nothing. GLB, glTF JSON,
+/// scene code, `.bin` buffers and WAV are what shrink.
+fn worth_compressing(head: &[u8]) -> bool {
+    const PREFIXES: &[&[u8]] = &[
+        &[0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A], // PNG
+        &[0xFF, 0xD8, 0xFF],                               // JPEG
+        b"GIF8",
+        &[0xAB, 0x4B, 0x54, 0x58, 0x20, 0x32, 0x30, 0xBB], // KTX2
+        &[0x1F, 0x8B],                                     // gzip
+        &[0x28, 0xB5, 0x2F, 0xFD],                         // zstd
+        &[0x50, 0x4B, 0x03, 0x04],                         // zip
+        b"OggS",
+        &[0x1A, 0x45, 0xDF, 0xA3], // WebM / Matroska
+        b"ID3",                    // MP3
+    ];
+    if PREFIXES.iter().any(|p| head.starts_with(p)) {
+        return false;
+    }
+    let mp3_frame = head.len() >= 2
+        && head[0] == 0xFF
+        && matches!(head[1], 0xFB | 0xFA | 0xF3 | 0xF2 | 0xE3 | 0xE2);
+    let mp4 = head.get(4..8) == Some(b"ftyp");
+    let webp = head.starts_with(b"RIFF") && head.get(8..12) == Some(b"WEBP");
+    !(mp3_frame || mp4 || webp)
+}
+
+/// On-the-fly br/gzip for the `/contents/{hash}` routes, applied to responses
+/// [`serve`] marked [`Compressible`] only. Quality 5 keeps the per-request cost
+/// low (most of brotli's and gzip's gain on GLBs); a CDN in front caches each
+/// encoding under the `Vary: Accept-Encoding` the layer adds. The layer leaves
+/// ranged responses alone and drops `Content-Length`/`Accept-Ranges` from the
+/// ones it compresses.
+pub fn compression_layer() -> CompressionLayer<impl Predicate> {
+    CompressionLayer::new()
+        .quality(CompressionLevel::Precise(5))
+        .compress_when(is_marked_compressible)
+}
+
+/// The [`compression_layer`] predicate: [`serve`] already applied every rule.
+fn is_marked_compressible(
+    _: StatusCode,
+    _: Version,
+    _: &HeaderMap,
+    extensions: &Extensions,
+) -> bool {
+    extensions.get::<Compressible>().is_some()
 }
 
 /// nginx serves `<STORAGE_X_ACCEL_BASE>/<shard>/<hash>` with an alias onto the
@@ -329,6 +409,12 @@ async fn serve(
     // nginx serves the body of a GET when the gateway is in front, so the app reads none of it.
     let accel = x_accel_redirect_path(state.settings.storage_x_accel_base.as_deref(), &key)
         .filter(|_| method != Method::HEAD);
+    // A whole file this process streams itself may be compressed on the wire
+    // ([`Compressible`]); nginx streams an X-Accel hand-off, outside this layer.
+    let compress = method == Method::GET
+        && accel.is_none()
+        && total >= MIN_COMPRESSED_SIZE
+        && accepts_compression(&headers);
 
     // Upstream sniffs for HEAD as for GET: the headers are the same. The
     // worlds mount sniffs every HEAD, as WCS does.
@@ -371,16 +457,21 @@ async fn serve(
         return Ok(response);
     }
 
-    // After a failed sniff the reader may be anywhere: replay the body from its start.
+    // After a failed sniff the reader may be anywhere: replay the body from its start. A
+    // compression check reads the head too when no sniff read it (a kept answer reads nothing).
     let head = match head {
-        Some(head) => head,
-        None => opened.read_range(0, SAMPLE - 1).await?,
+        Some(head) if !(compress && head.is_empty()) => head,
+        _ => opened.read_range(0, SAMPLE - 1).await?,
     };
+    let compressible = compress && worth_compressing(&head);
     let mut response = Response::builder()
         .status(StatusCode::OK)
         .body(opened.into_body(head))
         .expect("a constant status always builds a response");
     apply_headers(&mut response, &base_headers);
+    if compressible {
+        response.extensions_mut().insert(Compressible);
+    }
     Ok(response)
 }
 
@@ -991,6 +1082,163 @@ mod tests {
             .await
             .unwrap();
         assert!(body.is_empty());
+    }
+
+    /// A 4 KiB GLB: the binary glTF magic, then repetitive bytes that compress.
+    fn glb_blob() -> Bytes {
+        let mut blob = b"glTF\x02\x00\x00\x00".to_vec();
+        blob.extend(std::iter::repeat_n(b"vertex data ", 340).flatten());
+        Bytes::from(blob)
+    }
+
+    async fn get_accepting(
+        node: &TestNode,
+        method: Method,
+        accept_encoding: Option<&str>,
+        range: Option<&str>,
+    ) -> Response {
+        let mut headers = HeaderMap::new();
+        if let Some(a) = accept_encoding {
+            headers.insert(ACCEPT_ENCODING, a.parse().unwrap());
+        }
+        if let Some(r) = range {
+            headers.insert("range", r.parse().unwrap());
+        }
+        get_content(
+            State(node.state.clone()),
+            Path(TEST_CID.to_string()),
+            Query(ContentQuery {
+                include_mime_type: None,
+            }),
+            method,
+            headers,
+        )
+        .await
+        .unwrap()
+    }
+
+    fn marked(resp: &Response) -> bool {
+        resp.extensions().get::<Compressible>().is_some()
+    }
+
+    #[test]
+    fn accepts_compression_reads_the_offered_codings() {
+        let offered = |v: &str| {
+            let mut h = HeaderMap::new();
+            h.insert(ACCEPT_ENCODING, v.parse().unwrap());
+            accepts_compression(&h)
+        };
+        assert!(offered("gzip, deflate"));
+        assert!(offered("br;q=1.0, gzip;q=0.8"));
+        assert!(offered("GZIP"));
+        assert!(offered("*"));
+        assert!(!offered("identity"));
+        assert!(!offered("deflate, zstd"));
+        assert!(!accepts_compression(&HeaderMap::new()));
+    }
+
+    #[test]
+    fn already_compressed_formats_are_not_worth_compressing() {
+        assert!(worth_compressing(b"glTF\x02\x00\x00\x00"));
+        assert!(worth_compressing(b"{\"asset\":{\"version\":\"2.0\"}}"));
+        assert!(worth_compressing(b"RIFF\x24\x00\x00\x00WAVEfmt "));
+        assert!(worth_compressing(b""));
+        assert!(!worth_compressing(&[0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A]));
+        assert!(!worth_compressing(&[0xFF, 0xD8, 0xFF, 0xE0]));
+        assert!(!worth_compressing(b"RIFF\x24\x00\x00\x00WEBPVP8 "));
+        assert!(!worth_compressing(&[0xAB, 0x4B, 0x54, 0x58, 0x20, 0x32, 0x30, 0xBB, 0x0D, 0x0A]));
+        assert!(!worth_compressing(b"OggS\x00\x02"));
+        assert!(!worth_compressing(&[0x1F, 0x8B, 0x08]));
+        assert!(!worth_compressing(&[0x28, 0xB5, 0x2F, 0xFD]));
+    }
+
+    #[tokio::test]
+    async fn only_whole_compressible_files_for_willing_clients_are_marked() {
+        let node = TestNode::without_db("content-compress-mark").await;
+        node.store(TEST_CID, glb_blob()).await;
+        assert!(marked(&get_accepting(&node, Method::GET, Some("br, gzip"), None).await));
+        // a client that offers nothing the layer produces
+        assert!(!marked(&get_accepting(&node, Method::GET, None, None).await));
+        assert!(!marked(&get_accepting(&node, Method::GET, Some("identity"), None).await));
+        // a range is served as stored bytes
+        let ranged = get_accepting(&node, Method::GET, Some("br"), Some("bytes=0-99")).await;
+        assert_eq!(ranged.status(), StatusCode::PARTIAL_CONTENT);
+        assert!(!marked(&ranged));
+        // HEAD reports the stored representation
+        assert!(!marked(&get_accepting(&node, Method::HEAD, Some("br"), None).await));
+    }
+
+    #[tokio::test]
+    async fn small_and_precompressed_files_are_not_marked() {
+        let node = TestNode::without_db("content-compress-small").await;
+        node.store(TEST_CID, Bytes::from_static(b"glTF tiny")).await;
+        assert!(!marked(&get_accepting(&node, Method::GET, Some("br"), None).await));
+
+        let node = TestNode::without_db("content-compress-png").await;
+        let mut png = vec![0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A];
+        png.resize(4096, 0);
+        node.store(TEST_CID, Bytes::from(png)).await;
+        assert!(!marked(&get_accepting(&node, Method::GET, Some("br"), None).await));
+    }
+
+    #[tokio::test]
+    async fn x_accel_hand_off_is_not_marked() {
+        let mut settings = crate::Settings::for_tests();
+        settings.storage_x_accel_base = Some("/__protected_storage".into());
+        let node = TestNode::without_db_settings("content-compress-accel", settings).await;
+        node.store(TEST_CID, glb_blob()).await;
+        assert!(!marked(&get_accepting(&node, Method::GET, Some("br"), None).await));
+    }
+
+    /// Through the layer: a marked GLB goes out gzip-encoded with `Vary`, decodes
+    /// to the stored bytes (the bytes its CID names), and loses `Content-Length`
+    /// and `Accept-Ranges`; the ETag is the content's.
+    #[tokio::test]
+    async fn the_layer_compresses_marked_responses_on_the_wire() {
+        use std::io::Read;
+        use tower::ServiceExt;
+
+        let node = TestNode::without_db("content-compress-layer").await;
+        let blob = glb_blob();
+        node.store(TEST_CID, blob.clone()).await;
+        let app = axum::Router::new()
+            .route(
+                "/contents/{hashId}",
+                axum::routing::get(get_content).route_layer(compression_layer()),
+            )
+            .with_state(node.state.clone());
+        let request = |accept: Option<&str>| {
+            let mut builder = axum::http::Request::get(format!("/contents/{TEST_CID}"));
+            if let Some(accept) = accept {
+                builder = builder.header(ACCEPT_ENCODING, accept);
+            }
+            builder.body(Body::empty()).unwrap()
+        };
+
+        let resp = app.clone().oneshot(request(Some("gzip"))).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        assert_eq!(header(&resp, "content-encoding").as_deref(), Some("gzip"));
+        assert!(header(&resp, "vary").is_some_and(|v| v.to_ascii_lowercase().contains("accept-encoding")));
+        assert_eq!(header(&resp, "content-length"), None);
+        assert_eq!(header(&resp, "accept-ranges"), None);
+        assert_eq!(header(&resp, "etag"), Some(crate::formatters::to_etag(TEST_CID)));
+        let wire = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        assert!(wire.len() < blob.len());
+        let mut decoded = Vec::new();
+        flate2::read::GzDecoder::new(&wire[..])
+            .read_to_end(&mut decoded)
+            .unwrap();
+        assert_eq!(decoded, blob);
+
+        // without the offer, the stored bytes as they are
+        let resp = app.oneshot(request(None)).await.unwrap();
+        assert_eq!(header(&resp, "content-encoding"), None);
+        let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        assert_eq!(body, blob);
     }
 
     /// XML, after a BOM or in UTF-16 too, is `application/octet-stream` on GET, HEAD and a range
