@@ -26,6 +26,7 @@ type Props<T> = {
   value: T;
   className?: string;
   getExtraContextMenu?: (value: T) => JSX.Element | null;
+  contextMenuLabel: string;
   level?: number;
   getId: (value: T) => string;
   getChildren: (value: T) => T[];
@@ -78,6 +79,7 @@ export function Tree<T>() {
     withContextMenu<Props<T>>(props => {
       const {
         getExtraContextMenu,
+        contextMenuLabel,
         className,
         contextMenuId,
         value,
@@ -325,6 +327,7 @@ export function Tree<T>() {
 
       const controlsProps = {
         id: contextMenuId,
+        label: contextMenuLabel,
         enableAdd: enableAddChild,
         enableEdit:
           (enableRename &&
@@ -356,6 +359,7 @@ export function Tree<T>() {
           <div
             style={getLevelStyles(level)}
             className={cx({ selected, item: true, hidden })}
+            tabIndex={-1}
           >
             <ContextMenu {...controlsProps} />
             <div
