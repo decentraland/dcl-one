@@ -396,7 +396,7 @@ export default function ReportForm({ trackCtx }: { trackCtx: TrackContext }) {
                 setReason(selected);
                 track("report_category_set", { reason: selected }, trackCtx);
               }}
-              >
+            >
               <option value="" disabled>
                 Choose a reason
               </option>
@@ -405,7 +405,7 @@ export default function ReportForm({ trackCtx }: { trackCtx: TrackContext }) {
                   {label}
                 </option>
               ))}
-              </WebSelect>
+            </WebSelect>
 
             <div className={styles.inputGroup}>
               <WebTextarea
@@ -413,6 +413,7 @@ export default function ReportForm({ trackCtx }: { trackCtx: TrackContext }) {
                 description="Describe what happened. Include when and where the incident occurred if possible."
                 error={shown(errors.description)}
                 aria-required="true"
+                aria-describedby="report-description-hint"
                 rows={4}
                 placeholder="Write your description here..."
                 value={description}
@@ -420,7 +421,7 @@ export default function ReportForm({ trackCtx }: { trackCtx: TrackContext }) {
                 onBlur={() => description.trim() && track("report_details_set", { description_len: description.trim().length }, trackCtx)}
               />
               <p className={styles.counter}>{`${description.length} / ${REPORT_LIMITS.descriptionMax}`}</p>
-              <p className={styles.hint}>The more detail you provide, the easier it is for moderators to review your report.</p>
+              <p id="report-description-hint" className={styles.hint}>The more detail you provide, the easier it is for moderators to review your report.</p>
             </div>
 
             <div className={styles.evidence}>

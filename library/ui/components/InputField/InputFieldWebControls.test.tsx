@@ -79,6 +79,25 @@ describe('when a shared web field has no label, description, error or hint', () 
     expect(control).not.toHaveAttribute('aria-describedby')
   })
 
+  it.each([
+    ['null', null],
+    ['false', false]
+  ] as const)('should treat a %s label as no label', (_, label) => {
+    const { container } = render(<WebSelect aria-label="Reason" label={label} />)
+    const select = screen.getByRole('combobox', { name: 'Reason' })
+    expect(container.querySelector('label')).toBeNull()
+    expect(container.firstElementChild).toBe(select.parentElement)
+    expect(select).not.toHaveAttribute('id')
+    expect(select).not.toHaveAttribute('aria-describedby')
+  })
+
+  it('should not accept messages beside a label that may be missing', () => {
+    const maybe = undefined as string | undefined
+    // @ts-expect-error A label that may be missing could drop the error, so the type refuses it.
+    render(<WebSelect aria-label="Reason" label={maybe} error="Choose a reason" />)
+    expect(screen.queryByText('Choose a reason')).toBeNull()
+  })
+
   it('should not accept a description, error or hint without a label', () => {
     // @ts-expect-error The messages need the label, so a field without one renders the control alone.
     const { container } = render(<WebSelect aria-label="Reason" error="Choose a reason" />)

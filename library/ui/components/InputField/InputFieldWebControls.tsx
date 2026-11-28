@@ -1,6 +1,6 @@
 import { useId, type ComponentProps, type ReactNode } from 'react'
 
-import { FieldChrome, fieldMessageIds } from './InputField'
+import { FieldChrome, fieldMessageIds, hasLabel } from './InputField'
 import styles from './InputField.module.css'
 
 /**
@@ -11,13 +11,13 @@ import styles from './InputField.module.css'
 type WebFieldLabel =
   | {
       /** The visible name above the control. A node lets a form put its own content in it, such as a required mark. */
-      label: ReactNode
+      label: Exclude<ReactNode, undefined | null | boolean>
       labelHidden?: boolean
       description?: string
       error?: string
       hint?: string
     }
-  | { label?: undefined; labelHidden?: never; description?: never; error?: never; hint?: never }
+  | { label?: undefined | null | boolean; labelHidden?: never; description?: never; error?: never; hint?: never }
 
 type WebFieldProps = WebFieldLabel & {
   /** Placement on the outermost element: the field with its label, or the frame alone. `className` styles the control. */
@@ -57,7 +57,7 @@ function WebField({
   control: (aria: { id?: string; 'aria-describedby'?: string; 'aria-invalid'?: WebSelectProps['aria-invalid'] }) => ReactNode
 }) {
   const generatedId = useId()
-  if (label === undefined) {
+  if (!hasLabel(label)) {
     return (
       <div
         className={rootClassName ? `${frameClass} ${rootClassName}` : frameClass}
@@ -68,12 +68,14 @@ function WebField({
     )
   }
   const controlId = id ?? generatedId
-  const { descriptionId, errorId, hintId } = fieldMessageIds(controlId, { description, error, hint })
+  const messageIds = fieldMessageIds(controlId, { description, error, hint })
+  const { descriptionId, errorId, hintId } = messageIds
   const ids = [describedBy, descriptionId, errorId, hintId].filter(Boolean).join(' ') || undefined
   return (
     <FieldChrome
       surface="web"
       inputId={controlId}
+      ids={messageIds}
       label={label}
       labelHidden={labelHidden}
       description={description}

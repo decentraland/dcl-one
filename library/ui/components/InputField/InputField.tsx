@@ -97,12 +97,8 @@ export function InputField({
   const sanitized = nativeInput as InputHTMLAttributes<HTMLInputElement>
   delete sanitized.children
   delete sanitized.dangerouslySetInnerHTML
-  const { descriptionId, errorId, counterId, hintId } = fieldMessageIds(inputId, {
-    description,
-    error,
-    counter,
-    hint
-  })
+  const messageIds = fieldMessageIds(inputId, { description, error, counter, hint })
+  const { descriptionId, errorId, counterId, hintId } = messageIds
   const suffixId = suffix?.trim() ? `${inputId}-suffix` : undefined
   const ids =
     [describedBy, descriptionId, errorId, suffixId, counterId, hintId].filter(Boolean).join(' ') ||
@@ -113,6 +109,7 @@ export function InputField({
       inputId={inputId}
       label={label}
       labelHidden={surface === 'explorer' || labelHidden}
+      ids={messageIds}
       description={description}
       error={error}
       counter={counter}
@@ -171,6 +168,11 @@ export function InputField({
 
 type FieldMessages = { description?: string; error?: string; counter?: string; hint?: string }
 
+/** Whether a label renders: any node but nothing, `undefined`, `null` or a boolean. An empty string still does. */
+export function hasLabel(label: ReactNode): boolean {
+  return label != null && typeof label !== 'boolean'
+}
+
 /** The ids of a field's description and status lines, set only for the lines that have text. */
 export function fieldMessageIds(inputId: string, messages: FieldMessages) {
   const id = (part: keyof FieldMessages) =>
@@ -185,7 +187,8 @@ export function fieldMessageIds(inputId: string, messages: FieldMessages) {
 
 /**
  * The frame every web and Explorer field shares: its label, description and status lines around the
- * control the caller passes as children.
+ * control the caller passes as children. `ids` are the caller's, from `fieldMessageIds`, so the lines
+ * carry the same ids the control's `aria-describedby` names.
  */
 export function FieldChrome({
   surface,
@@ -198,25 +201,22 @@ export function FieldChrome({
   hint,
   hintIcon,
   className,
+  ids,
   children
 }: FieldMessages & {
   surface: 'explorer' | 'web'
   inputId: string
+  ids: ReturnType<typeof fieldMessageIds>
   label?: ReactNode
   labelHidden?: boolean
   hintIcon?: ReactNode
   className?: string
   children: ReactNode
 }) {
-  const { descriptionId, errorId, counterId, hintId } = fieldMessageIds(inputId, {
-    description,
-    error,
-    counter,
-    hint
-  })
+  const { descriptionId, errorId, counterId, hintId } = ids
   return (
     <div className={[styles.root, className].filter(Boolean).join(' ')} data-surface={surface}>
-      {label != null && typeof label !== 'boolean' ? (
+      {hasLabel(label) ? (
         <label className={styles.label} htmlFor={inputId} data-hidden={labelHidden || undefined}>
           {label}
         </label>

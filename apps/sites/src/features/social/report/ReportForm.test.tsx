@@ -268,7 +268,10 @@ describe("when a signed-in visitor submits an incomplete report", () => {
     });
     expect(reason.getAttribute("aria-invalid")).toBe("true");
     expect(reason.getAttribute("aria-required")).toBe("true");
-    const description = screen.getByRole("textbox", { name: "Description", description: /Describe what happened\..*Please include a description/ });
+    const description = screen.getByRole("textbox", {
+      name: "Description",
+      description: /^The more detail you provide.*Describe what happened\..*Please include a description/,
+    });
     expect(description.getAttribute("aria-invalid")).toBe("true");
     const comments = screen.getByRole("textbox", { name: "Additional Comments", description: "Provide any extra information that might help moderators investigate." });
     expect(comments.hasAttribute("aria-invalid")).toBe(false);
