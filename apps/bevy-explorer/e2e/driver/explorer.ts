@@ -126,16 +126,16 @@ export interface SceneStateReport {
   settleWaits: number
 }
 
-/**
- * What `/hover_entity` and `/click_entity` report. A hit on an avatar or on another scene's
- * entity reports `entity` and `container` as 4294967295.
- */
 /** A scene input action `/click_entity --button` presses: the SDK's `InputAction` name in
  *  lowercase without `IA_` (`IA_ANY` is bound to no input). */
 export type SceneAction =
   | 'pointer' | 'primary' | 'secondary' | 'forward' | 'backward' | 'right' | 'left' | 'jump' | 'walk'
   | 'action_3' | 'action_4' | 'action_5' | 'action_6' | 'modifier'
 
+/**
+ * What `/hover_entity` and `/click_entity` report. A hit on an avatar or on another scene's
+ * entity reports `entity` and `container` as 4294967295.
+ */
 export interface PointerReport {
   hit: { entity: number; container: number; scene: string; playerDistance: number; cameraDistance: number } | null
   entries: { button: string; event: string; hoverText: string | null; enabled: boolean; tooFar: boolean }[]
