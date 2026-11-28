@@ -1,0 +1,74 @@
+{
+  "description": "PUT /collections/{id} signed by a wallet that manages no provider, creating the first collection of a provider nobody has. Recorded from github.com/decentraland/builder-server at 98897af by tooling/builder-server-capture.cjs.",
+  "request": {
+    "method": "PUT",
+    "path": "/v1/collections/c011ec71-0000-4000-8000-000000000309",
+    "query": {},
+    "headers": {
+      "content-type": "application/json",
+      "x-identity-auth-chain-0": "{\"type\":\"SIGNER\",\"payload\":\"0xcd6884d4258edc833f31ac773e24affe6a7d3154\",\"signature\":\"\"}",
+      "x-identity-auth-chain-1": "{\"type\":\"ECDSA_EPHEMERAL\",\"payload\":\"Decentraland Login\\nEphemeral address: 0x69455f42De452C9B6425b41cC3a24d4BAADa6e0b\\nExpiration: 2026-01-01T01:00:00.000Z\",\"signature\":\"0xe05d23ed680bbb5276dda6c8326e083b07776128b856b5fa8a3e21bb47a9c4117a5131a2c3677da49f6db82b3dd5addef76231a5c6137042c88c069c03d42d651c\"}",
+      "x-identity-auth-chain-2": "{\"type\":\"ECDSA_SIGNED_ENTITY\",\"payload\":\"put:/v1/collections/c011ec71-0000-4000-8000-000000000309:1767225600000:{}\",\"signature\":\"0xed4f172626564216a0bbdb9739accecec887f14b95fd78f5ef4f8eddf3a4265e498362bb0f622e6a9f4bfb9dacacb036b27a5a0a4775febb80407119253778c51b\"}",
+      "x-identity-metadata": "{}",
+      "x-identity-timestamp": "1767225600000"
+    },
+    "body": {
+      "collection": {
+        "id": "c011ec71-0000-4000-8000-000000000309",
+        "name": "Fresh first",
+        "eth_address": "0xcd6884d4258edc833f31ac773e24affe6a7d3154",
+        "salt": null,
+        "contract_address": null,
+        "is_published": false,
+        "is_approved": false,
+        "minters": [],
+        "managers": [],
+        "urn": "urn:decentraland:matic:collections-thirdparty:fresh:first"
+      },
+      "data": ""
+    }
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "content-type": "application/json; charset=utf-8"
+    },
+    "body_json": {
+      "ok": true,
+      "data": {
+        "id": "c011ec71-0000-4000-8000-000000000309",
+        "name": "Fresh first",
+        "eth_address": "",
+        "salt": "",
+        "contract_address": null,
+        "is_published": false,
+        "created_at": "<<VOLATILE>>",
+        "updated_at": "<<VOLATILE>>",
+        "managers": [],
+        "minters": [],
+        "is_approved": false,
+        "reviewed_at": null,
+        "forum_link": null,
+        "lock": null,
+        "forum_id": null,
+        "linked_contract_address": null,
+        "linked_contract_network": null,
+        "is_mapping_complete": true,
+        "item_count": "0",
+        "urn": "urn:decentraland:matic:collections-thirdparty:fresh:first"
+      }
+    }
+  },
+  "captured_from": "github.com/decentraland/builder-server@98897af692f26063a088aebb2ea5bb3f683168a2",
+  "captured_at": "2026-01-01T00:00:00.000Z",
+  "volatile_paths": [
+    "data.created_at",
+    "data.updated_at"
+  ],
+  "volatile_equal": [
+    [
+      "data.created_at",
+      "data.updated_at"
+    ]
+  ]
+}

@@ -1,0 +1,85 @@
+{
+  "description": "GET /curations signed by a committee member: the newest curation of every collection. Recorded from github.com/decentraland/builder-server at 98897af by tooling/builder-server-capture.cjs.",
+  "request": {
+    "method": "GET",
+    "path": "/v1/curations",
+    "query": {},
+    "headers": {
+      "x-identity-auth-chain-0": "{\"type\":\"SIGNER\",\"payload\":\"0x01eba3f0e992f53debaf51ed3738dc2f23e09aee\",\"signature\":\"\"}",
+      "x-identity-auth-chain-1": "{\"type\":\"ECDSA_EPHEMERAL\",\"payload\":\"Decentraland Login\\nEphemeral address: 0xcb35E8511368f0De8759EEeAc3Fe51C8D5ea2e63\\nExpiration: 2026-01-01T01:00:00.000Z\",\"signature\":\"0x1a44116ede83b32f13ed080cc98e89d27d7ed635276ab2fabb9276554046bcc56070fc0c8edf5eece56d831406945891ae585e76b8fe1ddb8870481082b9be1d1b\"}",
+      "x-identity-auth-chain-2": "{\"type\":\"ECDSA_SIGNED_ENTITY\",\"payload\":\"get:/v1/curations:1767225600000:{}\",\"signature\":\"0x8a5cdbf508ba509d748ae15dd653b8ce237e71e928062577ba9190099296aed25e4ef1684436a354c07107cd094751656ac4cdc3eda9b060aad503f6a87751be1b\"}",
+      "x-identity-metadata": "{}",
+      "x-identity-timestamp": "1767225600000"
+    },
+    "body": null
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "content-type": "application/json; charset=utf-8"
+    },
+    "body_json": {
+      "ok": true,
+      "data": [
+        {
+          "id": "c011ec71-0000-4000-8000-0000000004c1",
+          "collection_id": "c011ec71-0000-4000-8000-000000000401",
+          "status": "pending",
+          "created_at": "2025-12-24T00:00:00.000Z",
+          "updated_at": "2025-12-24T00:00:00.000Z",
+          "assignee": "0x01eba3f0e992f53debaf51ed3738dc2f23e09aee",
+          "reviewed_by": null,
+          "rejection_reasons": null,
+          "rejection_message": null
+        },
+        {
+          "id": "c011ec71-0000-4000-8000-0000000004c2",
+          "collection_id": "c011ec71-0000-4000-8000-000000000402",
+          "status": "approved",
+          "created_at": "2025-12-24T01:00:00.000Z",
+          "updated_at": "2025-12-24T02:00:00.000Z",
+          "assignee": null,
+          "reviewed_by": null,
+          "rejection_reasons": null,
+          "rejection_message": null
+        },
+        {
+          "id": "c011ec71-0000-4000-8000-0000000005cb",
+          "collection_id": "c011ec71-0000-4000-8000-000000000502",
+          "status": "pending",
+          "created_at": "2026-02-02T00:00:00.000Z",
+          "updated_at": "2026-02-02T00:00:00.000Z",
+          "assignee": "0x01eba3f0e992f53debaf51ed3738dc2f23e09aee",
+          "reviewed_by": null,
+          "rejection_reasons": null,
+          "rejection_message": null
+        },
+        {
+          "id": "c011ec71-0000-4000-8000-0000000005cc",
+          "collection_id": "c011ec71-0000-4000-8000-000000000503",
+          "status": "approved",
+          "created_at": "2026-01-21T00:00:00.000Z",
+          "updated_at": "2026-01-21T00:00:00.000Z",
+          "assignee": null,
+          "reviewed_by": null,
+          "rejection_reasons": null,
+          "rejection_message": null
+        },
+        {
+          "id": "c011ec71-0000-4000-8000-0000000005cd",
+          "collection_id": "c011ec71-0000-4000-8000-000000000504",
+          "status": "rejected",
+          "created_at": "2026-02-11T00:00:00.000Z",
+          "updated_at": "2026-02-11T00:00:00.000Z",
+          "assignee": null,
+          "reviewed_by": null,
+          "rejection_reasons": null,
+          "rejection_message": null
+        }
+      ]
+    }
+  },
+  "captured_from": "github.com/decentraland/builder-server@98897af692f26063a088aebb2ea5bb3f683168a2",
+  "captured_at": "2026-01-01T00:00:00.000Z",
+  "volatile_paths": []
+}

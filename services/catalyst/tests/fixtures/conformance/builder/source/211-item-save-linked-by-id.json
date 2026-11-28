@@ -1,0 +1,145 @@
+{
+  "description": "PUT /items/{id} signed by the provider manager, saving a third-party item by its id with its URN. Recorded from github.com/decentraland/builder-server at 98897af by tooling/builder-server-capture.cjs.",
+  "request": {
+    "method": "PUT",
+    "path": "/v1/items/c011ec71-0000-4000-8000-0000000003c2",
+    "query": {},
+    "headers": {
+      "content-type": "application/json",
+      "x-identity-auth-chain-0": "{\"type\":\"SIGNER\",\"payload\":\"0xc1aba94a79ca07d9d15a62ff5c9b382777e0c70e\",\"signature\":\"\"}",
+      "x-identity-auth-chain-1": "{\"type\":\"ECDSA_EPHEMERAL\",\"payload\":\"Decentraland Login\\nEphemeral address: 0xCe07842D186368A1aE9897DD7290156A29CD3406\\nExpiration: 2026-01-01T01:00:00.000Z\",\"signature\":\"0x22ad22410544a70b1d27a532e621d93be0a59fb1220fb4d0ae089f4e56d3859c3b90b2ef4535210201488305d04289e47fca8040e79a2d0161139e09bba7fba01b\"}",
+      "x-identity-auth-chain-2": "{\"type\":\"ECDSA_SIGNED_ENTITY\",\"payload\":\"put:/v1/items/c011ec71-0000-4000-8000-0000000003c2:1767225600000:{}\",\"signature\":\"0x71a1ba002a1973ab4a8ad66832979c7fa7a5a51bb5f753a40aaaf7c0172d955604877e0a50b0d3bf7061899fb3419781fb8a2c4631d8ec528ffd7e593ba865ab1b\"}",
+      "x-identity-metadata": "{}",
+      "x-identity-timestamp": "1767225600000"
+    },
+    "body": {
+      "item": {
+        "beneficiary": null,
+        "blockchain_item_id": null,
+        "collection_id": "c011ec71-0000-4000-8000-000000000304",
+        "contents": {
+          "model.glb": "bafkreigl2ikuvlnqi45jrzwowmv4uqdjd6oopfwal3usjqi5fiiwm4yqei",
+          "thumbnail.png": "bafkreicjyysmiyonyudrmq6ejc6b7m42uma5fcnqoy6h4frcmugd7jtfma"
+        },
+        "data": {
+          "category": "hat",
+          "hides": [],
+          "replaces": [],
+          "representations": [
+            {
+              "bodyShapes": [
+                "urn:decentraland:off-chain:base-avatars:BaseMale"
+              ],
+              "contents": [
+                "model.glb"
+              ],
+              "mainFile": "model.glb",
+              "overrideHides": [],
+              "overrideReplaces": []
+            }
+          ],
+          "tags": [
+            "conformance"
+          ]
+        },
+        "description": "",
+        "eth_address": "0xc1aba94a79ca07d9d15a62ff5c9b382777e0c70e",
+        "id": "c011ec71-0000-4000-8000-0000000003c2",
+        "is_approved": false,
+        "is_published": false,
+        "mappings": null,
+        "metrics": {
+          "bodies": 1,
+          "entities": 1,
+          "materials": 1,
+          "meshes": 1,
+          "textures": 1,
+          "triangles": 100
+        },
+        "name": "Linked cap renamed",
+        "price": null,
+        "rarity": null,
+        "thumbnail": "thumbnail.png",
+        "total_supply": 0,
+        "type": "wearable",
+        "urn": "urn:decentraland:matic:collections-thirdparty:conformance:items-linked:cap-2",
+        "utility": null,
+        "video": null
+      }
+    }
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "content-type": "application/json; charset=utf-8"
+    },
+    "body_json": {
+      "ok": true,
+      "data": {
+        "beneficiary": "0x0000000000000000000000000000000000000000",
+        "collection_id": "c011ec71-0000-4000-8000-000000000304",
+        "contents": {
+          "model.glb": "bafkreigl2ikuvlnqi45jrzwowmv4uqdjd6oopfwal3usjqi5fiiwm4yqei",
+          "thumbnail.png": "bafkreicjyysmiyonyudrmq6ejc6b7m42uma5fcnqoy6h4frcmugd7jtfma"
+        },
+        "data": {
+          "category": "hat",
+          "hides": [],
+          "replaces": [],
+          "representations": [
+            {
+              "bodyShapes": [
+                "urn:decentraland:off-chain:base-avatars:BaseMale"
+              ],
+              "contents": [
+                "model.glb"
+              ],
+              "mainFile": "model.glb",
+              "overrideHides": [],
+              "overrideReplaces": []
+            }
+          ],
+          "tags": [
+            "conformance"
+          ]
+        },
+        "description": "",
+        "eth_address": "0xc1aba94a79ca07d9d15a62ff5c9b382777e0c70e",
+        "id": "c011ec71-0000-4000-8000-0000000003c2",
+        "mappings": null,
+        "metrics": {
+          "bodies": 1,
+          "entities": 1,
+          "materials": 1,
+          "meshes": 1,
+          "textures": 1,
+          "triangles": 100
+        },
+        "name": "Linked cap renamed",
+        "price": "0",
+        "rarity": null,
+        "thumbnail": "thumbnail.png",
+        "type": "wearable",
+        "utility": null,
+        "video": null,
+        "created_at": "2025-12-18T00:00:00.000Z",
+        "updated_at": "<<VOLATILE>>",
+        "local_content_hash": "e71c702e8715bc1ba2dcb97fa634848190b1986e3004210fa857883d4579051a",
+        "urn": "urn:decentraland:matic:collections-thirdparty:conformance:items-linked:cap-2",
+        "in_catalyst": false,
+        "is_approved": false,
+        "is_published": false,
+        "content_hash": null,
+        "catalyst_content_hash": null,
+        "total_supply": 0,
+        "blockchain_item_id": "cap-2",
+        "isMappingComplete": false
+      }
+    }
+  },
+  "captured_from": "github.com/decentraland/builder-server@98897af692f26063a088aebb2ea5bb3f683168a2",
+  "captured_at": "2026-01-01T00:00:00.000Z",
+  "volatile_paths": [
+    "data.updated_at"
+  ]
+}

@@ -1,0 +1,32 @@
+{
+  "description": "DELETE /thirdParties/{id} signed by the virtual third party's manager before the registry lists the provider. Recorded from github.com/decentraland/builder-server at 98897af by tooling/builder-server-capture.cjs.",
+  "request": {
+    "method": "DELETE",
+    "path": "/v1/thirdParties/urn:decentraland:matic:collections-thirdparty:fresh",
+    "query": {},
+    "headers": {
+      "x-identity-auth-chain-0": "{\"type\":\"SIGNER\",\"payload\":\"0xcd6884d4258edc833f31ac773e24affe6a7d3154\",\"signature\":\"\"}",
+      "x-identity-auth-chain-1": "{\"type\":\"ECDSA_EPHEMERAL\",\"payload\":\"Decentraland Login\\nEphemeral address: 0x69455f42De452C9B6425b41cC3a24d4BAADa6e0b\\nExpiration: 2026-01-01T01:00:00.000Z\",\"signature\":\"0xe05d23ed680bbb5276dda6c8326e083b07776128b856b5fa8a3e21bb47a9c4117a5131a2c3677da49f6db82b3dd5addef76231a5c6137042c88c069c03d42d651c\"}",
+      "x-identity-auth-chain-2": "{\"type\":\"ECDSA_SIGNED_ENTITY\",\"payload\":\"delete:/v1/thirdparties/urn:decentraland:matic:collections-thirdparty:fresh:1767225600000:{}\",\"signature\":\"0xdecadcb696cd90eff03ecf1bc670eaaf7fcb06f1fded556d8344ff1d082be1d20d3f5026862eb271d7e9c5808ac15a92a67aff7ddf673165498543e72362fce61b\"}",
+      "x-identity-metadata": "{}",
+      "x-identity-timestamp": "1767225600000"
+    },
+    "body": null
+  },
+  "response": {
+    "status": 400,
+    "headers": {
+      "content-type": "application/json; charset=utf-8"
+    },
+    "body_json": {
+      "ok": false,
+      "data": {
+        "id": "urn:decentraland:matic:collections-thirdparty:fresh"
+      },
+      "error": "The Third Party can only be deleted if it's already on the graph."
+    }
+  },
+  "captured_from": "github.com/decentraland/builder-server@98897af692f26063a088aebb2ea5bb3f683168a2",
+  "captured_at": "2026-01-01T00:00:00.000Z",
+  "volatile_paths": []
+}

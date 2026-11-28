@@ -1,0 +1,44 @@
+{
+  "description": "GET /addresses unsigned, with no filter. Recorded from github.com/decentraland/builder-server at 98897af by tooling/builder-server-capture.cjs.",
+  "request": {
+    "method": "GET",
+    "path": "/v1/addresses",
+    "query": {},
+    "headers": {},
+    "body": null
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "content-type": "application/json; charset=utf-8",
+      "cache-control": "public,max-age=300,s-maxage=300"
+    },
+    "body_json": {
+      "ok": true,
+      "data": [
+        "0xbca4b1cdd2a8900aad647625a4cbc57e6c1b7dc8",
+        "0x969194d18107025936324ddc6b1019a6755c94d5",
+        "0xb90cbc1a3e89cbcda1d4ecdd5738ef82810ee0a6",
+        "0x5eed000000000000000000000000000000000006",
+        "0x5eed000000000000000000000000000000000007",
+        "0xb56ca312627329449385995cb0b5c66f40a7c537",
+        "0x7b4558a5750dacde4b789fcfdf9124edb55166ba",
+        "0x3b48497b2c5bc4087e125a3a37f762adfb542eb6",
+        "0x5eed000000000000000000000000000000000101",
+        "0x5eed000000000000000000000000000000000102",
+        "0x5eed000000000000000000000000000000000103",
+        "0x5eed000000000000000000000000000000000104",
+        "0x5eed000000000000000000000000000000000106",
+        "0x084ebbbfe64ae44780df45d438f014e516608b8e",
+        "0x5eed000000000000000000000000000000000301",
+        "0x5eed000000000000000000000000000000000302",
+        "0x5eed000000000000000000000000000000000303",
+        "0x5eed000000000000000000000000000000000305",
+        "0x5eed000000000000000000000000000000000401"
+      ]
+    }
+  },
+  "captured_from": "github.com/decentraland/builder-server@98897af692f26063a088aebb2ea5bb3f683168a2",
+  "captured_at": "2026-01-01T00:00:00.000Z",
+  "volatile_paths": []
+}

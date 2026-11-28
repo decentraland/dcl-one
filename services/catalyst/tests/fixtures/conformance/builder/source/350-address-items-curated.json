@@ -1,0 +1,138 @@
+{
+  "description": "GET /{address}/items signed by that address, the owner of curated third-party items. Recorded from github.com/decentraland/builder-server at 98897af by tooling/builder-server-capture.cjs.",
+  "request": {
+    "method": "GET",
+    "path": "/v1/0x043b83d2010ee75cc3c0419348327eb9c6da7268/items",
+    "query": {},
+    "headers": {
+      "x-identity-auth-chain-0": "{\"type\":\"SIGNER\",\"payload\":\"0x043b83d2010ee75cc3c0419348327eb9c6da7268\",\"signature\":\"\"}",
+      "x-identity-auth-chain-1": "{\"type\":\"ECDSA_EPHEMERAL\",\"payload\":\"Decentraland Login\\nEphemeral address: 0xfd3efBfd7fF753cB02E909B91b8b62a673aA9D36\\nExpiration: 2026-01-01T01:00:00.000Z\",\"signature\":\"0xfe7da076b1510c181170fb16a988dc6081749e89ebf6f9da35827f4b7e87cfe6473713f3096a20c91f047746a979886b76e387be5450438373b7d488c05d52d01b\"}",
+      "x-identity-auth-chain-2": "{\"type\":\"ECDSA_SIGNED_ENTITY\",\"payload\":\"get:/v1/0x043b83d2010ee75cc3c0419348327eb9c6da7268/items:1767225600000:{}\",\"signature\":\"0xc7cac51df5599ae3113e2addfca669205caad8cb2f0f90b07eb682c384412ef96b30e0c92387a80ef04df12a0813d3d2fefd4a604db595f2b92e86d941bc7be11b\"}",
+      "x-identity-metadata": "{}",
+      "x-identity-timestamp": "1767225600000"
+    },
+    "body": null
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "content-type": "application/json; charset=utf-8"
+    },
+    "body_json": {
+      "ok": true,
+      "data": [
+        {
+          "id": "c011ec71-0000-4000-8000-0000000004a1",
+          "name": "Curated cap",
+          "description": null,
+          "eth_address": "0x043b83d2010ee75cc3c0419348327eb9c6da7268",
+          "collection_id": "c011ec71-0000-4000-8000-000000000402",
+          "blockchain_item_id": "cap-1",
+          "price": "0",
+          "beneficiary": "0x0000000000000000000000000000000000000000",
+          "rarity": null,
+          "type": "wearable",
+          "data": {
+            "category": "hat",
+            "hides": [],
+            "replaces": [],
+            "representations": [],
+            "tags": []
+          },
+          "created_at": "2025-12-20T00:00:00.000Z",
+          "updated_at": "2025-12-20T00:00:00.000Z",
+          "metrics": {},
+          "thumbnail": "thumbnail.png",
+          "contents": {},
+          "total_supply": 0,
+          "local_content_hash": "58a676c64c6c0010d9508e3dee5fb677bd576ecd2cb3a7a575b506e4011546ce",
+          "video": null,
+          "utility": null,
+          "mappings": null,
+          "urn": "urn:decentraland:matic:collections-thirdparty:curated:curated-wearables:cap-1",
+          "in_catalyst": true,
+          "is_approved": true,
+          "is_published": true,
+          "content_hash": null,
+          "catalyst_content_hash": "1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c",
+          "isMappingComplete": true
+        },
+        {
+          "id": "c011ec71-0000-4000-8000-0000000004a2",
+          "name": "Curated helmet",
+          "description": null,
+          "eth_address": "0x043b83d2010ee75cc3c0419348327eb9c6da7268",
+          "collection_id": "c011ec71-0000-4000-8000-000000000402",
+          "blockchain_item_id": "helmet-2",
+          "price": "0",
+          "beneficiary": "0x0000000000000000000000000000000000000000",
+          "rarity": null,
+          "type": "wearable",
+          "data": {
+            "category": "hat",
+            "hides": [],
+            "replaces": [],
+            "representations": [],
+            "tags": []
+          },
+          "created_at": "2025-12-20T00:00:00.000Z",
+          "updated_at": "2025-12-20T00:00:00.000Z",
+          "metrics": {},
+          "thumbnail": "thumbnail.png",
+          "contents": {},
+          "total_supply": 0,
+          "local_content_hash": "ff3aa92c422bb9b16117152e435263cf070822e175c9647c83ceca46d8b9919b",
+          "video": null,
+          "utility": null,
+          "mappings": null,
+          "urn": "urn:decentraland:matic:collections-thirdparty:curated:curated-wearables:helmet-2",
+          "in_catalyst": false,
+          "is_approved": false,
+          "is_published": true,
+          "content_hash": null,
+          "catalyst_content_hash": null,
+          "isMappingComplete": false
+        },
+        {
+          "id": "c011ec71-0000-4000-8000-0000000004a3",
+          "name": "Uncurated mask",
+          "description": null,
+          "eth_address": "0x043b83d2010ee75cc3c0419348327eb9c6da7268",
+          "collection_id": "c011ec71-0000-4000-8000-000000000402",
+          "blockchain_item_id": "mask-3",
+          "price": "0",
+          "beneficiary": "0x0000000000000000000000000000000000000000",
+          "rarity": null,
+          "type": "wearable",
+          "data": {
+            "category": "hat",
+            "hides": [],
+            "replaces": [],
+            "representations": [],
+            "tags": []
+          },
+          "created_at": "2025-12-20T00:00:00.000Z",
+          "updated_at": "2025-12-20T00:00:00.000Z",
+          "metrics": {},
+          "thumbnail": "thumbnail.png",
+          "contents": {},
+          "total_supply": 0,
+          "local_content_hash": "7e8f778897f448ea9eb00d252ebf7a052e611f0f440e37d6675a0d477d258950",
+          "video": null,
+          "utility": null,
+          "mappings": null,
+          "urn": "urn:decentraland:matic:collections-thirdparty:curated:curated-wearables:mask-3",
+          "in_catalyst": true,
+          "is_approved": true,
+          "is_published": true,
+          "content_hash": null,
+          "catalyst_content_hash": "3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a",
+          "isMappingComplete": false
+        }
+      ]
+    }
+  },
+  "captured_from": "github.com/decentraland/builder-server@98897af692f26063a088aebb2ea5bb3f683168a2",
+  "captured_at": "2026-01-01T00:00:00.000Z",
+  "volatile_paths": []
+}

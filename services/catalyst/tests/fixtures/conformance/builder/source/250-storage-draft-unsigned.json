@@ -1,0 +1,22 @@
+{
+  "description": "GET /storage/contents/{hash} unsigned, the model only an item with no collection names. Recorded from github.com/decentraland/builder-server at 98897af by tooling/builder-server-capture.cjs.",
+  "request": {
+    "method": "GET",
+    "path": "/v1/storage/contents/bafkreigtbcabv6bu27zstecfipauq63zdag7z3qmjbku3cfytp4cykvkka",
+    "query": {},
+    "headers": {},
+    "body": null
+  },
+  "response": {
+    "status": 301,
+    "headers": {
+      "content-type": "text/plain; charset=utf-8",
+      "cache-control": "public,max-age=31536000,immutable",
+      "location": "https://s3.example/conformance/contents/bafkreigtbcabv6bu27zstecfipauq63zdag7z3qmjbku3cfytp4cykvkka"
+    },
+    "body_bytes_b64": "TW92ZWQgUGVybWFuZW50bHkuIFJlZGlyZWN0aW5nIHRvIGh0dHBzOi8vczMuZXhhbXBsZS9jb25mb3JtYW5jZS9jb250ZW50cy9iYWZrcmVpZ3RiY2FidjZidTI3enN0ZWNmaXBhdXE2M3pkYWc3ejNxbWpia3UzY2Z5dHA0Y3lrdmtrYQ=="
+  },
+  "captured_from": "github.com/decentraland/builder-server@98897af692f26063a088aebb2ea5bb3f683168a2",
+  "captured_at": "2026-01-01T00:00:00.000Z",
+  "volatile_paths": []
+}

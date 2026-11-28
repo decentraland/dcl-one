@@ -1,0 +1,73 @@
+{
+  "description": "GET /thirdParties signed by a manager the registry lists for two approved providers and an unapproved one whose virtual third party lists another wallet. Recorded from github.com/decentraland/builder-server at 98897af by tooling/builder-server-capture.cjs.",
+  "request": {
+    "method": "GET",
+    "path": "/v1/thirdParties",
+    "query": {},
+    "headers": {
+      "x-identity-auth-chain-0": "{\"type\":\"SIGNER\",\"payload\":\"0x1257bf35fafebbfc08ea47903e1f7c36ecda48c0\",\"signature\":\"\"}",
+      "x-identity-auth-chain-1": "{\"type\":\"ECDSA_EPHEMERAL\",\"payload\":\"Decentraland Login\\nEphemeral address: 0x5672Df71369356f13Ae7E2bC6B530c65C0864Ccd\\nExpiration: 2026-01-01T01:00:00.000Z\",\"signature\":\"0x2e24a6d9762021b78f11900935ea35c5bfade2266b1e0398f97bacd9618abb95234c3261558ae7813c47ddb69c7cb08e4c553bbef76ab317e740d438c96773d41b\"}",
+      "x-identity-auth-chain-2": "{\"type\":\"ECDSA_SIGNED_ENTITY\",\"payload\":\"get:/v1/thirdparties:1767225600000:{}\",\"signature\":\"0x221bd2be9c16b9f2451c7d69b5ccfba90858786367b70cb7ac1db60080b1c66553f813f1271bd80dfb136fc1f84bbcbab7e9d3707cf6d0ecb5ad913a9143a1421b\"}",
+      "x-identity-metadata": "{}",
+      "x-identity-timestamp": "1767225600000"
+    },
+    "body": null
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "content-type": "application/json; charset=utf-8"
+    },
+    "body_json": {
+      "ok": true,
+      "data": [
+        {
+          "id": "urn:decentraland:matic:collections-thirdparty:programmatic",
+          "root": null,
+          "managers": [
+            "0x1257bf35fafebbfc08ea47903e1f7c36ecda48c0"
+          ],
+          "maxItems": "100",
+          "isApproved": true,
+          "isProgrammatic": true,
+          "name": "Programmatic provider",
+          "description": "",
+          "contracts": [],
+          "published": true
+        },
+        {
+          "id": "urn:decentraland:matic:collections-thirdparty:registered",
+          "root": null,
+          "managers": [
+            "0x1257bf35fafebbfc08ea47903e1f7c36ecda48c0",
+            "0xc1eba15006e9d7f629bcad7a7dd41285f012b949"
+          ],
+          "maxItems": "100",
+          "isApproved": true,
+          "isProgrammatic": false,
+          "name": "Registered provider",
+          "description": "",
+          "contracts": [],
+          "published": true
+        },
+        {
+          "id": "urn:decentraland:matic:collections-thirdparty:scarce",
+          "root": null,
+          "managers": [
+            "0x1257bf35fafebbfc08ea47903e1f7c36ecda48c0"
+          ],
+          "maxItems": "1",
+          "isApproved": true,
+          "isProgrammatic": false,
+          "name": "Scarce provider",
+          "description": "",
+          "contracts": [],
+          "published": true
+        }
+      ]
+    }
+  },
+  "captured_from": "github.com/decentraland/builder-server@98897af692f26063a088aebb2ea5bb3f683168a2",
+  "captured_at": "2026-01-01T00:00:00.000Z",
+  "volatile_paths": []
+}

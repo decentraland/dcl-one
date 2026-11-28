@@ -1,0 +1,47 @@
+{
+  "description": "POST /items/{id}/curation signed by the provider's manager, an item whose newest curation is approved: a new pending curation. Recorded from github.com/decentraland/builder-server at 98897af by tooling/builder-server-capture.cjs.",
+  "request": {
+    "method": "POST",
+    "path": "/v1/items/c011ec71-0000-4000-8000-0000000004a2/curation",
+    "query": {},
+    "headers": {
+      "x-identity-auth-chain-0": "{\"type\":\"SIGNER\",\"payload\":\"0x043b83d2010ee75cc3c0419348327eb9c6da7268\",\"signature\":\"\"}",
+      "x-identity-auth-chain-1": "{\"type\":\"ECDSA_EPHEMERAL\",\"payload\":\"Decentraland Login\\nEphemeral address: 0xfd3efBfd7fF753cB02E909B91b8b62a673aA9D36\\nExpiration: 2026-01-01T01:00:00.000Z\",\"signature\":\"0xfe7da076b1510c181170fb16a988dc6081749e89ebf6f9da35827f4b7e87cfe6473713f3096a20c91f047746a979886b76e387be5450438373b7d488c05d52d01b\"}",
+      "x-identity-auth-chain-2": "{\"type\":\"ECDSA_SIGNED_ENTITY\",\"payload\":\"post:/v1/items/c011ec71-0000-4000-8000-0000000004a2/curation:1767225600000:{}\",\"signature\":\"0x448aebf818ddc608c9a66348154a5a25ff36082cdb6457224f686e1c3b67686a0175aa421905cd5073302531dc4a04074adc46b137a64744e690a84cab2d45f61b\"}",
+      "x-identity-metadata": "{}",
+      "x-identity-timestamp": "1767225600000"
+    },
+    "body": null
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "content-type": "application/json; charset=utf-8"
+    },
+    "body_json": {
+      "ok": true,
+      "data": {
+        "id": "<<VOLATILE>>",
+        "status": "pending",
+        "created_at": "<<VOLATILE>>",
+        "updated_at": "<<VOLATILE>>",
+        "item_id": "c011ec71-0000-4000-8000-0000000004a2",
+        "content_hash": "ff3aa92c422bb9b16117152e435263cf070822e175c9647c83ceca46d8b9919b",
+        "is_mapping_complete": false
+      }
+    }
+  },
+  "captured_from": "github.com/decentraland/builder-server@98897af692f26063a088aebb2ea5bb3f683168a2",
+  "captured_at": "2026-01-01T00:00:00.000Z",
+  "volatile_paths": [
+    "data.id",
+    "data.created_at",
+    "data.updated_at"
+  ],
+  "volatile_equal": [
+    [
+      "data.created_at",
+      "data.updated_at"
+    ]
+  ]
+}

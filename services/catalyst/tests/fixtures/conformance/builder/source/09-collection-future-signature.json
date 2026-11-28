@@ -1,0 +1,36 @@
+{
+  "description": "GET /collections/{id} signed by the owner 40 minutes after the request. Recorded from github.com/decentraland/builder-server at 98897af by tooling/builder-server-capture.cjs.",
+  "request": {
+    "method": "GET",
+    "path": "/v1/collections/c011ec71-0000-4000-8000-000000000001",
+    "query": {},
+    "headers": {
+      "x-identity-auth-chain-0": "{\"type\":\"SIGNER\",\"payload\":\"0xc1aba94a79ca07d9d15a62ff5c9b382777e0c70e\",\"signature\":\"\"}",
+      "x-identity-auth-chain-1": "{\"type\":\"ECDSA_EPHEMERAL\",\"payload\":\"Decentraland Login\\nEphemeral address: 0xCe07842D186368A1aE9897DD7290156A29CD3406\\nExpiration: 2026-01-01T01:00:00.000Z\",\"signature\":\"0x22ad22410544a70b1d27a532e621d93be0a59fb1220fb4d0ae089f4e56d3859c3b90b2ef4535210201488305d04289e47fca8040e79a2d0161139e09bba7fba01b\"}",
+      "x-identity-auth-chain-2": "{\"type\":\"ECDSA_SIGNED_ENTITY\",\"payload\":\"get:/v1/collections/c011ec71-0000-4000-8000-000000000001:1767228000000:{}\",\"signature\":\"0x0967f7fed2edc1af4fa7eb86798ce50a07f6c3379eefbd65d785e0bbd81bbcd43b840e7c290e6acf9d93022879da41738122aceae14d2d03759901f3f674eced1c\"}",
+      "x-identity-metadata": "{}",
+      "x-identity-timestamp": "1767228000000"
+    },
+    "body": null
+  },
+  "response": {
+    "status": 401,
+    "headers": {
+      "content-type": "application/json; charset=utf-8"
+    },
+    "body_json": {
+      "ok": false,
+      "data": {
+        "message": "\"verify\" method failed with error: Signature timestamp is too far in the future: signature timestamp: 1767228000000, local timestamp: 1767225600000. \"validateSignature\" method failed with error: ERROR: Invalid final authority. Expected: get:/collections/c011ec71-0000-4000-8000-000000000001. Current get:/v1/collections/c011ec71-0000-4000-8000-000000000001:1767228000000:{}."
+      },
+      "error": "Unauthenticated"
+    }
+  },
+  "captured_from": "github.com/decentraland/builder-server@98897af692f26063a088aebb2ea5bb3f683168a2",
+  "captured_at": "2026-01-01T00:00:00.000Z",
+  "volatile_paths": [],
+  "sign": {
+    "offset": 2400000,
+    "metadata": "{}"
+  }
+}

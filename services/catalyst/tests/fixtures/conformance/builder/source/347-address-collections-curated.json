@@ -1,0 +1,79 @@
+{
+  "description": "GET /{address}/collections signed by that address, owner of a curated collection and manager of a provider with a curated collection. Recorded from github.com/decentraland/builder-server at 98897af by tooling/builder-server-capture.cjs.",
+  "request": {
+    "method": "GET",
+    "path": "/v1/0x043b83d2010ee75cc3c0419348327eb9c6da7268/collections",
+    "query": {},
+    "headers": {
+      "x-identity-auth-chain-0": "{\"type\":\"SIGNER\",\"payload\":\"0x043b83d2010ee75cc3c0419348327eb9c6da7268\",\"signature\":\"\"}",
+      "x-identity-auth-chain-1": "{\"type\":\"ECDSA_EPHEMERAL\",\"payload\":\"Decentraland Login\\nEphemeral address: 0xfd3efBfd7fF753cB02E909B91b8b62a673aA9D36\\nExpiration: 2026-01-01T01:00:00.000Z\",\"signature\":\"0xfe7da076b1510c181170fb16a988dc6081749e89ebf6f9da35827f4b7e87cfe6473713f3096a20c91f047746a979886b76e387be5450438373b7d488c05d52d01b\"}",
+      "x-identity-auth-chain-2": "{\"type\":\"ECDSA_SIGNED_ENTITY\",\"payload\":\"get:/v1/0x043b83d2010ee75cc3c0419348327eb9c6da7268/collections:1767225600000:{}\",\"signature\":\"0xc002b5a8799496fdf36809b83821d9cb9d700b978e46012a04adde8413bd5b9407924d0d19ad449627f516a27cd7184043d0fe5ffe9cc91d7e4e10f072ccdb571b\"}",
+      "x-identity-metadata": "{}",
+      "x-identity-timestamp": "1767225600000"
+    },
+    "body": null
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "content-type": "application/json; charset=utf-8"
+    },
+    "body_json": {
+      "ok": true,
+      "data": [
+        {
+          "id": "c011ec71-0000-4000-8000-000000000401",
+          "name": "Forum hats",
+          "eth_address": "0x043b83d2010ee75cc3c0419348327eb9c6da7268",
+          "salt": "0x4014014014014014014014014014014014014014014014010000000000000000",
+          "contract_address": "0x5eed000000000000000000000000000000000401",
+          "is_published": true,
+          "created_at": "2025-12-20T00:00:00.000Z",
+          "updated_at": "2025-12-20T00:00:00.000Z",
+          "managers": [],
+          "minters": [],
+          "is_approved": false,
+          "reviewed_at": "1970-01-01T00:00:00.000Z",
+          "forum_link": "https://forum.example.org/t/forum-hats/401",
+          "lock": null,
+          "forum_id": 401,
+          "linked_contract_address": null,
+          "linked_contract_network": null,
+          "curation_status": "pending",
+          "last_activity_at": "2025-12-24T00:00:00.000Z",
+          "item_count": "0",
+          "is_mapping_complete": true,
+          "urn": "urn:decentraland:matic:collections-v2:0x5eed000000000000000000000000000000000401"
+        },
+        {
+          "id": "c011ec71-0000-4000-8000-000000000402",
+          "name": "Curated wearables",
+          "eth_address": "",
+          "salt": "0x4024024024024024024024024024024024024024024024020000000000000000",
+          "contract_address": null,
+          "is_published": true,
+          "created_at": "2025-12-21T00:00:00.000Z",
+          "updated_at": "2025-12-21T06:00:00.000Z",
+          "managers": [],
+          "minters": [],
+          "is_approved": false,
+          "reviewed_at": "2025-12-21T06:00:00.000Z",
+          "forum_link": null,
+          "lock": null,
+          "forum_id": null,
+          "linked_contract_address": null,
+          "linked_contract_network": null,
+          "curation_status": "approved",
+          "last_activity_at": "2025-12-24T02:00:00.000Z",
+          "item_count": "3",
+          "is_mapping_complete": false,
+          "is_programmatic": false,
+          "urn": "urn:decentraland:matic:collections-thirdparty:curated:curated-wearables"
+        }
+      ]
+    }
+  },
+  "captured_from": "github.com/decentraland/builder-server@98897af692f26063a088aebb2ea5bb3f683168a2",
+  "captured_at": "2026-01-01T00:00:00.000Z",
+  "volatile_paths": []
+}

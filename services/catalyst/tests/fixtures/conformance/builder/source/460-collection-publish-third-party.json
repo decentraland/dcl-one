@@ -1,0 +1,195 @@
+{
+  "description": "POST /collections/{id}/publish of a third-party collection signed by its provider's manager naming two items with the cheque it signed. Recorded from github.com/decentraland/builder-server at 98897af by tooling/builder-server-capture.cjs.",
+  "request": {
+    "method": "POST",
+    "path": "/v1/collections/c011ec71-0000-4000-8000-000000000403/publish",
+    "query": {},
+    "headers": {
+      "content-type": "application/json",
+      "x-identity-auth-chain-0": "{\"type\":\"SIGNER\",\"payload\":\"0x1257bf35fafebbfc08ea47903e1f7c36ecda48c0\",\"signature\":\"\"}",
+      "x-identity-auth-chain-1": "{\"type\":\"ECDSA_EPHEMERAL\",\"payload\":\"Decentraland Login\\nEphemeral address: 0x5672Df71369356f13Ae7E2bC6B530c65C0864Ccd\\nExpiration: 2026-01-01T01:00:00.000Z\",\"signature\":\"0x2e24a6d9762021b78f11900935ea35c5bfade2266b1e0398f97bacd9618abb95234c3261558ae7813c47ddb69c7cb08e4c553bbef76ab317e740d438c96773d41b\"}",
+      "x-identity-auth-chain-2": "{\"type\":\"ECDSA_SIGNED_ENTITY\",\"payload\":\"post:/v1/collections/c011ec71-0000-4000-8000-000000000403/publish:1767225600000:{}\",\"signature\":\"0xe3e9b5ac71e99c193a3e54eae6ea11b61d552f1915eec7416466f4abf78f58901775143e29df9f25a1f3a4f4a9fbbef4c812c340f8f308e13d08ada184477bc61c\"}",
+      "x-identity-metadata": "{}",
+      "x-identity-timestamp": "1767225600000"
+    },
+    "body": {
+      "itemIds": [
+        "c011ec71-0000-4000-8000-0000000004b1",
+        "c011ec71-0000-4000-8000-0000000004b2"
+      ],
+      "cheque": {
+        "qty": 2,
+        "salt": "0xb0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0",
+        "signature": "0xbc6cc5344586ffcb8387999014e0be2fbee3740d306f6c0ab86530e15d3ba04a29289b1e6ebf91c60070afb2b6eda12e013a983de098dfae800ee3c282345d6b1b"
+      }
+    }
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "content-type": "application/json; charset=utf-8"
+    },
+    "body_json": {
+      "ok": true,
+      "data": {
+        "collection": {
+          "id": "c011ec71-0000-4000-8000-000000000403",
+          "name": "Publishable wearables",
+          "eth_address": "",
+          "salt": "0x4034034034034034034034034034034034034034034034030000000000000000",
+          "contract_address": null,
+          "is_published": true,
+          "created_at": "<<VOLATILE>>",
+          "updated_at": "<<VOLATILE>>",
+          "managers": [],
+          "minters": [],
+          "is_approved": false,
+          "reviewed_at": "<<VOLATILE>>",
+          "forum_link": null,
+          "lock": null,
+          "forum_id": null,
+          "linked_contract_address": null,
+          "linked_contract_network": null,
+          "is_mapping_complete": false,
+          "item_count": "2",
+          "urn": "urn:decentraland:matic:collections-thirdparty:registered:publishable"
+        },
+        "items": [
+          {
+            "id": "c011ec71-0000-4000-8000-0000000004b1",
+            "name": "Publishable hat",
+            "description": null,
+            "eth_address": "0x1257bf35fafebbfc08ea47903e1f7c36ecda48c0",
+            "collection_id": "c011ec71-0000-4000-8000-000000000403",
+            "blockchain_item_id": "hat-1",
+            "price": "0",
+            "beneficiary": "0x0000000000000000000000000000000000000000",
+            "rarity": null,
+            "type": "wearable",
+            "data": {
+              "category": "hat",
+              "hides": [],
+              "replaces": [],
+              "representations": [],
+              "tags": []
+            },
+            "created_at": "2025-12-23T00:00:00.000Z",
+            "updated_at": "2025-12-23T00:00:00.000Z",
+            "metrics": {},
+            "thumbnail": "thumbnail.png",
+            "contents": {},
+            "total_supply": 0,
+            "local_content_hash": "b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1",
+            "video": null,
+            "utility": null,
+            "mappings": null,
+            "urn": "urn:decentraland:matic:collections-thirdparty:registered:publishable:hat-1",
+            "in_catalyst": false,
+            "is_approved": false,
+            "is_published": true,
+            "content_hash": null,
+            "catalyst_content_hash": null,
+            "isMappingComplete": false
+          },
+          {
+            "id": "c011ec71-0000-4000-8000-0000000004b2",
+            "name": "Publishable cap",
+            "description": null,
+            "eth_address": "0x1257bf35fafebbfc08ea47903e1f7c36ecda48c0",
+            "collection_id": "c011ec71-0000-4000-8000-000000000403",
+            "blockchain_item_id": "cap-2",
+            "price": "0",
+            "beneficiary": "0x0000000000000000000000000000000000000000",
+            "rarity": null,
+            "type": "wearable",
+            "data": {
+              "category": "hat",
+              "hides": [],
+              "replaces": [],
+              "representations": [],
+              "tags": []
+            },
+            "created_at": "2025-12-23T00:00:00.000Z",
+            "updated_at": "2025-12-23T00:00:00.000Z",
+            "metrics": {},
+            "thumbnail": "thumbnail.png",
+            "contents": {},
+            "total_supply": 0,
+            "local_content_hash": "b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2",
+            "video": null,
+            "utility": null,
+            "mappings": null,
+            "urn": "urn:decentraland:matic:collections-thirdparty:registered:publishable:cap-2",
+            "in_catalyst": false,
+            "is_approved": false,
+            "is_published": true,
+            "content_hash": null,
+            "catalyst_content_hash": null,
+            "isMappingComplete": false
+          }
+        ],
+        "itemCurations": [
+          {
+            "id": "<<VOLATILE>>",
+            "item_id": "c011ec71-0000-4000-8000-0000000004b1",
+            "status": "pending",
+            "content_hash": "b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1",
+            "created_at": "<<VOLATILE>>",
+            "updated_at": "<<VOLATILE>>",
+            "is_mapping_complete": false
+          },
+          {
+            "id": "<<VOLATILE>>",
+            "item_id": "c011ec71-0000-4000-8000-0000000004b2",
+            "status": "pending",
+            "content_hash": "b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2",
+            "created_at": "<<VOLATILE>>",
+            "updated_at": "<<VOLATILE>>",
+            "is_mapping_complete": false
+          }
+        ]
+      }
+    }
+  },
+  "captured_from": "github.com/decentraland/builder-server@98897af692f26063a088aebb2ea5bb3f683168a2",
+  "captured_at": "2026-01-01T00:00:00.000Z",
+  "volatile_paths": [
+    "data.collection.created_at",
+    "data.collection.updated_at",
+    "data.collection.reviewed_at",
+    "data.itemCurations.id",
+    "data.itemCurations.created_at",
+    "data.itemCurations.updated_at"
+  ],
+  "volatile_equal": [
+    [
+      "data.collection.created_at",
+      "data.collection.updated_at",
+      "data.collection.reviewed_at"
+    ],
+    [
+      "data.itemCurations.created_at",
+      "data.itemCurations.updated_at"
+    ]
+  ],
+  "slack": [
+    {
+      "channel": "curation-example",
+      "text": "📦 New Third Party items ready for review: <https://creators.example.org/collections/editor?collection=c011ec71-0000-4000-8000-000000000403&reviewing=true|Publishable wearables> by <https://creators.example.org/shop/items/creator/0x1257bf35fafebbfc08ea47903e1f7c36ecda48c0|0x1257...48c0> (2 items).",
+      "unfurl_links": false,
+      "unfurl_media": false
+    }
+  ],
+  "forum": [
+    {
+      "method": "POST",
+      "path": "/posts.json",
+      "username": null,
+      "body": {
+        "title": "Third Party collection Publishable wearables with URN: urn:decentraland:matic:collections-thirdparty:registered",
+        "raw": "# Publishable wearables\n\n  [View entire collection](https://creators.example.org/collections/editor?collection=c011ec71-0000-4000-8000-000000000403&reviewing=true)\n\n  ## Wearables\n\n  **Publishable hat**\n      - Category: hat\n      ![](https://builder-api.example.org/v1/storage/contents/)\n      [Link to editor](https://creators.example.org/collections/editor?collection=c011ec71-0000-4000-8000-000000000403&item=c011ec71-0000-4000-8000-0000000004b1&reviewing=true)\n\n**Publishable cap**\n      - Category: hat\n      ![](https://builder-api.example.org/v1/storage/contents/)\n      [Link to editor](https://creators.example.org/collections/editor?collection=c011ec71-0000-4000-8000-000000000403&item=c011ec71-0000-4000-8000-0000000004b2&reviewing=true)",
+        "category": "12"
+      }
+    }
+  ]
+}

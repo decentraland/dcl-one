@@ -1,0 +1,33 @@
+{
+  "description": "DELETE /items/{id} signed by the provider's manager, a curated third-party item. Recorded from github.com/decentraland/builder-server at 98897af by tooling/builder-server-capture.cjs.",
+  "request": {
+    "method": "DELETE",
+    "path": "/v1/items/c011ec71-0000-4000-8000-0000000004a1",
+    "query": {},
+    "headers": {
+      "x-identity-auth-chain-0": "{\"type\":\"SIGNER\",\"payload\":\"0x043b83d2010ee75cc3c0419348327eb9c6da7268\",\"signature\":\"\"}",
+      "x-identity-auth-chain-1": "{\"type\":\"ECDSA_EPHEMERAL\",\"payload\":\"Decentraland Login\\nEphemeral address: 0xfd3efBfd7fF753cB02E909B91b8b62a673aA9D36\\nExpiration: 2026-01-01T01:00:00.000Z\",\"signature\":\"0xfe7da076b1510c181170fb16a988dc6081749e89ebf6f9da35827f4b7e87cfe6473713f3096a20c91f047746a979886b76e387be5450438373b7d488c05d52d01b\"}",
+      "x-identity-auth-chain-2": "{\"type\":\"ECDSA_SIGNED_ENTITY\",\"payload\":\"delete:/v1/items/c011ec71-0000-4000-8000-0000000004a1:1767225600000:{}\",\"signature\":\"0x4a121bd34970cdc5548a83de61a5faca2310159f74a4d9e21015925e48fe21c74094b24fbe8faed1f59e7f68add3f876f5f0ccf36283a009026bf5b6ce2429a31b\"}",
+      "x-identity-metadata": "{}",
+      "x-identity-timestamp": "1767225600000"
+    },
+    "body": null
+  },
+  "response": {
+    "status": 409,
+    "headers": {
+      "content-type": "application/json; charset=utf-8"
+    },
+    "body_json": {
+      "ok": false,
+      "data": {
+        "id": "c011ec71-0000-4000-8000-0000000004a1",
+        "urn": "urn:decentraland:matic:collections-thirdparty:curated:curated-wearables:cap-1"
+      },
+      "error": "The third party item is already published. It can't be deleted."
+    }
+  },
+  "captured_from": "github.com/decentraland/builder-server@98897af692f26063a088aebb2ea5bb3f683168a2",
+  "captured_at": "2026-01-01T00:00:00.000Z",
+  "volatile_paths": []
+}

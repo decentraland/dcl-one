@@ -1,0 +1,22 @@
+{
+  "description": "HEAD /storage/contents/{hash} unsigned, the model a minted item names. Recorded from github.com/decentraland/builder-server at 98897af by tooling/builder-server-capture.cjs.",
+  "request": {
+    "method": "HEAD",
+    "path": "/v1/storage/contents/bafkreigl2ikuvlnqi45jrzwowmv4uqdjd6oopfwal3usjqi5fiiwm4yqei",
+    "query": {},
+    "headers": {},
+    "body": null
+  },
+  "response": {
+    "status": 301,
+    "headers": {
+      "content-type": "text/plain; charset=utf-8",
+      "cache-control": "public,max-age=31536000,immutable",
+      "location": "https://s3.example/conformance/contents/bafkreigl2ikuvlnqi45jrzwowmv4uqdjd6oopfwal3usjqi5fiiwm4yqei"
+    },
+    "body_bytes_b64": ""
+  },
+  "captured_from": "github.com/decentraland/builder-server@98897af692f26063a088aebb2ea5bb3f683168a2",
+  "captured_at": "2026-01-01T00:00:00.000Z",
+  "volatile_paths": []
+}

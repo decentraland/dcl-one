@@ -1,0 +1,34 @@
+{
+  "description": "POST /collections/{id}/validations signed by the creator wallet, which has no role on that collection, after 30 such requests within the minute, with the review flow off. Recorded from github.com/decentraland/builder-server at 98897af by tooling/builder-server-capture.cjs.",
+  "request": {
+    "method": "POST",
+    "path": "/v1/collections/c011ec71-0000-4000-8000-000000000302/validations",
+    "query": {},
+    "headers": {
+      "x-identity-auth-chain-0": "{\"type\":\"SIGNER\",\"payload\":\"0x05bb381a642d932037707c4a626f93fb009696b2\",\"signature\":\"\"}",
+      "x-identity-auth-chain-1": "{\"type\":\"ECDSA_EPHEMERAL\",\"payload\":\"Decentraland Login\\nEphemeral address: 0x422212cB25b99a75e4745bf88BEdc92E38fc28e7\\nExpiration: 2026-01-01T01:00:00.000Z\",\"signature\":\"0x20886dc7fab75a52aafd6dfbc2bdd4a222de3a11422cd16c65da707ab913e7c5067db0df5cf1de71e3541cc77fcbfebec9cf95a7e2677c4ee8a094ee2cc3e6c31c\"}",
+      "x-identity-auth-chain-2": "{\"type\":\"ECDSA_SIGNED_ENTITY\",\"payload\":\"post:/v1/collections/c011ec71-0000-4000-8000-000000000302/validations:1767225600000:{}\",\"signature\":\"0x4b1aa345b805f9f59593d506c00c4c256032b83306cd862df0d73a9bac3e3a8e396b49d33d43255d4e603fa89227f39bbe42460c73e780413376f7291ff2fbc11b\"}",
+      "x-identity-metadata": "{}",
+      "x-identity-timestamp": "1767225600000"
+    },
+    "body": null
+  },
+  "response": {
+    "status": 429,
+    "headers": {
+      "content-type": "application/json; charset=utf-8",
+      "retry-after": "60",
+      "ratelimit": "limit=30, remaining=0, reset=60",
+      "ratelimit-policy": "30;w=60"
+    },
+    "body_json": {
+      "ok": false,
+      "data": {},
+      "error": "Too many requests, try again in a minute"
+    }
+  },
+  "captured_from": "github.com/decentraland/builder-server@98897af692f26063a088aebb2ea5bb3f683168a2",
+  "captured_at": "2026-01-01T00:00:00.000Z",
+  "volatile_paths": [],
+  "repeat": 30
+}

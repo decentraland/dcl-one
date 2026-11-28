@@ -1,0 +1,43 @@
+{
+  "description": "POST /newsletter without a signature, an email and the source the sign-up sends. Recorded from github.com/decentraland/builder-server at 98897af by tooling/builder-server-capture.cjs.",
+  "request": {
+    "method": "POST",
+    "path": "/v1/newsletter",
+    "query": {},
+    "headers": {
+      "content-type": "application/json"
+    },
+    "body": {
+      "email": "jane.doe@example.com",
+      "source": "auth"
+    }
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "content-type": "application/json; charset=utf-8"
+    },
+    "body_json": {
+      "ok": true
+    }
+  },
+  "captured_from": "github.com/decentraland/builder-server@98897af692f26063a088aebb2ea5bb3f683168a2",
+  "captured_at": "2026-01-01T00:00:00.000Z",
+  "volatile_paths": [],
+  "newsletter": [
+    {
+      "method": "POST",
+      "path": "/v2/publications/pub-example/subscriptions",
+      "authorization": "Bearer example-newsletter-key",
+      "accept": "application/json",
+      "content_type": "application/json",
+      "body": {
+        "email": "jane.doe@example.com",
+        "reactivate_existing": true,
+        "send_welcome_email": false,
+        "utm_source": "auth",
+        "utm_medium": "organic"
+      }
+    }
+  ]
+}
