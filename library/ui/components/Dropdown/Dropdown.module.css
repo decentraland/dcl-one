@@ -201,6 +201,99 @@
     outline-offset: 0;
   }
 
+  /* Not in Figma: the dark variant, as decentraland.org's Places filters draw their category: a translucent
+     black field with pearl body/sm text and a filled caret, and under it a raised list of the field's width
+     with body/md rows, whose chosen option has a 16% ruby fill (28% while active) instead of a check. The list's
+     shadow and the 16% and 28% fills have no token. */
+  .root[data-variant='dark'] .control {
+    padding: 0 var(--dcl-space-12) 0 var(--dcl-space-16);
+    border-radius: var(--dcl-radius-sm);
+    background: var(--dcl-transparencies-black-40);
+    color: var(--dcl-neutrals-pearl);
+    font-weight: 400;
+    font-size: var(--dcl-font-size-body-sm);
+  }
+
+  @media (hover: hover) {
+    .root[data-variant='dark'] .control:hover:not(:disabled) {
+      background: var(--dcl-transparencies-black-60);
+    }
+  }
+
+  .root[data-variant='dark'] .value[data-placeholder] {
+    color: var(--dcl-text-secondary);
+  }
+
+  .caret {
+    flex: none;
+    width: 10px;
+    height: 5px;
+    fill: currentColor;
+  }
+
+  .control[aria-expanded='true'] .caret {
+    transform: rotate(180deg);
+  }
+
+  .root[data-variant='dark'] .list {
+    top: 100%;
+    width: 100%;
+    max-height: min(560px, 70vh);
+    padding: var(--dcl-space-8) 0;
+    border-radius: var(--dcl-radius-xs);
+    background: var(--dcl-neutrals-onix);
+    color: var(--dcl-neutrals-snow);
+    box-shadow:
+      0 5px 5px -3px rgb(0 0 0 / 20%),
+      0 8px 10px 1px rgb(0 0 0 / 14%),
+      0 3px 14px 2px rgb(0 0 0 / 12%);
+    scrollbar-color: var(--dcl-transparencies-white-20) transparent;
+  }
+
+  .root[data-variant='dark'] .list[data-side='top'] {
+    top: auto;
+    bottom: 100%;
+  }
+
+  .root[data-variant='dark'] .option {
+    min-height: 36px;
+    padding: 6px var(--dcl-space-16);
+    border-radius: 0;
+    font-weight: 400;
+    font-size: var(--dcl-font-size-body-md);
+    line-height: 1.5;
+  }
+
+  /* A finger gets the reference's 48px rows. */
+  @media (max-width: 767px), (pointer: coarse) {
+    .root[data-variant='dark'] .option {
+      min-height: 48px;
+    }
+  }
+
+  .root[data-variant='dark'] .option[data-active] {
+    background: var(--dcl-transparencies-white-10);
+  }
+
+  .root[data-variant='dark'] .option[aria-selected='true'] {
+    background: color-mix(in srgb, var(--dcl-brand-ruby) 16%, transparent);
+  }
+
+  .root[data-variant='dark'] .option[aria-selected='true'][data-active] {
+    background: color-mix(in srgb, var(--dcl-brand-ruby) 28%, transparent);
+  }
+
+  .root[data-variant='dark'] .check {
+    display: none;
+  }
+
+  /* Forced colours drop the ruby fill, so the dark list shows the check again. */
+  @media (forced-colors: active) {
+    .root[data-variant='dark'] .check {
+      display: block;
+    }
+  }
+
   /* Not in the design: the open help text, on the raised surface. */
   .bubble {
     composes: text626f64792f736d from '../../foundations/typography/text-styles.module.css';

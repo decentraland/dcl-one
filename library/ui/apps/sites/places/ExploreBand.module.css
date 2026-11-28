@@ -124,11 +124,12 @@
   }
 }
 
-/* The category's shared select keeps the reference's minimum width instead of filling the row. */
+/* The category's shared Dropdown takes the box's width: about the reference's in the toolbar, the drawer's row in the drawer. */
 .selectBox {
   display: inline-flex;
   flex: none;
-  min-width: clamp(120px, 7.813vw, 150px);
+  flex-direction: column;
+  width: clamp(150px, 10.417vw, 200px);
 }
 
 .desktopOnly {
@@ -178,4 +179,5 @@
 
 .drawerSection .selectBox {
   display: flex;
+  width: 100%;
 }
