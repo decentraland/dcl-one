@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import type { LocationMetrics } from '/@/lib/metricsApi';
 
-import { formatUsdc, totalPlaytimeSeconds30d } from './format';
+import { formatUsdc, metricValue } from './format';
 
 const location = (values: Record<string, number>): LocationMetrics => ({
   x: 0,
@@ -20,22 +20,21 @@ const location = (values: Record<string, number>): LocationMetrics => ({
   ),
 });
 
-describe('totalPlaytimeSeconds30d', () => {
-  it('should multiply the whole-population average playtime by the visits', () => {
+describe('metricValue', () => {
+  it('should read the whole-population series', () => {
     expect(
-      totalPlaytimeSeconds30d(location({ avg_playtime_seconds_30d: 95.5, unique_visits_30d: 4 })),
-    ).toBe(382);
+      metricValue(location({ total_playtime_seconds_range: 5400 }), 'total_playtime_seconds_range'),
+    ).toBe(5400);
   });
 
-  it.each([
-    ['the average', { unique_visits_30d: 4 }],
-    ['the visits', { avg_playtime_seconds_30d: 95.5 }],
-  ])('should be null without %s', (_, values) => {
-    expect(totalPlaytimeSeconds30d(location(values))).toBeNull();
+  it('should be null when the metric is absent, never 0', () => {
+    expect(
+      metricValue(location({ unique_visits_30d: 4 }), 'total_playtime_seconds_range'),
+    ).toBeNull();
   });
 
   it('should be null without metrics', () => {
-    expect(totalPlaytimeSeconds30d(undefined)).toBeNull();
+    expect(metricValue(undefined, 'total_playtime_seconds_range')).toBeNull();
   });
 });
 

@@ -28,10 +28,16 @@ export type MetricLocation = {
 export type MetricRow = {
   /** `null` for the five metrics that have a single series. */
   series: string | null;
-  /** Week-start Monday (`2026-06-15`) for the `*_weekly` metrics; `null` for `_30d`/`_60d`. */
+  /** Week-start Monday (`2026-06-15`) for the `*_weekly` metrics; `null` for `_30d`/`_60d`/`_range`. */
   period: string | null;
   value: number;
 };
+
+/**
+ * An inclusive span of UTC days, each `YYYY-MM-DD`. Sent, it makes the service answer only the
+ * `*_range` metrics, summed over those days, in place of its fixed windows.
+ */
+export type DayRange = { from: string; to: string };
 
 export type LocationMetrics = MetricLocation & {
   /** The service's own key, for its logs. Never built or parsed here — see `readPositionally`. */
@@ -49,6 +55,8 @@ export type MetricsBatch = {
   /** The warehouse's export stamp, not our load time. Present even when every location is empty. */
   exported_at: string;
   source: string;
+  /** The span the metrics were summed over, echoed back; absent when none was asked for. */
+  range?: DayRange;
   locations: LocationMetrics[];
 };
 
@@ -113,15 +121,20 @@ function readPositionally(
  * Requests run in the main process: Electron's renderer sends `Origin: null`,
  * which the service's CORS allow-list rejects, so a renderer-side fetch never
  * sees the response.
+ *
+ * @param range - when given, the service answers only the `*_range` metrics, summed over these days.
  */
-export async function fetchMetrics(locations: MetricLocation[]): Promise<MetricsBatch> {
+export async function fetchMetrics(
+  locations: MetricLocation[],
+  range?: DayRange,
+): Promise<MetricsBatch> {
   const batches = await Promise.all(
     chunk(locations, MAX_LOCATIONS_PER_REQUEST).map(async group => {
       const response = await metrics.request<MetricsBatch>({
         baseUrl: METRICS_API_URL,
         path: PATH,
         headers: await buildSignedHeaders(METRICS_API_URL, PATH),
-        body: { locations: group },
+        body: range ? { locations: group, range } : { locations: group },
       });
       if (!response.ok) throw new Error(response.error);
       return { ...response.data, locations: readPositionally(group, response.data.locations) };
@@ -132,6 +145,7 @@ export async function fetchMetrics(locations: MetricLocation[]): Promise<Metrics
   return {
     exported_at: first.exported_at,
     source: first.source,
+    ...(first.range && { range: first.range }),
     locations: batches.flatMap(batch => batch.locations),
   };
 }

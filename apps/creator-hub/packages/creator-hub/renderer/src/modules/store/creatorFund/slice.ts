@@ -28,14 +28,19 @@ import type {
 
 import * as api from '/@/lib/creatorFundApi';
 import type { CreatorFundResponse } from '/@/lib/creatorFundApi';
-import { fetchMetrics, type LocationMetrics, type MetricLocation } from '/@/lib/metricsApi';
+import {
+  fetchMetrics,
+  type DayRange,
+  type LocationMetrics,
+  type MetricLocation,
+} from '/@/lib/metricsApi';
 import { Worlds } from '/@/lib/worlds';
 import type { AppState } from '/@/modules/store';
 import { accountChanged } from '/@/modules/store/account';
 import { FeatureFlag, getCreatorFundStart } from '/@/modules/store/featureFlags';
 import { createAsyncThunk as createAppAsyncThunk } from '/@/modules/store/thunk';
 
-import { formatCycleLabel } from './utils';
+import { cycleDayRange, formatCycleLabel } from './utils';
 
 /** A failed response, kept whole so the UI can render its status and body. */
 export type CreatorFundFailure = Extract<CreatorFundResponse<unknown>, { ok: false }>;
@@ -50,8 +55,13 @@ export type Resource<T> = Async<{
 /** A Payouts setup step: verify the email, then add the payout wallet. */
 export type PayoutSetupStep = 'verify_email' | 'add_wallet';
 
-/** The analytics export for my places, keyed by place id. */
-export type PlaceMetrics = { exported_at: string; byPlaceId: Record<string, LocationMetrics> };
+/** The analytics export for my places, summed over `range`, keyed by place id. */
+export type PlaceMetrics = {
+  exported_at: string;
+  /** The days asked for, kept even when the service does not echo them back. */
+  range: DayRange;
+  byPlaceId: Record<string, LocationMetrics>;
+};
 
 const NOT_ENROLLED = 'not enrolled';
 
@@ -140,13 +150,24 @@ const locationOf = (place: CreatorFundPlace): MetricLocation => {
   return place.world && place.world_name ? { world: place.world_name, x, y } : { x, y };
 };
 
-/** The analytics API's (`METRICS_API_URL`) 30-day metrics for my places, read positionally into place ids. */
+/**
+ * The analytics API's (`METRICS_API_URL`) metrics for my places, summed over the cycle's UTC days
+ * (`cycleDayRange`) and read positionally into place ids.
+ */
 export const fetchPlaceMetrics = createAsyncThunk(
   'creatorFund/fetchPlaceMetrics',
-  async (places: CreatorFundPlace[]): Promise<PlaceMetrics> => {
-    const batch = await fetchMetrics(places.map(locationOf));
+  async ({
+    places,
+    cycle,
+  }: {
+    places: CreatorFundPlace[];
+    cycle: Pick<Cycle, 'start_at' | 'end_at'>;
+  }): Promise<PlaceMetrics> => {
+    const range = cycleDayRange(cycle);
+    const batch = await fetchMetrics(places.map(locationOf), range);
     return {
       exported_at: batch.exported_at,
+      range,
       byPlaceId: Object.fromEntries(
         places.map((place, index) => [place.id, batch.locations[index]]),
       ),
