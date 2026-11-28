@@ -90,6 +90,11 @@ export class BevySceneContext {
     components.NftShape(this.engine),
     components.GltfNodeModifiers(this.engine),
     components.AvatarAttach(this.engine),
+    // AvatarShape: the engine draws the NPC itself; forwarded so a wearable or colour edit shows live.
+    components.AvatarShape(this.engine),
+    // On the Player: forwarded so a speed or a blocked move applies without a reload.
+    components.AvatarLocomotionSettings(this.engine),
+    components.InputModifier(this.engine),
     components.VirtualCamera(this.engine),
     // Audio: forwarded so an edited clip/volume plays on the next unfreeze, with the
     // same paused override while frozen as VideoPlayer (the engine keeps playing

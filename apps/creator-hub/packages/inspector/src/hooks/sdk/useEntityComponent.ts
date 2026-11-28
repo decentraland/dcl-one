@@ -33,7 +33,11 @@ export const INSPECTOR_COMPONENTS: string[] = [
 
 export const ROOT_COMPONENTS: Record<Entity, string[]> = {
   [ROOT]: [],
-  [PLAYER]: [],
+  [PLAYER]: [
+    CoreComponents.AVATAR_SHAPE,
+    CoreComponents.AVATAR_LOCOMOTION_SETTINGS,
+    CoreComponents.INPUT_MODIFIER,
+  ],
   [CAMERA]: [],
 };
 

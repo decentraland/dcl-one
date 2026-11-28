@@ -7,7 +7,11 @@ import '@babylonjs/loaders/glTF';
 
 import { isEmoteContainer } from './emote';
 
-export function toWearableWithBlobs(file: File, resources: File[] = []): WearableWithBlobs {
+export function toWearableWithBlobs(
+  file: File,
+  resources: File[] = [],
+  category: WearableCategory = WearableCategory.HAT,
+): WearableWithBlobs {
   return {
     id: file.name,
     name: '',
@@ -16,7 +20,7 @@ export function toWearableWithBlobs(file: File, resources: File[] = []): Wearabl
     thumbnail: '',
     i18n: [],
     data: {
-      category: WearableCategory.HAT,
+      category,
       hides: [],
       replaces: [],
       tags: [],

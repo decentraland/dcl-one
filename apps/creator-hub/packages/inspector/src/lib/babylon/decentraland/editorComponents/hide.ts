@@ -3,6 +3,12 @@ import type { ComponentOperation } from '../component-operations';
 import { setGizmoManager, unsetGizmoManager } from './selection';
 
 export const putHideComponent: ComponentOperation = (entity, component) => {
+  // The AvatarShape mannequin is built synchronously, so it needs no wait for an asset.
+  if (entity.avatarShape && component.componentType === ComponentType.LastWriteWinElementSet) {
+    const { value: isHidden } =
+      (component.getOrNull(entity.entityId) as { value: boolean } | null) ?? {};
+    entity.avatarShape.setEnabled(!isHidden);
+  }
   // Ensure asset is loaded before applying hide.
   entity.onAssetLoaded().then(() => {
     const container = entity.gltfContainer ?? entity.meshRenderer;

@@ -32,6 +32,7 @@ import { putMaterialComponent } from './sdkComponents/material';
 import { putNftShapeComponent } from './sdkComponents/nft';
 import { putVideoPlayerComponent } from './sdkComponents/video-player';
 import { putAvatarAttachComponent } from './sdkComponents/avatar-attach';
+import { putAvatarShapeComponent } from './sdkComponents/avatar-shape';
 import { putHideComponent } from './editorComponents/hide';
 import { putLockComponent } from './editorComponents/lock';
 import { putPlaceholderComponent } from './sdkComponents/placeholder';
@@ -83,6 +84,7 @@ export class SceneContext {
   NftShape = components.NftShape(this.engine);
   VideoPlayer = components.VideoPlayer(this.engine);
   AvatarAttach = components.AvatarAttach(this.engine);
+  AvatarShape = components.AvatarShape(this.engine);
   // No render operation for these two: they're defined so their state exists in
   // this engine and the gizmo-commit path (operations.updateValue on Transform)
   // can mirror scale changes into their `area` field.
@@ -105,6 +107,7 @@ export class SceneContext {
     [this.NftShape.componentId]: putNftShapeComponent,
     [this.VideoPlayer.componentId]: putVideoPlayerComponent,
     [this.AvatarAttach.componentId]: putAvatarAttachComponent,
+    [this.AvatarShape.componentId]: putAvatarShapeComponent,
     [this.editorComponents.Selection.componentId]: putEntitySelectedComponent,
     [this.editorComponents.Scene.componentId]: putSceneComponent,
     [this.editorComponents.Hide.componentId]: putHideComponent,
@@ -123,6 +126,7 @@ export class SceneContext {
     [this.NftShape.componentId]: putNftShapeComponent,
     [this.VideoPlayer.componentId]: putVideoPlayerComponent,
     [this.AvatarAttach.componentId]: putAvatarAttachComponent,
+    [this.AvatarShape.componentId]: putAvatarShapeComponent,
     [this.editorComponents.Selection.componentId]: deleteEntitySelectedComponent,
     [this.editorComponents.Scene.componentId]: putSceneComponent,
     [this.editorComponents.Hide.componentId]: putHideComponent,

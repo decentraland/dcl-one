@@ -25,6 +25,7 @@ import {
 } from './gizmo';
 import { getDefaultSpawnWorld, setSpawnAreas } from './spawn-areas';
 import { setBrokenAssets } from './broken-assets';
+import { setAvatarHitboxes } from './avatar-hitboxes';
 import { createSceneUiVisibility, sceneUiVisibleAfter } from './scene-ui-visibility';
 
 /**
@@ -135,6 +136,10 @@ export function main(): void {
     }
     if (msg.kind === 'set-broken-assets') {
       setBrokenAssets(msg.assets);
+      return;
+    }
+    if (msg.kind === 'set-avatar-hitboxes') {
+      setAvatarHitboxes(msg.hitboxes);
       return;
     }
     // Freeze (static) or run the inspected scene (the toolbar's run/freeze toggle).

@@ -69,6 +69,9 @@ export const toggleSelection = (entity: EcsEntity, value: boolean) => {
   if (entity.meshRenderer) {
     toggleMeshSelection(entity.meshRenderer, value);
   }
+  if (entity.avatarShape) {
+    toggleMeshSelection(entity.avatarShape, value);
+  }
 
   void entity.onAssetLoaded().then(() => {
     if (entity.gltfContainer) {

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { PreviewMessageType } from '@dcl/schemas';
 import type {
+  BodyShape,
   EmoteWithBlobs,
   PreviewCamera,
   PreviewEmote,
@@ -13,11 +14,19 @@ import { PREVIEW_URL, isPreviewMessage, postToPreview } from './protocol';
 
 import styles from './WearablePreview.module.css';
 
+type PreviewOptionsBodyShape = BodyShape | `${BodyShape}`;
+
 export type PreviewOptions = {
   /** A local model. It cannot go in the URL, so the frame gets it in a message. */
   blob?: WearableWithBlobs | EmoteWithBlobs;
   profile?: string;
+  /** Wearables to dress the avatar in, by URN. */
+  urns?: string[];
+  bodyShape?: PreviewOptionsBodyShape;
+  /** Hex colours without the `#`, as the preview URL takes them. */
   skin?: string;
+  hair?: string;
+  eyes?: string;
   emote?: PreviewEmote;
   camera?: PreviewCamera;
   projection?: PreviewProjection;
@@ -71,7 +80,11 @@ export function WearablePreview({
   onUpdate,
   blob,
   profile,
+  urns,
+  bodyShape,
   skin,
+  hair,
+  eyes,
   emote,
   camera,
   projection,
@@ -91,7 +104,11 @@ export function WearablePreview({
       withoutUndefined({
         blob,
         profile,
+        urns,
+        bodyShape,
         skin,
+        hair,
+        eyes,
         emote,
         camera,
         projection,
@@ -104,7 +121,11 @@ export function WearablePreview({
     [
       blob,
       profile,
+      urns,
+      bodyShape,
       skin,
+      hair,
+      eyes,
       emote,
       camera,
       projection,

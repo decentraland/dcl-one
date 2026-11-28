@@ -41,6 +41,7 @@ import { createSelectionBridge } from './selection-bridge';
 import { createSpawnAreasBridge } from './spawn-areas-bridge';
 import { createSpawnGizmoBridge } from './spawn-gizmo-bridge';
 import { createBrokenAssetsBridge } from './broken-assets-bridge';
+import { createAvatarHitboxesBridge } from './avatar-hitboxes-bridge';
 
 /**
  * Bevy-specific escape hatch exposed on {@link MountedRenderer.internals} — the
@@ -210,6 +211,7 @@ export function registerBevyRenderer(): void {
       // held in mutable holders and rebuilt against the new window on reload (the
       // bus-based bridges below survive a reboot, and `modifiers` is retargeted).
       let forwardBridge: ReturnType<typeof createForwardEditBridge> | null = null;
+      let avatarHitboxes: ReturnType<typeof createAvatarHitboxesBridge> | null = null;
       // Editing = the scene is stopped (frozen at its initial state; a Pause keeps
       // the scene as it was) and the user drives the free fly-camera.
       const isEditingWithFreeCamera = () =>
@@ -583,6 +585,7 @@ export function registerBevyRenderer(): void {
         // playback — so also pause/resume Animator clips with the run state, and
         // show editor Placeholders only while frozen.
         forwardBridge?.setSceneFrozen(!running);
+        avatarHitboxes?.refresh();
       });
 
       // Wire the engine-window bindings for the initial boot. Re-run on reboot.
@@ -652,6 +655,7 @@ export function registerBevyRenderer(): void {
         // reconcile at reset-complete does it once the scene is pinned again.)
         sceneRunBridge.setRunning(false);
         sceneRunBridge.reset();
+        avatarHitboxes?.refresh();
         // Edits from here until reset-complete are not in the bundle it reloads.
         forwardBridge?.noteReloadStarted();
         // Stopped now, also from a Pause (which kept the avatar shown): hide it in the
@@ -721,6 +725,13 @@ export function registerBevyRenderer(): void {
         },
       });
 
+      // NPCs (AvatarShape) have no collider in the engine; while editing, the agent puts a
+      // pointer box over each so a viewport click selects it.
+      avatarHitboxes = createAvatarHitboxesBridge({
+        context: bevy.context,
+        isRunning: () => sceneRunBridge.isRunning(),
+      });
+
       const internals: BevyInternals = {
         takeScreenshot: () => bevy.takeScreenshot(),
       };
@@ -740,6 +751,7 @@ export function registerBevyRenderer(): void {
           spawnGizmo.disconnect();
           disconnectSpawnAreas();
           disconnectBrokenAssets();
+          avatarHitboxes?.disconnect();
           sceneRunBridge.disconnect();
           cameraBridge.disconnect();
           dropPoint.disconnect();

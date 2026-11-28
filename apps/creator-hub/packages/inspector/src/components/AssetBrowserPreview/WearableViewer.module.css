@@ -1,0 +1,58 @@
+.root {
+  position: relative;
+}
+
+.root iframe {
+  width: 100%;
+  height: 100%;
+  border: none;
+}
+
+.bodies {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  display: flex;
+  gap: 4px;
+  padding: 3px;
+  border-radius: var(--shape-borderRadiusMedium);
+  background: var(--palette-blackTransparent-blurry);
+}
+
+.body {
+  height: 24px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: var(--r-control);
+  background: transparent;
+  color: var(--sub-text);
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.body:hover {
+  background: var(--hover-row);
+}
+
+.body[aria-pressed="true"] {
+  background: var(--selected-item);
+  color: var(--title);
+  font-weight: 600;
+}
+
+.body:focus-visible {
+  outline: 1px solid var(--focus-ring-color);
+  outline-offset: -1px;
+}
+
+.badge {
+  position: absolute;
+  left: 8px;
+  bottom: 8px;
+  padding: 2px 8px;
+  border-radius: var(--r-pill);
+  background: var(--palette-blackTransparent-blurry);
+  color: var(--title);
+  font-size: 11px;
+}

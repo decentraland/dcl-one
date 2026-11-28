@@ -36,6 +36,7 @@ import type { ActivityHit } from './activity';
 import { bus } from './bus';
 import { isGizmoActive } from './gizmo-visibility';
 import { getSpawnMarkerTarget } from './spawn-markers';
+import { getAvatarHitboxOwner } from './avatar-hitbox-owners';
 
 /**
  * Minimal translate gizmo (prototype). Three axis handles attached to the
@@ -1522,7 +1523,7 @@ function emitHover(result: { hits: readonly SceneHit[] }): void {
   let hovered = 0;
   for (const id of sceneHitIds(result)) {
     if (getSpawnMarkerTarget(id) !== null) continue;
-    hovered = id;
+    hovered = getAvatarHitboxOwner(id) ?? id;
     break;
   }
   if (hovered !== lastHoverEntity) {
@@ -1544,7 +1545,8 @@ function emitPick(
       bus.postToPage({ kind: 'spawn-pick', index: spawn.index, target: spawn.target });
       return;
     }
-    bus.postToPage({ kind: 'pick', entity: id, shift: mods.shift, ctrl: mods.ctrl });
+    const entity = getAvatarHitboxOwner(id) ?? id;
+    bus.postToPage({ kind: 'pick', entity, shift: mods.shift, ctrl: mods.ctrl });
     return;
   }
   // Empty miss. While a spawn point owns the selection, a miss must NOT deselect it

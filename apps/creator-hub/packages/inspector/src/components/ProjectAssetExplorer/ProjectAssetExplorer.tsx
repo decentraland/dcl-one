@@ -3,6 +3,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { useAppSelector } from '../../redux/hooks';
 import { selectAssetCatalog, selectThumbnails } from '../../redux/app';
 import { useAssetTree } from '../../hooks/catalog/useAssetTree';
+import { useRiggedWearableModels } from '../../hooks/catalog/useRiggedWearableModels';
 import { fetchLatestCatalog, getBuiltInEmote, type Asset } from '../../lib/logic/catalog';
 
 import ProjectView from './ProjectView';
@@ -25,7 +26,9 @@ function useBuiltInEmotes(): Asset[] {
 function ProjectAssetExplorer() {
   const files = useAppSelector(selectAssetCatalog) ?? { basePath: '', assets: [] };
   const thumbnails = useAppSelector(selectThumbnails);
-  const { tree } = useAssetTree(files);
+  const paths = useMemo(() => files.assets.map($ => $.path), [files]);
+  const riggedWearables = useRiggedWearableModels(paths);
+  const { tree } = useAssetTree(files, riggedWearables);
   const builtInEmotes = useBuiltInEmotes();
   const folders = useMemo(() => {
     const sceneFolders = tree.children.filter(item => item.type === 'folder') as AssetNodeFolder[];
