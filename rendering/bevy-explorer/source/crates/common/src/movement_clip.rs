@@ -16,15 +16,12 @@ fn contains_ignore_case(text: &str, word: &str) -> bool {
 }
 
 /// The clips of a ground jump on its way up, from its start clip, for each take-off gait.
-const JUMPS: [&str; 9] = [
+const JUMPS: [&str; 6] = [
     "Jump_Start",
     "Jog_Jump_Start",
     "Run_Jump_Start",
-    "Jump_Rise_Loop",
     "Jump_Mid",
-    "Jog_Jump_Rise_Loop",
     "Jog_Jump_Mid",
-    "Run_Jump_Rise_Loop",
     "Run_Jump_Mid",
 ];
 /// The air jump's clips: an air jump plays one of them from its start.
@@ -41,7 +38,10 @@ const DOUBLE_JUMPS: [&str; 6] = [
 /// about the avatar's motion. Any other clip is [`Self::None`]. [`Self::of_other_scene_clip`] reads
 /// the clips of any other scene.
 ///
-/// The fall loops and touchdowns are not jumps, so walking off a ledge is not a jump.
+/// The fall loops and touchdowns are not jumps. The scene counts a walk-off as a jump once the fall
+/// outlasts the window in which a ground jump may still take off, and then plays the jump's start
+/// clip, so that fall is a jump. A walk-off back on the ground within that window only plays the
+/// fall loop, so it is not.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub enum ClipMotion {
     #[default]
@@ -60,7 +60,10 @@ impl ClipMotion {
             stem if DOUBLE_JUMPS.contains(&stem) => Self::DoubleJump,
             "Gliding_AvatarStartRig" => Self::GlideOpening,
             "Gliding_AvatarForwardRig" | "Gliding_AvatarIdleRig" => Self::Gliding,
-            "Gliding_AvatarEndRig" | "Hard_Landing_GliderRig" => Self::GlideClosing,
+            "Gliding_AvatarEndRig"
+            | "Gliding_Idle_Jump_EndRig"
+            | "Gliding_Jog_Jump_EndRig"
+            | "Gliding_Run_Jump_EndRig" => Self::GlideClosing,
             _ => Self::None,
         }
     }
@@ -108,19 +111,15 @@ mod tests {
             ("Walk.glb", ClipMotion::None),
             ("Jog.glb", ClipMotion::None),
             ("Run.glb", ClipMotion::None),
-            ("Jog_Stop.glb", ClipMotion::None),
             ("Jump_Start.glb", ClipMotion::Jump),
-            ("Jump_Rise_Loop.glb", ClipMotion::Jump),
             ("Jump_Mid.glb", ClipMotion::Jump),
             ("Jump_Fall_Loop.glb", ClipMotion::None),
-            ("Jump_End.glb", ClipMotion::None),
+            ("Idle_Jump_End.glb", ClipMotion::None),
             ("Jog_Jump_Start.glb", ClipMotion::Jump),
-            ("Jog_Jump_Rise_Loop.glb", ClipMotion::Jump),
             ("Jog_Jump_Mid.glb", ClipMotion::Jump),
             ("Jog_Jump_Fall_Loop.glb", ClipMotion::None),
             ("Jog_Jump_End.glb", ClipMotion::None),
             ("Run_Jump_Start.glb", ClipMotion::Jump),
-            ("Run_Jump_Rise_Loop.glb", ClipMotion::Jump),
             ("Run_Jump_Mid.glb", ClipMotion::Jump),
             ("Run_Jump_Fall_Loop.glb", ClipMotion::None),
             ("Run_Jump_End.glb", ClipMotion::None),
@@ -135,9 +134,10 @@ mod tests {
             ("Gliding_AvatarForwardRig.glb", ClipMotion::Gliding),
             ("Gliding_AvatarIdleRig.glb", ClipMotion::Gliding),
             ("Gliding_AvatarEndRig.glb", ClipMotion::GlideClosing),
-            ("Hard_Landing_GliderRig.glb", ClipMotion::GlideClosing),
+            ("Gliding_Idle_Jump_EndRig.glb", ClipMotion::GlideClosing),
+            ("Gliding_Jog_Jump_EndRig.glb", ClipMotion::GlideClosing),
+            ("Gliding_Run_Jump_EndRig.glb", ClipMotion::GlideClosing),
             // a hard landing is no motion the clip names
-            ("Hard_Landing.glb", ClipMotion::None),
             ("Hard_Landing_Enter.glb", ClipMotion::None),
             ("Hard_Landing_Loop.glb", ClipMotion::None),
             ("Hard_Landing_Exit.glb", ClipMotion::None),

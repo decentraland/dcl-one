@@ -70,8 +70,8 @@ export const GLIDE_TILT_FULL_ANGLE = 20; // orientation delta (degrees) at which
 export const LANDING_STUN_DROP = 8; // m
 export const LANDING_STUN_TIME = 0.76; // s from the landing step
 
-export const TURN_MAX_DEGREES_SEC = 1040; // max degrees to turn (set to inf for TURN_FULL_TIME to apply)
-export const TURN_FULL_TIME = 0.1; // time to turn fully towards target
+// Share of the remaining turn toward the heading the facing takes per second (per tick: TURN_RATE * tickTime, at most 1)
+export const TURN_RATE = 10;
 
 export const GROUNDED_HEIGHT = 0.05; // distance from surface at which player is considered "grounded"
 // Steepest walkable slope in degrees (can jump, will not slide). The half degree absorbs single-precision normals, so

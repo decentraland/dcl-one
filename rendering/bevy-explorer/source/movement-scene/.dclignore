@@ -8,6 +8,7 @@ yarn-lock.json
 tsconfig.json
 node_modules
 src
+test
 *.ts
 *.tsx
 *.md

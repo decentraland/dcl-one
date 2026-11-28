@@ -19,6 +19,23 @@ corepack pnpm@12.21.0 run build
 
 `build` bundles `src/index.ts` into `bin/game.js` and type-checks it.
 
+## Tests
+
+```sh
+corepack pnpm@12.21.0 run typecheck
+corepack pnpm@12.21.0 test
+```
+
+`test` runs the unit tests in `test/` with Node.js's test runner. `test/run.mjs` bundles each
+`*.test.ts` file with the scene modules it imports, by the esbuild that the SDK's `sdk-commands`
+uses. The SDK's runtime entry (`@dcl/sdk`) and the engine's `~system/*` modules exist only inside
+the engine, so the bundle replaces them with empty modules. A test reaches the scene's logic
+through its exported functions: the vertical model's state and step (`src/vertical.ts`), the
+animator and its state machine (`src/animator.ts`, `src/character-animator.ts`), and the jump,
+glide and emote rules of `src/index.ts`. The tests and `test/run.mjs` are not part of the deployed
+scene (`.dclignore`) or of its type check (`tsconfig.json` covers `src/`). The Explorer CI job
+*Movement scene* runs both commands when the scene's directory or that workflow changes.
+
 ## Ground handling
 
 The engine moves the avatar by collide-and-slide alone (step 6 of the algorithm described in

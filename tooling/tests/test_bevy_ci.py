@@ -1312,6 +1312,35 @@ class SelectionTest(unittest.TestCase):
                 with patch.object(ci, 'main_baselines', return_value=baselines):
                     self.assertEqual(ci.plan('push', self.base, head, 'example/project')['relay-wake'], expected)
 
+    def test_the_movement_scene_checks_follow_the_scene_and_the_workflow(self):
+        cases = {
+            'rendering/bevy-explorer/source/movement-scene/src/vertical.ts': True,
+            'rendering/bevy-explorer/source/movement-scene/test/run.mjs': True,
+            'rendering/bevy-explorer/source/movement-scene/package.json': True,
+            'rendering/bevy-explorer/source/movement-scene/pnpm-lock.yaml': True,
+            ci.WORKFLOW: True,
+            'rendering/bevy-explorer/source/movement-scene/README.md': False,
+            'rendering/bevy-explorer/source/crates/avatar/src/animate.rs': False,
+            'rendering/bevy-explorer/source/react-web/bridge-scene/src/index.ts': False,
+        }
+        for path, expected in cases.items():
+            with self.subTest(path=path):
+                before = self.git('rev-parse', 'HEAD')
+                self.write(path, 'changed')
+                self.assertEqual(ci.select(before, self.commit())['movement-scene'], expected)
+        self.assertTrue(ci.full_selection('Manual full run')['movement-scene'])
+
+    def test_on_main_the_movement_scene_checks_follow_the_web_baseline(self):
+        self.write('rendering/bevy-explorer/source/movement-scene/src/index.ts', 'scene change')
+        changed = self.commit()
+        self.write('apps/bevy-explorer/nginx.conf', 'web change')
+        head = self.commit()
+        for web, expected in ((self.base, True), (changed, False)):
+            with self.subTest(web=web):
+                baselines = {**dict.fromkeys(ci.LANES, self.base), 'web': web}
+                with patch.object(ci, 'main_baselines', return_value=baselines):
+                    self.assertEqual(ci.plan('push', self.base, head, 'example/project')['movement-scene'], expected)
+
     def test_unknown_inputs_and_shared_protoc_changes_run_all_platforms_and_scenes(self):
         for path in ('apps/bevy-explorer/future-build-input', 'apps/bevy-explorer/install-protoc.py',
                      'tooling/bevy-ci.py', 'tooling/bevy-mtimes.py', 'tooling/bevy-target-cache.py'):

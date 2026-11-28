@@ -133,6 +133,9 @@ RELAY_WAKE_INPUTS = (*RELAY_WAKE_CRATE_DIRS, 'library/protocol/proto/',
                      PATCHES + '/bevy/', SOURCE + 'Cargo.toml', SOURCE + 'Cargo.lock', SOURCE + '.cargo/',
                      '.cargo/', 'apps/bevy-explorer/install-web-tools.py', 'apps/bevy-explorer/install-tools.sh',
                      'tooling/bevy-target-cache.py', 'tooling/bevy-mtimes.py', WORKFLOW, *TOOLS_INPUTS)
+# What the movement scene's checks (job "Movement scene": its type check and unit tests) read: the scene's directory
+# and the workflow. It is not a lane: on main it follows the web lane's baseline.
+MOVEMENT_SCENE_INPUTS = (SOURCE + 'movement-scene/', WORKFLOW)
 # Unknown app inputs remain conservative. Only named integration boundaries narrow work.
 APP_INPUTS = {
     'README.md': (),
@@ -278,7 +281,7 @@ def ensure_commit(sha):
 
 
 def full_selection(reason):
-    return {**dict.fromkeys((*LANES, 'native-matrix', 'scenes', 'relay-wake'), True), 'reason': reason}
+    return {**dict.fromkeys((*LANES, 'native-matrix', 'scenes', 'relay-wake', 'movement-scene'), True), 'reason': reason}
 
 
 def platform_input(path):
@@ -323,7 +326,7 @@ def select(base, head):
         previous, bootstrap = {}, True
     shared_paths = set(shared) | set(previous)
     paths = changed_inputs(base, head, (*INPUTS, *(':(literal)' + path for path in sorted(shared_paths | set(HARNESS_WEB_READS)))))
-    selected = dict.fromkeys((*LANES, 'native-matrix', 'scenes', 'relay-wake'), False)
+    selected = dict.fromkeys((*LANES, 'native-matrix', 'scenes', 'relay-wake', 'movement-scene'), False)
     if bootstrap:
         selected['web'] = True
     for path in paths:
@@ -401,6 +404,8 @@ def select(base, head):
             selected[lane] = True
         if path.startswith(RELAY_WAKE_INPUTS):
             selected['relay-wake'] = True
+        if path.startswith(MOVEMENT_SCENE_INPUTS):
+            selected['movement-scene'] = True
     names = [name for name, enabled in selected.items() if enabled]
     return {**selected, 'base': base,
             'reason': 'Selected: ' + ', '.join(names) if names else 'Inputs unchanged; integrity checks only'}
@@ -421,6 +426,7 @@ def plan(event, base, head, repo):
                 result[lane] = selections[previous][lane]
             result['native-matrix'] = result['test']
             result['relay-wake'] = selections[baselines.get('web')]['relay-wake']
+            result['movement-scene'] = selections[baselines.get('web')]['movement-scene']
             result['reason'] = 'Compared each job with its latest successful main execution'
             return result
         if event not in ('pull_request', 'local'):

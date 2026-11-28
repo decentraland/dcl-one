@@ -87,8 +87,27 @@ mod tests {
         // a glider closed in the air is the jump again
         assert_eq!(count.update(false, ClipMotion::GlideClosing, false), 1);
         assert_eq!(count.update(true, ClipMotion::GlideClosing, false), 0);
-        // walking off a ledge is no jump
+        // walking off a ledge, while the scene plays no jump's clip, is no jump
         assert_eq!(count.update(false, ClipMotion::None, false), 0);
+    }
+
+    #[test]
+    fn a_walk_off_counts_one_once_the_scene_plays_the_jump_start() {
+        let jump_start = ClipMotion::of_clip("assets/animations/Jump_Start.glb");
+        let fall_loop = ClipMotion::of_clip("assets/animations/Jump_Fall_Loop.glb");
+        // a jump from the ground
+        let mut count = JumpCount::default();
+        assert_eq!(count.update(true, jump_start, false), 1);
+        assert_eq!(count.update(false, jump_start, false), 1);
+        // a walk-off back on the ground within the window where a ground jump may still take off
+        let mut count = JumpCount::default();
+        assert_eq!(count.update(false, fall_loop, false), 0);
+        assert_eq!(count.update(true, ClipMotion::None, false), 0);
+        // a fall that outlasts that window: the scene counts it as a jump and plays the jump's start
+        assert_eq!(count.update(false, fall_loop, false), 0);
+        assert_eq!(count.update(false, jump_start, false), 1);
+        assert_eq!(count.update(false, fall_loop, false), 1);
+        assert_eq!(count.update(true, ClipMotion::None, false), 0);
     }
 
     #[test]
