@@ -8,6 +8,7 @@ publish = false
 [dependencies]
 dcl-http = { workspace = true, features = ["db"] }
 dcl-auth.workspace = true
+catalyst-db = { path = "../db" }
 catalyst-fed = { path = "../fed" }
 catalyst-jobs = { path = "../jobs" }
 catalyst-shared = { path = "../shared" }

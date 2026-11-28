@@ -3,7 +3,7 @@ pub mod schema_migrate;
 use parking_lot::Mutex;
 use std::collections::HashMap;
 
-use sqlx::postgres::{PgConnectOptions, PgPool, PgPoolOptions};
+use sqlx::postgres::{PgConnectOptions, PgPool, PgPoolOptions, PgSslMode};
 use thiserror::Error;
 
 pub const SCHEMA_IDENTITY: &str = "catalyst";
@@ -63,6 +63,17 @@ impl Default for PoolSettings {
 pub enum PoolError {
     #[error("invalid postgres connection string: {0}")]
     InvalidUrl(sqlx::Error),
+
+    #[error("sslmode=verify-ca is not supported")]
+    VerifyCaUnsupported,
+
+    #[error(
+        "sslrootcert or PGSSLROOTCERT is set, but only sslmode=verify-full checks the server certificate"
+    )]
+    RootCertIgnored,
+
+    #[error("PGSSLMODE={0:?} is not a recognised sslmode")]
+    UnknownPgSslMode(String),
 
     #[error(transparent)]
     Connect(sqlx::Error),
@@ -137,6 +148,7 @@ pub async fn connect_pool(url: &str, settings: &PoolSettings) -> Result<PgPool, 
         .parse::<PgConnectOptions>()
         .map_err(PoolError::InvalidUrl)?
         .options(options);
+    check_tls(url, &connect_opts)?;
 
     let mut pool_opts = PgPoolOptions::new()
         .max_connections(settings.max_connections)
@@ -173,6 +185,46 @@ pub async fn connect_pool(url: &str, settings: &PoolSettings) -> Result<PgPool, 
         .connect_with(connect_opts)
         .await
         .map_err(PoolError::Connect)
+}
+
+/// Refuses the TLS settings sqlx would silently weaken, then logs the mode in effect.
+pub fn check_tls(url: &str, opts: &PgConnectOptions) -> Result<(), PoolError> {
+    let sslmode = opts.get_ssl_mode();
+    let root_cert = std::env::var("PGSSLROOTCERT").is_ok_and(|cert| !cert.is_empty())
+        || url_names_root_cert(url);
+    refuse_weakened_tls(
+        sslmode,
+        std::env::var("PGSSLMODE").ok().as_deref(),
+        root_cert,
+    )?;
+    tracing::info!(?sslmode, "connecting to PostgreSQL");
+    Ok(())
+}
+
+fn refuse_weakened_tls(
+    sslmode: PgSslMode,
+    pgsslmode: Option<&str>,
+    root_cert: bool,
+) -> Result<(), PoolError> {
+    if let Some(env) = pgsslmode.filter(|env| !env.is_empty())
+        && env.parse::<PgSslMode>().is_err()
+    {
+        return Err(PoolError::UnknownPgSslMode(env.to_owned()));
+    }
+    match sslmode {
+        // sqlx's verify-ca skips the hostname check and needs a process-wide rustls provider.
+        PgSslMode::VerifyCa => Err(PoolError::VerifyCaUnsupported),
+        PgSslMode::Prefer | PgSslMode::Require if root_cert => Err(PoolError::RootCertIgnored),
+        _ => Ok(()),
+    }
+}
+
+fn url_names_root_cert(url: &str) -> bool {
+    url::Url::parse(url).is_ok_and(|url| {
+        url.query_pairs().any(|(key, value)| {
+            matches!(&*key, "sslrootcert" | "ssl-root-cert" | "ssl-ca") && !value.is_empty()
+        })
+    })
 }
 
 #[derive(Debug, Error)]
@@ -910,6 +962,64 @@ pub mod scratch {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn connect_pool_refuses_verify_ca_before_connecting() {
+        let err = connect_pool(
+            "postgres://catalyst@127.0.0.1:1/catalyst?sslmode=verify-ca",
+            &PoolSettings::default(),
+        )
+        .await
+        .unwrap_err();
+        assert!(matches!(err, PoolError::VerifyCaUnsupported), "{err}");
+    }
+
+    #[test]
+    fn url_names_root_cert_matches_every_sqlx_spelling() {
+        for key in ["sslrootcert", "ssl-root-cert", "ssl-ca"] {
+            let url = format!("postgres://u@h/db?sslmode=require&{key}=/ca.pem");
+            assert!(url_names_root_cert(&url), "{key}");
+        }
+        assert!(!url_names_root_cert(
+            "postgres://u@h/db?sslmode=require&sslrootcert="
+        ));
+        assert!(!url_names_root_cert("postgres://u@h/db?sslmode=require"));
+        assert!(!url_names_root_cert("postgres://u@h/db"));
+    }
+
+    #[test]
+    fn weakened_tls_settings_are_refused() {
+        let err = refuse_weakened_tls(PgSslMode::Prefer, Some("required"), false).unwrap_err();
+        assert!(
+            matches!(&err, PoolError::UnknownPgSslMode(env) if env == "required"),
+            "{err}"
+        );
+        let err = refuse_weakened_tls(PgSslMode::VerifyCa, None, false).unwrap_err();
+        assert!(matches!(err, PoolError::VerifyCaUnsupported), "{err}");
+        for mode in [PgSslMode::Prefer, PgSslMode::Require] {
+            let err = refuse_weakened_tls(mode, None, true).unwrap_err();
+            assert!(matches!(err, PoolError::RootCertIgnored), "{mode:?}: {err}");
+        }
+    }
+
+    #[test]
+    fn other_tls_settings_pass() {
+        let all = [
+            PgSslMode::Disable,
+            PgSslMode::Allow,
+            PgSslMode::Prefer,
+            PgSslMode::Require,
+            PgSslMode::VerifyFull,
+        ];
+        for mode in all {
+            for env in [None, Some(""), Some("verify-full")] {
+                refuse_weakened_tls(mode, env, false).unwrap();
+            }
+        }
+        for mode in [PgSslMode::Disable, PgSslMode::Allow, PgSslMode::VerifyFull] {
+            refuse_weakened_tls(mode, None, true).unwrap();
+        }
+    }
 
     #[tokio::test]
     async fn isolated_pools_do_not_share_facts() {
