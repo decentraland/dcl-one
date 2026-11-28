@@ -81,4 +81,63 @@ describe('when the modal draws a side drawer', () => {
     const m = await open(1440, 900)
     expect(m).toMatchObject({ x: 1080, width: 360, height: 900 })
   })
+
+  it('should collapse a hidden title to the visually hidden 1px box', async () => {
+    await viewport(390, 844)
+    await browser.session.navigate(`${browser.origin}?hidden=1`)
+    const box = await browser.evaluate<number[]>(`(async()=>{
+      for(let i=0;i<120&&!document.querySelector('dialog[open]');i++)await new Promise(r=>requestAnimationFrame(r));
+      const r=document.querySelector('dialog h2').getBoundingClientRect();return [r.width,r.height]
+    })()`)
+    expect(box).toEqual([1, 1])
+  })
 })
+
+describe('when the drawer holds the category Dropdown', () => {
+  const state = () =>
+    browser.evaluate<{ drawer: boolean; list: boolean }>(
+      `(()=>{const d=document.querySelector('dialog[open]');const l=d&&d.querySelector('[role=listbox]');return {drawer:Boolean(d),list:Boolean(l)&&l.getBoundingClientRect().height>0}})()`
+    )
+  const press = async (key: string, code = 27) => {
+    for (const type of ['keyDown', 'keyUp'] as const)
+      await browser.session.send('Input.dispatchKeyEvent', {
+        type,
+        key,
+        code: key,
+        windowsVirtualKeyCode: code
+      })
+    await browser.evaluate('new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)))')
+  }
+
+  it('should close the list on the first Escape and the drawer on the second', async () => {
+    await viewport(390, 844)
+    await browser.session.navigate(`${browser.origin}?dropdown=1`)
+    const at = await browser.evaluate<{ x: number; y: number }>(`(async()=>{
+      for(let i=0;i<120&&!document.querySelector('dialog[open] [role=combobox]');i++)await new Promise(r=>requestAnimationFrame(r));
+      const r=document.querySelector('dialog[open] [role=combobox]').getBoundingClientRect();return {x:r.x+r.width/2,y:r.y+r.height/2}
+    })()`)
+    for (const type of ['mousePressed', 'mouseReleased'] as const)
+      await browser.session.send('Input.dispatchMouseEvent', {
+        type,
+        x: at.x,
+        y: at.y,
+        button: 'left',
+        clickCount: 1
+      })
+    await browser.evaluate('new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)))')
+    expect(await state()).toEqual({ drawer: true, list: true })
+    await press('Escape')
+    expect(await state()).toEqual({ drawer: true, list: false })
+    await press('Escape')
+    expect(await state()).toEqual({ drawer: false, list: false })
+  })
+})
+
+async function viewport(width: number, height: number) {
+  await browser.session.send('Emulation.setDeviceMetricsOverride', {
+    width,
+    height,
+    deviceScaleFactor: 1,
+    mobile: width < 600
+  })
+}

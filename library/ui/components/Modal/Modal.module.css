@@ -79,6 +79,7 @@
   .root[data-layout='drawer'] {
     inset: 0 0 0 auto;
     width: min(360px, 85vw);
+    height: 100vh;
     height: 100dvh;
     max-height: none;
     margin: 0;
@@ -103,7 +104,7 @@
   }
 
   /* The title's row is the close button's height; its end stays clear of the button. */
-  .root[data-layout='drawer'] .title {
+  .root[data-layout='drawer'] .title:not([data-hidden]) {
     display: flex;
     align-items: center;
     min-height: var(--dcl-space-32);
