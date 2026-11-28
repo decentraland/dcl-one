@@ -60,6 +60,82 @@ export interface WorldState {
   keyboardClaimed?: boolean | null
 }
 
+/** A scene's lifecycle state as `/scene_loading_state` and the settling waits name it: `none` on a
+ *  parcel with no scene, `refused` on one whose scene refuses the player (a scene or world ban; it
+ *  is not loaded for them). */
+export type SceneLifecycle = 'loading' | 'failed' | 'starting' | 'blocked' | 'broken' | 'running' | 'none' | 'refused'
+
+/** What `/teleport --wait` and `/reload --wait` report: the scene settled (it runs, its content is
+ *  shown and a frame with it was presented) or the wait ended, and why in `warning`. */
+export interface SettleReport {
+  /** null on a parcel with no scene or one whose scene refuses the player; absent when a
+   *  teleport's wait ended before the landing */
+  sceneHash?: string | null
+  title?: string
+  sceneState: SceneLifecycle
+  /** scene ticks run during the wait */
+  ticksWaited?: number
+  /** frames drawn since the scene was ready: 2 when the reply settled on a ready scene (the first
+   *  of them has been presented); 0 when it settled on a parcel with no scene or a refused one, or
+   *  ended before the scene was ready */
+  renderedFrames: number
+  settleMs: number
+  settled: boolean
+  /** what holds a blocked scene (`frozen`, `gltfs loading`, ...) */
+  blocked?: string[]
+  warning?: string
+}
+
+export interface TeleportReport extends SettleReport {
+  location: [number, number]
+  realm?: string
+  arrived: boolean
+  sceneReady: boolean
+}
+
+export interface ReloadReport extends SettleReport {
+  reloaded: true
+  hint?: string
+}
+
+/** What `/scene_loading_state` reports: the parcel scene under the player, then counts of every
+ *  scene by stage. */
+export interface SceneStateReport {
+  /** null until the player has a position */
+  playerParcel: [number, number] | null
+  /** the player has not landed yet (the scene under them loads first); null until the player has
+   *  a position */
+  outOfWorld: boolean | null
+  /** the parcel's scene, known once its pointer has resolved, before the scene spawns; null on a
+   *  parcel with no scene or one whose scene refuses the player, or until then */
+  sceneHash: string | null
+  state: SceneLifecycle
+  /** the scene readiness `/teleport --wait` and `/reload --wait` wait for: `state` is `running`.
+   *  A teleport's wait also needs the player landed (`outOfWorld` false) */
+  isReady: boolean
+  /** the load stage of the scene under the player, or why there is none */
+  stage: string
+  /** what holds the scene under the player (`frozen`, `gltfs loading`, ...), sorted */
+  blockedBy: string[]
+  /** why each null reading above is null */
+  unavailable: Record<string, string>
+  /** the player's own scene is still loading, which holds the others back */
+  current: boolean
+  spawned: number
+  definition: number
+  crdt: number
+  javascript: number
+  failed: number
+  running: number
+  blocked: number
+  broken: number
+  gltf: number
+  preloads: number
+  texturePreloads: number
+  /** `--wait` commands still waiting for a scene to settle */
+  settleWaits: number
+}
+
 /**
  * What `/hover_entity` and `/click_entity` report. A hit on an avatar or on another scene's
  * entity reports `entity` and `container` as 4294967295.
@@ -691,6 +767,15 @@ const DEFAULT_HUD_TIMEOUT_MS = 10_000
 const ACTIONABLE_TIMEOUT_MS = 10_000
 
 const DEFAULT_ARRIVAL_TIMEOUT_MS = 180_000
+/** A transport's command timeout when it names none (the fake). */
+const DEFAULT_COMMAND_TIMEOUT_MS = 120_000
+/** What a settling command's wait inside the engine stays under the transport's command timeout
+ *  by, so a slow load is reported by the engine rather than cut by the transport. */
+const SETTLE_MARGIN_MS = 20_000
+/** `--timeout-seconds` of `--wait` when the flag is left out. */
+const ENGINE_SETTLE_MS = 60_000
+/** The longest `--timeout-seconds` the engine takes. */
+const ENGINE_MAX_SETTLE_MS = 300_000
 
 /** The error as it may be rethrown: a transport's own error (a timeout, a closed driver) can
  *  quote the line, and the test runner prints the message and the stack. */
@@ -838,12 +923,48 @@ export class Explorer {
     return until(() => this.worldState(), (state) => state.inWorld, { timeoutMs, what: 'the player to be in the world' })
   }
 
-  /** Teleport to a parcel and wait for the arrival: every teleport takes the player out of the
-   *  world first, so the wait is for `arrivals` to grow, then `inWorld`. */
-  async teleport(x: number, y: number, options: { timeoutMs?: number } = {}): Promise<WorldState> {
+  /** Teleport to a parcel and wait inside the engine for the arrival and the scene:
+   *  `/teleport --wait` replies once the player has landed and the parcel's scene settled, or its
+   *  wait ended (`teleport.settled` false, `teleport.warning` says why), and the world state is
+   *  read once after it. Only a wait the engine ended before the landing (it waits less than the
+   *  transport's command timeout) is followed by a poll for `arrivals` to grow and `inWorld`, for
+   *  what is left of `timeoutMs`. */
+  async teleport(x: number, y: number, options: { timeoutMs?: number } = {}): Promise<WorldState & { teleport: TeleportReport }> {
+    const timeoutMs = options.timeoutMs ?? DEFAULT_ARRIVAL_TIMEOUT_MS
+    const seconds = this.#settleSeconds(timeoutMs)
+    const startedAt = Date.now()
     const before = (await this.worldState()).arrivals
-    await this.run(`/teleport ${x} ${y}`)
-    return this.#waitArrival(before, options.timeoutMs ?? DEFAULT_ARRIVAL_TIMEOUT_MS, `the arrival at ${x},${y}`)
+    const teleport = await this.json<TeleportReport>(`/teleport ${x} ${y} --wait --timeout-seconds ${seconds}`)
+    if (teleport.arrived) return { ...(await this.worldState()), teleport }
+    const left = Math.max(0, timeoutMs - (Date.now() - startedAt))
+    return { ...(await this.#waitArrival(before, left, `the arrival at ${x},${y}`)), teleport }
+  }
+
+  /** Reload the parcel scene under the player and wait for the new one to settle
+   *  (`/reload --current --wait`); `settled` false with a `warning` when it did not in time. */
+  async reload(options: { timeoutMs?: number } = {}): Promise<ReloadReport> {
+    // the engine's own default, unless the transport would cut it
+    const timeout = options.timeoutMs === undefined && this.#maxSettleMs() >= ENGINE_SETTLE_MS ? '' : ` --timeout-seconds ${this.#settleSeconds(options.timeoutMs ?? ENGINE_SETTLE_MS)}`
+    return this.json<ReloadReport>(`/reload --current --wait${timeout}`)
+  }
+
+  /** The longest a settling command waits inside the engine: under the transport's command timeout. */
+  #maxSettleMs(): number {
+    return Math.max(1000, (this.console.commandTimeoutMs ?? DEFAULT_COMMAND_TIMEOUT_MS) - SETTLE_MARGIN_MS)
+  }
+
+  /** `--timeout-seconds` for a wait of `timeoutMs`, inside the engine's range (above 0, at most
+   *  300 s) and under the transport's command timeout. A `timeoutMs` that is not above 0 is refused
+   *  here, as the engine would. */
+  #settleSeconds(timeoutMs: number): number {
+    if (!(timeoutMs > 0)) throw new RangeError(`a settling wait needs a timeout above 0 ms; got ${timeoutMs}`)
+    return Math.min(timeoutMs, this.#maxSettleMs(), ENGINE_MAX_SETTLE_MS) / 1000
+  }
+
+  /** The parcel scene under the player (its hash, state, what blocks it and whether it is ready)
+   *  and the counts of every scene by load stage. */
+  sceneState(): Promise<SceneStateReport> {
+    return this.json<SceneStateReport>('/scene_loading_state')
   }
 
   /** Change realm (a realm URL or a world name) and wait for the arrival in it. */

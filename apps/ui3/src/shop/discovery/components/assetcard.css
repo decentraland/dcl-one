@@ -427,8 +427,16 @@
   .shop-card__top { display: contents; }
   .shop-card__desc { grid-area: desc; min-width: 0; }
   .shop-card__name { line-height: 1.57; }
-  .shop-card__price { align-self: center; justify-self: start; gap: 2px; }
-  .shop-card__price[data-variant="sale"] { max-width: none; flex-shrink: 1; min-width: 0; justify-content: flex-start; row-gap: 2px; }
+  .shop-card__price {
+    align-self: center;
+    justify-self: start;
+    flex-shrink: 1;
+    flex-wrap: wrap;
+    min-width: 0;
+    gap: 2px;
+  }
+  .shop-card__price .shop-price__or { overflow-wrap: anywhere; }
+  .shop-card__price[data-variant="sale"] { max-width: none; justify-content: flex-start; row-gap: 2px; }
   .shop-card__action { grid-area: add; align-self: center; justify-self: end; min-height: 0; }
   .shop-card__body[data-row] > .shop-card__action { justify-self: stretch; }
   .shop-card__chips,

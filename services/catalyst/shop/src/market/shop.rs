@@ -68,7 +68,7 @@ use sqlx::Row;
 use sqlx::postgres::PgRow;
 
 use super::catalog::{
-    Builder, ITEM_ID_SHIFT, MAX_NUMERIC_NUMBER, escape_like, unified_trades_cte_of,
+    Builder, ITEM_ID_SHIFT, MAX_NUMERIC_NUMBER, escape_like, unified_trades_cte_for_listing,
 };
 use super::catalogue::CatalogueRead;
 use super::items::{
@@ -1242,7 +1242,7 @@ pub async fn trending_items(
     let ids: Vec<String> = signals.keys().cloned().collect();
     let items = items_by_ids(state, read, &ids, filters, rate)
         .await
-        .map_err(IntoResponse::into_response)?;
+        .map_err(readers::index_api_error)?;
     Ok(rank_trending(items, &signals, first))
 }
 
@@ -1279,7 +1279,13 @@ pub async fn top_creators(
         .bind(&creators)
         .fetch_all(&mut *read.tx)
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| {
+            if super::nft_reads::cancelled(&e) {
+                readers::index_read_error(e)
+            } else {
+                readers::upstream_failed("/v3/catalog/creators", &e.to_string())
+            }
+        })?;
         let catalogue: HashMap<String, (i64, i64)> = catalogue.into_iter().map(|(c, items, collections)| (c, (items, collections))).collect();
         let mut rows: Vec<TopCreator> = creators
             .into_iter()
@@ -1291,10 +1297,10 @@ pub async fn top_creators(
             .collect();
         rows.sort_by(|a, b| b.volume_wei.parse::<u128>().unwrap_or(0).cmp(&a.volume_wei.parse::<u128>().unwrap_or(0)).then(a.id.cmp(&b.id)));
         rows.truncate(crate::market::casts::page(first));
-        serde_json::to_value(rows).map_err(|e| e.to_string())
+        serde_json::to_value(rows)
+            .map_err(|e| readers::upstream_failed("/v3/catalog/creators", &e.to_string()))
     })
-    .await
-    .map_err(|e: String| readers::upstream_failed("/v3/catalog/creators", &e))?;
+    .await?;
     value.map(|value| creators_of(&value)).transpose()
 }
 
@@ -1321,7 +1327,7 @@ pub async fn get_shop_catalog(
     };
     match shop_listings(&state, &mut read, &parse_shop_filters(&pairs)).await {
         Ok((data, total)) => Json(DataTotal { data, total }).into_response(),
-        Err(e) => e.into_response(),
+        Err(e) => readers::index_api_error(e),
     }
 }
 
@@ -1335,7 +1341,7 @@ pub async fn get_legacy_catalog(
     };
     match legacy_listings(&state, &mut read, &parse_legacy_filters(&pairs)).await {
         Ok((data, total)) => Json(DataTotal { data, total }).into_response(),
-        Err(e) => e.into_response(),
+        Err(e) => readers::index_api_error(e),
     }
 }
 
@@ -1391,7 +1397,7 @@ pub async fn get_unified_catalog(
     };
     match result {
         Ok(body) => with_creator_profiles(&state, body, directory.as_deref()),
-        Err(e) => e.into_response(),
+        Err(e) => readers::index_api_error(e),
     }
 }
 
@@ -1407,7 +1413,7 @@ pub async fn get_importable_listings(
     let data = match seller {
         Some(seller) => match importable_listings(&state, &mut read, &seller).await {
             Ok(data) => data,
-            Err(e) => return e.into_response(),
+            Err(e) => return readers::index_api_error(e),
         },
         None => Vec::new(),
     };
@@ -1457,7 +1463,7 @@ pub async fn get_related_catalog(
             .await
             {
                 Ok(data) => data,
-                Err(e) => return e.into_response(),
+                Err(e) => return readers::index_api_error(e),
             }
         }
         None => Vec::new(),
@@ -1714,7 +1720,7 @@ async fn suggested_personal(
     match personal_rows(state, read, p, verified, filters, rate, limit).await {
         Ok(rows) if rows.len() >= MIN_PERSONAL_ROWS => Ok(rows),
         Ok(_) => Ok(Vec::new()),
-        Err(e) => Err(e.into_response()),
+        Err(e) => Err(readers::index_api_error(e)),
     }
 }
 

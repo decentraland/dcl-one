@@ -332,6 +332,49 @@ Each p95 uses 20 warmed, alternating prepared SQL executions per variant
 with one client. The paired result rows and totals matched. These are
 local SQL timings. Production latency depends on its cache and storage.
 
+## Primary related catalogue rail (2026-11-27)
+
+A local PostgreSQL 17.6 fixture held 69,712 live NFT resales, 9,131 live
+primary trades, and an equal number of expired trades. The generated
+query asked for 15 related primary listings over the synthetic Polygon
+catalogue. Its first execution hit the 10-second statement bound. With a
+30-second bound, the old query ran 69,712 NFT lookups and 69,712 post-fold
+transfer checks before discarding the resales.
+
+The related query applies the requested listing kind inside the shared
+trade CTE, ahead of the ownership and trade proofs. The primary rail's
+custom and generic plans each performed zero NFT and transfer probes.
+
+| Prepared primary rail | Before | After |
+| --- | ---: | ---: |
+| Custom plan | 8.09 s | 0.52 s |
+| Generic plan | 4.56 s | 0.51 s |
+
+These single-execution SQL timings reflect the local cache state.
+Primary, secondary, and mixed rails returned byte-identical pairs of
+15 rows in both plan modes, including listing counts and prices.
+
+## Unscoped legacy catalogue price ranking
+
+The two-network fixture added 438 Ethereum items, 217,358 NFTs, and
+142,024 legacy orders (936 live) to the Polygon fixture above. For
+`/v1/catalog?first=24`, the existing query checked 70,648 NFT owners
+across both books. The price-prefix query and page detail query together
+checked 21,190. The generic plan read 110,350 shared blocks before the
+change and 64,532 after it. Temporary blocks fell from 1,437 to zero.
+
+| Prepared two-network first page | p95 before | p95 after |
+| --- | ---: | ---: |
+| Custom plan | 532 ms | 295 ms |
+| Generic plan | 571 ms | 278 ms |
+
+Each p95 uses 20 warm, alternating executions per variant. The new
+timings include both SQL statements. At offsets 0, 37, 500, and 15,000,
+the rows and exact totals matched the original query in both plan
+modes. The first two offsets used the price prefix. At offset 500
+the prefix could not prove the page, so the reader used the full query.
+Deep offsets such as 15,000 go straight to the full query.
+
 ## Latest sale per token
 
 The fixtures below are synthetic, measured on a laptop with PostgreSQL 17.6 while other builds were running. Treat the ranges as an order of magnitude.

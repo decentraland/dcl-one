@@ -85,11 +85,18 @@ const networks = [
 ] as const
 type Network = (typeof networks)[number]['value']
 
-function SingleDropdownDemo({ initial }: { initial: Network | null }) {
+function SingleDropdownDemo({
+  initial,
+  variant
+}: {
+  initial: Network | null
+  variant?: 'light' | 'dark'
+}) {
   const [value, setValue] = useState<Network | null>(initial)
   return (
     <div className={layout.field}>
       <Dropdown
+        variant={variant}
         label="Network"
         placeholder="Choose a network"
         options={networks}
@@ -432,6 +439,11 @@ export const formEntries: GalleryEntry[] = [
         id: 'chosen',
         title: 'Single, chosen',
         render: () => <SingleDropdownDemo initial="ethereum" />
+      },
+      {
+        id: 'dark',
+        title: 'Dark, chosen (the Places filters)',
+        render: () => <SingleDropdownDemo initial="ethereum" variant="dark" />
       },
       { id: 'multiple', title: 'Multiple', render: () => <MultipleDropdownDemo /> },
       {

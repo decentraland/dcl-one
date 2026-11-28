@@ -213,3 +213,30 @@ fn arriving_at_a_scene_that_is_already_ready_reports_nothing() {
     // nothing to time: the load happened before the player got here
     assert!(world.resource::<FirstRingTiming>().arrival.is_none());
 }
+
+#[test]
+fn a_frozen_scene_has_loaded_once_its_gltfs_have() {
+    let mut world = world();
+    let home = scene(&mut world, "home", &[IVec2::ZERO], 3);
+    let mut context = world.get_mut::<RendererSceneContext>(home).unwrap();
+    assert!(!scene_is_halted(&context) && !scene_has_loaded(&context));
+
+    // the editor's freeze at tick 3, while the scene's models still load
+    context.blocked.insert(FROZEN_BLOCK);
+    context.blocked.insert(GLTF_LOADING);
+    assert!(!scene_is_halted(&context) && !scene_has_loaded(&context));
+    context.blocked.remove(GLTF_LOADING);
+    assert!(scene_is_halted(&context) && scene_has_loaded(&context));
+
+    // a running scene has loaded past its startup ticks with nothing blocking it
+    context.blocked.clear();
+    context.tick_number = STARTUP_TICKS;
+    assert!(!scene_has_loaded(&context));
+    context.tick_number = STARTUP_TICKS + 1;
+    assert!(scene_has_loaded(&context) && !scene_is_halted(&context));
+    context.blocked.insert(GLTF_LOADING);
+    assert!(!scene_has_loaded(&context));
+
+    context.state = crate::renderer_context::SceneState::Broken;
+    assert!(scene_is_halted(&context) && scene_has_loaded(&context));
+}
