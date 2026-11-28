@@ -1,0 +1,100 @@
+@layer dcl.reset, dcl.foundations, dcl.components;
+/* Figma `pagination-dots` (Navigation): 14px dots at white 20%, white 40% under the pointer, and a 40px ruby pill for
+ * the current page, 8px apart. The 14px dot and the 40px pill have no token. Not in Figma: the `plain` look,
+ * decentraland.org's 8px dots at white 40% with the current one white, as its carousels draw them, and the `wide`
+ * spacing, 24px between dots. Each dot's pseudo-element widens its target to 24px high and to the middle of the gaps
+ * beside it. */
+@layer dcl.components {
+  .root {
+    --pagination-dot: 14px;
+    --pagination-dot-current: 40px;
+    --pagination-dot-gap: var(--dcl-space-8);
+
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: var(--pagination-dot-gap);
+  }
+
+  .root[data-appearance='plain'] {
+    --pagination-dot: var(--dcl-space-8);
+    --pagination-dot-current: var(--dcl-space-8);
+  }
+
+  .root[data-spacing='wide'] {
+    --pagination-dot-gap: var(--dcl-space-24);
+  }
+
+  .dot {
+    position: relative;
+    flex: none;
+    box-sizing: border-box;
+    width: var(--pagination-dot);
+    height: var(--pagination-dot);
+    padding: 0;
+    border: 0;
+    border-radius: var(--dcl-radius-full);
+    background: var(--dcl-transparencies-white-20);
+    cursor: pointer;
+  }
+
+  .dot::after {
+    content: '';
+    position: absolute;
+    inset: calc((var(--pagination-dot) - var(--dcl-space-24)) / 2) calc(var(--pagination-dot-gap) / -2);
+  }
+
+  .dot[aria-current='true'] {
+    width: var(--pagination-dot-current);
+    background: var(--dcl-brand-ruby);
+  }
+
+  .root[data-appearance='plain'] .dot {
+    background: var(--dcl-transparencies-white-40);
+  }
+
+  .root[data-appearance='plain'] .dot[aria-current='true'] {
+    background: var(--dcl-neutrals-white);
+  }
+
+  @media (hover: hover) {
+    .root[data-appearance='default'] .dot:not([aria-current='true']):hover {
+      background: var(--dcl-transparencies-white-40);
+    }
+  }
+
+  .dot:focus-visible {
+    outline: 2px solid var(--dcl-neutrals-snow);
+    outline-offset: 2px;
+  }
+
+  /* The current dot widens over 200ms and the colours change over 300ms, unless less motion is asked for. */
+  @media (prefers-reduced-motion: no-preference) {
+    .dot {
+      transition:
+        width 200ms cubic-bezier(0.215, 0.61, 0.355, 1),
+        background-color 300ms ease;
+    }
+  }
+
+  @media (forced-colors: active) {
+    .root[data-appearance] .dot {
+      border: 1px solid ButtonText;
+      background: ButtonFace;
+      forced-color-adjust: none;
+    }
+
+    .root[data-appearance] .dot:not([aria-current='true']):hover {
+      background: ButtonFace;
+    }
+
+    .root[data-appearance] .dot[aria-current='true'] {
+      border-color: Highlight;
+      background: Highlight;
+    }
+
+    .dot:focus-visible {
+      outline-color: Highlight;
+    }
+  }
+}

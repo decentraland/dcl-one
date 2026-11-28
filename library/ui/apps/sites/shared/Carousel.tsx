@@ -10,6 +10,7 @@ import {
   type ReactNode
 } from 'react'
 import { Button } from '../../../components/Button/Button'
+import { PaginationDots } from '../../../components/PaginationDots/PaginationDots'
 import { GeneralLeftArrow, GeneralRightArrow } from '../../../foundations/icons'
 import styles from './Carousel.module.css'
 
@@ -315,16 +316,13 @@ function Carousel<T>({
             </Button>
           </div>
           <div className={styles.dots}>
-            {items.map((item, index) => (
-              <button
-                key={getKey(item)}
-                type="button"
-                className={index === current ? `${styles.dot} ${styles.dotActive}` : styles.dot}
-                aria-label={labels.goTo(index + 1)}
-                aria-current={index === current ? 'true' : undefined}
-                onClick={() => go(index)}
-              />
-            ))}
+            <PaginationDots
+              appearance="plain"
+              count={total}
+              current={current}
+              onSelect={go}
+              pageLabel={labels.goTo}
+            />
           </div>
         </>
       ) : null}

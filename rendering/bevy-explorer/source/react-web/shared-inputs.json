@@ -8031,6 +8031,10 @@
           "kind": "directory"
         },
         {
+          "name": "PaginationDots",
+          "kind": "directory"
+        },
+        {
           "name": "Panel",
           "kind": "directory"
         },
@@ -9191,6 +9195,23 @@
         },
         {
           "name": "Pager.tsx",
+          "kind": "regular"
+        }
+      ]
+    },
+    {
+      "path": "library/ui/components/PaginationDots",
+      "entries": [
+        {
+          "name": "PaginationDots.module.css",
+          "kind": "regular"
+        },
+        {
+          "name": "PaginationDots.test.tsx",
+          "kind": "regular"
+        },
+        {
+          "name": "PaginationDots.tsx",
           "kind": "regular"
         }
       ]
@@ -16332,11 +16353,11 @@
     },
     {
       "path": "library/ui/apps/sites/events/Rail.module.css",
-      "sha256": "773f54b93a11e18169aa8bade8b01ce07c24db4200908488ffdbd1436cd32be5"
+      "sha256": "6fc0df92b9d88dfdf231b2dac9773dccb8bbde32dae6bb78b16db32c3c457c82"
     },
     {
       "path": "library/ui/apps/sites/events/Rail.tsx",
-      "sha256": "13b36666d9583a6537d88bbd586eb0a09f8f33e4d55c55c46ebb674c98e28000"
+      "sha256": "7b66cb1ad154dc56c5470c5ad6a798f58dc78b1b2d8eb9921a5415bfaa80a218"
     },
     {
       "path": "library/ui/apps/sites/events/RejectEventModal.tsx",
@@ -16352,7 +16373,7 @@
     },
     {
       "path": "library/ui/apps/sites/events/Upcoming.tsx",
-      "sha256": "424592a277ab556b6e1b6fac5fed23faf3f741e14f19058d0d5c52d213f337c3"
+      "sha256": "445a754c2c1f78e320d1d0ceead096edaa65ddf481b9eb0458c439c0b79abe20"
     },
     {
       "path": "library/ui/apps/sites/events/UsersTable.module.css",
@@ -16780,11 +16801,11 @@
     },
     {
       "path": "library/ui/apps/sites/shared/Carousel.module.css",
-      "sha256": "b8aed4447fcda89b7043e744b752c6df122c06b34523266c260485e9a474d04c"
+      "sha256": "eb52651cc0764876e4c6e058cf4100443a222e17bfc0e931211c68f7a23b795c"
     },
     {
       "path": "library/ui/apps/sites/shared/Carousel.tsx",
-      "sha256": "22ec6e90537059209e41f6903bdcd3d35b2f2cc721feba632e1c36b2cb5f9219"
+      "sha256": "d62066f4c9e20e83f067d480db11db7f84668843dd7d42382859039247599f71"
     },
     {
       "path": "library/ui/apps/sites/shared/a11y.module.css",
@@ -17331,6 +17352,14 @@
       "sha256": "7934a4bc7f94e7487194729d02525ed78cfd5440dc5d92797b40cf89088fb88a"
     },
     {
+      "path": "library/ui/components/PaginationDots/PaginationDots.module.css",
+      "sha256": "143ad2f2cf20b24b482b07baadc395d0ca1f256b9af9d2b42b11aed521f2510c"
+    },
+    {
+      "path": "library/ui/components/PaginationDots/PaginationDots.tsx",
+      "sha256": "e8315f79442cc80e5a00aed2a80f9e9190734d1b145e111d02a481b7dc763660"
+    },
+    {
       "path": "library/ui/components/Panel/Panel.module.css",
       "sha256": "48b79b831ebf6004eb30f8aa589dd3732e35f9b727c83f1aacb8f8d44acd5427"
     },
@@ -17652,7 +17681,7 @@
     },
     {
       "path": "library/ui/index.ts",
-      "sha256": "488221341fd8f86bd5fffcb3ae056a13ab15f3e8d41c26ca0f2a0948ddc5cc8f"
+      "sha256": "c3d272db187e0aaaf18b86715a739bb3f98cc1706ea29bb63e301a03cb4a13d9"
     },
     {
       "path": "library/ui/link.helpers.ts",
@@ -56930,6 +56959,21 @@
     },
     {
       "from": "library/ui/apps/sites/events/Rail.tsx",
+      "to": "library/ui/components/PaginationDots/PaginationDots.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/sites/events/Rail.tsx",
+      "to": "library/ui/components/PaginationDots/PaginationDots.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/sites/events/Rail.tsx",
+      "to": "library/ui/components/PaginationDots/PaginationDots.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/sites/events/Rail.tsx",
       "to": "library/ui/foundations/icons/index.ts",
       "kind": "native:runtime"
     },
@@ -62480,6 +62524,21 @@
     },
     {
       "from": "library/ui/apps/sites/shared/Carousel.tsx",
+      "to": "library/ui/components/PaginationDots/PaginationDots.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/sites/shared/Carousel.tsx",
+      "to": "library/ui/components/PaginationDots/PaginationDots.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/sites/shared/Carousel.tsx",
+      "to": "library/ui/components/PaginationDots/PaginationDots.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/sites/shared/Carousel.tsx",
       "to": "library/ui/foundations/icons/index.ts",
       "kind": "native:runtime"
     },
@@ -64609,6 +64668,21 @@
       "kind": "test:runtime"
     },
     {
+      "from": "library/ui/components/PaginationDots/PaginationDots.tsx",
+      "to": "library/ui/components/PaginationDots/PaginationDots.module.css",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/components/PaginationDots/PaginationDots.tsx",
+      "to": "library/ui/components/PaginationDots/PaginationDots.module.css",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/components/PaginationDots/PaginationDots.tsx",
+      "to": "library/ui/components/PaginationDots/PaginationDots.module.css",
+      "kind": "test:runtime"
+    },
+    {
       "from": "library/ui/components/Panel/Panel.tsx",
       "to": "library/ui/components/Panel/Panel.module.css",
       "kind": "native:runtime"
@@ -66506,6 +66580,21 @@
     {
       "from": "library/ui/index.ts",
       "to": "library/ui/components/Pager/Pager.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/index.ts",
+      "to": "library/ui/components/PaginationDots/PaginationDots.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/index.ts",
+      "to": "library/ui/components/PaginationDots/PaginationDots.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/index.ts",
+      "to": "library/ui/components/PaginationDots/PaginationDots.tsx",
       "kind": "test:runtime"
     },
     {
@@ -71736,6 +71825,11 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/ui/components/Pager/Pager.tsx",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/ui/components/PaginationDots/PaginationDots.tsx",
       "kind": "type"
     },
     {
