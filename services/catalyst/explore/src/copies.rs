@@ -160,16 +160,23 @@ pub mod origin {
     pub async fn place(pool: &PgPool, id: &str) -> Result<bool, sqlx::Error> {
         if let Ok(identity) = uuid::Uuid::parse_str(id) {
             let local: Option<bool> = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
-                "SELECT EXISTS (SELECT 1 {} WHERE p.identity = known.identity AND {}) FROM explore.world_scene_place known WHERE known.identity = $1",
+                "SELECT EXISTS (SELECT 1 {} WHERE p.identity = $1 AND {})
+                 WHERE EXISTS (SELECT 1 FROM explore.world_scene_place WHERE identity = $1)
+                    OR EXISTS (SELECT 1 FROM explore.world_scene_public_id WHERE public_id = $1)",
                 crate::places::scene_identity::BOUND_WORLD_SCENE_FROM,
                 crate::places::scene_identity::LOCAL_WORLD_SCENE
-            ))).bind(identity).fetch_optional(pool).await?;
+            )))
+            .bind(identity)
+            .fetch_optional(pool)
+            .await?;
             if let Some(local) = local {
                 return Ok(local);
             }
         }
         sqlx::query_scalar(concat!(
-            "SELECT EXISTS (SELECT 1 FROM explore.place WHERE id = $1 AND ",
+            "SELECT EXISTS (SELECT 1 FROM explore.place
+              WHERE id = COALESCE((SELECT local_id FROM explore.genesis_place_alias WHERE public_id = lower($1)),
+                                  (SELECT local_id FROM explore.genesis_place_alias WHERE local_id = lower($1)), $1) AND ",
             local_place!(),
             ") OR EXISTS (SELECT 1 FROM explore.place_world_local WHERE id = $1)"
         ))
@@ -260,6 +267,10 @@ pub mod origin {
     /// partially mirrored scene through this separate read surface.
     pub fn world_scenes_local_only() -> bool {
         super::OwnRowsOnly::current().worlds
+    }
+
+    pub fn places_local_only() -> bool {
+        super::OwnRowsOnly::current().places
     }
 
     pub fn world_scene_rows_sql() -> &'static str {
@@ -419,18 +430,39 @@ pub async fn gate(State(state): State<SharedState>, request: Request, next: Next
                 &[]
             };
         }
-    } else if request.method() == Method::GET
-        && matches!(
-            path.as_str(),
-            "/api/places" | "/api/destinations" | "/v1/destinations"
-        )
-        && request.uri().query().is_some_and(|query| {
-            url::form_urlencoded::parse(query.as_bytes()).any(|(key, value)| {
-                key == "only_favorites" && matches!(value.as_ref(), "true" | "1")
-            })
-        })
-    {
-        mirrors = DESTINATIONS;
+    } else if request.method() == Method::GET {
+        let path = path.trim_end_matches('/');
+        let destinations = matches!(path, "/api/destinations" | "/v1/destinations");
+        if (destinations || path == "/api/places")
+            && let Some(query) = request.uri().query()
+        {
+            let pairs: Vec<_> = url::form_urlencoded::parse(query.as_bytes())
+                .into_owned()
+                .collect();
+            if pairs.iter().any(|(key, value)| {
+                key == "only_favorites" && matches!(value.as_str(), "true" | "1")
+            }) {
+                mirrors = DESTINATIONS;
+            }
+            if destinations
+                && let Ok(ids) = crate::places::destinations::multi(&pairs, "ids")
+                && !ids.is_empty()
+                && let Ok((catalogue, scenes)) = state.places.partition_scene_ids(&ids).await
+                && catalogue.is_empty()
+                && !scenes.is_empty()
+            {
+                mirrors = if state
+                    .places
+                    .has_bound_scene_ids(&scenes)
+                    .await
+                    .unwrap_or(true)
+                {
+                    WORLDS
+                } else {
+                    &[]
+                };
+            }
+        }
     }
     gate_with_freshness(state, request, next, mirrors).await
 }

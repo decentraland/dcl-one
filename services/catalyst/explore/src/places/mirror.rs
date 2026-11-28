@@ -78,9 +78,12 @@ const UPSERT: &str = r#"
               categories, likes, dislikes, favorites, deployed_at, disabled, highlighted, raw)
     -- An operator's decision (places::moderation) outlives every pass: the
     -- overlay's non-NULL fields win over upstream's.
-    LEFT JOIN explore.place_moderation m ON m.place_id = u.id
+    LEFT JOIN explore.genesis_place_claim genesis ON genesis.public_id = u.id
+    LEFT JOIN explore.place_moderation m ON m.place_id = COALESCE(genesis.local_id, u.id)
+        AND (genesis.public_id IS NULL OR m.set_by <> 'migration:places')
     -- and so does an operator's ranking (places::ranking): its raw keys win.
-    LEFT JOIN explore.place_ranking r ON r.place_id = u.id
+    LEFT JOIN explore.place_ranking r ON r.place_id = COALESCE(genesis.local_id, u.id)
+        AND (genesis.public_id IS NULL OR r.set_by <> 'migration:places')
     -- A world this node publishes is listed from the local leg alone
     -- (places::derive), and an id stays unique across both legs.
     WHERE NOT EXISTS (
@@ -110,8 +113,10 @@ const UPSERT: &str = r#"
         highlighted     = EXCLUDED.highlighted,
         raw             = EXCLUDED.raw,
         fetched_at      = timezone('UTC', now()),
-        -- a listed id is the upstream's, even where a local scene derived it first
+        -- A locally authored Genesis row keeps its ID on a collision.
         origin          = 'upstream'
+    WHERE NOT (explore.place.origin = 'local' AND explore.place.raw->>'source' = 'content'
+               AND NOT explore.place.world)
 "#;
 
 const RETIRE_DERIVED: &str =
@@ -285,6 +290,11 @@ async fn fetch_page_once(client: &crate::http::Outbound, url: &str) -> Result<Va
         .with_context(|| format!("GET {url}"))?
         .error_for_status()
         .with_context(|| format!("GET {url}"))?;
+    if url.starts_with(&format!("{}/", super::genesis_identity::TRUSTED_SOURCE))
+        && resp.url().origin().ascii_serialization() != super::genesis_identity::TRUSTED_SOURCE
+    {
+        bail!("trusted Places catalogue request redirected to another origin");
+    }
     let body = read_body_capped(resp, MAX_PAGE_BYTES)
         .await
         .with_context(|| format!("reading {url}"))?;
@@ -381,6 +391,11 @@ pub async fn run_places_pass(
     let base = source.base();
     reclaim_local(pool).await?;
     let start = mirror_state::begin_pass(pool, PLACES_MIRROR, base).await?;
+    let trusted = base == super::genesis_identity::TRUSTED_SOURCE;
+    if !trusted {
+        super::genesis_identity::clear_observations(pool, start.started_at.naive_utc(), base)
+            .await?;
+    }
     let mut out = PassOutcome {
         complete: true,
         fetched_all: true,
@@ -396,7 +411,8 @@ pub async fn run_places_pass(
             out.complete = false;
             return Ok(out);
         }
-        let url = format!("{base}/api/places?limit={PAGE}&offset={offset}");
+        let order = if trusted { "&order_by=updated_at" } else { "" };
+        let url = format!("{base}/api/places?limit={PAGE}&offset={offset}{order}");
         let body = tokio::select! {
             _ = cancel.cancelled() => {
                 out.cancelled = true;
@@ -423,7 +439,18 @@ pub async fn run_places_pass(
                 bail!("places upstream at offset={offset}: {e}");
             }
         };
-        let total = body.get("total").and_then(Value::as_i64).unwrap_or(0);
+        let reported_total = body.get("total").and_then(Value::as_i64);
+        let total = reported_total.unwrap_or(0);
+        if trusted {
+            super::genesis_identity::record_page(
+                pool,
+                start.started_at.naive_utc(),
+                offset,
+                &data,
+                reported_total,
+            )
+            .await?;
+        }
         if data.is_empty() {
             break;
         }
@@ -458,6 +485,9 @@ pub async fn run_places_pass(
     if out.complete && out.upserted > 0 {
         out.retired = retire_derived(pool).await?;
         out.swept = sweep_after_pass(pool, Leg::Places, start.started_at, interval).await;
+    }
+    if out.complete && trusted {
+        super::genesis_identity::finish_pass(pool, start.started_at.naive_utc(), base).await?;
     }
     // The marker's row count is the distinct rows this pass stamped, not the
     // page lengths summed: an id repeated across two upstream pages (seen
@@ -757,14 +787,14 @@ pub async fn upsert_rows(pool: &PgPool, rows: &[MirrorRow]) -> Result<()> {
         .bind(rows.iter().map(|r| r.disabled).collect::<Vec<_>>())
         .bind(rows.iter().map(|r| r.highlighted).collect::<Vec<_>>())
         .bind(rows.iter().map(|r| r.raw.clone()).collect::<Vec<_>>());
+    let mut tx = pool.begin().await?;
+    super::interactions::lock_public_id_writes(&mut tx).await?;
+    super::moderation::lock_curation_projection(&mut tx).await?;
     if rows.iter().any(|r| !r.raw["world_name"].is_null()) {
-        let mut tx = pool.begin().await?;
         super::derive::lock_world_projection(&mut tx).await?;
-        query.execute(&mut *tx).await?;
-        tx.commit().await?;
-    } else {
-        query.execute(pool).await?;
     }
+    query.execute(&mut *tx).await?;
+    tx.commit().await?;
     Ok(())
 }
 

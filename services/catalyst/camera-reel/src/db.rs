@@ -302,13 +302,10 @@ impl Database {
                 qb.push_bind(addr.to_lowercase());
             }
             Filter::PlaceId(place_id) => {
-                qb.push("place_id = ");
-                qb.push_bind(parse_uuid(place_id)?.to_string());
+                Self::push_place_ids(qb, vec![parse_uuid(place_id)?.to_string()]);
             }
             Filter::PlacesIds(ids) => {
-                qb.push("place_id = ANY(");
-                qb.push_bind(ids.to_vec());
-                qb.push(")");
+                Self::push_place_ids(qb, ids.to_vec());
             }
             Filter::WearableItem(item) => {
                 qb.push("camera_reel.image_wearable_items(metadata) && ARRAY[");
@@ -320,6 +317,34 @@ impl Database {
             qb.push(" AND is_public = true AND review_status <> 'rejected'");
         }
         Ok(())
+    }
+
+    /// Retain the exact metadata keys, plus both UUIDs of any currently
+    /// proven scene alias. Distinct requested keys never duplicate a photo.
+    fn push_place_ids(qb: &mut QueryBuilder<Postgres>, ids: Vec<String>) {
+        qb.push("place_id = ANY (ARRAY(WITH requested AS (SELECT id, ")
+            .push(
+                "CASE WHEN pg_input_is_valid(regexp_replace(id, '^urn:uuid:', '', 'i'), 'uuid') \
+                  THEN regexp_replace(id, '^urn:uuid:', '', 'i')::uuid END AS uuid \
+                  FROM unnest(",
+            )
+            .push_bind(ids)
+            .push(
+                "::text[]) AS keys(id)) \
+                 SELECT id FROM requested UNION \
+                 SELECT keys.id FROM requested r \
+                 JOIN explore.world_scene_public_id b ON b.entity_id IS NOT NULL \
+                   AND r.uuid IN (b.identity, b.public_id) \
+                 JOIN explore.world_scene_place p ON p.identity = b.identity AND p.active \
+                   AND p.world_name = b.world_name AND p.entity_id = b.entity_id \
+                 JOIN worlds.world_scenes s ON s.world_name = b.world_name AND s.entity_id = b.entity_id \
+                   AND s.mirror_source = b.source \
+                 JOIN worlds.worlds w ON w.name = b.world_name AND w.mirror_source = b.source \
+                 CROSS JOIN LATERAL (VALUES (b.identity::text), (b.public_id::text)) AS keys(id) \
+                 UNION SELECT keys.id FROM requested r \
+                 JOIN explore.genesis_place_alias a ON r.uuid::text IN (a.local_id, a.public_id) \
+                 CROSS JOIN LATERAL (VALUES (a.local_id), (a.public_id)) AS keys(id)))",
+            );
     }
 
     async fn get_images_count(
@@ -872,28 +897,33 @@ impl Database {
                 LEFT JOIN explore.place_moderation m ON m.place_id = c.id
                 WHERE c.world IS TRUE AND lower(c.world_name) = $1
             ), eligible_scenes AS (
-                SELECT p.identity
+                SELECT p.identity, b.public_id
                 FROM explore.world_scene_place p
                 JOIN worlds.world_scenes s
                   ON s.world_name = p.world_name AND s.entity_id = p.entity_id
                 JOIN worlds.worlds w ON w.name = p.world_name
+                LEFT JOIN explore.world_scene_public_id b ON b.identity = p.identity AND b.entity_id IS NOT NULL
+                  AND b.world_name = p.world_name AND b.entity_id = s.entity_id
+                  AND b.source = s.mirror_source AND b.source = w.mirror_source
                 LEFT JOIN explore.place_moderation m ON m.place_id = p.identity::text
                 LEFT JOIN explore.place_moderation wm ON wm.place_id = w.name
                 WHERE p.world_name = $1 AND p.active AND w.blocked_since IS NULL
                   AND NOT COALESCE(m.disabled, false) AND NOT COALESCE(wm.disabled, false)
                   AND NOT EXISTS (
                       SELECT 1 FROM catalogue c
-                      WHERE c.disabled AND (c.id = $1 OR c.identity = p.identity)
+                      WHERE c.disabled AND (c.id = $1 OR c.identity IN (p.identity, b.public_id))
                   )
             )
             SELECT c.id FROM catalogue c
             WHERE NOT c.disabled AND c.id <> $1
               AND (
-                  NOT EXISTS (
+                  (NOT EXISTS (
                       SELECT 1 FROM explore.world_scene_place p WHERE p.identity = c.identity
-                  )
+                  ) AND NOT EXISTS (
+                      SELECT 1 FROM explore.world_scene_public_id b WHERE b.public_id = c.identity
+                  ))
                   OR EXISTS (
-                      SELECT 1 FROM eligible_scenes e WHERE e.identity = c.identity
+                      SELECT 1 FROM eligible_scenes e WHERE c.identity IN (e.identity, e.public_id)
                   )
               )
             UNION

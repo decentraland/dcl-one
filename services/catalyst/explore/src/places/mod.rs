@@ -10,6 +10,9 @@ pub mod admin;
 pub mod content_quality;
 pub mod derive;
 pub mod destinations;
+#[cfg(test)]
+mod genesis_adoption_tests;
+pub(crate) mod genesis_identity;
 pub mod handlers;
 pub mod interactions;
 pub mod live;
@@ -42,7 +45,10 @@ use query::{
 pub use rows::{
     ActiveRows, CategoryTarget, PlaceListFilters, PlaceOrderBy, PlaceRow, PlaceStatusRow, WorldRow,
 };
-use rows::{WORLD_THUMBNAIL_JOIN, place_columns, place_image_url, row_to_place, viewer_columns};
+use rows::{
+    GENESIS_PLACE_JOIN, WORLD_THUMBNAIL_JOIN, place_columns, place_image_url, row_to_place,
+    viewer_columns,
+};
 
 type CategoryCounts = Vec<(String, i64)>;
 type ParcelAliases = Arc<HashMap<String, String>>;
@@ -179,11 +185,16 @@ impl PlacesComponent {
     /// comes from the fresh LAND authority (or its trusted fallback), never scene metadata.
     pub async fn owns_places(&self, place_ids: &[String], owner: &str) -> Result<bool, ApiError> {
         let keys: Vec<String> = place_ids.iter().map(|id| id.to_lowercase()).collect();
-        let rows: Vec<(String, bool, String, Option<String>)> = sqlx::query_as(
-            "SELECT CASE WHEN id = ANY($1) THEN id ELSE lower(world_name) END, \
-             world, base_position, lower(COALESCE(raw->>'owner', creator_address)) FROM explore.place_indexed \
-             WHERE id = ANY($1) OR lower(world_name) = ANY($1)"
-        ).bind(&keys).fetch_all(&self.pool).await?;
+        let key = query::genesis_storage_key_sql("requested.id");
+        let rows: Vec<(String, bool, String, Option<String>)> =
+            sqlx::query_as(sqlx::AssertSqlSafe(format!(
+                "SELECT requested.id, world, base_position, lower(COALESCE(raw->>'owner', creator_address))
+                 FROM unnest($1::text[]) AS requested(id)
+                 JOIN explore.place_indexed p ON p.id = {key} OR lower(p.world_name) = requested.id"
+            )))
+            .bind(&keys)
+            .fetch_all(&self.pool)
+            .await?;
         let mut owned = std::collections::HashSet::new();
         let mut parcels = Vec::new();
         let mut parcel_keys = Vec::new();
@@ -379,8 +390,10 @@ impl PlacesComponent {
         place_id: &str,
         viewer: Option<&str>,
     ) -> Result<Option<PlaceRow>, ApiError> {
+        let storage = query::genesis_storage_key_sql("$1");
         let sql = format!(
-            "SELECT {}, world_thumbnail_hash{} FROM explore.place_indexed {WORLD_THUMBNAIL_JOIN} WHERE id = $1",
+            "SELECT {}, world_thumbnail_hash, genesis_copy.*{} FROM explore.place_indexed
+             {WORLD_THUMBNAIL_JOIN} {GENESIS_PLACE_JOIN} WHERE id = {storage}",
             place_columns(),
             viewer.map(|_| viewer_columns(2)).unwrap_or_default()
         );
@@ -419,16 +432,19 @@ impl PlacesComponent {
             return Ok(0);
         }
         let (catalogue_ids, scene_ids) = self.partition_scene_ids(ids).await?;
+        let genesis = query::genesis_ids_sql("$1");
+        let unshadowed = query::GENESIS_UNSHADOWED;
         let catalogue: i64 = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
             "SELECT count(*)::bigint FROM explore.place_indexed \
-             WHERE id = ANY($1) AND NOT {}{}",
+             WHERE id = ANY({genesis}) AND {unshadowed} AND NOT {}{}",
             query::WORLD_CATALOGUE_SQL,
             and_own_rows()
         )))
         .bind(&catalogue_ids)
         .fetch_one(&self.pool)
         .await?;
-        Ok(catalogue + scene_ids.len() as i64)
+        let scenes = self.scene_status_identities(&scene_ids).await?;
+        Ok(catalogue + scenes.len() as i64)
     }
 
     /// `PlaceModel.findByIds` (`Place/model.ts:556-577`): the status columns,
@@ -443,11 +459,14 @@ impl PlacesComponent {
             return Ok(vec![]);
         }
         let (catalogue_ids, scene_ids) = self.partition_scene_ids(ids).await?;
+        let genesis = query::genesis_ids_sql("$1");
+        let unshadowed = query::GENESIS_UNSHADOWED;
         let rows = sqlx::query(sqlx::AssertSqlSafe(format!(
-            "SELECT id, disabled, \
-             CASE WHEN jsonb_typeof(raw->'disabled_reason') = 'string' THEN raw->>'disabled_reason' END AS disabled_reason, \
-             base_position, world, world_name FROM explore.place_indexed \
-             WHERE id = ANY($1) AND NOT {}{}",
+            "SELECT COALESCE(genesis_public_id, id) AS id, (disabled OR COALESCE(genesis_disabled, false)) AS disabled, \
+             COALESCE(CASE WHEN jsonb_typeof(raw->'disabled_reason') = 'string' THEN raw->>'disabled_reason' END,
+                      genesis_disabled_reason) AS disabled_reason, \
+             base_position, world, world_name FROM explore.place_indexed {GENESIS_PLACE_JOIN} \
+             WHERE id = ANY({genesis}) AND {unshadowed} AND NOT {}{}",
             query::WORLD_CATALOGUE_SQL,
             and_own_rows()
         )))
@@ -467,16 +486,21 @@ impl PlacesComponent {
                 base_position: r.get::<String, _>("base_position"),
             })
             .collect();
+        let scene_identities = self.scene_status_identities(&scene_ids).await?;
+        let storage_ids = scene_identities
+            .iter()
+            .map(|(id, _)| id.clone())
+            .collect::<Vec<_>>();
         let visible: HashMap<String, PlaceRow> = self
             .world_scene_places_by_ids_scoped(&scene_ids, None, false)
             .await?
             .into_iter()
-            .map(|row| (row.id.clone(), row))
+            .map(|row| (row.storage_id().to_string(), row))
             .collect();
         // A missing mirror copy is not a disabled scene. Only suppress live
         // mirrored rows; hidden/retired identities still return minimal status.
         let nonlocal: Vec<uuid::Uuid> = if crate::copies::origin::world_scenes_local_only() {
-            let ids: Vec<uuid::Uuid> = scene_ids
+            let ids: Vec<uuid::Uuid> = storage_ids
                 .iter()
                 .filter_map(|id| uuid::Uuid::parse_str(id).ok())
                 .collect();
@@ -491,15 +515,15 @@ impl PlacesComponent {
         } else {
             Vec::new()
         };
-        for id in scene_ids {
-            if visible.contains_key(&id)
-                && uuid::Uuid::parse_str(&id).is_ok_and(|id| nonlocal.contains(&id))
+        for (storage_id, public_id) in scene_identities {
+            if visible.contains_key(&storage_id)
+                && uuid::Uuid::parse_str(&storage_id).is_ok_and(|id| nonlocal.contains(&id))
             {
                 continue;
             }
-            match visible.get(&id) {
+            match visible.get(&storage_id) {
                 Some(row) => status.push(PlaceStatusRow {
-                    id,
+                    id: row.id.clone(),
                     disabled: false,
                     disabled_reason: None,
                     base_position: row.base_position.clone(),
@@ -507,7 +531,7 @@ impl PlacesComponent {
                     world_name: row.world_name.clone(),
                 }),
                 None => status.push(PlaceStatusRow {
-                    id,
+                    id: public_id,
                     disabled: true,
                     disabled_reason: None,
                     base_position: String::new(),
@@ -534,15 +558,17 @@ impl PlacesComponent {
         // `Category/model.ts:34-51`: a LEFT JOIN over every place row, disabled
         // ones included; `target` narrows to `p.world IS true|false`.
         let world_filter = match target {
-            CategoryTarget::Worlds => "WHERE p.world IS TRUE",
-            CategoryTarget::Places => "WHERE p.world IS FALSE",
+            CategoryTarget::Worlds => "AND p.world IS TRUE",
+            CategoryTarget::Places => "AND p.world IS FALSE",
             CategoryTarget::All => "",
         };
+        let categories = query::genesis_categories_sql("p.id", "p.raw", "p.categories");
         let sql = format!(
             "SELECT cat AS name, count(*)::bigint AS count \
-             FROM explore.place_indexed p, unnest(p.categories) AS cat \
-             {world_filter} \
-             GROUP BY cat ORDER BY count DESC, name ASC"
+             FROM explore.place_indexed p, unnest({categories}) AS cat \
+             WHERE {} {world_filter} \
+             GROUP BY cat ORDER BY count DESC, name ASC",
+            query::GENESIS_UNSHADOWED
         );
         let rows = sqlx::query(sqlx::AssertSqlSafe(sql))
             .fetch_all(&self.pool)
@@ -564,10 +590,14 @@ impl PlacesComponent {
         if let Some(scene) = self.find_world_scene_place(place_id, None).await? {
             return Ok(scene.map(|p| p.categories).unwrap_or_default());
         }
-        let row = sqlx::query("SELECT categories FROM explore.place_indexed WHERE id = $1")
-            .bind(place_id)
-            .fetch_optional(&self.pool)
-            .await?;
+        let storage = query::genesis_storage_key_sql("$1");
+        let categories = query::genesis_categories_sql("id", "raw", "categories");
+        let row = sqlx::query(sqlx::AssertSqlSafe(format!(
+            "SELECT {categories} AS categories FROM explore.place_indexed WHERE id = {storage}"
+        )))
+        .bind(place_id)
+        .fetch_optional(&self.pool)
+        .await?;
         Ok(row
             .map(|r| {
                 r.try_get::<Vec<String>, _>("categories")
@@ -765,11 +795,17 @@ fn list_sql_from(
     binds.extend(where_binds);
     let relation = source.relation;
     let projection = if source.scene_projection {
-        "canonical_scene, "
+        "canonical_scene, public_scene_id, "
     } else {
         ""
     };
-    let order = f.order_by.order_expr();
+    let has_genesis_scores = matches!(f.order_by, PlaceOrderBy::LikeScore)
+        && !crate::copies::origin::places_local_only();
+    let order = if matches!(f.order_by, PlaceOrderBy::LikeScore) && !has_genesis_scores {
+        query::LOCAL_LIKE_SCORE_ORDER_SQL
+    } else {
+        f.order_by.order_expr()
+    };
     let dir = if f.order_desc { "DESC" } else { "ASC" };
     // `Place/model.ts:323-328,631`: `ts_rank_cd(textsearch, query) as rank`,
     // selected and sorted first when a search is set.
@@ -817,6 +853,14 @@ fn list_sql_from(
     };
     let limit = binds.len() + search_count + live_binds.len() + viewer_count + 1;
     let offset = limit + 1;
+    let (scores_cte, scores_join) = if has_genesis_scores {
+        (
+            query::GENESIS_SCORES_CTE,
+            " LEFT JOIN genesis_scores ON genesis_scores.local_id = place_indexed.id",
+        )
+    } else {
+        ("", "")
+    };
     let sql = if like_score_top_n {
         let total = if with_total {
             format!(
@@ -825,31 +869,43 @@ fn list_sql_from(
         } else {
             String::new()
         };
-        // Cut each leg of place_indexed to the page, order the page among those keys, then
-        // read the columns of the page alone. Each cut sorts the leg's rows on the score
-        // they answer, with the recounts joined beside them.
+        // Keep the ordinary per-leg top-N and add the sparse adopted local keys.
+        // Two extra keys per alias cover both halves of every pair that the
+        // final visibility filter may drop from the ordinary candidate cuts.
+        let candidates_where = query::build_where_with_genesis(f, true, 1, false, false).0;
+        let candidates_order = order_clause.replace(
+            query::LIKE_SCORE_ORDER_SQL,
+            query::LOCAL_LIKE_SCORE_ORDER_SQL,
+        );
         format!(
             r#"
             WITH cand AS (
-                (SELECT id FROM explore.place{place_join} WHERE ({where_clause}) AND world IS FALSE ORDER BY {order_clause} LIMIT {n})
+                (SELECT id FROM explore.place{place_join} WHERE ({candidates_where}) AND world IS FALSE ORDER BY {candidates_order} LIMIT {n})
                 UNION ALL
-                (SELECT id FROM explore.place{place_join} WHERE ({where_clause}) AND world IS TRUE ORDER BY {order_clause} LIMIT {n})
+                (SELECT id FROM explore.place{place_join} WHERE ({candidates_where}) AND world IS TRUE ORDER BY {candidates_order} LIMIT {n})
                 UNION ALL
-                (SELECT id FROM explore.place_world_local{local_join} WHERE {where_clause} ORDER BY {order_clause} LIMIT {n})
-            ), page AS (
+                (SELECT id FROM explore.place_world_local{local_join} WHERE {candidates_where} ORDER BY {candidates_order} LIMIT {n})
+                UNION ALL
+                SELECT local_id FROM explore.genesis_place_alias
+            ), {scores_cte} page AS (
                 SELECT id FROM explore.place_indexed{indexed_join}
+                {scores_join}
                 WHERE id = ANY (ARRAY(SELECT id FROM cand)) AND {where_clause}
                 ORDER BY {order_clause}
                 LIMIT ${limit} OFFSET ${offset}
             )
-            SELECT {cols}, world_thumbnail_hash{rank_col}{viewer_cols}{total}
+            SELECT {cols}, world_thumbnail_hash, genesis_copy.*{rank_col}{viewer_cols}{total}
             FROM explore.place_indexed{indexed_join}
             JOIN page USING (id)
+            {scores_join}
             {WORLD_THUMBNAIL_JOIN}
+            {GENESIS_PLACE_JOIN}
             ORDER BY {order_clause}
             "#,
             cols = place_columns(),
-            n = format!("${limit}::bigint + ${offset}::bigint"),
+            n = format!(
+                "LEAST(${limit}::numeric + ${offset}::numeric + 2 * (SELECT count(*) FROM explore.genesis_place_alias), 9223372036854775807)::bigint"
+            ),
             place_join = like_score_recount_join(f.order_by, "place"),
             local_join = like_score_recount_join(f.order_by, "place_world_local"),
             indexed_join = like_score_recount_join(f.order_by, "place_indexed"),
@@ -869,17 +925,20 @@ fn list_sql_from(
         };
         format!(
             r#"
-            {cte_lead} page AS (
+            {cte_lead} {scores_cte} page AS (
                 SELECT id{window}
                 FROM {relation}{recount_join}
+                {scores_join}
                 WHERE {where_clause}
                 ORDER BY {order_clause}
                 LIMIT ${limit} OFFSET ${offset}
             )
-            SELECT {projection}{cols}, world_thumbnail_hash{rank_col}{viewer_cols}{total}
+            SELECT {projection}{cols}, world_thumbnail_hash, genesis_copy.*{rank_col}{viewer_cols}{total}
             FROM {relation}{recount_join}
             JOIN page USING (id)
+            {scores_join}
             {WORLD_THUMBNAIL_JOIN}
+            {GENESIS_PLACE_JOIN}
             ORDER BY {order_clause}
             "#,
             cols = place_columns(),
@@ -1019,16 +1078,33 @@ mod list_sql_tests {
             sql.contains("WHERE id = ANY (ARRAY(SELECT id FROM cand)) AND"),
             "{sql}"
         );
-        // Every sort, the three cuts, the page and the read, orders on the served score.
+        // Ordinary legs keep their original score cut. The sparse adopted keys
+        // enter separately, and the page and response sort on the served score.
         assert_eq!(
-            sql.matches("ORDER BY CASE WHEN recount.imported > 0 THEN recount.like_score ELSE COALESCE(recount.like_score, like_score_num) END DESC NULLS LAST, deployed_at DESC, id ASC")
-                .count(),
-            5,
+            sql.matches(&format!(
+                "ORDER BY {} DESC NULLS LAST, deployed_at DESC, id ASC",
+                query::LIKE_SCORE_ORDER_SQL
+            ))
+            .count(),
+            2,
+            "{sql}"
+        );
+        assert_eq!(
+            sql.matches(&format!(
+                "ORDER BY {} DESC NULLS LAST, deployed_at DESC, id ASC",
+                query::LOCAL_LIKE_SCORE_ORDER_SQL
+            ))
+            .count(),
+            3,
+            "{sql}"
+        );
+        assert!(
+            sql.contains("SELECT local_id FROM explore.genesis_place_alias"),
             "{sql}"
         );
         assert!(!sql.contains("ORDER BY like_score_num"), "{sql}");
         assert_eq!(
-            sql.matches("LIMIT $1::bigint + $2::bigint)").count(),
+            sql.matches("LIMIT LEAST($1::numeric + $2::numeric + 2 * (SELECT count(*) FROM explore.genesis_place_alias), 9223372036854775807)::bigint)").count(),
             3,
             "{sql}"
         );
@@ -1125,7 +1201,7 @@ mod list_sql_tests {
                 "{sql}"
             );
             assert_eq!(
-                sql.contains("CASE WHEN recount.imported > 0 THEN recount.like_score ELSE COALESCE(recount.like_score, like_score_num) END"),
+                sql.contains(query::LIKE_SCORE_ORDER_SQL),
                 like_score,
                 "{sql}"
             );

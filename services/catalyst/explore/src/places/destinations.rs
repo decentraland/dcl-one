@@ -103,6 +103,10 @@ impl From<NextEvent> for DestinationNextEvent {
 #[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(export, export_to = "places/"))]
 pub struct Destination {
     pub id: String,
+    /// Existing local references can still address a scene after its public ID is confirmed.
+    #[serde(skip)]
+    #[cfg_attr(feature = "ts", ts(skip))]
+    pub local_scene_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     #[cfg_attr(feature = "ts", ts(optional))]
     pub kind: Option<EntityType>,
@@ -201,6 +205,7 @@ impl From<PlaceRow> for Destination {
         };
         Self {
             id: p.id,
+            local_scene_id: p.local_scene_id,
             kind: Some(kind),
             title: p.title,
             description: p.description,
@@ -308,7 +313,7 @@ fn surface_pairs(pairs: &[(String, String)], surface: Surface) -> Vec<(String, S
         .collect()
 }
 
-fn multi(pairs: &[(String, String)], key: &str) -> Result<Vec<String>, ApiError> {
+pub(crate) fn multi(pairs: &[(String, String)], key: &str) -> Result<Vec<String>, ApiError> {
     let values: Vec<String> = pairs
         .iter()
         .filter(|(k, _)| k == key)
@@ -489,7 +494,12 @@ async fn enrich_with_counts(
         live::fill_connected(&state.live, data).await;
     }
     if flags.with_live_events {
-        let ids: Vec<String> = data.iter().map(event_key).collect();
+        let mut ids: Vec<String> = data.iter().map(event_key).collect();
+        ids.extend(
+            data.iter()
+                .filter(|d| !d.world)
+                .filter_map(|d| d.local_scene_id.clone()),
+        );
         let live_map: HashMap<String, Option<String>> =
             match state.events.live_event_names(&ids).await {
                 Ok(map) => map,
@@ -499,7 +509,17 @@ async fn enrich_with_counts(
                 }
             };
         for d in data.iter_mut() {
-            let event_name = live_map.get(&event_key(d)).cloned().unwrap_or(None);
+            let event_name = live_map
+                .get(&event_key(d))
+                .and_then(Option::as_ref)
+                .or_else(|| {
+                    d.local_scene_id
+                        .as_ref()
+                        .filter(|_| !d.world)
+                        .and_then(|id| live_map.get(id))
+                        .and_then(Option::as_ref)
+                })
+                .cloned();
             d.live = Some(event_name.is_some());
             d.live_event_name = Some(event_name);
         }
@@ -527,7 +547,12 @@ pub(crate) async fn decorate_next_event(
     if !flags.with_next_event || data.is_empty() {
         return;
     }
-    let ids: Vec<String> = data.iter().map(destination_event_key).collect();
+    let mut ids: Vec<String> = data.iter().map(destination_event_key).collect();
+    ids.extend(
+        data.iter()
+            .filter(|d| !d.world)
+            .filter_map(|d| d.local_scene_id.clone()),
+    );
     let next = match state.events.next_events(&ids).await {
         Ok(map) => map,
         Err(e) => {
@@ -536,8 +561,17 @@ pub(crate) async fn decorate_next_event(
         }
     };
     for d in data.iter_mut() {
+        let public = next.get(&destination_event_key(d));
+        let local = d
+            .local_scene_id
+            .as_ref()
+            .filter(|_| !d.world)
+            .and_then(|id| next.get(id));
         d.next_event = Some(
-            next.get(&destination_event_key(d))
+            public
+                .into_iter()
+                .chain(local)
+                .min_by(|a, b| (&a.next_start_at, &a.id).cmp(&(&b.next_start_at, &b.id)))
                 .cloned()
                 .map(DestinationNextEvent::from),
         );

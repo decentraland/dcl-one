@@ -146,6 +146,14 @@ pub async fn get_about(
             .await
             .map_err(read)?;
     }
+    if about
+        .world
+        .as_ref()
+        .is_some_and(|world| world.blocked_since.is_none())
+        && about.scenes.iter().any(|scene| !scene.is_local())
+    {
+        state.retry_held_places(&world_name);
+    }
     // The live NAME holder's quota block, not the stored owner's.
     if let (Some(policy), Some(world)) = (state.policy(), about.world.as_mut())
         && let Ok(name) = crate::comms::world_identity::WorldName::parse(&world.name)

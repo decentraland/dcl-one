@@ -98,14 +98,20 @@ pub async fn get_v1_event(
                     || matches!((viewer.as_deref(), evt.user.as_deref()), (Some(v), Some(u)) if v.eq_ignore_ascii_case(u)))
         })
         .ok_or_else(not_found)?;
-    let destination_id = destination_id(&event);
-    let destination = match &destination_id {
-        Some(id) => crate::places::v1::find_destination_for(&state, id, viewer.as_deref())
-            .await?
-            .map(crate::places::destinations::Destination::from)
-            .and_then(|d| serde_json::to_value(d).ok()),
+    let mut destination_id = destination_id(&event);
+    let destination_row = match &destination_id {
+        Some(id) => crate::places::v1::find_destination_for(&state, id, viewer.as_deref()).await?,
         None => None,
     };
+    if let Some(scene) = destination_row
+        .as_ref()
+        .filter(|row| row.scene_place || row.local_scene_id.is_some())
+    {
+        destination_id = Some(scene.id.clone());
+    }
+    let destination = destination_row
+        .map(crate::places::destinations::Destination::from)
+        .and_then(|d| serde_json::to_value(d).ok());
     Ok(Json(ApiData::ok(V1EventRecord {
         event,
         destination_id,
@@ -120,12 +126,20 @@ pub async fn get_v1_destination_events(
     Path(id): Path<String>,
 ) -> Result<Json<ApiData<Vec<EventRecord>>>, ApiError> {
     let viewer = state.viewer(&headers, "get", uri.path()).await;
+    let mut destination_ids = vec![id.to_lowercase()];
+    if uuid::Uuid::parse_str(&id).is_ok()
+        && let Some(scene) =
+            crate::places::v1::find_destination_for(&state, &id, viewer.as_deref()).await?
+        && scene.storage_id() != scene.id
+    {
+        destination_ids = vec![scene.storage_id().to_string(), scene.id];
+    }
     let filters = EventListFilters {
         limit: 500,
         offset: 0,
         list: EventListType::Active,
         order: SortOrder::Asc,
-        destination_ids: vec![id.to_lowercase()],
+        destination_ids,
         user: viewer,
         include_own: true,
         ..Default::default()

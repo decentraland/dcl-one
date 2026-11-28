@@ -40,10 +40,17 @@ WITH scene AS (
 )
 INSERT INTO explore.world_scene_place AS p (world_name, identity, entity_id, parcels, active)
 SELECT sc.world_name,
-       coalesce(c.identity, md5(sc.world_name || '/' || sc.entity_id)::uuid),
+       proposed.identity,
        sc.entity_id, sc.parcels, true
 FROM scene sc
 LEFT JOIN chosen c ON c.world_name = sc.world_name AND c.entity_id = sc.entity_id
+CROSS JOIN LATERAL (
+    SELECT coalesce(c.identity, md5(sc.world_name || '/' || sc.entity_id)::uuid) AS identity
+) proposed
+WHERE NOT EXISTS (
+    SELECT 1 FROM explore.genesis_place_claim g
+    WHERE g.public_id = proposed.identity::text OR g.local_id = proposed.identity::text
+)
 ON CONFLICT (identity) DO UPDATE SET
     entity_id = EXCLUDED.entity_id,
     parcels = EXCLUDED.parcels,

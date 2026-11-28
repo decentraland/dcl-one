@@ -49,6 +49,7 @@ pub struct WorldSceneRow {
     pub world_name: String,
     pub entity_id: String,
     pub deployment_auth_chain: Value,
+    pub mirror_source: Option<String>,
     pub entity: Value,
     pub deployer: String,
     pub parcels: Vec<String>,
@@ -235,7 +236,7 @@ pub async fn list_scenes_full(
 
     let mut page = QueryBuilder::new(
         "SELECT world_name, entity_id, deployment_auth_chain, entity, deployer, \
-         parcels, size, created_at, updated_at",
+         parcels, size, created_at, updated_at, mirror_source",
     );
     push_scene_filters(&mut page, world_name, filters);
     page.push(" ORDER BY created_at, entity_id LIMIT ")
@@ -249,6 +250,7 @@ pub async fn list_scenes_full(
             world_name: r.get("world_name"),
             entity_id: r.get("entity_id"),
             deployment_auth_chain: r.get("deployment_auth_chain"),
+            mirror_source: r.get("mirror_source"),
             entity: r.get("entity"),
             deployer: r.get("deployer"),
             parcels: r.get("parcels"),

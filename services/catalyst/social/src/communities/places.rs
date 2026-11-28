@@ -113,11 +113,12 @@ fn is_uuid_shaped(id: &str) -> bool {
 /// at `fb3dcb8`): the UUID-shaped ids and the `*.eth` names of the page go to
 /// the destinations lookup as one array (upstream's `POST /api/destinations`
 /// body; here explore's [`destinations_by_ids`](crate::explore::places::destinations::destinations_by_ids)
-/// in process), and each row takes the fields of the destination whose `id`
-/// is exactly its id, after its own. The destinations are `world is false`
+/// in process), and each row takes its destination's fields. A bound scene also
+/// matches a saved local UUID and keeps that association's original key.
+/// The catalogue destinations are `world is false`
 /// places and the catalogue's worlds, each keyed by its lowercased name
 /// (places `Place/model.ts:149`, `World/model.ts:132-135,466-469`): a `*.eth`
-/// row is its catalogue world, while a world scene's UUID, a `*.eth` name the
+/// row is its catalogue world, while an unbound catalogue scene UUID, a `*.eth` name the
 /// catalogue lacks or a disabled place stays bare (ids are stored lowercased,
 /// [`canonical_place_id`]).
 /// A failed lookup answers the bare rows. `addedBy` and `addedAt` stay on
@@ -142,17 +143,22 @@ async fn with_destinations(
             return rows;
         }
     };
-    let mut details: std::collections::HashMap<String, serde_json::Map<String, Value>> =
-        std::collections::HashMap::new();
-    for d in destinations {
-        if let Ok(Value::Object(mut fields)) = serde_json::to_value(&d) {
-            fields.remove("kind");
-            details.insert(d.id.clone(), fields);
+    let mut details = std::collections::HashMap::new();
+    for d in &destinations {
+        details.insert(d.id.as_str(), d);
+        if let Some(local) = d.local_scene_id.as_deref() {
+            details.insert(local, d);
         }
     }
     for (row, place) in rows.iter_mut().zip(&places) {
-        if let (Some(fields), Some(obj)) = (details.get(&place.id), row.as_object_mut()) {
-            obj.extend(fields.clone());
+        if let Some(destination) = details.get(place.id.as_str())
+            && let Ok(Value::Object(mut fields)) = serde_json::to_value(destination)
+            && let Some(obj) = row.as_object_mut()
+        {
+            fields.remove("kind");
+            // The stored association ID is also the key for removing this place.
+            fields.remove("id");
+            obj.extend(fields);
         }
     }
     rows

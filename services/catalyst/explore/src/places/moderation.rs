@@ -176,15 +176,28 @@ const WORLD_SCENE_RESOLVE: &str = "SELECT p.identity::text AS id, true AS world,
      LEFT JOIN worlds.worlds w ON w.name = p.world_name \
      LEFT JOIN explore.place_moderation m ON m.place_id = p.identity::text \
      LEFT JOIN explore.place_moderation wm ON wm.place_id = p.world_name \
-     WHERE p.identity = $1";
+     LEFT JOIN explore.world_scene_public_id canonical ON canonical.public_id = $1 AND canonical.identity = p.identity \
+         AND canonical.world_name = p.world_name AND canonical.entity_id = s.entity_id \
+         AND canonical.source = s.mirror_source AND canonical.source = w.mirror_source \
+     WHERE p.identity = COALESCE(
+         (SELECT identity FROM explore.world_scene_public_id WHERE public_id = $1), $1
+     ) AND (p.identity = $1 OR canonical.public_id = $1)";
 
 /// The catalogue row `target` names, from either leg; `None` when none matches.
 /// A place target is any row by id, world-backed ones included
 /// (`findByIdWithAggregates`, `Place/model.ts:513-553`); a world target is a
 /// world catalogue row by id or folded name (`World/model.ts:333` reads the
 /// worlds table alone, so a world known only through its scenes is a miss).
+#[cfg(test)]
 pub(super) async fn resolve(
     pool: &PgPool,
+    target: &Target<'_>,
+) -> Result<Option<Resolved>, ApiError> {
+    resolve_on(&mut *pool.acquire().await?, target).await
+}
+
+async fn resolve_on(
+    conn: &mut sqlx::PgConnection,
     target: &Target<'_>,
 ) -> Result<Option<Resolved>, ApiError> {
     let row = match target {
@@ -192,17 +205,19 @@ pub(super) async fn resolve(
             if let Ok(identity) = Uuid::parse_str(id) {
                 let scene = sqlx::query_as(WORLD_SCENE_RESOLVE)
                     .bind(identity)
-                    .fetch_optional(pool)
+                    .fetch_optional(&mut *conn)
                     .await?;
                 if scene.is_some() {
                     return Ok(scene);
                 }
             }
+            let scene = super::scene_identity::is_scene_id_sql("id");
+            let storage = super::query::genesis_storage_key_sql("$1");
             sqlx::query_as(sqlx::AssertSqlSafe(format!(
-                "SELECT {RESOLVE_COLUMNS} FROM explore.place_indexed WHERE id = $1 LIMIT 1"
+                "SELECT {RESOLVE_COLUMNS} FROM explore.place_indexed WHERE id = {storage} AND NOT {scene} LIMIT 1"
             )))
             .bind(id)
-            .fetch_optional(pool)
+            .fetch_optional(&mut *conn)
             .await?
         }
         Target::World(id) => {
@@ -210,7 +225,7 @@ pub(super) async fn resolve(
                 "SELECT {RESOLVE_COLUMNS} FROM explore.place_indexed WHERE world IS TRUE AND id = lower(world_name) AND id = lower($1) LIMIT 1"
             )))
             .bind(id)
-            .fetch_optional(pool)
+            .fetch_optional(&mut *conn)
             .await?
         }
     };
@@ -243,6 +258,66 @@ fn disable_raw_patch(disabled: bool, reason: Option<&str>, at: DateTime<Utc>) ->
     }
 }
 
+/// Curation writers serialize against catalogue refreshes after taking the
+/// scene claim lock. Likes and favorites do not take this lock.
+pub(super) async fn lock_curation(conn: &mut sqlx::PgConnection) -> Result<(), sqlx::Error> {
+    sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended('explore.place_curation', 0))")
+        .execute(conn)
+        .await?;
+    Ok(())
+}
+
+pub(super) async fn lock_curation_projection(
+    conn: &mut sqlx::PgConnection,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        "SELECT pg_advisory_xact_lock_shared(hashtextextended('explore.place_curation', 0))",
+    )
+    .execute(conn)
+    .await?;
+    Ok(())
+}
+
+pub(super) async fn curation_key(
+    conn: &mut sqlx::PgConnection,
+    id: &str,
+) -> Result<String, sqlx::Error> {
+    sqlx::query_scalar(
+        "SELECT explore.genesis_curation_key(explore.scene_interaction_entity_id($1))",
+    )
+    .bind(id)
+    .fetch_one(conn)
+    .await
+}
+
+/// Apply a reserved Genesis place's decisions to both physical catalogue rows.
+pub(super) async fn project_genesis_curation(
+    conn: &mut sqlx::PgConnection,
+    local_ids: &[&str],
+) -> Result<(), sqlx::Error> {
+    project_curation(conn, local_ids, true).await
+}
+
+pub(super) async fn project_local_genesis_curation(
+    conn: &mut sqlx::PgConnection,
+    local_ids: &[&str],
+) -> Result<(), sqlx::Error> {
+    project_curation(conn, local_ids, false).await
+}
+
+async fn project_curation(
+    conn: &mut sqlx::PgConnection,
+    local_ids: &[&str],
+    include_public: bool,
+) -> Result<(), sqlx::Error> {
+    sqlx::query("SELECT explore.project_genesis_place_curation($1, $2)")
+        .bind(local_ids)
+        .bind(include_public)
+        .execute(conn)
+        .await?;
+    Ok(())
+}
+
 /// Records `decision` for `target` as `actor` and projects it onto the row.
 /// `Ok(None)` when no catalogue row matches (the old routes' 404).
 pub async fn apply(
@@ -267,10 +342,13 @@ pub async fn apply_with(
     actor: &str,
     ctx: Context<'_>,
 ) -> Result<Option<Applied>, ApiError> {
-    let Some(row) = resolve(pool, &target).await? else {
+    let mut tx = pool.begin().await?;
+    super::interactions::lock_public_id_writes(&mut tx).await?;
+    lock_curation(&mut tx).await?;
+    let Some(row) = resolve_on(&mut tx, &target).await? else {
         return Ok(None);
     };
-    let id = row.id.clone();
+    let id = curation_key(&mut tx, &row.id).await?;
     let at = Utc::now().trunc_subsecs(3);
     // `updatePlace` (`Place/model.ts:928-935`): a genesis place takes a
     // highlight or rating while enabled, a world-backed place row while
@@ -287,7 +365,6 @@ pub async fn apply_with(
         Decision::Highlighted(h) => (None, Some(*h), None, None),
         Decision::Rating(r) => (None, None, Some(r.clone()), None),
     };
-    let mut tx = pool.begin().await?;
     super::ranking::lock_world_scenes(&mut tx, std::slice::from_ref(&id)).await?;
     if written {
         sqlx::query(OVERLAY)
@@ -308,7 +385,8 @@ pub async fn apply_with(
         for table in ["explore.place", "explore.place_world_local"] {
             let sql = format!(
                 "UPDATE {table} SET disabled = COALESCE($2, disabled), highlighted = COALESCE($3, highlighted), \
-                 content_rating = COALESCE($4, content_rating), raw = raw || $5::jsonb WHERE id = $1"
+                 content_rating = COALESCE($4, content_rating), raw = raw || $5::jsonb WHERE id = $1 OR id IN (\
+                     SELECT public_id FROM explore.genesis_place_claim WHERE local_id = $1)"
             );
             sqlx::query(sqlx::AssertSqlSafe(sql))
                 .bind(&id)

@@ -252,6 +252,14 @@ pub const NOT_STORE_KEYS: &[(&str, &str)] = &[
          recovery; worlds.world_scenes and retired_world_scenes hold the blob references",
     ),
     (
+        "explore.world_scene_public_id.entity_id",
+        "the CID confirmed by Places for a public UUID. The active Worlds deployment owns its blobs",
+    ),
+    (
+        "worlds.world_scene_place_probe.entity_id",
+        "a retry record tied to a held Worlds scene. The scene holds the blob reference",
+    ),
+    (
         "explore.place_indexed.image_url",
         "a URL (the view over the place tables)",
     ),

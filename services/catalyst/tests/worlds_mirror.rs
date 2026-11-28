@@ -15,7 +15,7 @@ use std::sync::Arc;
 
 use alloy::signers::{Signer, local::PrivateKeySigner};
 use axum::body::Body;
-use axum::extract::{Path, State};
+use axum::extract::{Path, Query, State};
 use axum::http::{Request, StatusCode};
 use axum::response::IntoResponse;
 use axum::routing::get;
@@ -93,6 +93,10 @@ struct Upstream {
     /// While set, `/permissions` answers this status instead.
     permissions_status: Option<StatusCode>,
     permissions_calls: usize,
+    places_rows: Vec<Value>,
+    places_status: Option<StatusCode>,
+    places_offsets: Vec<usize>,
+    places_empty_on_first_request: bool,
 }
 
 type Shared = Arc<Mutex<Upstream>>;
@@ -355,6 +359,28 @@ async fn fake_contents(
     }
 }
 
+async fn fake_places(
+    State((s, _)): State<(Shared, String)>,
+    Query(query): Query<HashMap<String, String>>,
+) -> axum::response::Response {
+    assert_eq!(query["include_opted_out"], "true");
+    assert_eq!(query["order_by"], "updated_at");
+    assert_eq!(query["order"], "desc");
+    let offset: usize = query["offset"].parse().unwrap();
+    let limit: usize = query["limit"].parse().unwrap();
+    let mut state = s.lock();
+    assert!(state.worlds.contains_key(&query["names"]));
+    state.places_offsets.push(offset);
+    if let Some(status) = state.places_status {
+        return status.into_response();
+    }
+    if state.places_empty_on_first_request && state.places_offsets.len() == 1 {
+        return Json(json!({"data": [], "total": 0})).into_response();
+    }
+    let data: Vec<_> = state.places_rows.iter().skip(offset).take(limit).collect();
+    Json(json!({"data": data, "total": state.places_rows.len()})).into_response()
+}
+
 async fn start_fake() -> Fake {
     let state: Shared = Arc::new(Mutex::new(Upstream::default()));
     let hold = Arc::new(Notify::new());
@@ -367,6 +393,7 @@ async fn start_fake() -> Fake {
         .route("/world/{name}/settings", get(fake_settings))
         .route("/world/{name}/permissions", get(fake_permissions))
         .route("/contents/{hash}", get(fake_contents))
+        .route("/api/places", get(fake_places))
         .layer(axum::Extension(hold.clone()))
         .with_state((state.clone(), base.clone()));
     tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
@@ -999,6 +1026,199 @@ async fn identities(pool: &PgPool, world: &str) -> Vec<(uuid::Uuid, Vec<String>,
     .fetch_all(pool)
     .await
     .unwrap()
+}
+
+async fn probe_places(node: &Node) {
+    catalyst::worlds::mirror::probe_places_for_tests(&node.client, &node.pool, &node.settings)
+        .await
+        .unwrap();
+}
+
+async fn make_probe_due(pool: &PgPool) {
+    sqlx::query("UPDATE worlds.world_scene_place_probe SET retry_at = now()")
+        .execute(pool)
+        .await
+        .unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn an_unchanged_mirror_retries_places_after_a_failed_lookup_and_restart() {
+    let Some(scratch) = db::scratch_database().await else {
+        return;
+    };
+    let fake = start_fake().await;
+    let world = "canon.dcl.eth";
+    let cid = add_scene(&mut fake.state.lock(), world, "Canon", "0,0", &[]);
+    let pending = || async {
+        catalyst::explore::places::scene_identity::pending_public_ids(
+            &scratch.pool,
+            &fake.base,
+            world,
+            &[cid.as_str()],
+        )
+        .await
+        .unwrap()
+    };
+
+    let mut node = Node::new(scratch.pool.clone(), &fake.base, "places-first").await;
+    let ctx = node.ctx().await;
+    assert_eq!(node.pass(&ctx).await.scenes.synced, 1);
+    probe_places(&node).await;
+    assert!(fake.state.lock().places_offsets.is_empty());
+    assert_eq!(pending().await, std::slice::from_ref(&cid));
+
+    fake.state.lock().places_status = Some(StatusCode::SERVICE_UNAVAILABLE);
+    node.settings = node.settings.clone().with_places_source(&fake.base);
+    assert_eq!(node.pass(&ctx).await.scenes.unchanged, 1);
+    probe_places(&node).await;
+    assert_eq!(pending().await, std::slice::from_ref(&cid));
+    let internal = identities(&scratch.pool, world).await;
+    node.jobs.shutdown(std::time::Duration::from_secs(1)).await;
+
+    {
+        let mut upstream = fake.state.lock();
+        upstream.places_status = None;
+        upstream.places_rows = (0..100)
+            .map(|index| {
+                json!({
+                    "id": uuid::Uuid::new_v4(),
+                    "world": true,
+                    "world_name": world,
+                    "deployment_id": format!("old-cid-{index}"),
+                    "disabled": false,
+                    "deployed_at": format!("2026-11-20T12:{:02}:{:02}.000Z", 59-index/60, 59-index%60),
+                    "updated_at": "2026-11-20T13:00:00.000Z",
+                })
+            })
+            .collect();
+        let tied = upstream.places_rows[99].clone();
+        upstream.places_rows.push(json!({
+            "id": uuid::Uuid::new_v4(),
+            "world": true,
+            "world_name": "Canon.DCL.ETH",
+            "deployment_id": cid,
+            "disabled": false,
+            "deployed_at": tied["deployed_at"],
+            "updated_at": tied["updated_at"],
+        }));
+    }
+    // Reopen the same blob directory and database after restarting the worker.
+    node.storage = Arc::new(Storage::from_config(&node.tmp).await.unwrap());
+    node.client = catalyst::http::Outbound::for_tests();
+    node.jobs = Jobs::new();
+    let ctx = node.ctx().await;
+    assert_eq!(node.pass(&ctx).await.scenes.unchanged, 1);
+    probe_places(&node).await;
+    assert_eq!(fake.state.lock().places_offsets, [0]);
+    make_probe_due(&scratch.pool).await;
+    probe_places(&node).await;
+    assert_eq!(pending().await, std::slice::from_ref(&cid));
+    assert_eq!(fake.state.lock().places_offsets, [0, 0, 100]);
+    {
+        let mut upstream = fake.state.lock();
+        upstream.places_rows[100]["disabled"] = json!(true);
+        upstream.places_rows[100]["disabled_reason"] = json!("opt_out");
+    }
+    assert_eq!(node.pass(&ctx).await.scenes.unchanged, 1);
+    make_probe_due(&scratch.pool).await;
+    probe_places(&node).await;
+    assert!(pending().await.is_empty());
+    assert_eq!(identities(&scratch.pool, world).await, internal);
+    assert_eq!(about_calls(&fake, world), 1);
+    assert_eq!(
+        fake.state.lock().places_offsets,
+        [0, 0, 100, 0, 100, 0, 100]
+    );
+    assert_eq!(node.pass(&ctx).await.scenes.unchanged, 1);
+    probe_places(&node).await;
+    assert_eq!(
+        fake.state.lock().places_offsets,
+        [0, 0, 100, 0, 100, 0, 100]
+    );
+    node.jobs.shutdown(std::time::Duration::from_secs(1)).await;
+    drop(node);
+    scratch.teardown().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_scheduled_mirror_retries_when_places_indexes_a_deployment_late() {
+    let Some(scratch) = db::scratch_database().await else {
+        return;
+    };
+    let fake = start_fake().await;
+    let world = "canon.dcl.eth";
+    let cid = add_scene(&mut fake.state.lock(), world, "Canon", "0,0", &[]);
+    let mut node = Node::new(scratch.pool.clone(), &fake.base, "places-delayed").await;
+    node.settings = node.settings.clone().with_places_source(&fake.base);
+    {
+        let mut upstream = fake.state.lock();
+        upstream.places_empty_on_first_request = true;
+        upstream.places_rows.push(json!({
+            "id": uuid::Uuid::new_v4(),
+            "world": true,
+            "world_name": world,
+            "deployment_id": cid,
+            "disabled": false,
+        }));
+    }
+    let ctx = node.ctx().await;
+    assert_eq!(node.pass(&ctx).await.scenes.synced, 1);
+    assert!(
+        fake.state.lock().places_offsets.is_empty(),
+        "content workers never await Places"
+    );
+    probe_places(&node).await;
+    probe_places(&node).await;
+    assert_eq!(fake.state.lock().places_offsets, [0]);
+    make_probe_due(&scratch.pool).await;
+    probe_places(&node).await;
+    assert!(
+        catalyst::explore::places::scene_identity::pending_public_ids(
+            &scratch.pool,
+            &fake.base,
+            world,
+            &[cid.as_str()]
+        )
+        .await
+        .unwrap()
+        .is_empty()
+    );
+    assert_eq!(about_calls(&fake, world), 1);
+    assert_eq!(fake.state.lock().places_offsets, [0, 0]);
+    node.jobs.shutdown(std::time::Duration::from_secs(1)).await;
+    drop(node);
+    scratch.teardown().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn places_probe_batch_keeps_unadmitted_worlds_due_for_the_next_batch() {
+    let Some(scratch) = db::scratch_database().await else {
+        return;
+    };
+    let fake = start_fake().await;
+    {
+        let mut upstream = fake.state.lock();
+        for index in 0..17 {
+            let world = format!("probe-{index:02}.dcl.eth");
+            add_scene(&mut upstream, &world, "Pending", "0,0", &[]);
+        }
+    }
+    let mut node = Node::new(scratch.pool.clone(), &fake.base, "places-backlog").await;
+    node.settings = node.settings.clone().with_places_source(&fake.base);
+    let ctx = node.ctx().await;
+    assert_eq!(node.pass(&ctx).await.scenes.synced, 17);
+    assert!(fake.state.lock().places_offsets.is_empty());
+
+    probe_places(&node).await;
+    assert_eq!(fake.state.lock().places_offsets.len(), 16);
+    probe_places(&node).await;
+    assert_eq!(fake.state.lock().places_offsets.len(), 17);
+    probe_places(&node).await;
+    assert_eq!(fake.state.lock().places_offsets.len(), 17);
+
+    node.jobs.shutdown(std::time::Duration::from_secs(1)).await;
+    drop(node);
+    scratch.teardown().await;
 }
 
 /// Newest-first about ordering must not give the predecessor's scope to

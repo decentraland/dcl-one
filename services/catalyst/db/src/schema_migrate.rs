@@ -1645,6 +1645,123 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn genesis_identity_objects_upgrade_without_rewriting_world_identities() {
+        let Some(db) = crate::scratch::OwnedDatabase::new(
+            "genesis_identity_upgrade",
+            crate::scratch::Schema::Full,
+            2,
+        )
+        .await
+        else {
+            return;
+        };
+        sqlx::raw_sql(
+            "DROP FUNCTION explore.scene_interaction_entity_id(text);
+             DROP FUNCTION explore.genesis_curation_key(text);
+             DROP FUNCTION explore.project_genesis_place_curation(text[], boolean);
+             DROP VIEW explore.genesis_place_alias;
+             DROP VIEW explore.genesis_place_candidate;
+             DROP TRIGGER world_scene_identity_reserved_genesis ON explore.world_scene_place;
+             DROP FUNCTION explore.guard_world_scene_genesis_reservation();
+             DROP TABLE explore.genesis_place_claim, explore.genesis_place_observed,
+                 explore.genesis_place_sighting, explore.genesis_place_page;
+             DROP INDEX explore.place_local_genesis_deployment_idx;
+             INSERT INTO explore.world_scene_place (world_name, identity, parcels, active)
+             VALUES ('existing.dcl.eth', '11111111-1111-4111-8111-111111111111', ARRAY['0,0'], false);",
+        )
+        .execute(&db.pool)
+        .await
+        .unwrap();
+        migrate(&db.pool, crate::SCHEMA_SQL, crate::MIGRATIONS_SQL)
+            .await
+            .unwrap();
+        let unchanged: bool = sqlx::query_scalar(
+            "SELECT EXISTS (SELECT 1 FROM explore.world_scene_place
+                            WHERE identity = '11111111-1111-4111-8111-111111111111' AND NOT active)
+             AND NOT EXISTS (SELECT 1 FROM explore.genesis_place_alias)
+             AND EXISTS (SELECT 1 FROM pg_trigger
+                         WHERE tgrelid = 'explore.world_scene_place'::regclass
+                           AND tgname = 'world_scene_identity_reserved_genesis')",
+        )
+        .fetch_one(&db.pool)
+        .await
+        .unwrap();
+        assert!(unchanged);
+        assert!(
+            migrate(&db.pool, crate::SCHEMA_SQL, crate::MIGRATIONS_SQL)
+                .await
+                .unwrap()
+                .is_empty()
+        );
+        db.drop().await;
+    }
+
+    #[tokio::test]
+    async fn public_scene_claim_objects_upgrade_without_rewriting_existing_identities() {
+        let Some(pool) = crate::scratch::pool(2).await else {
+            return;
+        };
+        let schema = format!("scene_claim_upgrade_{}", uuid::Uuid::new_v4().simple());
+        let local_id = "11111111-1111-4111-8111-111111111111";
+        sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
+            "CREATE SCHEMA {schema};
+             CREATE TABLE {schema}.world_scene_place
+               (world_name text, identity uuid PRIMARY KEY, entity_id text);
+             INSERT INTO {schema}.world_scene_place VALUES ('test.eth','{local_id}','old');"
+        )))
+        .execute(&pool)
+        .await
+        .unwrap();
+        let mut installed = Vec::new();
+        for object in plan(crate::SCHEMA_SQL).unwrap() {
+            let Step::Create { object: kind, .. } = &object.step else {
+                continue;
+            };
+            let selected = match kind {
+                Object::Relation(path) => path == "explore.world_scene_public_id",
+                Object::Index(path) => path == "explore.world_scene_public_id_current_idx",
+                Object::Function { schema, name } => {
+                    schema == "explore"
+                        && matches!(
+                            name.as_str(),
+                            "invalidate_world_scene_public_id" | "guard_world_scene_identity"
+                        )
+                }
+                Object::Trigger { name, table } => {
+                    table == "explore.world_scene_place"
+                        && matches!(
+                            name.as_str(),
+                            "world_scene_public_id_invalidated" | "world_scene_identity_guarded"
+                        )
+                }
+                _ => false,
+            };
+            if selected {
+                sqlx::raw_sql(sqlx::AssertSqlSafe(
+                    object.sql.replace("explore.", &format!("{schema}.")),
+                ))
+                .execute(&pool)
+                .await
+                .unwrap();
+                installed.push(kind.to_string());
+            }
+        }
+        assert_eq!(installed.len(), 6, "{installed:?}");
+        let unchanged: (String, String, i64) = sqlx::query_as(sqlx::AssertSqlSafe(format!(
+            "SELECT identity::text, entity_id, (SELECT count(*) FROM {schema}.world_scene_public_id)
+             FROM {schema}.world_scene_place"
+        )))
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(unchanged, (local_id.to_string(), "old".to_string(), 0));
+        sqlx::query(sqlx::AssertSqlSafe(format!("DROP SCHEMA {schema} CASCADE")))
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
     async fn streaming_binding_objects_preserve_existing_identity_and_transaction_history() {
         let Some(pool) = crate::scratch::pool(2).await else {
             return;

@@ -4,12 +4,16 @@ use super::*;
 pub const DEFAULT_INTERVAL: Duration = Duration::from_secs(6 * 3600);
 pub const DEFAULT_CONCURRENCY: usize = 4;
 pub const DEFAULT_BLOB_CONCURRENCY: usize = 8;
+const PRODUCTION_WORLDS: &str = "https://worlds-content-server.decentraland.org/";
+const PRODUCTION_PLACES: &str = "https://places.decentraland.org";
 
 /// The validated `WORLDS_CONTENT_MIRROR_*` configuration.
 #[derive(Clone, Debug)]
 pub struct MirrorSettings {
     /// The upstream worlds content server, no trailing slash.
     pub source: String,
+    /// Places deployment identities belong to the corresponding WCS source.
+    pub(super) places_source: Option<String>,
     /// Pause between passes; the v1 stack's timer ran every six hours.
     pub interval: Duration,
     /// Worlds mirrored at once (one batch; the cursor moves per batch).
@@ -164,7 +168,16 @@ impl MirrorSettings {
             .map(|n| n.trim().to_ascii_lowercase())
             .filter(|n| !n.is_empty())
             .collect();
+        let places_source =
+            (parsed.as_str() == PRODUCTION_WORLDS).then(|| PRODUCTION_PLACES.into());
+        let source = if places_source.is_some() {
+            // Equivalent URL spellings share the provenance stored with the scene.
+            PRODUCTION_WORLDS.trim_end_matches('/').into()
+        } else {
+            source
+        };
         Ok(Self {
+            places_source,
             source,
             interval,
             concurrency,
@@ -184,6 +197,17 @@ impl MirrorSettings {
     #[allow(clippy::unwrap_used, reason = "test support")]
     pub fn for_tests(source: &str) -> Self {
         Self::parse_with(source, &[], Duration::from_secs(60), 2, 4, 0, "", true).unwrap()
+    }
+
+    pub(crate) fn has_places_source(&self) -> bool {
+        self.places_source.is_some()
+    }
+
+    /// Tests only: pair a stub WCS with its stub Places endpoint.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn with_places_source(mut self, source: &str) -> Self {
+        self.places_source = Some(source.to_string());
+        self
     }
 
     /// Tests only: the node's own URLs (`PUBLIC_URL`, ...) for the loop checks.

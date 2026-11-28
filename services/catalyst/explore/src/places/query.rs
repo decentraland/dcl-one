@@ -254,6 +254,41 @@ pub(super) fn own_rows_sql() -> impl Iterator<Item = &'static str> {
     crate::copies::origin::place_rows_sql().into_iter()
 }
 
+/// Normalize known Genesis UUID spellings while preserving the lookup spelling
+/// of untouched catalogue IDs. The live alias only matches an exact deployment.
+pub(super) fn genesis_storage_key_sql(input: &str) -> String {
+    format!(
+        "COALESCE((SELECT a.local_id FROM explore.genesis_place_alias a WHERE a.public_id = lower({input})), (SELECT a.local_id FROM explore.genesis_place_alias a WHERE a.local_id = lower({input})), {input})"
+    )
+}
+
+pub(super) fn genesis_ids_sql(parameter: &str) -> String {
+    let key = genesis_storage_key_sql("requested.id");
+    format!("ARRAY(SELECT {key} FROM unnest({parameter}::text[]) AS requested(id))")
+}
+
+pub(super) const GENESIS_UNSHADOWED: &str =
+    "NOT EXISTS (SELECT 1 FROM explore.genesis_place_alias alias WHERE alias.public_id = id)";
+
+pub(super) fn genesis_categories_sql(id: &str, raw: &str, categories: &str) -> String {
+    if crate::copies::origin::places_local_only() {
+        return categories.to_string();
+    }
+    format!(
+        "CASE WHEN cardinality({categories}) = 0 AND {raw}->>'source' = 'content' THEN COALESCE((
+            SELECT (SELECT p.categories FROM explore.place p WHERE p.id = alias.public_id)
+            FROM explore.genesis_place_alias alias WHERE alias.local_id = {id}
+        ), {categories}) ELSE {categories} END"
+    )
+}
+
+const GENESIS_ENABLED: &str = "NOT EXISTS (
+    SELECT 1 FROM explore.genesis_place_alias alias
+    WHERE alias.local_id = id
+      AND (EXISTS (SELECT 1 FROM explore.place public_place WHERE public_place.id = alias.public_id AND public_place.disabled)
+           OR EXISTS (SELECT 1 FROM explore.place_moderation m WHERE m.place_id = alias.local_id AND m.disabled))
+)";
+
 #[cfg(test)]
 pub(super) fn build_where(f: &PlaceListFilters, road_positions: bool) -> (String, Vec<Bind>) {
     build_where_from(f, road_positions, 1, false)
@@ -265,13 +300,57 @@ pub(super) fn build_where_from(
     start: usize,
     scene_projection: bool,
 ) -> (String, Vec<Bind>) {
+    build_where_with_genesis(f, road_positions, start, scene_projection, true)
+}
+
+pub(super) fn build_where_with_genesis(
+    f: &PlaceListFilters,
+    road_positions: bool,
+    start: usize,
+    scene_projection: bool,
+    apply_genesis_visibility: bool,
+) -> (String, Vec<Bind>) {
     let mut clauses: Vec<String> = vec!["disabled IS FALSE".to_string()];
     clauses.extend(own_rows_sql().map(String::from));
+    if apply_genesis_visibility && !f.only_worlds {
+        clauses.push(GENESIS_UNSHADOWED.to_string());
+        clauses.push(GENESIS_ENABLED.to_string());
+    }
+    if !scene_projection && !f.only_worlds {
+        // Keep the catalogue's existing filters and fields for a live exact
+        // copy. An expired claim still reserves its UUID, so a stale or
+        // unrelated row cannot revive it. Probe the claim's UUID primary key.
+        clauses.push(r#"NOT EXISTS (
+            SELECT 1 FROM explore.world_scene_public_id claim
+            WHERE claim.public_id = CASE
+                WHEN pg_input_is_valid(regexp_replace(id, '^urn:uuid:', '', 'i'), 'uuid')
+                THEN regexp_replace(id, '^urn:uuid:', '', 'i')::uuid END
+              AND NOT EXISTS (
+                SELECT 1 FROM explore.world_scene_place scene
+                JOIN worlds.world_scenes s ON s.world_name = scene.world_name AND s.entity_id = scene.entity_id
+                JOIN worlds.worlds w ON w.name = scene.world_name
+                LEFT JOIN explore.place_moderation m ON m.place_id = scene.identity::text
+                LEFT JOIN explore.place_moderation wm ON wm.place_id = w.name
+                WHERE scene.identity = claim.identity AND scene.active
+                  AND scene.world_name = claim.world_name AND scene.entity_id = claim.entity_id
+                  AND s.mirror_source = claim.source AND w.mirror_source = claim.source
+                  AND world IS TRUE AND lower(btrim(raw->>'world_name')) = claim.world_name
+                  AND raw->>'deployment_id' = claim.entity_id
+                  AND w.blocked_since IS NULL AND w.show_in_places
+                  AND NOT COALESCE(m.disabled, false) AND NOT COALESCE(wm.disabled, false)
+              )
+        )"#.to_string());
+    }
     let mut binds: Vec<Bind> = Vec::new();
     let mut idx = start;
 
     if !f.ids.is_empty() {
-        clauses.push(format!("id = ANY(${idx})"));
+        let genesis = genesis_ids_sql(&format!("${idx}"));
+        clauses.push(if scene_projection {
+            format!("(id = ANY({genesis}) OR (canonical_scene AND public_scene_id = ANY(${idx})))")
+        } else {
+            format!("id = ANY({genesis})")
+        });
         binds.push(Bind::TextArray(f.ids.clone()));
         idx += 1;
     }
@@ -313,10 +392,21 @@ pub(super) fn build_where_from(
     }
     clauses.push(SHOW_IN_PLACES_CLAUSE.to_string());
     if f.only_categorized {
-        clauses.push("array_length(categories, 1) > 0".to_string());
+        let categories = genesis_categories_sql("id", "raw", "categories");
+        clauses.push(format!("array_length(({categories}), 1) > 0"));
     }
     if f.only_highlighted {
-        clauses.push("highlighted = TRUE".to_string());
+        let public_highlight = if crate::copies::origin::places_local_only() {
+            ""
+        } else {
+            "OR (SELECT p.highlighted FROM explore.place p WHERE p.id = alias.public_id)"
+        };
+        clauses.push(format!(r#"COALESCE((
+            SELECT COALESCE(
+                (SELECT m.highlighted FROM explore.place_moderation m WHERE m.place_id = alias.local_id),
+                highlighted {public_highlight}
+            ) FROM explore.genesis_place_alias alias WHERE alias.local_id = id
+        ), highlighted) = TRUE"#));
     }
     if f.only_excluded_from_ranking {
         clauses.push(format!("{EXCLUDE_FROM_RANKING_SQL} IS TRUE"));
@@ -407,7 +497,8 @@ pub(super) fn build_where_from(
         clauses.push("FALSE".to_string());
     }
     if !f.categories.is_empty() {
-        clauses.push(format!("categories && ${idx}"));
+        let categories = genesis_categories_sql("id", "raw", "categories");
+        clauses.push(format!("({categories}) && ${idx}"));
         binds.push(Bind::TextArray(f.categories.clone()));
         idx += 1;
     }
@@ -563,7 +654,14 @@ pub(super) fn order_tail(f: &PlaceListFilters) -> &'static str {
 /// row, so the order agrees with the answer where a local vote moved the
 /// score; the mirrored column alone would list 0.2 above 0.2065 and split a
 /// page on a value the page does not show.
-pub(super) const LIKE_SCORE_ORDER_SQL: &str = "CASE WHEN recount.imported > 0 THEN recount.like_score ELSE COALESCE(recount.like_score, like_score_num) END";
+pub(super) const LIKE_SCORE_ORDER_SQL: &str =
+    "CASE WHEN recount.imported > 0 THEN recount.like_score
+    ELSE COALESCE(recount.like_score, like_score_num, genesis_scores.public_like_score) END";
+pub(super) const LOCAL_LIKE_SCORE_ORDER_SQL: &str = "CASE WHEN recount.imported > 0 THEN recount.like_score ELSE COALESCE(recount.like_score, like_score_num) END";
+pub(super) const GENESIS_SCORES_CTE: &str = "genesis_scores AS MATERIALIZED (
+    SELECT g.local_id, p.like_score_num AS public_like_score
+    FROM explore.genesis_place_alias g JOIN explore.place p ON p.id = g.public_id
+),";
 
 /// The recounts beside each row of `row` (the relation name the `ON` can
 /// qualify) for `LIKE_SCORE_ORDER_SQL`: one hash join over the few entities
@@ -736,11 +834,11 @@ mod tests {
             true,
         );
         assert!(
-            clause.contains("array_length(categories, 1) > 0"),
+            clause.contains("array_length(") && clause.contains("), 1) > 0"),
             "{clause}"
         );
         let (clause, _) = build_where(&PlaceListFilters::default(), true);
-        assert!(!clause.contains("array_length(categories"), "{clause}");
+        assert!(!clause.contains("array_length("), "{clause}");
     }
 
     #[test]
@@ -1357,10 +1455,9 @@ mod tests {
     /// a score it does not show; the other orders stay on the stored column.
     #[test]
     fn like_score_orders_on_the_served_score() {
-        assert_eq!(
-            PlaceOrderBy::LikeScore.order_expr(),
-            "CASE WHEN recount.imported > 0 THEN recount.like_score ELSE COALESCE(recount.like_score, like_score_num) END"
-        );
+        let order = squeezed(PlaceOrderBy::LikeScore.order_expr());
+        assert!(order.starts_with("CASE WHEN recount.imported > 0 THEN recount.like_score ELSE COALESCE(recount.like_score, like_score_num,"));
+        assert!(order.contains("genesis_scores.public_like_score"));
         assert_eq!(PlaceOrderBy::LikeScore.column(), "like_score_num");
         let served = squeezed(super::super::rows::place_columns());
         assert!(

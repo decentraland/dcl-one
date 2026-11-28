@@ -774,6 +774,65 @@ async fn a_community_place_is_its_destination_when_the_id_names_one_exactly() {
     rig.finish();
 }
 
+#[tokio::test]
+async fn a_saved_community_place_keeps_its_key_and_details_after_a_public_uuid_match() {
+    use crate::db::scratch::{OwnedDatabase, Schema};
+    let Some(database) = OwnedDatabase::new("community_place_alias", Schema::Full, 6).await else {
+        return;
+    };
+    let rig = Rig::with_pool(
+        Settings::for_tests(),
+        State::explore_for_tests,
+        database.pool.clone(),
+    )
+    .await;
+    let places = Places::seed(&rig).await;
+    let local = places.missing;
+    let public = Uuid::new_v4();
+    let cid = public.to_string();
+    let world = &places.world_name;
+    let mut tx = rig.pool.begin().await.unwrap();
+    sqlx::query("INSERT INTO worlds.worlds (name, mirror_source, title) VALUES ($1, 'upstream', 'Mirrored scene')")
+        .bind(world).execute(&mut *tx).await.unwrap();
+    sqlx::query("INSERT INTO worlds.world_scenes (world_name, entity_id, deployment_auth_chain, entity, deployer, parcels, size, mirror_source) VALUES ($1, $2, '[]', '{}', '0xaa', ARRAY['0,0'], 1, 'upstream')")
+        .bind(world).bind(&cid).execute(&mut *tx).await.unwrap();
+    sqlx::query("INSERT INTO explore.world_scene_place (world_name, identity, entity_id, parcels) VALUES ($1, $2, $3, ARRAY['0,0'])")
+        .bind(world).bind(local).bind(&cid).execute(&mut *tx).await.unwrap();
+    sqlx::query("INSERT INTO explore.world_scene_public_id (public_id, identity, world_name, entity_id, source) VALUES ($1, $2, $3, $4, 'upstream')")
+        .bind(public).bind(local).bind(world).bind(&cid).execute(&mut *tx).await.unwrap();
+    tx.commit().await.unwrap();
+
+    let saved = &places.rows(&rig).await[1];
+    assert_eq!(saved["id"], local.to_string());
+    assert_eq!(saved["title"], "Mirrored scene");
+    assert_eq!(saved["world_name"], *world);
+    assert!(saved.get("local_scene_id").is_none());
+
+    let mut tx = rig.pool.begin().await.unwrap();
+    let photo = Uuid::new_v4().to_string();
+    for tag in [public, local] {
+        crate::communities::ranking::record_photo(
+            &mut tx,
+            &photo,
+            &tag.to_string(),
+            chrono::Utc::now().naive_utc(),
+        )
+        .await
+        .unwrap();
+        let counted: i32 =
+            sqlx::query_scalar("SELECT ranking_photos_count FROM social.communities WHERE id = $1")
+                .bind(places.community)
+                .fetch_one(&mut *tx)
+                .await
+                .unwrap();
+        assert_eq!(counted, 1);
+    }
+    tx.commit().await.unwrap();
+
+    rig.finish();
+    database.drop().await;
+}
+
 /// The explore state reads a pool that never connects; the communities
 /// state's own pool is the scratch one.
 fn unreachable_explore(_: &PgPool) -> crate::explore::SharedState {

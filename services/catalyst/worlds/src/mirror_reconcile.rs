@@ -317,14 +317,19 @@ pub(super) async fn mirror_world(
         return Ok(Outcome::RefusedLocalPublish { retired: 0 });
     }
 
-    let held: Vec<String> = sqlx::query_scalar(
-        "SELECT entity_id FROM worlds.world_scenes WHERE world_name = lower($1) AND mirror_source IS NOT NULL",
+    let held: Vec<(String, bool)> = sqlx::query_as(
+        "SELECT s.entity_id, (s.mirror_source = $2 AND w.mirror_source IS NOT DISTINCT FROM $2)
+         FROM worlds.world_scenes s JOIN worlds.worlds w ON w.name = s.world_name
+         WHERE s.world_name = lower($1) AND s.mirror_source IS NOT NULL",
     )
     .bind(name)
+    .bind(source)
     .fetch_all(pool)
     .await
     .with_context(|| format!("reading the scenes held for {name}"))?;
-    if holds_every_scene(catalogue_scene_ids, &held) {
+    let source_unchanged = held.iter().all(|(_, same_source)| *same_source);
+    let held: Vec<_> = held.into_iter().map(|(cid, _)| cid).collect();
+    if source_unchanged && holds_every_scene(catalogue_scene_ids, &held) {
         // Every file, not only the entities: a read-through fill leaves all but the scene
         // host's to be read through, and the pass fetches them.
         let files: Vec<String> = sqlx::query_scalar(
@@ -724,7 +729,6 @@ pub(super) async fn mirror_world(
     .execute(&mut *tx)
     .await
     .with_context(|| format!("retire the scenes {name} no longer lists upstream"))?;
-    let world = name.to_lowercase();
     // Apply the overlap rule in deployment order:
     // a replacement must inherit its predecessor before a later scene takes
     // a parcel that predecessor vacated. CID breaks timestamp ties stably.
@@ -737,11 +741,11 @@ pub(super) async fn mirror_world(
             .then_with(|| a.cid.cmp(&b.cid))
     });
     for record in chronological {
-        scene_identity::assign(&mut tx, &world, &record.cid, &record.parcels)
+        scene_identity::assign(&mut tx, world.key(), &record.cid, &record.parcels)
             .await
             .with_context(|| format!("storage identity of {} in {name}", record.cid))?;
     }
-    scene_identity::retire_orphans(&mut tx, std::slice::from_ref(&world))
+    scene_identity::retire_orphans(&mut tx, &[world.key().to_string()])
         .await
         .with_context(|| format!("retire the storage identities of {name}"))?;
     tx.commit().await.context("commit tx")?;

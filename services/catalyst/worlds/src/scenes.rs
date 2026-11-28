@@ -314,6 +314,9 @@ async fn scenes_page(
             .await
             .map_err(internal)?;
     }
+    if rows.iter().any(|row| row.mirror_source.is_some()) {
+        state.retry_held_places(world_name);
+    }
     let millis =
         |t: chrono::NaiveDateTime| t.and_utc().to_rfc3339_opts(SecondsFormat::Millis, true);
     let scenes = rows

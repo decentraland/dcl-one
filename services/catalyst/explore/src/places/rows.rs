@@ -74,12 +74,42 @@ pub(super) fn place_columns() -> &'static str {
     &SQL
 }
 
+/// The live alias exposes the public UUID and retains compatible upstream
+/// aggregates and moderation, while the original row owns all local facts.
+/// This is a point probe on each selected row, after ordinary page selection.
+pub(super) const GENESIS_PLACE_JOIN: &str = r#"
+LEFT JOIN LATERAL (
+    SELECT alias.public_id AS genesis_public_id,
+           (p.disabled OR COALESCE(m.disabled, false)) AS genesis_disabled,
+           COALESCE(m.reason, CASE WHEN jsonb_typeof(p.raw->'disabled_reason') = 'string'
+                    THEN p.raw->>'disabled_reason' END) AS genesis_disabled_reason,
+           COALESCE(m.content_rating, place_indexed.content_rating, p.content_rating) AS genesis_content_rating,
+           m.highlighted AS genesis_local_highlighted,
+           COALESCE(m.highlighted, p.highlighted OR place_indexed.highlighted) AS genesis_highlighted,
+           p.favorites AS genesis_favorites, p.likes AS genesis_likes, p.dislikes AS genesis_dislikes,
+           p.like_rate_num AS genesis_like_rate, p.like_score_num AS genesis_like_score,
+           p.raw->>'image' AS genesis_image,
+           p.categories AS genesis_categories,
+           r.overlay AS genesis_ranking_overlay, p.ranking_num AS genesis_ranking,
+           EXISTS (SELECT 1 FROM explore.place_interaction_counts ic
+                   WHERE ic.entity_id = alias.local_id AND ic.imported > 0) AS genesis_votes_settled
+    FROM explore.genesis_place_alias alias
+    JOIN explore.place p ON p.id = alias.public_id
+    LEFT JOIN explore.place_moderation m ON m.place_id = alias.local_id
+    LEFT JOIN explore.place_ranking r ON r.place_id = alias.local_id
+    WHERE alias.local_id = place_indexed.id
+) genesis_copy ON true"#;
+
 #[derive(Debug, Clone, Default, Serialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(export, export_to = "places/"))]
 pub struct PlaceRow {
     #[serde(skip)]
     #[cfg_attr(feature = "ts", ts(skip))]
     pub(crate) scene_place: bool,
+    /// The durable interaction and moderation key when a scene serves a verified public UUID.
+    #[serde(skip)]
+    #[cfg_attr(feature = "ts", ts(skip))]
+    pub(crate) local_scene_id: Option<String>,
     pub id: String,
     pub title: Option<String>,
     pub description: Option<String>,
@@ -167,6 +197,10 @@ pub struct PlaceRow {
 }
 
 impl PlaceRow {
+    pub(crate) fn storage_id(&self) -> &str {
+        self.local_scene_id.as_deref().unwrap_or(&self.id)
+    }
+
     /// `realms_detail`, when asked for (`Some(realm)`): the realms with users
     /// in the place. Upstream reads them off the hot scenes of every realm;
     /// this node knows one realm, its own, so the list is that realm with
@@ -521,8 +555,9 @@ pub(super) fn row_to_place(
                 r.try_get::<bool, _>("user_dislike").unwrap_or(false),
             )
         };
-    PlaceRow {
+    let mut place = PlaceRow {
         scene_place: false,
+        local_scene_id: None,
         id: r.get::<String, _>("id"),
         title: strip_all_markup_opt(r.try_get::<Option<String>, _>("title").unwrap_or(None)),
         description: sanitize_place_description(
@@ -605,13 +640,83 @@ pub(super) fn row_to_place(
         live_event_name: None,
         connected_addresses: None,
         realms_detail: None,
+    };
+    if let Ok(Some(public_id)) = r.try_get::<Option<String>, _>("genesis_public_id") {
+        place.local_scene_id = Some(std::mem::replace(&mut place.id, public_id));
+        place.disabled |= r.try_get::<bool, _>("genesis_disabled").unwrap_or(false);
+        if place.disabled_reason.is_none() && place.disabled {
+            place.disabled_reason = r.try_get("genesis_disabled_reason").unwrap_or(None);
+        }
+        place.content_rating = r
+            .try_get::<Option<String>, _>("genesis_content_rating")
+            .unwrap_or(None)
+            .or(place.content_rating);
+        if let Ok(Some(highlighted)) = r.try_get::<Option<bool>, _>("genesis_local_highlighted") {
+            place.highlighted = highlighted;
+        }
+        if !crate::copies::origin::places_local_only() {
+            if place.categories.is_empty() {
+                place.categories = r.try_get("genesis_categories").unwrap_or_default();
+            }
+            if place.image.is_none() {
+                place.image = place_image_url(
+                    r.try_get::<Option<String>, _>("genesis_image")
+                        .unwrap_or(None)
+                        .as_deref(),
+                    content_origin,
+                    asset_base,
+                    None,
+                );
+            }
+            place.favorites = place
+                .favorites
+                .saturating_add(r.try_get("genesis_favorites").unwrap_or(0));
+            if !r
+                .try_get::<bool, _>("genesis_votes_settled")
+                .unwrap_or(false)
+            {
+                place.likes = place
+                    .likes
+                    .saturating_add(r.try_get("genesis_likes").unwrap_or(0));
+                place.dislikes = place
+                    .dislikes
+                    .saturating_add(r.try_get("genesis_dislikes").unwrap_or(0));
+                place.like_rate = place
+                    .like_rate
+                    .or_else(|| r.try_get("genesis_like_rate").unwrap_or(None));
+                place.like_score = place
+                    .like_score
+                    .or_else(|| r.try_get("genesis_like_score").unwrap_or(None));
+            }
+            place.highlighted = r
+                .try_get("genesis_highlighted")
+                .unwrap_or(place.highlighted);
+            place.ranking = place
+                .ranking
+                .or_else(|| r.try_get("genesis_ranking").unwrap_or(None));
+        }
+        if let Ok(Some(overlay)) =
+            r.try_get::<Option<serde_json::Value>, _>("genesis_ranking_overlay")
+        {
+            if let Some(ranking) = overlay.get("ranking") {
+                place.ranking = ranking.as_f64();
+            }
+            if let Some(excluded) = overlay
+                .get("exclude_from_ranking")
+                .and_then(serde_json::Value::as_bool)
+            {
+                place.exclude_from_ranking = excluded;
+            }
+        }
     }
+    place
 }
 
 #[cfg(test)]
 pub(crate) fn sample_row() -> PlaceRow {
     PlaceRow {
         scene_place: false,
+        local_scene_id: None,
         id: "uuid-1".to_string(),
         title: Some("t".to_string()),
         description: None,

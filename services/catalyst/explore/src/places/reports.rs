@@ -211,18 +211,24 @@ pub async fn post_report(
         .and_then(Value::as_str)
         .or_else(|| payload.get("place_id").and_then(Value::as_str))
         .map(str::to_string);
-    if let Some(id) = entity_id.as_deref()
-        && state.places.find_by_id_for(id, None).await?.is_none()
-    {
-        return Err(ApiError::not_found(format!("Not found place \"{id}\"")));
-    }
+    let place = if let Some(id) = entity_id.as_deref() {
+        Some(
+            state
+                .places
+                .find_by_id_for(id, None)
+                .await?
+                .ok_or_else(|| ApiError::not_found(format!("Not found place \"{id}\"")))?,
+        )
+    } else {
+        None
+    };
     admit_report(&reporter, source.as_deref())?;
     let now = Utc::now();
     let filename = report_filename(&reporter, now.timestamp());
     let token = format!("{:032x}", rand::random::<u128>());
     let signed_url = upload_url(&state.settings.public_url, &headers, uri.path(), &filename);
     sqlx::query("INSERT INTO explore.place_reports (entity_id, reporter, signed_url, filename, payload, created_at, upload_token_hash) VALUES ($1, $2, $3, $4, $5, $6, $7)")
-        .bind(entity_id.as_deref())
+        .bind(place.as_ref().and_then(|place| place.local_scene_id.as_deref()).or(entity_id.as_deref()))
         .bind(&reporter)
         .bind(&signed_url)
         .bind(&filename)
@@ -248,16 +254,12 @@ async fn fed_report(
     let (signed, signer) =
         fed::preflight::<fed::PlaceReport>(state, headers, body, fed::Scope::Places).await?;
     let place_id = signed.message.place_id.clone();
-    if state
-        .places
-        .find_by_id_for(&place_id, None)
-        .await?
-        .is_none()
-    {
+    let Some(place) = state.places.find_by_id_for(&place_id, None).await? else {
         return Err(ApiError::not_found(format!(
             "Not found place \"{place_id}\""
         )));
-    }
+    };
+    let stored_place_id = place.local_scene_id.as_deref().unwrap_or(&place_id);
     admit_report(&signer, source)?;
     let hash = signed.signature_hash();
     let reason = serde_json::to_value(signed.message.reason).unwrap_or_else(|_| json!("other"));
@@ -270,7 +272,7 @@ async fn fed_report(
             scope: fed::Scope::Places,
             signature_hash: &hash,
             signer: &signer,
-            subject_id: Some(&place_id),
+            subject_id: Some(stored_place_id),
             action_type: "report",
             payload: &logged,
             signed_at: signed.signed_at,
@@ -278,7 +280,7 @@ async fn fed_report(
     )
     .await?;
     sqlx::query("INSERT INTO explore.place_reports (entity_id, reporter, signed_url, filename, payload, created_at) VALUES ($1, $2, '', $3, $4, $5) ON CONFLICT (filename) DO NOTHING")
-        .bind(&place_id)
+        .bind(stored_place_id)
         .bind(&signer)
         .bind(&hash)
         .bind(json!({ "entity_id": place_id, "reason": reason, "signed": true, "signature_hash": hash }))
@@ -388,16 +390,29 @@ pub async fn list_reports(
 ) -> Result<(Vec<ReportRow>, i64), sqlx::Error> {
     let status = q.status.as_deref().filter(|s| !s.is_empty());
     let entity_id = q.entity_id.as_deref().filter(|s| !s.is_empty());
+    let uuid = entity_id.and_then(|id| uuid::Uuid::parse_str(id).ok());
     let limit = q.limit.unwrap_or(50).clamp(1, 200);
     let offset = q.offset.unwrap_or(0).max(0);
+    // Reports keep the ID recorded at submission. Moderators can audit the
+    // history under either reserved ID, including after a deployment changes.
+    let filter = "FROM explore.place_reports WHERE ($1::text IS NULL OR status = $1)
+         AND ($2::text IS NULL OR entity_id IN (
+             SELECT $2::text
+             UNION SELECT k.id FROM explore.world_scene_public_id w
+             CROSS JOIN LATERAL (VALUES (w.public_id::text), (w.identity::text)) k(id)
+             WHERE w.identity = COALESCE((SELECT identity FROM explore.world_scene_public_id WHERE public_id=$3), $3::uuid)
+             UNION SELECT k.id FROM explore.genesis_place_claim g
+             CROSS JOIN LATERAL (VALUES (g.public_id), (g.local_id)) k(id)
+             WHERE g.local_id = COALESCE((SELECT local_id FROM explore.genesis_place_claim WHERE public_id=$3::uuid::text), $3::uuid::text)
+         ))";
     let sql = format!(
-        "SELECT {REPORT_COLUMNS}, count(*) OVER () AS total_count FROM explore.place_reports
-         WHERE ($1::text IS NULL OR status = $1) AND ($2::text IS NULL OR entity_id = $2)
-         ORDER BY created_at DESC, id DESC LIMIT $3 OFFSET $4"
+        "SELECT {REPORT_COLUMNS}, count(*) OVER () AS total_count {filter}
+         ORDER BY created_at DESC, id DESC LIMIT $4 OFFSET $5"
     );
     let rows = sqlx::query(sqlx::AssertSqlSafe(sql))
         .bind(status)
         .bind(entity_id)
+        .bind(uuid)
         .bind(limit)
         .bind(offset)
         .fetch_all(pool)
@@ -405,9 +420,10 @@ pub async fn list_reports(
     let total = match rows.first() {
         Some(r) => r.get::<i64, _>("total_count"),
         None if offset > 0 => {
-            sqlx::query_scalar("SELECT count(*) FROM explore.place_reports WHERE ($1::text IS NULL OR status = $1) AND ($2::text IS NULL OR entity_id = $2)")
+            sqlx::query_scalar(sqlx::AssertSqlSafe(format!("SELECT count(*) {filter}")))
                 .bind(status)
                 .bind(entity_id)
+                .bind(uuid)
                 .fetch_one(pool)
                 .await?
         }
@@ -474,6 +490,66 @@ pub async fn resolve_report(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn moderators_find_all_reports_under_either_reserved_place_id() {
+        use crate::db::scratch::{OwnedDatabase, Schema};
+        use uuid::Uuid;
+        let Some(db) = OwnedDatabase::new("place_report_alias", Schema::Full, 2).await else {
+            return;
+        };
+        for world in [false, true] {
+            let local = Uuid::new_v4();
+            let public = Uuid::new_v4();
+            if world {
+                sqlx::query(
+                    "INSERT INTO explore.world_scene_place (world_name,identity,parcels,active)
+                         VALUES ('reports.dcl.eth',$1,ARRAY['1,2'],false)",
+                )
+                .bind(local)
+                .execute(&db.pool)
+                .await
+                .unwrap();
+                sqlx::query("INSERT INTO explore.world_scene_public_id (public_id,identity,source,world_name)
+                         VALUES ($1,$2,'mirror','reports.dcl.eth')")
+                    .bind(public).bind(local).execute(&db.pool).await.unwrap();
+            } else {
+                sqlx::query(
+                    "INSERT INTO explore.genesis_place_claim (public_id,local_id) VALUES ($1,$2)",
+                )
+                .bind(public.to_string())
+                .bind(local.to_string())
+                .execute(&db.pool)
+                .await
+                .unwrap();
+            }
+            for id in [local, public, Uuid::new_v4()] {
+                sqlx::query(
+                    "INSERT INTO explore.place_reports (entity_id,reporter,signed_url,filename)
+                         VALUES ($1,'reporter','',$1)",
+                )
+                .bind(id.to_string())
+                .execute(&db.pool)
+                .await
+                .unwrap();
+            }
+            for id in [local, public] {
+                let mut filter = ReportQuery {
+                    entity_id: Some(id.to_string()),
+                    status: Some("open".into()),
+                    limit: None,
+                    offset: None,
+                };
+                let (rows, total) = list_reports(&db.pool, &filter).await.unwrap();
+                assert_eq!((rows.len(), total), (2, 2));
+                filter.offset = Some(2);
+                let (rows, total) = list_reports(&db.pool, &filter).await.unwrap();
+                assert!(rows.is_empty());
+                assert_eq!(total, 2);
+            }
+        }
+        db.drop().await;
+    }
 
     /// The old key (`Report/routes.ts:33-37`): the signer's last eight hex
     /// characters lowercased, the request second in lowercase hex, `.json`
