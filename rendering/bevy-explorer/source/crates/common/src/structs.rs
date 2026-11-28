@@ -49,7 +49,11 @@ pub struct PrimaryUser {
     pub block_all: bool,
     pub block_run: bool,
     pub block_walk: bool,
+    pub block_jog: bool,
     pub block_jump: bool,
+    /// Blocks a jump in the air; a glide stays available unless `block_gliding` is set too.
+    pub block_double_jump: bool,
+    pub block_gliding: bool,
     pub block_emote: bool,
 }
 
@@ -64,9 +68,19 @@ impl Default for PrimaryUser {
             block_all: false,
             block_run: false,
             block_walk: false,
+            block_jog: false,
             block_jump: false,
+            block_double_jump: false,
+            block_gliding: false,
             block_emote: false,
         }
+    }
+}
+
+impl PrimaryUser {
+    /// The player's settings with the area and input modifiers in force applied.
+    pub fn with_modifiers(&self, modifiers: Option<&PlayerModifiers>) -> PrimaryUser {
+        modifiers.map_or_else(|| self.clone(), |modifiers| modifiers.combine(self))
     }
 }
 
@@ -111,7 +125,10 @@ pub struct PlayerModifiers {
     pub block_all: bool,
     pub block_run: bool,
     pub block_walk: bool,
+    pub block_jog: bool,
     pub block_jump: bool,
+    pub block_double_jump: bool,
+    pub block_gliding: bool,
     pub block_emote: bool,
     pub areas: Vec<ActiveAvatarArea>,
     /// The scenes whose areas hide the primary player's avatar, passport or nametag now.
@@ -127,7 +144,7 @@ pub struct ActiveAvatarArea {
 }
 
 impl PlayerModifiers {
-    pub fn combine(&self, user: &PrimaryUser) -> PrimaryUser {
+    fn combine(&self, user: &PrimaryUser) -> PrimaryUser {
         PrimaryUser {
             walk_speed: self.walk_speed.unwrap_or(user.walk_speed),
             jog_speed: self.run_speed.unwrap_or(user.jog_speed),
@@ -137,7 +154,10 @@ impl PlayerModifiers {
             block_all: self.block_all || user.block_all,
             block_run: self.block_run || user.block_run,
             block_walk: self.block_walk || user.block_walk,
+            block_jog: self.block_jog || user.block_jog,
             block_jump: self.block_jump || user.block_jump,
+            block_double_jump: self.block_double_jump || user.block_double_jump,
+            block_gliding: self.block_gliding || user.block_gliding,
             block_emote: self.block_emote || user.block_emote,
         }
     }

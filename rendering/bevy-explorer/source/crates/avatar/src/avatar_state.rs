@@ -18,7 +18,10 @@ use scene_runner::{initialize_scene::SuperUserScene, SceneEntity};
 use serde_json::{json, Value};
 
 use crate::{
-    animate::{ActiveEmote, ActiveEmoteSource, EmotePlayback, MaskedEmote},
+    animate::{
+        ActiveEmote, ActiveEmoteSource, EmotePlayback, MaskedEmote, SceneEmoteDropped,
+        SceneEmoteRequest,
+    },
     avatar_texture::BoothAvatar,
     requested_body, AvatarDefinition, AvatarLoadFailures, AvatarLoaded, AvatarProcessed,
     AvatarSelection, PreviousAvatar,
@@ -41,6 +44,8 @@ impl Plugin for AvatarStatePlugin {
                 ("Equipped emotes", "selected.emotes"),
                 ("Animation", "emote.urn"),
                 ("Animation source", "emote.source"),
+                ("Scene emote", "sceneEmote.urn"),
+                ("Scene emote state", "sceneEmote.state"),
             ],
             actions: &[(
                 "Play wave",
@@ -135,7 +140,14 @@ struct AvatarReport {
     emote: Option<EmoteState>,
     /// the upper-body emote overlaying it, while one plays
     upper_body_emote: Option<EmoteState>,
+    /// the player's full-body emote from a scene, while it waits to start or after input dropped it
+    scene_emote: Option<SceneEmoteState>,
     load_failures: LoadFailures,
+}
+
+struct SceneEmoteState {
+    urn: String,
+    dropped: bool,
 }
 
 /// The files the avatar could not be built from, which its builds leave out
@@ -221,6 +233,10 @@ impl AvatarReport {
             })),
             "emote": self.emote.as_ref().map(EmoteState::to_json),
             "upperBodyEmote": self.upper_body_emote.as_ref().map(EmoteState::to_json),
+            "sceneEmote": self.scene_emote.as_ref().map(|scene_emote| json!({
+                "urn": scene_emote.urn,
+                "state": if scene_emote.dropped { "dropped" } else { "waiting" },
+            })),
             "loadFailures": {
                 "bodies": self.load_failures.bodies,
                 "wearables": self.load_failures.wearables,
@@ -283,6 +299,7 @@ fn avatar_state_cmd(
     )>,
     renders: Query<(&AvatarDefinition, Has<AvatarProcessed>, Has<AvatarLoaded>)>,
     super_user_scenes: Query<(), With<SuperUserScene>>,
+    scene_emotes: Query<(&SceneEmoteRequest, Has<SceneEmoteDropped>)>,
     // read-only, so the command's every-frame check runs beside the emote systems
     emotes: Res<Collectibles<Emote>>,
 ) {
@@ -398,6 +415,13 @@ fn avatar_state_cmd(
             upper_body_emote: emote
                 .and_then(|(_, masked)| masked.active_request())
                 .map(|playback| emote_state(playback, ActiveEmoteSource::TriggeredEmote, false)),
+            scene_emote: scene_emotes
+                .get(entity)
+                .ok()
+                .map(|(request, dropped)| SceneEmoteState {
+                    urn: request.command.urn.clone(),
+                    dropped,
+                }),
             load_failures,
         };
         if command.panel {
@@ -405,6 +429,7 @@ fn avatar_state_cmd(
             state["unavailable"] = json!({
                 "rendered": render_reason,
                 "emote": "No active full-body animation.",
+                "sceneEmote": "No scene emote is waiting to start or was dropped.",
                 "address": "No local profile address.",
             });
             input.reply_ok(state.to_string());
@@ -483,6 +508,25 @@ mod tests {
         assert_eq!(query(&mut app, &[])[0], all[0]);
         assert_eq!(all[0]["loadFailures"]["noBody"], false);
 
+        // a scene's emote waiting to start, then dropped by input
+        assert!(panel["sceneEmote"].is_null());
+        assert!(panel["unavailable"]["sceneEmote"].is_string());
+        let command = common::structs::EmoteCommand {
+            urn: "wave".to_owned(),
+            ..default()
+        };
+        app.world_mut()
+            .entity_mut(player)
+            .insert(SceneEmoteRequest { command });
+        let panel = query(&mut app, &["--panel"]);
+        assert_eq!(
+            panel["sceneEmote"],
+            json!({"urn": "wave", "state": "waiting"})
+        );
+        app.world_mut().entity_mut(player).insert(SceneEmoteDropped);
+        let panel = query(&mut app, &["--panel"]);
+        assert_eq!(panel["sceneEmote"]["state"], "dropped");
+
         // the default body failed too: the player has no body to build
         let default_body = collectibles::base_wearables::default_bodyshape_urn();
         app.world_mut()
@@ -532,6 +576,7 @@ mod tests {
                 idle: true,
             }),
             upper_body_emote: None,
+            scene_emote: None,
             load_failures: LoadFailures {
                 bodies: Vec::new(),
                 wearables: vec!["urn:decentraland:off-chain:base-avatars:cap".to_owned()],
@@ -572,6 +617,7 @@ mod tests {
                     "idle": true,
                 },
                 "upperBodyEmote": null,
+                "sceneEmote": null,
                 "loadFailures": {
                     "bodies": [],
                     "wearables": ["urn:decentraland:off-chain:base-avatars:cap"],

@@ -286,7 +286,10 @@ State, in every build:
   could not be built from (`loadFailures`: bodies and wearables its builds leave out, `noBody`
   when neither its body nor the default body could be built) and the emote
   each plays (with `idle`: whether a triggered emote may take over, which a scene's non-idle
-  movement animation does not let it), as a JSON array; the player's by default. The HUD's preview avatars are tagged
+  movement animation does not let it), as a JSON array; the player's by default. The player's
+  `sceneEmote` is the full-body emote a scene asked for that has not started (`state`
+  `waiting`), or that movement or jump input dropped before it started (`dropped`) while it
+  is still the player's latest emote command; null otherwise. The HUD's preview avatars are tagged
   `preview`. Rendered URNs are normalised (lowercase, default wearables included); selected ones
   are as written. The HUD uses `/avatar_state --panel` for a single local-player report.
   It shows the completed model while a replacement loads and explains missing readings.
