@@ -387,6 +387,10 @@ pub async fn names_for(
 ) -> std::collections::HashMap<String, String> {
     use crate::chain_index::names::Purpose;
     let mut out = std::collections::HashMap::new();
+    // No wallet, no read (a scene without bans, a page past the end).
+    if addresses.is_empty() {
+        return out;
+    }
     let Some(names) = state.name_authority.as_ref() else {
         for addr in addresses {
             out.insert(addr.to_lowercase(), String::new());
@@ -819,6 +823,16 @@ mod tests {
         }
         assert!(names.values().any(String::is_empty));
         assert!(names.values().any(|n| !n.is_empty()));
+    }
+
+    /// No wallet asks nothing of the source.
+    #[tokio::test]
+    async fn no_wallets_read_nothing() {
+        let source = Counting::new(true, true);
+        let state = state_with(source.clone());
+        assert!(names_for(&state, &[]).await.is_empty());
+        assert_eq!(source.batched.load(std::sync::atomic::Ordering::SeqCst), 0);
+        assert_eq!(source.single.load(std::sync::atomic::Ordering::SeqCst), 0);
     }
 
     /// An index that cannot answer shows no names, nothing kept: the next
