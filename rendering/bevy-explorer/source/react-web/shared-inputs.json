@@ -6649,18 +6649,6 @@
           "kind": "regular"
         },
         {
-          "name": "BlogAvatar.module.css",
-          "kind": "regular"
-        },
-        {
-          "name": "BlogAvatar.tsx",
-          "kind": "regular"
-        },
-        {
-          "name": "BlogBadge.module.css",
-          "kind": "regular"
-        },
-        {
           "name": "BlogBadge.tsx",
           "kind": "regular"
         },
@@ -15960,23 +15948,11 @@
     },
     {
       "path": "library/ui/apps/sites/blog/BlogArticlePage.tsx",
-      "sha256": "5e421486cedee1d6f23f552accb8a4b57c4bdd3b0adbe2e50e3e64559c64e7cf"
-    },
-    {
-      "path": "library/ui/apps/sites/blog/BlogAvatar.module.css",
-      "sha256": "255b464d9b9c52e72a46482559e4883e1fad3b6d85fb15facc569105aa89bfb2"
-    },
-    {
-      "path": "library/ui/apps/sites/blog/BlogAvatar.tsx",
-      "sha256": "3e602674264d7fdf2c1630928585cd3705727c90e9c6516d67820cb47de23517"
-    },
-    {
-      "path": "library/ui/apps/sites/blog/BlogBadge.module.css",
-      "sha256": "a83c044d45b201198d0d30cfa0ca5bbdb5f5e6065d591198527af27739f718af"
+      "sha256": "01ca46401c60f4b9f1335329d8cd92f37d6facb1a4e2285cf440f44ba16279dd"
     },
     {
       "path": "library/ui/apps/sites/blog/BlogBadge.tsx",
-      "sha256": "84494d503e4bf2a4fc543f092dfc4d63c8d9528dec46b1dbb8769901e870bd48"
+      "sha256": "b6f27ca624cb9fcd2724e39c28037bdc9787286d2cd0a8c3c91ab98167358f68"
     },
     {
       "path": "library/ui/apps/sites/blog/BlogCover.module.css",
@@ -16008,7 +15984,7 @@
     },
     {
       "path": "library/ui/apps/sites/blog/BlogPostCard.tsx",
-      "sha256": "a80477769507486f931fa51a5e4cf880bc23267c2537e2b49e0be11e98fbeaab"
+      "sha256": "e963d61423b92d2afd3664077f8b73877b042d7b55158d1d585317d9bd64a6b1"
     },
     {
       "path": "library/ui/apps/sites/blog/BlogRichText.module.css",
@@ -16068,7 +16044,7 @@
     },
     {
       "path": "library/ui/apps/sites/blog/blogModel.ts",
-      "sha256": "d6f38072bb181c89b9f14bd3a51f6a542140d026e473ad3df4b854262b413633"
+      "sha256": "758244fa82d530a41c6cb578e7cced71d8573dfae75930bd14c5b1301ef5f03b"
     },
     {
       "path": "library/ui/apps/sites/blog/index.ts",
@@ -17356,11 +17332,11 @@
     },
     {
       "path": "library/ui/components/ProfilePic/ProfilePic.module.css",
-      "sha256": "0417cbbb33f17d3e7f106f2befa8fa8a3f3edc08ebc0e1d21bb10f9bc4d44ec3"
+      "sha256": "ff68fe2d5c8cfa970e389ddea5f7197e11e57a4150009a15f07d7cbb557ee5dc"
     },
     {
       "path": "library/ui/components/ProfilePic/ProfilePic.tsx",
-      "sha256": "1d8cdc6bb5441bcb9f5462a4fac5f9cabceee53908237b120f8bf6079b2fb6c7"
+      "sha256": "a877d08a759bd1bc14fd3a758748818e2c27b0e562208e4ee2c238c0f101ff3a"
     },
     {
       "path": "library/ui/components/ProgressBar/ProgressBar.module.css",
@@ -17476,11 +17452,11 @@
     },
     {
       "path": "library/ui/components/Tag/Tag.module.css",
-      "sha256": "c9b9362694bb9ff0c792cc0f1edc557be4a2d37fed3a3891824aac22c141ce57"
+      "sha256": "b98d06e95397272176c3dd9eb2089cce9e00f0c7375eaad20bdfa31b2fdf65c6"
     },
     {
       "path": "library/ui/components/Tag/Tag.tsx",
-      "sha256": "9de632800f2278070b65e0374cdad076062c4a2f0ae339a8dc4323e9333f3f21"
+      "sha256": "a94778933691767aa18b1b7f9d433d9d5e33d5174596bbed3136bf61f462b4c1"
     },
     {
       "path": "library/ui/components/TitleBar/TitleBar.module.css",
@@ -17652,7 +17628,7 @@
     },
     {
       "path": "library/ui/index.ts",
-      "sha256": "488221341fd8f86bd5fffcb3ae056a13ab15f3e8d41c26ca0f2a0948ddc5cc8f"
+      "sha256": "ff0f393941cf2f3e7a30d9b79e73a698578f171dc4489ccfe55e95b88f5f4239"
     },
     {
       "path": "library/ui/link.helpers.ts",
@@ -53405,21 +53381,6 @@
     },
     {
       "from": "library/ui/apps/sites/blog/BlogArticlePage.tsx",
-      "to": "library/ui/apps/sites/blog/BlogAvatar.tsx",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/sites/blog/BlogArticlePage.tsx",
-      "to": "library/ui/apps/sites/blog/BlogAvatar.tsx",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/sites/blog/BlogArticlePage.tsx",
-      "to": "library/ui/apps/sites/blog/BlogAvatar.tsx",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/sites/blog/BlogArticlePage.tsx",
       "to": "library/ui/apps/sites/blog/BlogBadge.tsx",
       "kind": "native:runtime"
     },
@@ -53555,6 +53516,21 @@
     },
     {
       "from": "library/ui/apps/sites/blog/BlogArticlePage.tsx",
+      "to": "library/ui/components/ProfilePic/ProfilePic.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/sites/blog/BlogArticlePage.tsx",
+      "to": "library/ui/components/ProfilePic/ProfilePic.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/sites/blog/BlogArticlePage.tsx",
+      "to": "library/ui/components/ProfilePic/ProfilePic.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/sites/blog/BlogArticlePage.tsx",
       "to": "library/ui/foundations/icons/general.tsx",
       "kind": "native:runtime"
     },
@@ -53569,63 +53545,33 @@
       "kind": "test:runtime"
     },
     {
-      "from": "library/ui/apps/sites/blog/BlogAvatar.tsx",
-      "to": "library/ui/apps/sites/blog/BlogAvatar.module.css",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/sites/blog/BlogAvatar.tsx",
-      "to": "library/ui/apps/sites/blog/BlogAvatar.module.css",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/sites/blog/BlogAvatar.tsx",
-      "to": "library/ui/apps/sites/blog/BlogAvatar.module.css",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/sites/blog/BlogAvatar.tsx",
+      "from": "library/ui/apps/sites/blog/BlogBadge.tsx",
       "to": "library/ui/apps/sites/blog/blogModel.ts",
       "kind": "native:runtime"
     },
     {
-      "from": "library/ui/apps/sites/blog/BlogAvatar.tsx",
+      "from": "library/ui/apps/sites/blog/BlogBadge.tsx",
       "to": "library/ui/apps/sites/blog/blogModel.ts",
       "kind": "production:runtime"
     },
     {
-      "from": "library/ui/apps/sites/blog/BlogAvatar.tsx",
+      "from": "library/ui/apps/sites/blog/BlogBadge.tsx",
       "to": "library/ui/apps/sites/blog/blogModel.ts",
       "kind": "test:runtime"
     },
     {
       "from": "library/ui/apps/sites/blog/BlogBadge.tsx",
-      "to": "library/ui/apps/sites/blog/BlogBadge.module.css",
+      "to": "library/ui/components/Tag/Tag.tsx",
       "kind": "native:runtime"
     },
     {
       "from": "library/ui/apps/sites/blog/BlogBadge.tsx",
-      "to": "library/ui/apps/sites/blog/BlogBadge.module.css",
+      "to": "library/ui/components/Tag/Tag.tsx",
       "kind": "production:runtime"
     },
     {
       "from": "library/ui/apps/sites/blog/BlogBadge.tsx",
-      "to": "library/ui/apps/sites/blog/BlogBadge.module.css",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/sites/blog/BlogBadge.tsx",
-      "to": "library/ui/apps/sites/blog/blogModel.ts",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/sites/blog/BlogBadge.tsx",
-      "to": "library/ui/apps/sites/blog/blogModel.ts",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/sites/blog/BlogBadge.tsx",
-      "to": "library/ui/apps/sites/blog/blogModel.ts",
+      "to": "library/ui/components/Tag/Tag.tsx",
       "kind": "test:runtime"
     },
     {
@@ -53915,21 +53861,6 @@
     },
     {
       "from": "library/ui/apps/sites/blog/BlogPostCard.tsx",
-      "to": "library/ui/apps/sites/blog/BlogAvatar.tsx",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/sites/blog/BlogPostCard.tsx",
-      "to": "library/ui/apps/sites/blog/BlogAvatar.tsx",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/sites/blog/BlogPostCard.tsx",
-      "to": "library/ui/apps/sites/blog/BlogAvatar.tsx",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/sites/blog/BlogPostCard.tsx",
       "to": "library/ui/apps/sites/blog/BlogBadge.tsx",
       "kind": "native:runtime"
     },
@@ -54001,6 +53932,21 @@
     {
       "from": "library/ui/apps/sites/blog/BlogPostCard.tsx",
       "to": "library/ui/components/BlogCard/BlogCard.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/sites/blog/BlogPostCard.tsx",
+      "to": "library/ui/components/ProfilePic/ProfilePic.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/sites/blog/BlogPostCard.tsx",
+      "to": "library/ui/components/ProfilePic/ProfilePic.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/sites/blog/BlogPostCard.tsx",
+      "to": "library/ui/components/ProfilePic/ProfilePic.tsx",
       "kind": "test:runtime"
     },
     {
@@ -70791,11 +70737,6 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/ui/apps/sites/blog/BlogArticlePage.tsx",
-      "kind": "type"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
-      "to": "library/ui/apps/sites/blog/BlogAvatar.tsx",
       "kind": "type"
     },
     {

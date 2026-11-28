@@ -3,7 +3,7 @@ import type { CSSProperties, HTMLAttributes } from 'react'
 import { ConnectionStatus, type ConnectionStatusValue } from './ConnectionStatus'
 import styles from './ProfilePic.module.css'
 
-export type ProfilePicSize = 76 | 72 | 60 | 48 | 40 | 32 | 28 | 24 | 20
+export type ProfilePicSize = 76 | 72 | 60 | 56 | 48 | 40 | 32 | 28 | 24 | 20
 
 type Common = Omit<HTMLAttributes<HTMLSpanElement>, 'children'> & {
   /** The member's name: the picture's text alternative, and the source of the fallback initial. */
@@ -28,6 +28,16 @@ type DefaultLook = {
   /** The connection dot is shown from 32px up. */
   status?: ConnectionStatusValue
   statusLabel?: string
+  /** The white 60% ring around the picture (default). Without it the picture fills the whole size. */
+  ring?: boolean
+  /**
+   * Not in Figma: `gradient` puts the brand gradient behind the picture in place of the name colour (`nameColor` is
+   * not drawn), and the name's initials (up to two) on it from 48px up; below 48px the disc stays blank, for a
+   * picture shown beside the name. `initial` (default) is the name's first letter on the name colour.
+   */
+  fallback?: 'initial' | 'gradient'
+  /** `lazy` defers the picture until it nears the viewport and decodes it off the main thread. Eager by default. */
+  loading?: 'lazy' | 'eager'
 }
 
 /**
@@ -51,6 +61,23 @@ export type ProfilePicProps = Common & (DefaultLook | HudLook)
 function initialOf(name: string): string {
   for (const character of name.trim()) return character.toUpperCase()
   return '?'
+}
+
+const graphemes =
+  typeof Intl !== 'undefined' && 'Segmenter' in Intl
+    ? new Intl.Segmenter(undefined, { granularity: 'grapheme' })
+    : undefined
+
+/** A word's first user-perceived character: a flag or an accented letter stays whole. */
+function firstCharacter(word: string): string {
+  if (graphemes) for (const { segment } of graphemes.segment(word)) return segment
+  return Array.from(word)[0] ?? ''
+}
+
+/** The first characters of the name's first two words, upper case; `?` for a blank name. */
+function initialsOf(name: string): string {
+  const words = name.trim().split(/\s+/).filter(Boolean).slice(0, 2)
+  return words.length ? words.map((word) => firstCharacter(word).toUpperCase()).join('') : '?'
 }
 
 /** The HUD's initial: the first letter or digit, past a leading `@` or `#`. */
@@ -125,6 +152,9 @@ function DefaultProfilePic({
   compactOnMobile = false,
   status,
   statusLabel,
+  ring = true,
+  fallback = 'initial',
+  loading,
   nameColor,
   onPictureLoad,
   onPictureError,
@@ -146,6 +176,8 @@ function DefaultProfilePic({
       className={[styles.root, className].filter(Boolean).join(' ')}
       data-size={size}
       data-compact-on-mobile={compactOnMobile || undefined}
+      data-ring={ring ? undefined : 'none'}
+      data-fallback={fallback === 'gradient' ? 'gradient' : undefined}
       style={nameColor ? ({ ...style, '--profile-pic-name-color': nameColor } as CSSProperties) : style}
     >
       <span className={styles.picture}>
@@ -156,6 +188,8 @@ function DefaultProfilePic({
             src={src}
             alt={alt}
             draggable={false}
+            loading={loading}
+            decoding={loading === 'lazy' ? 'async' : undefined}
             onLoad={onPictureLoad}
             onError={() => {
               setFailed(src)
@@ -165,9 +199,9 @@ function DefaultProfilePic({
         ) : (
           <span
             className={styles.initial}
-            {...(alt ? { role: 'img', 'aria-label': alt } : { 'aria-hidden': true })}
+            {...(alt.trim() ? { role: 'img', 'aria-label': alt } : { 'aria-hidden': true })}
           >
-            {initialOf(name)}
+            {fallback === 'gradient' ? (size >= 48 ? initialsOf(name) : null) : initialOf(name)}
           </span>
         )}
       </span>

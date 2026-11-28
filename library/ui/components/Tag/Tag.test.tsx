@@ -145,3 +145,45 @@ describe('when a community supplies a role label', () => {
     expect(screen.getByText('Owner')).toHaveAttribute('data-appearance', 'emphasized')
   })
 })
+
+describe('when a post category is shown as a pill', () => {
+  it('should show the caller text in the medium about pill by default', () => {
+    render(<Tag variant="category">About Decentraland</Tag>)
+    const pill = screen.getByText('About Decentraland').closest('[data-variant]')!
+    expect(pill).toHaveAttribute('data-variant', 'category')
+    expect(pill).toHaveAttribute('data-tone', 'about')
+    expect(pill).toHaveAttribute('data-size', 'md')
+    expect(marks(pill as HTMLElement)).toHaveLength(0)
+  })
+
+  it('should carry the tone and the large size', () => {
+    render(
+      <Tag variant="category" tone="ruby" size="lg">
+        Announcements
+      </Tag>
+    )
+    const pill = screen.getByText('Announcements').closest('[data-variant]')!
+    expect(pill).toHaveAttribute('data-tone', 'ruby')
+    expect(pill).toHaveAttribute('data-size', 'lg')
+  })
+
+  it('should render nothing but the pill when the category has no text', () => {
+    const { container } = render(<Tag variant="category" tone="updates" />)
+    expect(container.firstElementChild).toHaveAttribute('data-tone', 'updates')
+    expect(container.textContent).toBe('')
+  })
+})
+
+describe('when another variant is given a tone or a size', () => {
+  it('should reject them when compiling and ignore them at run time', () => {
+    render(
+      // @ts-expect-error: tone and size belong to the category variant only.
+      <Tag variant="role" tone="ruby" size="lg">
+        Owner
+      </Tag>
+    )
+    const tag = screen.getByText('Owner')
+    expect(tag).not.toHaveAttribute('data-tone')
+    expect(tag).not.toHaveAttribute('data-size')
+  })
+})

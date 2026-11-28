@@ -260,6 +260,41 @@ describe('BlogArticlePage', () => {
       const avatar = container.querySelector('img[src="https://images.example/j.png"]')
       expect(avatar).toHaveAttribute('alt', '')
     })
+
+    it('should show it at 56px without a ring, on the brand gradient', () => {
+      const avatar = container.querySelector('img[src="https://images.example/j.png"]')!
+      const pic = avatar.closest('[data-size]')!
+      expect(pic).toHaveAttribute('data-size', '56')
+      expect(pic).toHaveAttribute('data-ring', 'none')
+      expect(pic).toHaveAttribute('data-fallback', 'gradient')
+    })
+  })
+
+  describe('when the CMS has no picture of the author', () => {
+    beforeEach(() => {
+      ;({ container } = renderArticle({
+        post: article({ author: { slug: 'j', name: 'Jane Doe', image: '' } })
+      }))
+    })
+
+    it("should show the author's initials on the gradient, hidden from assistive tech", () => {
+      const disc = container.querySelector('[data-fallback="gradient"]')!
+      expect(disc.querySelector('img')).toBeNull()
+      expect(disc).toHaveTextContent('JD')
+      expect(within(disc as HTMLElement).queryByRole('img')).toBeNull()
+    })
+  })
+
+  describe('when the post category is shown', () => {
+    it('should draw it as the large brand pill', () => {
+      renderArticle()
+      const pill = screen
+        .getAllByText('Platform')
+        .map((el) => el.closest('[data-variant="category"]'))
+        .find(Boolean)!
+      expect(pill).toHaveAttribute('data-size', 'lg')
+      expect(pill).toHaveAttribute('data-tone', 'violet')
+    })
   })
 
   describe('when the post has a picture', () => {

@@ -1,5 +1,5 @@
 import { BlogCard as ArticleCard } from '../../../components/BlogCard/BlogCard'
-import { BlogAvatar } from './BlogAvatar'
+import { ProfilePic } from '../../../components/ProfilePic/ProfilePic'
 import { BlogBadge } from './BlogBadge'
 import { BlogCover } from './BlogCover'
 import { BlogArticleLink } from './BlogRouting'
@@ -32,7 +32,14 @@ export function BlogPostCard(props: BlogPostCardProps) {
       author={
         !related && props.post.author.name ? (
           <>
-            <BlogAvatar name={props.post.author.name} image={props.post.author.image} card />
+            <ProfilePic
+              name={props.post.author.name}
+              src={props.post.author.image}
+              alt=""
+              size={28}
+              fallback="gradient"
+              loading="lazy"
+            />
             {props.post.author.name}
           </>
         ) : null

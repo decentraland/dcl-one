@@ -785,7 +785,7 @@
   },
   "library/ui/components/ProfilePic/ProfilePic.module.css": {
     "primitives": 0,
-    "tokens": 14
+    "tokens": 17
   },
   "library/ui/components/ProgressBar/ProgressBar.module.css": {
     "primitives": 0,
@@ -837,7 +837,7 @@
   },
   "library/ui/components/Tag/Tag.module.css": {
     "primitives": 0,
-    "tokens": 58
+    "tokens": 73
   },
   "library/ui/components/TitleBar/TitleBar.module.css": {
     "primitives": 0,

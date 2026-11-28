@@ -1,17 +1,17 @@
-// TODO(figma-ds): replace with the generated Badge component when the DCL UI library lands
+import { Tag } from '../../../components/Tag/Tag'
 import { blogBadgeTone, blogCardBadgeTone, type BlogCategory } from './blogModel'
-import styles from './BlogBadge.module.css'
 
 export type BlogBadgeProps = { category: BlogCategory; card?: boolean }
 
-/** A post's category as a coloured pill. */
+/** A post's category as a coloured pill: the category colours on a card, a larger brand pill elsewhere. */
 export function BlogBadge({ category, card = false }: BlogBadgeProps) {
-  return (
-    <span
-      className={`${styles.badge} ${styles[blogBadgeTone(category.slug)]}`}
-      data-card-tone={card ? blogCardBadgeTone(category.slug) : undefined}
-    >
+  return card ? (
+    <Tag variant="category" tone={blogCardBadgeTone(category.slug)}>
       {category.title}
-    </span>
+    </Tag>
+  ) : (
+    <Tag variant="category" size="lg" tone={blogBadgeTone(category.slug)}>
+      {category.title}
+    </Tag>
   )
 }

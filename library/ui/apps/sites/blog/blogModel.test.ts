@@ -4,7 +4,6 @@ import {
   blogBadgeTone,
   blogCardBadgeTone,
   blogCategoryHref,
-  blogInitials,
   blogPostHref,
   blogShareLinks,
   formatBlogDate
@@ -104,21 +103,6 @@ describe('badges and initials', () => {
     describe('and the category is unknown', () => {
       it('should fall back to about', () => {
         expect(blogCardBadgeTone('unknown')).toBe('about')
-      })
-    })
-  })
-
-  describe('when taking initials from a name', () => {
-    describe('and the name has words', () => {
-      it('should take up to two initials', () => {
-        expect(blogInitials('jane  doe smith')).toBe('JD')
-        expect(blogInitials('Catalyrst')).toBe('C')
-      })
-    })
-
-    describe('and the name is blank', () => {
-      it('should return an empty string', () => {
-        expect(blogInitials('   ')).toBe('')
       })
     })
   })

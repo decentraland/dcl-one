@@ -1,7 +1,7 @@
 @layer dcl.reset, dcl.foundations, dcl.components;
 /* Figma `ProfilePic` (Size=72|60|48|40|32|28|24|20): a round picture inside a white 60% ring on the
  * member's name colour. The ring, and the dot's size and offset, are the capture's value for each
- * size. */
+ * size. The 56px size, the picture without a ring and the gradient fallback are not in Figma. */
 @layer dcl.components {
   .root {
     --profile-pic-size: 72px;
@@ -31,6 +31,14 @@
     --profile-pic-ring: 3px;
     --profile-pic-dot: 10px;
     --profile-pic-dot-inset: 5px;
+  }
+
+  /* Not in Figma: 56px, with the ring and the dot between the 60px and 48px values. */
+  .root[data-size='56'] {
+    --profile-pic-size: 56px;
+    --profile-pic-ring: 2.8px;
+    --profile-pic-dot: 9px;
+    --profile-pic-dot-inset: 4.5px;
   }
 
   .root[data-size='48'] {
@@ -76,6 +84,23 @@
       --profile-pic-dot: 7.2px;
       --profile-pic-dot-inset: 3.6px;
     }
+  }
+
+  /* Not in Figma: without the ring the picture fills the whole size. */
+  .root[data-ring='none'] {
+    padding: 0;
+    box-shadow: none;
+  }
+
+  /* Not in Figma: the brand gradient behind the picture, and bold initials on it. */
+  .root[data-fallback='gradient'] {
+    background: linear-gradient(135deg, var(--dcl-brand-violet), var(--dcl-brand-ruby));
+  }
+
+  .root[data-fallback='gradient'] .initial {
+    color: var(--dcl-text-primary);
+    font-size: calc(var(--profile-pic-size) * 5 / 14);
+    font-weight: 700;
   }
 
   .picture {
