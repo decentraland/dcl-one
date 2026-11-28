@@ -16104,7 +16104,7 @@
     },
     {
       "path": "library/ui/apps/sites/chrome/SitesFooter.module.css",
-      "sha256": "d51d86ea3d7c73dfb59d068891ca15b18b46ad7f184fa1874962b0da28948e98"
+      "sha256": "296a540e3432c168ac994f9437857bd038a61bc64bfdee79ae64f6022e2455b6"
     },
     {
       "path": "library/ui/apps/sites/chrome/SitesFooter.tsx",
@@ -16452,7 +16452,7 @@
     },
     {
       "path": "library/ui/apps/sites/home/CatchTheVibe.module.css",
-      "sha256": "7774c452480635e03735f17154d0e0d3aa8680f05bcc9f8b7c8995db9c48f5c0"
+      "sha256": "d182d4909432c4e54d645b00c13a8edda65dd0518efd2032680da53824ade48d"
     },
     {
       "path": "library/ui/apps/sites/home/CatchTheVibe.tsx",

@@ -321,7 +321,8 @@
   }
   .wordmark {
     height: 40px;
-    max-width: 322px;
+    max-width: min(322px, 100%);
+    object-fit: contain;
   }
   .news {
     width: 100%;
@@ -362,6 +363,20 @@
   }
   .footbarright {
     display: none;
+  }
+}
+
+@media (max-width: 599px) {
+  .footbarleft,
+  .legal {
+    width: 100%;
+  }
+  .legal {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: var(--dcl-space-16);
+  }
+  .legallink {
+    white-space: normal;
   }
 }
 
