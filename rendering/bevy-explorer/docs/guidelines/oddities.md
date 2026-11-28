@@ -12,6 +12,12 @@ than once. Check here before correcting something surprising.
   pass cheap. The repeated mistake is to assume the pass renders the full cubemap each frame
   and "optimise" by running it less often, which only starves the progressive update and
   makes the sky lag. The pass must run every frame.
+- **The high reflection map lags the sky by up to 7 frames.** The sky's reflection map
+  (`crates/visuals/src/sky_envmap.rs`) is filtered from the atmosphere skybox every 8 frames
+  (`FILTER_INTERVAL`), not on every redraw: its downsample chain and specular passes cost far
+  more than the sky slice they would follow. The lag is deliberate; do not set the interval back
+  to every frame without a measurement, and do not throttle the atmosphere pass by analogy, which
+  must still run every frame. `/envmap --interval <frames>` sets it live for comparisons.
 - **Our bevy is not stock bevy.** The fork page has the detail; the differences a reader will
   trip over are: the engine runs on web workers with a multi-threaded task pool on web; the
   transparent pass has a second attachment (the focus target) when depth of field is on, and
