@@ -229,6 +229,10 @@ pub struct ReportArgs {
     /// The labels that should report, comma-separated; one with no results gets a line
     #[arg(long = "expected-labels", env = "EXPECTED_LABELS")]
     pub expected_labels: Option<String>,
+    /// Also write each machine's outcome to this file, a line each: label, name and verdict,
+    /// tab-separated
+    #[arg(long, env = "REPORT_MACHINES")]
+    pub machines: Option<String>,
 }
 
 /// The option's text when it was given and is not empty.

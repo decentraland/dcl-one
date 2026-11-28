@@ -399,6 +399,42 @@ pub fn failure(name: &str, message: &str) -> String {
     format!("> ⚠️ Could not gather the results of {name}: {message}\n\n")
 }
 
+/// A machine's verdict when its section could not be read.
+pub const MACHINE_UNREADABLE: &str = "⚠️ results unreadable";
+/// A machine's verdict when an expected label left no section.
+pub const MACHINE_MISSING: &str = "⚠️ no results";
+
+/// A section in one table cell: every 🔴 verdict, then every 🟢 one, one per line; the verdicts
+/// are the section's own, not the headline's, which needs two machines or a large change.
+pub fn machine_verdict(section: &RunnerSection) -> String {
+    if section.baseline_comparison.is_none() {
+        return "⚠️ not compared".to_string();
+    }
+    let mut findings = section.significant_metric_changes();
+    if findings.is_empty() {
+        return "⚪ no significant change".to_string();
+    }
+    // regressions first; the sort is stable, so each keeps the table's order
+    findings.sort_by_key(|finding| finding.improved);
+    findings
+        .iter()
+        .map(|finding| {
+            let percent = finding.relative_change * 100.0;
+            let change = match (finding.metric, finding.improved) {
+                (EXCEPTIONS_METRIC | CPU_HICCUPS_METRIC, true) => "fewer".to_string(),
+                (EXCEPTIONS_METRIC | CPU_HICCUPS_METRIC, false) => "more".to_string(),
+                (PEAK_MEMORY_METRIC, true) => format!("{percent:.0}% less"),
+                (PEAK_MEMORY_METRIC, false) => format!("{percent:.0}% more"),
+                (_, true) => format!("{percent:.0}% faster"),
+                (_, false) => format!("{percent:.0}% slower"),
+            };
+            let icon = if finding.improved { "🟢" } else { "🔴" };
+            format!("{icon} {} {change}", finding.metric)
+        })
+        .collect::<Vec<_>>()
+        .join("<br>")
+}
+
 /// An expected runner that left no `runs_on.txt`.
 pub fn missing(label: &str) -> String {
     format!(

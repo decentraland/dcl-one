@@ -480,6 +480,59 @@ fn no_folder_no_section_and_every_expected_label_missing() {
     );
 }
 
+#[test]
+fn every_machine_gets_one_verdict_line_and_a_missing_one_says_so() {
+    let mut options = options("ok");
+    options.expected_labels = vec!["intel-i3-chrome".into()];
+    let report = build(&options);
+    let lines: Vec<(&str, &str, &str)> = report
+        .machines
+        .iter()
+        .map(|m| (m.label.as_str(), m.name.as_str(), m.verdict.as_str()))
+        .collect();
+    assert_eq!(
+        lines,
+        [
+            (
+                "apple-m1-chrome",
+                "Apple M1 (Chrome)",
+                "🟢 CPU average 9% faster<br>🟢 CPU 1% worst 6% faster"
+            ),
+            (
+                "intel-i5-chrome",
+                "Intel Core i5 (Chrome)",
+                "🟢 CPU average 9% faster"
+            ),
+            ("intel-i3-chrome", "Intel Core i3 (Chrome)", "⚠️ no results"),
+        ]
+    );
+
+    let alone = report_of("missing-label");
+    assert_eq!(alone.machines.len(), 1);
+    assert_eq!(alone.machines[0].verdict, "⚠️ not compared");
+}
+
+#[test]
+fn the_command_writes_the_machine_lines_when_asked() {
+    let dir = scratch("report-machines");
+    let machines = dir.join("machines.tsv");
+    let output = command(&[
+        fixture("ok").to_str().unwrap(),
+        "--out",
+        dir.join("report.md").to_str().unwrap(),
+        "--machines",
+        machines.to_str().unwrap(),
+    ])
+    .output()
+    .unwrap();
+    assert_eq!(output.status.code(), Some(0));
+    assert_eq!(
+        std::fs::read_to_string(&machines).unwrap(),
+        "apple-m1-chrome\tApple M1 (Chrome)\t🟢 CPU average 9% faster<br>🟢 CPU 1% worst 6% faster\n\
+         intel-i5-chrome\tIntel Core i5 (Chrome)\t🟢 CPU average 9% faster\n"
+    );
+}
+
 fn command(arguments: &[&str]) -> Command {
     let mut command = Command::new(env!("CARGO_BIN_EXE_benchmark"));
     command.arg("report").args(arguments);
@@ -492,6 +545,7 @@ fn command(arguments: &[&str]) -> Command {
         "RUN_URL",
         "EXPECTED_RUNS",
         "EXPECTED_LABELS",
+        "REPORT_MACHINES",
     ] {
         command.env_remove(variable);
     }

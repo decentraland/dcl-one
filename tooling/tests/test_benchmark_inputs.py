@@ -26,6 +26,11 @@ MAIN = ('c' * 40, 'd' * 40, 'e' * 40)
 RELEASE = MAIN[2]
 RELEASE_VERSION = f'0.1.0-88.commit-{RELEASE[:7]}'
 RUNNERS = ('windows-amd64', 'macos-arm64', 'linux-amd64')
+SCENARIOS = [
+    {'name': 'still', 'title': 'Standing still', 'realm': 'supportteam.dcl.eth', 'query': ''},
+    {'name': 'walk', 'title': 'Walking in', 'realm': 'https://realm.example/main', 'query': 'position=-12,2&autopilotWalkTo=0,2'},
+]
+FLEET_LABELS = ['intel-i5-chrome', 'apple-m1-chrome', 'amd-ryzen-3-chrome', 'intel-i3-chrome', 'framework-13-i7-chrome']
 
 
 def ci_run(run_id, sha, event='pull_request', branch='feature', **changes):
@@ -157,7 +162,7 @@ class Fixture(unittest.TestCase):
         self.addCleanup(api.stop)
 
     def resolve(self, event_name='workflow_run', event=None, enabled='', runs=''):
-        return inputs.resolve(event_name, completed() if event is None else event, REPO, enabled, runs)
+        return inputs.resolve(event_name, completed() if event is None else event, REPO, enabled, runs, SCENARIOS)
 
     def assert_skipped(self, result):
         self.assertFalse(result['run'])
@@ -178,8 +183,12 @@ class ResolverTest(Fixture):
             'runner_artifact': f'bevy-explorer-benchmark-macos-arm64-{MERGE}', 'runner_run_id': '100',
             'change_artifact': f'bevy-explorer-web-{MERGE}', 'change_run_id': '100',
             'base_artifact': f'bevy-explorer-web-{MAIN[0]}', 'base_run_id': '90',
-            'release_artifact': f'bevy-explorer-web-{RELEASE}', 'release_run_id': '88'})
+            'release_artifact': f'bevy-explorer-web-{RELEASE}', 'release_run_id': '88',
+            'scenario': 'still', 'realm': 'supportteam.dcl.eth', 'query': ''})
         self.assertEqual((result['release_sha'], result['release_version']), (RELEASE, RELEASE_VERSION))
+        self.assertEqual(len(result['legs']), 5)
+        self.assertFalse(result['suite'])
+        self.assertEqual(result['scenarios'], [{'name': 'still', 'title': 'Standing still', 'heading': 'Benchmark'}])
         self.assertEqual((result['report_runner_artifact'], result['report_runner_run_id']),
                          (f'bevy-explorer-benchmark-linux-amd64-{MERGE}', '100'))
         self.assertEqual(result['notes'], '')
@@ -269,6 +278,64 @@ class ResolverTest(Fixture):
         self.assertEqual(result['release_version'], RELEASE_VERSION)
         pages = [call for call in self.github.calls if '/deployments?' in call]
         self.assertEqual([call.rsplit('=', 1)[1] for call in pages], ['1', '2'])
+
+    def assert_suite(self, result):
+        self.assertTrue(result['run'])
+        self.assertTrue(result['suite'])
+        # scenario by scenario, each on every laptop
+        self.assertEqual([(leg['scenario'], leg['label']) for leg in result['legs']],
+                         [(scenario, label) for scenario in ('still', 'walk') for label in FLEET_LABELS])
+        self.assertEqual({(leg['realm'], leg['query']) for leg in result['legs'] if leg['scenario'] == 'walk'},
+                         {('https://realm.example/main', 'position=-12,2&autopilotWalkTo=0,2')})
+        self.assertEqual(result['expected_labels'], ','.join(FLEET_LABELS))
+        self.assertEqual([row['heading'] for row in result['scenarios']],
+                         ['Benchmark: Standing still', 'Benchmark: Walking in'])
+
+    def test_a_pr_with_the_suite_label_runs_every_scenario_on_every_laptop(self):
+        self.github.pr['labels'] = [{'name': 'other'}, {'name': inputs.SUITE_LABEL}]
+        self.assert_suite(self.resolve())
+
+    def test_adding_the_suite_label_runs_the_suite(self):
+        event = {'action': 'labeled', 'label': {'name': inputs.SUITE_LABEL}, 'pull_request': {'number': 7}}
+        self.assert_suite(self.resolve('pull_request_target', event))
+
+    def test_adding_the_suite_label_before_ci_passes_says_the_suite_waits_for_it(self):
+        self.github.change_runs = []
+        event = {'action': 'labeled', 'label': {'name': inputs.SUITE_LABEL}, 'pull_request': {'number': 7}}
+        result = self.resolve('pull_request_target', event)
+        self.assertFalse(result['run'])
+        self.assertIn('starts when one passes', result['notes'])
+
+    def test_another_label_or_action_starts_nothing_and_reads_nothing(self):
+        for event in ({'action': 'labeled', 'label': {'name': 'bug'}, 'pull_request': {'number': 7}},
+                      {'action': 'unlabeled', 'label': {'name': inputs.SUITE_LABEL}, 'pull_request': {'number': 7}}):
+            with self.subTest(event=event):
+                self.assert_skipped(self.resolve('pull_request_target', event))
+        self.assertEqual(self.github.calls, [])
+
+    def test_a_manual_run_asks_for_the_suite(self):
+        for suite, expected in (('true', 2), (True, 2), ('false', 1), ('', 1)):
+            with self.subTest(suite=suite):
+                result = self.resolve('workflow_dispatch', {'inputs': {'pr': '7', 'suite': suite}})
+                self.assertEqual(len(result['scenarios']), expected)
+                self.assertEqual(len(result['legs']), 5 * expected)
+
+    def test_the_scenario_list_loads_and_a_broken_one_is_refused(self):
+        scenarios = inputs.load_scenarios()
+        self.assertTrue(scenarios)
+        self.assertEqual(scenarios[0]['realm'], 'supportteam.dcl.eth')
+        good = {'name': 'a', 'title': 'A', 'realm': 'r.dcl.eth'}
+        for bad in ({}, {'scenarios': []}, {'scenarios': [{**good, 'name': 'A b'}]},
+                    {'scenarios': [good, good]}, {'scenarios': [{**good, 'title': ''}]},
+                    {'scenarios': [{**good, 'title': 'a | b'}]}, {'scenarios': [{**good, 'realm': ''}]},
+                    {'scenarios': [{**good, 'realm': 'r&autopilot'}]}, {'scenarios': [{**good, 'query': 'a=b#c'}]},
+                    {'scenarios': [{**good, 'query': 'a b'}]}, {'scenarios': [{**good, 'extra': 'x'}]},
+                    {'scenarios': [{**good, 'query': 1}]}):
+            with self.subTest(bad=bad), tempfile.TemporaryDirectory() as temporary:
+                path = Path(temporary) / 'scenarios.json'
+                path.write_text(json.dumps(bad))
+                with self.assertRaises(ValueError):
+                    inputs.load_scenarios(path)
 
     def test_an_unoptimized_change_build_is_not_measured_and_the_pr_is_told_how_to_get_one(self):
         for info in ({'engine': {'optimized': False}}, {'engine': {}}, None):
@@ -416,7 +483,8 @@ class MainTest(Fixture):
             'runner_artifact': f'bevy-explorer-benchmark-windows-amd64-{MAIN[0]}', 'runner_run_id': '90',
             'change_artifact': f'bevy-explorer-web-{MAIN[0]}', 'change_run_id': '90',
             'base_artifact': f'bevy-explorer-web-{RELEASE}', 'base_run_id': '88',
-            'release_artifact': '', 'release_run_id': ''})
+            'release_artifact': '', 'release_run_id': '',
+            'scenario': 'still', 'realm': 'supportteam.dcl.eth', 'query': ''})
         self.assertEqual(self.resolve('workflow_dispatch', {'inputs': {'pr': ''}})['base_sha'], RELEASE)
         with self.assertRaises(ValueError):
             self.resolve('workflow_dispatch', {'inputs': {'pr': ' '}})
@@ -560,12 +628,15 @@ class OutputTest(unittest.TestCase):
                 self.assertEqual(inputs.main(), 0)
             values = dict(line.split('=', 1) for line in (folder / 'output').read_text().splitlines())
             self.assertIn('Benchmark runs', (folder / 'summary').read_text())
-        for name in ('run', 'pr', 'change_sha', 'base_sha', 'release_sha', 'release_version', 'runs', 'legs', 'expected_labels',
+        for name in ('run', 'pr', 'change_sha', 'base_sha', 'release_sha', 'release_version', 'runs', 'legs', 'suite',
+                     'scenarios', 'expected_labels',
                      'report_runner_artifact', 'report_runner_run_id', 'notes', 'change_description',
                      'base_description', 'retention_days', 'issue_title'):
             self.assertIn(name, values)
         self.assertEqual(values['run'], 'true')
         self.assertEqual([leg['runs_on'] for leg in json.loads(values['legs'])], ['apple-m1'])
+        self.assertEqual(values['suite'], 'false')
+        self.assertEqual(len(json.loads(values['scenarios'])), 1)
 
     def test_an_invalid_input_fails_the_step_with_its_message(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -580,18 +651,34 @@ class OutputTest(unittest.TestCase):
 
 
 class QueueWatchdogTest(unittest.TestCase):
-    def queue(self, states, timeout=1, expire_after_sleep=False):
+    def queue(self, states, timeout=1, expire_after_sleep=False, scenarios=('still',), others=None, limit=''):
+        """Runs the watchdog's step: `states` answer this run's jobs read by read, `others` the
+        jobs of the other benchmark runs in progress, by run ID."""
         source = (Path(__file__).parents[2] / '.github/workflows/bevy-explorer-benchmark.yml').read_text()
         step = source.split('      - name: Wait for every leg to start\n', 1)[1]
         body = step.split('        run: |\n', 1)[1].split('      - name:', 1)[0]
         with tempfile.TemporaryDirectory() as temporary:
             folder = Path(temporary)
             (folder / 'states.json').write_text(json.dumps(states))
+            (folder / 'others.json').write_text(json.dumps(others or {}))
             gh = folder / 'gh'
             gh.write_text(f'#!{sys.executable}\n' + textwrap.dedent("""\
-                import json, os
+                import json, os, re, sys
                 from pathlib import Path
                 folder = Path(os.environ['QUEUE_FIXTURE'])
+                path = sys.argv[2]
+                others = json.loads((folder / 'others.json').read_text())
+                if others == 'refused':
+                    if '/workflows/' in path:
+                        raise SystemExit('API rate limit exceeded')
+                    others = {}
+                if '/workflows/' in path:
+                    print(json.dumps({'workflow_runs': [{'id': int(run)} for run in others]}))
+                    raise SystemExit
+                run = re.search(r'/runs/([0-9]+)/jobs', path).group(1)
+                if run != '42':
+                    print(json.dumps({'jobs': others[run]}))
+                    raise SystemExit
                 counter = folder / 'calls'
                 call = int(counter.read_text()) if counter.exists() else 0
                 counter.write_text(str(call + 1))
@@ -603,7 +690,10 @@ class QueueWatchdogTest(unittest.TestCase):
             environment = dict(os.environ, PATH=f'{folder}{os.pathsep}{os.environ["PATH"]}',
                                QUEUE_FIXTURE=str(folder), GITHUB_WORKSPACE=str(Path(__file__).parents[2]),
                                QUEUE_EXPIRE_AFTER_SLEEP='1' if expire_after_sleep else '',
-                               EXPECTED_LABELS='first-chrome,second-chrome',
+                               WATCH_LIMIT_MINUTES=str(limit),
+                               LEGS=json.dumps([{'label': f'{runner}-chrome', 'runs_on': runner, 'scenario': scenario}
+                                                for scenario in scenarios
+                                                for runner in ('first', 'second')]),
                                QUEUE_TIMEOUT_MINUTES=str(timeout), GITHUB_REPOSITORY=REPO,
                                GITHUB_RUN_ID='42', RUN_URL='https://example.test/run',
                                GITHUB_STEP_SUMMARY=str(folder / 'summary'), GITHUB_OUTPUT=str(folder / 'output'))
@@ -618,8 +708,8 @@ class QueueWatchdogTest(unittest.TestCase):
                     (folder / 'summary').read_text() if (folder / 'summary').exists() else '')
 
     def test_empty_partial_and_queued_publication_requires_every_leg_to_start(self):
-        first = {'name': 'first-chrome / Chrome', 'status': 'in_progress'}
-        second = {'name': 'second-chrome / Chrome', 'status': 'queued'}
+        first = {'name': 'first-chrome (still) / Chrome', 'status': 'in_progress'}
+        second = {'name': 'second-chrome (still) / Chrome', 'status': 'queued'}
         calls, sleeps, output, _ = self.queue([
             {'jobs': []}, {'jobs': [first]}, {'jobs': [first, second]},
             {'jobs': [{**first, 'status': 'completed'}, {**second, 'status': 'in_progress'}]},
@@ -636,8 +726,8 @@ class QueueWatchdogTest(unittest.TestCase):
 
     def test_unusable_jobs_responses_retry_until_every_leg_starts(self):
         started = {'jobs': [
-            {'name': 'first-chrome / Chrome', 'status': 'in_progress'},
-            {'name': 'second-chrome / Chrome', 'status': 'completed'},
+            {'name': 'first-chrome (still) / Chrome', 'status': 'in_progress'},
+            {'name': 'second-chrome (still) / Chrome', 'status': 'completed'},
         ]}
         for response in [{}, {'jobs': None}, 'malformed JSON']:
             with self.subTest(response=response):
@@ -647,10 +737,84 @@ class QueueWatchdogTest(unittest.TestCase):
                 self.assertEqual(output, '')
                 self.assertEqual(summary, '')
 
+    def test_a_laptop_running_its_legs_one_after_another_is_not_stuck(self):
+        def jobs(*states):
+            return {'jobs': [{'name': f'{label} ({scenario}) / Chrome', 'status': status}
+                             for (label, scenario), status in states]}
+        first_still, first_walk = ('first-chrome', 'still'), ('first-chrome', 'walk')
+        second_still, second_walk = ('second-chrome', 'still'), ('second-chrome', 'walk')
+        # each poll is an hour later (the timeout); a laptop running a leg at a poll is not stuck
+        calls, sleeps, output, _ = self.queue([
+            jobs((first_still, 'in_progress'), (second_still, 'in_progress'), (first_walk, 'queued'), (second_walk, 'queued')),
+            jobs((first_still, 'completed'), (second_still, 'in_progress'), (first_walk, 'in_progress'), (second_walk, 'queued')),
+            jobs((first_still, 'completed'), (second_still, 'completed'), (first_walk, 'completed'), (second_walk, 'in_progress')),
+        ], expire_after_sleep=True, scenarios=('still', 'walk'))
+        self.assertEqual((calls, output), (3, ''))
+        self.assertEqual(len(sleeps), 2)
+
+    def test_a_laptop_idle_with_legs_left_is_stuck_while_the_other_keeps_running(self):
+        def jobs(*states):
+            return {'jobs': [{'name': f'{label} ({scenario}) / Chrome', 'status': status}
+                             for (label, scenario), status in states]}
+        calls, _, output, summary = self.queue([
+            jobs((('first-chrome', 'still'), 'in_progress'), (('second-chrome', 'still'), 'completed'),
+                 (('first-chrome', 'walk'), 'queued'), (('second-chrome', 'walk'), 'queued')),
+        ], expire_after_sleep=True, scenarios=('still', 'walk'))
+        self.assertEqual((calls, output), (2, 'stuck=true\n'))
+        self.assertIn('**second-chrome**', summary)
+        self.assertNotIn('first-chrome', summary)
+
+    def test_a_laptop_busy_with_another_benchmark_run_is_not_stuck(self):
+        mine = {'jobs': [
+            {'name': 'first-chrome (still) / Chrome', 'status': 'in_progress', 'labels': ['first']},
+            {'name': 'second-chrome (still) / Chrome', 'status': 'queued', 'labels': ['second']},
+        ]}
+        started = {'jobs': [{**job, 'status': 'in_progress'} for job in mine['jobs']]}
+        # another PR's suite holds the second laptop for the first two polls, an hour apart
+        suite = {'7': [{'name': 'second-chrome (walk) / Chrome', 'status': 'in_progress', 'labels': ['second']},
+                       {'name': 'Report', 'status': 'queued', 'labels': ['ubuntu-26.04']}]}
+        calls, _, output, _ = self.queue([mine, mine, started], expire_after_sleep=True, others=suite)
+        self.assertEqual((calls, output), (3, ''))
+
+    def test_a_refused_read_of_the_other_runs_moves_no_laptop_toward_the_timeout(self):
+        queued = {'jobs': [
+            {'name': 'first-chrome (still) / Chrome', 'status': 'in_progress'},
+            {'name': 'second-chrome (still) / Chrome', 'status': 'queued'},
+        ]}
+        started = {'jobs': [{**job, 'status': 'in_progress'} for job in queued['jobs']]}
+        for mine in (queued, 'malformed JSON'):
+            with self.subTest(mine=mine):
+                calls, _, output, _ = self.queue([queued, mine, mine, started], expire_after_sleep=True,
+                                                 others='refused')
+                self.assertEqual((calls, output), (4, ''))
+
+    def test_unread_jobs_of_this_run_wait_while_its_laptops_are_busy_elsewhere(self):
+        started = {'jobs': [
+            {'name': 'first-chrome (still) / Chrome', 'status': 'in_progress'},
+            {'name': 'second-chrome (still) / Chrome', 'status': 'in_progress'},
+        ]}
+        suite = {'7': [{'name': 'second-chrome (walk) / Chrome', 'status': 'in_progress', 'labels': ['second']}]}
+        calls, _, output, _ = self.queue(['malformed JSON', 'malformed JSON', started], expire_after_sleep=True,
+                                         others=suite)
+        self.assertEqual((calls, output), (3, ''))
+        # with nothing busy, the run's start counts as before
+        calls, _, output, summary = self.queue(['malformed JSON'], expire_after_sleep=True)
+        self.assertEqual((calls, output), (2, 'stuck=true\n'))
+        self.assertIn('**a leg**', summary)
+
+    def test_the_watchdog_stops_watching_before_the_job_limit(self):
+        queued = {'jobs': [
+            {'name': 'first-chrome (still) / Chrome', 'status': 'in_progress'},
+            {'name': 'second-chrome (still) / Chrome', 'status': 'queued'},
+        ]}
+        calls, sleeps, output, summary = self.queue([queued], timeout=600, limit=0)
+        self.assertEqual((calls, sleeps, output), (1, [], ''))
+        self.assertIn('stopped watching after 0 minutes', summary)
+
     def test_final_unusable_response_preserves_the_last_queued_runner(self):
         queued = {'jobs': [
-            {'name': 'first-chrome / Chrome', 'status': 'in_progress'},
-            {'name': 'second-chrome / Chrome', 'status': 'queued'},
+            {'name': 'first-chrome (still) / Chrome', 'status': 'in_progress'},
+            {'name': 'second-chrome (still) / Chrome', 'status': 'queued'},
         ]}
         for response in [{}, {'jobs': None}, 'malformed JSON']:
             with self.subTest(response=response):
@@ -661,6 +825,70 @@ class QueueWatchdogTest(unittest.TestCase):
                 self.assertIn('**second-chrome**', summary)
                 self.assertNotIn('**a leg**', summary)
 
+
+class ReportStepTest(unittest.TestCase):
+    """The report job's shell under bash -e, against a stand-in report runner."""
+
+    RUNNER = textwrap.dedent("""\
+        #!/bin/bash
+        # benchmark report DIR --out FILE: a section per leg folder, a machine line each
+        dir=$2
+        legs=$(ls "$dir")
+        if [ -z "$legs" ]; then printf '## %s\\n\\nno data\\n\\n' "$RUN_NAME" > part.md; exit 2; fi
+        printf '## %s\\n\\n**Overall: 🔴 CPU average regressed on A**\\n\\n' "$RUN_NAME" > part.md
+        for leg in $legs; do
+          label=${leg#benchmark-result-*--}
+          printf '%s\\t%s name\\t🔴 CPU average 6%% slower<br>🟢 Peak memory 9%% less\\n' "$label" "$label" >> "$REPORT_MACHINES"
+        done
+        """)
+
+    def report(self, suite, scenarios, legs):
+        source = (Path(__file__).parents[2] / '.github/workflows/bevy-explorer-benchmark.yml').read_text()
+        step = source.split('      - name: Write the report\n', 1)[1]
+        body = step.split('        run: |\n', 1)[1].split('      - name:', 1)[0]
+        with tempfile.TemporaryDirectory() as temporary:
+            folder = Path(temporary)
+            (folder / 'runner').mkdir()
+            runner = folder / 'runner' / 'benchmark'
+            runner.write_text(self.RUNNER)
+            for leg in legs:
+                (folder / 'results' / f'benchmark-result-{leg}').mkdir(parents=True)
+            environment = dict(os.environ, PR_NUMBER='7', CHANGE_SHA=HEAD, BASE_SHA=MAIN[0],
+                               RUN_URL='https://example.test/run', EXPECTED_RUNS='3',
+                               EXPECTED_LABELS='a-chrome,b-chrome,c-chrome', SUITE=suite,
+                               NOTES='c-chrome did not run.', SCENARIOS=json.dumps(scenarios),
+                               GITHUB_STEP_SUMMARY=str(folder / 'summary'), GITHUB_OUTPUT=str(folder / 'output'))
+            result = subprocess.run(['bash', '-e', '-c', textwrap.dedent(body)], cwd=folder, env=environment,
+                                    capture_output=True, text=True, timeout=30)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            return ((folder / 'output').read_text(), (folder / 'report.md').read_text(),
+                    (folder / 'comment.md').read_text())
+
+    SCENARIOS = [{'name': 'still', 'title': 'Standing still', 'heading': 'Benchmark: Standing still'},
+                 {'name': 'still-more', 'title': 'Standing longer', 'heading': 'Benchmark: Standing longer'},
+                 {'name': 'none', 'title': 'Nothing ran', 'heading': 'Benchmark: Nothing ran'}]
+
+    def test_a_suite_comments_a_table_of_every_scenario_on_every_laptop(self):
+        output, report, comment = self.report('true', self.SCENARIOS,
+                                              ['still--a-chrome', 'still-more--a-chrome', 'still-more--b-chrome'])
+        self.assertEqual(output, 'status=0\n')
+        self.assertEqual([line for line in report.splitlines() if line.startswith('## ')],
+                         ['## Benchmark: Standing still', '## Benchmark: Standing longer', '## Benchmark: Nothing ran'])
+        cell = '🔴 CPU average 6% slower<br>🟢 Peak memory 9% less'
+        self.assertIn('| Scenario | Overall | a-chrome name | b-chrome name | c-chrome |', comment)
+        # a scenario's name that starts another's does not take that one's legs
+        self.assertIn(f'| Standing still | 🔴 CPU average regressed on A | {cell} | ⚠️ no results | ⚠️ no results |',
+                      comment)
+        self.assertIn(f'| Standing longer | 🔴 CPU average regressed on A | {cell} | {cell} | ⚠️ no results |', comment)
+        self.assertIn('| Nothing ran | ⚠️ no data | ⚠️ no results | ⚠️ no results | ⚠️ no results |', comment)
+        self.assertTrue(comment.rstrip().endswith('c-chrome did not run.'))
+
+    def test_one_scenario_comments_its_report_and_no_data_is_status_2(self):
+        output, report, comment = self.report('false', self.SCENARIOS[:1], ['still--a-chrome'])
+        self.assertEqual((output, comment), ('status=0\n', report))
+        output, _, comment = self.report('false', self.SCENARIOS[2:], [])
+        self.assertEqual(output, 'status=2\n')
+        self.assertIn('no data', comment)
 
 
 class RegressionIssueTest(unittest.TestCase):

@@ -7,9 +7,11 @@
 # Each night, and by hand without a PR, it measures main's newest web build against the latest
 # release instead: its results stay with the run, and a regression opens or updates one issue.
 # tooling/benchmark-inputs.py decides and finds the builds and runners in the CI runs' artifacts.
+# A leg is one scenario of tooling/benchmark-scenarios.json on one laptop: every run measures the
+# first scenario, and the whole list when the PR carries the performance-suite label (adding it
+# starts a run) or a manual run asks for the suite.
 #
-# GitHub starts `workflow_run`, `workflow_dispatch` and `schedule` only from the workflow file on the
-# default branch: until this file is on main, no run starts.
+# GitHub starts these events from the workflow file on the default branch.
 #
 # Repository variables: BENCHMARK_ENABLED_RUNNERS (the laptops that are online, by runner label;
 # empty means all; `none` means none, and PR engine builds then skip wasm-opt), BENCHMARK_RUNS
@@ -19,6 +21,9 @@ name: Bevy Explorer / Benchmark
   workflow_run:
     workflows: ['Bevy Explorer / CI']
     types: [completed]
+  # Only adding the suite label counts (setup's condition); no job runs code of the PR's branch.
+  pull_request_target:
+    types: [labeled]
   # Nightly, while the laptops are least likely to be busy with PRs.
   schedule:
     - cron: '17 2 * * *'
@@ -40,15 +45,20 @@ name: Bevy Explorer / Benchmark
         description: Measured runs per build, 1 to 3 (empty = BENCHMARK_RUNS, else 3)
         required: false
         default: ''
+      suite:
+        description: For a pull request, run every scenario in tooling/benchmark-scenarios.json
+        type: boolean
+        required: false
+        default: false
 permissions: {}
-# A newer CI run of the same PR makes a run in progress obsolete, so it cancels it. The PR's group
-# takes only the events setup's condition lets through; the others (a fork's PR, a failed CI run,
-# a CI run of no PR or not started by a pull_request event, such as a manual one on the PR's
-# branch) get the run's own group, so they cancel nothing. A passed CI re-run of an older commit of
-# the PR still joins: it cancels a run in progress, then the resolver skips it. A PR given by URL
-# to a manual run forms a group of its own. Runs of main, nightly or manual without a PR, share
-# one group and queue rather than cancel, so they never share the laptops; GitHub keeps only the
-# newest waiting one. A PR's key carries a `pr-` prefix so no pr input can name main's group.
+# A newer CI run of the same PR makes a run in progress obsolete, so it cancels it, as does adding
+# the suite label. The PR's group takes only the events setup's condition lets through, and of CI
+# runs only one of the PR's head; the others (a fork's PR, a failed CI run, a re-run of an older
+# commit, a CI run of no PR or not started by a pull_request event, such as a manual one on the
+# PR's branch, any other label) get the run's own group, so they cancel nothing: a suite holds
+# the laptops for hours. A PR given by URL to a manual run forms a group of its own.
+# Nightly and manual runs of main queue in their own concurrency group.
+
 concurrency:
   group: >-
     bevy-explorer-benchmark-${{
@@ -57,10 +67,14 @@ concurrency:
       (github.event_name == 'workflow_run' && github.event.workflow_run.event == 'pull_request' &&
        github.event.workflow_run.conclusion == 'success' &&
        github.event.workflow_run.head_repository.full_name == github.repository &&
+       github.event.workflow_run.head_sha == github.event.workflow_run.pull_requests[0].head.sha &&
        github.event.workflow_run.pull_requests[0].number &&
        format('pr-{0}', github.event.workflow_run.pull_requests[0].number)) ||
       (github.event_name == 'workflow_dispatch' && github.event.inputs.pr &&
        format('pr-{0}', github.event.inputs.pr)) ||
+      (github.event_name == 'pull_request_target' && github.event.label.name == 'performance-suite' &&
+       github.event.pull_request.head.repo.full_name == github.repository &&
+       format('pr-{0}', github.event.pull_request.number)) ||
       format('run-{0}', github.run_id) }}
   cancel-in-progress: >-
     ${{ !(github.event_name == 'schedule' ||
@@ -74,7 +88,9 @@ jobs:
       github.event_name == 'workflow_dispatch' || github.event_name == 'schedule' ||
       (github.event_name == 'workflow_run' && github.event.workflow_run.event == 'pull_request' &&
        github.event.workflow_run.conclusion == 'success' &&
-       github.event.workflow_run.head_repository.full_name == github.repository)
+       github.event.workflow_run.head_repository.full_name == github.repository) ||
+      (github.event_name == 'pull_request_target' && github.event.label.name == 'performance-suite' &&
+       github.event.pull_request.head.repo.full_name == github.repository)
     runs-on: ${{ vars.RUNNER_LINUX_X86 || 'ubuntu-26.04' }}
     # Up to three web app zips (change, base, release) at 5 minutes each.
     timeout-minutes: 20
@@ -93,6 +109,8 @@ jobs:
       runs: ${{ steps.inputs.outputs.runs }}
       legs: ${{ steps.inputs.outputs.legs }}
       expected_labels: ${{ steps.inputs.outputs.expected_labels }}
+      suite: ${{ steps.inputs.outputs.suite }}
+      scenarios: ${{ steps.inputs.outputs.scenarios }}
       report_runner_artifact: ${{ steps.inputs.outputs.report_runner_artifact }}
       report_runner_run_id: ${{ steps.inputs.outputs.report_runner_run_id }}
       notes: ${{ steps.inputs.outputs.notes }}
@@ -177,16 +195,18 @@ jobs:
           BASE_SHA: ${{ needs.setup.outputs.base_sha }}
           RELEASE_VERSION: ${{ needs.setup.outputs.release_version }}
           EXPECTED_LABELS: ${{ needs.setup.outputs.expected_labels }}
+          SCENARIOS: ${{ needs.setup.outputs.scenarios }}
           RUNS: ${{ needs.setup.outputs.runs }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           labels=$(sed 's/,/`, `/g' <<< "$EXPECTED_LABELS")
+          scenarios=$(jq -r 'map(.title) | join(", ")' <<< "$SCENARIOS")
           release=''
           if [ -n "$RELEASE_VERSION" ]; then release=" and the latest release \`$RELEASE_VERSION\`"; fi
           {
             printf '[![Performance](https://img.shields.io/badge/Performance-Running!-yellow?logo=speedtest&logoColor=white&style=for-the-badge)](%s)\n\n' "$RUN_URL"
-            printf 'Benchmarking #%s at `%s` against main at `%s`%s on `%s`, %s runs per build ([run](%s)). The report lands here.\n' \
-              "$PR_NUMBER" "${CHANGE_SHA:0:7}" "${BASE_SHA:0:7}" "$release" "$labels" "$RUNS" "$RUN_URL"
+            printf 'Benchmarking #%s at `%s` against main at `%s`%s on `%s`, %s runs per build, scenarios: %s ([run](%s)). The report lands here.\n' \
+              "$PR_NUMBER" "${CHANGE_SHA:0:7}" "${BASE_SHA:0:7}" "$release" "$labels" "$RUNS" "$scenarios" "$RUN_URL"
           } > section.md
       - name: Set the performance section to running
         uses: ./.github/actions/bevy-explorer-ci-status
@@ -196,14 +216,18 @@ jobs:
           github-token: ${{ github.token }}
           body-file: section.md
   # A leg sent to an offline, stuck or busy laptop sits queued for 24 hours with no message;
-  # timeout-minutes only counts once a job starts. The timeout is generous because a laptop busy
-  # with another job is the likeliest cause. It ends when every leg has started, so it has no
-  # timeout of its own.
+  # timeout-minutes only counts once a job starts. A laptop runs one job at a time, a suite's legs
+  # one after another, so the wait is per laptop: one with a leg of this run still to start that
+  # has run no benchmark job, of this run or another, for the timeout cancels the run. The timeout
+  # is generous because a laptop busy with another repository's job is the likeliest cause. The
+  # job ends when every leg has started, or stops watching, with a warning, before GitHub's six
+  # hours would end it as a failure.
   watchdog:
     name: Queue watchdog
     needs: setup
     if: needs.setup.outputs.run == 'true'
     runs-on: ubuntu-26.04
+    timeout-minutes: 360
     permissions:
       contents: read
       actions: write
@@ -212,9 +236,10 @@ jobs:
       GH_TOKEN: ${{ github.token }}
       GH_REPO: ${{ github.repository }}
       PR_NUMBER: ${{ needs.setup.outputs.pr }}
-      EXPECTED_LABELS: ${{ needs.setup.outputs.expected_labels }}
+      LEGS: ${{ needs.setup.outputs.legs }}
       # A leg queued behind another run's leg on the same laptop waits up to that leg's 135-minute job.
       QUEUE_TIMEOUT_MINUTES: ${{ vars.BENCHMARK_QUEUE_TIMEOUT_MINUTES || 150 }}
+      WATCH_LIMIT_MINUTES: '340'
       RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -227,32 +252,86 @@ jobs:
         id: queue
         run: |
           source "$GITHUB_WORKSPACE/.github/actions/bevy-explorer-ci-status/retry.sh"
-          : "${EXPECTED_LABELS:?Expected benchmark legs are required}"
-          deadline=$((SECONDS + 60 * QUEUE_TIMEOUT_MINUTES))
-          queued=''
+          : "${LEGS:?Expected benchmark legs are required}"
+          timeout=$((60 * QUEUE_TIMEOUT_MINUTES))
+          limit=$((60 * ${WATCH_LIMIT_MINUTES:-340}))
+          started=$SECONDS
+          # Before this run's jobs are first read: when a laptop of its legs was last seen busy, or
+          # the busy set could not be read, else the run's start.
+          unread_since=$SECONDS
+          # Each laptop with a leg still to start: the time it was last seen running a benchmark
+          # job, or first seen waiting. A leg's job is "<label> (<scenario>) / Chrome".
+          waiting='{}'
+          # every few minutes at most: each read costs a call per benchmark run in progress
           QUEUE_INITIAL_DELAY_SECONDS=5
-          QUEUE_MAX_DELAY_SECONDS=60
+          QUEUE_MAX_DELAY_SECONDS=180
           attempt=1
           while :; do
-            if jobs=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/jobs?per_page=100"); then
-              if pending=$(jq -r --arg labels "$EXPECTED_LABELS" '
-                .jobs as $jobs |
-                [$labels | split(",")[] | . as $label |
-                  select(any($jobs[]; .name == ($label + " / Chrome") and
-                    (.status == "in_progress" or .status == "completed")) | not)] |
-                join(", ")' <<< "$jobs"); then
-                queued=$pending
-                [ -z "$queued" ] && exit 0
+            # The runner labels of every benchmark job in progress, this run's or another's: a
+            # laptop running one is busy, not stuck. `null` when any read failed: with no
+            # evidence that a laptop is idle, none moves toward the timeout.
+            busy=null
+            if runs=$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/bevy-explorer-benchmark.yml/runs?status=in_progress&per_page=100") &&
+              ids=$(jq -r '.workflow_runs[].id' <<< "$runs"); then
+              labels=''
+              for id in $ids; do
+                if ! run_jobs=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$id/jobs?per_page=100") ||
+                  ! run_labels=$(jq -r '.jobs[] | select(.status == "in_progress") | .labels[]' <<< "$run_jobs"); then
+                  labels=failed
+                  break
+                fi
+                labels+=$'\n'"$run_labels"
+              done
+              if [ "$labels" != failed ]; then
+                busy=$(jq -Rsc 'split("\n") | map(select(. != "")) | unique' <<< "$labels")
               fi
             fi
-            remaining=$((deadline - SECONDS))
-            [ "$remaining" -le 0 ] && break
+            if jobs=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/jobs?per_page=100") &&
+              next=$(jq -c --argjson legs "$LEGS" --argjson waiting "$waiting" --argjson busy "$busy" \
+                --argjson now "$SECONDS" '
+                .jobs as $jobs |
+                [$legs[] | (.label + " (" + .scenario + ") / Chrome") as $name |
+                  {laptop: .label,
+                   started: any($jobs[]; .name == $name and (.status == "in_progress" or .status == "completed")),
+                   running: (any($jobs[]; .name == $name and .status == "in_progress") or $busy == null or
+                             (.runs_on as $runner | $busy | index([$runner]) != null))}] |
+                [group_by(.laptop)[] | select(any(.[]; .started | not)) |
+                  {key: .[0].laptop,
+                   value: (if any(.[]; .running) then $now else ($waiting[.[0].laptop] // $now) end)}] |
+                from_entries' <<< "$jobs"); then
+              if [ "$next" = '{}' ]; then exit 0; fi
+              waiting=$next
+            else
+              # this run's jobs unread: the laptops seen busy, or every one when that read failed
+              # too, still count as active now
+              waiting=$(jq -c --argjson legs "$LEGS" --argjson busy "$busy" --argjson now "$SECONDS" '
+                with_entries(.key as $laptop |
+                  if $busy == null or any($legs[]; .label == $laptop and (.runs_on as $runner | $busy | index([$runner]) != null))
+                  then .value = $now else . end)' <<< "$waiting")
+            fi
+            queued=$(jq -r --argjson now "$SECONDS" --argjson timeout "$timeout" \
+              '[to_entries[] | select($now - .value >= $timeout) | .key] | join(", ")' <<< "$waiting")
+            if [ -n "$queued" ]; then break; fi
+            # no usable answer yet: only time with no evidence that the legs' laptops are busy counts
+            if [ "$waiting" = '{}' ]; then
+              if jq -e --argjson busy "$busy" \
+                '$busy == null or any(.[]; .runs_on as $runner | $busy | index([$runner]) != null)' \
+                <<< "$LEGS" > /dev/null; then
+                unread_since=$SECONDS
+              fi
+              if [ $((SECONDS - unread_since)) -ge "$timeout" ]; then break; fi
+            fi
+            if [ $((SECONDS - started)) -ge "$limit" ]; then
+              echo "::warning::Stopped watching after $WATCH_LIMIT_MINUTES minutes with legs still to start; their own timeouts apply"
+              echo "The queue watchdog stopped watching after $WATCH_LIMIT_MINUTES minutes with legs still to start." >> "$GITHUB_STEP_SUMMARY"
+              exit 0
+            fi
             delay=$(backoff_delay "$attempt" "$QUEUE_MAX_DELAY_SECONDS" "$QUEUE_INITIAL_DELAY_SECONDS")
-            sleep_for "$delay" "$remaining"
+            sleep_for "$delay" "$timeout"
             attempt=$((attempt + 1))
           done
 
-          message="The benchmark [run]($RUN_URL) was cancelled: **${queued:-a leg}** had not started after $QUEUE_TIMEOUT_MINUTES minutes, so the laptop is offline, stuck or busy with another job. When it is free, use *Re-run failed jobs* on the run, which keeps the legs that finished and their results; or raise the BENCHMARK_QUEUE_TIMEOUT_MINUTES variable, or leave the laptop out of the BENCHMARK_ENABLED_RUNNERS variable."
+          message="The benchmark [run]($RUN_URL) was cancelled: **${queued:-a leg}** had a leg still to start and ran none for $QUEUE_TIMEOUT_MINUTES minutes, so the laptop is offline, stuck or busy with another job. When it is free, use *Re-run failed jobs* on the run, which keeps the legs that finished and their results; or raise the BENCHMARK_QUEUE_TIMEOUT_MINUTES variable, or leave the laptop out of the BENCHMARK_ENABLED_RUNNERS variable."
           echo "$message" >> "$GITHUB_STEP_SUMMARY"
           {
             printf '[![Performance](https://img.shields.io/badge/Performance-Cancelled-lightgrey?logo=speedtest&logoColor=white&style=for-the-badge)](%s)\n\n' "$RUN_URL"
@@ -271,7 +350,7 @@ jobs:
         if: steps.queue.outputs.stuck == 'true'
         run: gh run cancel "$GITHUB_RUN_ID"
   leg:
-    name: ${{ matrix.leg.label }}
+    name: ${{ matrix.leg.label }} (${{ matrix.leg.scenario }})
     needs: setup
     if: needs.setup.outputs.run == 'true'
     strategy:
@@ -284,6 +363,9 @@ jobs:
     with:
       runs_on: ${{ matrix.leg.runs_on }}
       label: ${{ matrix.leg.label }}
+      scenario: ${{ matrix.leg.scenario }}
+      realm: ${{ matrix.leg.realm }}
+      query: ${{ matrix.leg.query }}
       runner_artifact: ${{ matrix.leg.runner_artifact }}
       runner_run_id: ${{ matrix.leg.runner_run_id }}
       change_artifact: ${{ matrix.leg.change_artifact }}
@@ -321,8 +403,12 @@ jobs:
           path: runner
           run-id: ${{ needs.setup.outputs.report_runner_run_id }}
           github-token: ${{ github.token }}
-      # Exit 2 is a report with no data; it is posted, then fails the post job. Notes name the
-      # laptops that had no runner.
+      # One report per scenario, from its legs' artifacts (benchmark-result-<scenario>--<label>),
+      # one after another in report.md. Exit 2 is a report with no data; when every scenario's is,
+      # it is posted, then fails the post job. Notes name the laptops that had no runner.
+      # comment.md is what the PR's comment shows: the report itself for one scenario; for the
+      # suite, whose reports outgrow the comment, a table of each scenario's verdicts on each
+      # laptop (`benchmark report --machines`), with the reports in this job's summary.
       - name: Write the report
         id: report
         env:
@@ -335,27 +421,75 @@ jobs:
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           EXPECTED_RUNS: ${{ needs.setup.outputs.runs }}
           EXPECTED_LABELS: ${{ needs.setup.outputs.expected_labels }}
+          SCENARIOS: ${{ needs.setup.outputs.scenarios }}
+          SUITE: ${{ needs.setup.outputs.suite }}
           NOTES: ${{ needs.setup.outputs.notes }}
         run: |
           chmod +x runner/benchmark
-          mkdir -p results
-          status=0
-          runner/benchmark report results --out report.md || status=$?
-          if [ "$status" -ne 0 ] && [ "$status" -ne 2 ]; then
-            echo "::error::benchmark report exited $status"
-            exit "$status"
-          fi
+          mkdir -p results scenarios
+          status=2
+          : > report.md
+          : > machines.tsv
+          : > overall.tsv
+          while IFS=$'\t' read -r name heading; do
+            mkdir -p "scenarios/$name"
+            for leg in results/benchmark-result-"$name"--*; do
+              if [ -d "$leg" ]; then mv "$leg" "scenarios/$name/"; fi
+            done
+            part=0
+            rm -f part.tsv
+            # REPORT_MACHINES, not --machines: a base runner from before the option ignores it
+            RUN_NAME="$heading" REPORT_MACHINES=part.tsv runner/benchmark report "scenarios/$name" --out part.md || part=$?
+            if [ "$part" -ne 0 ] && [ "$part" -ne 2 ]; then
+              echo "::error::benchmark report of $name exited $part"
+              exit "$part"
+            fi
+            if [ "$part" -eq 0 ]; then status=0; fi
+            cat part.md >> report.md
+            if [ -f part.tsv ]; then awk -v scenario="$name" '{ print scenario "\t" $0 }' part.tsv >> machines.tsv; fi
+            overall=$(sed -n 's/^\*\*Overall: \(.*\)\*\*$/\1/p' part.md | head -n 1)
+            printf '%s\t%s\n' "$name" "${overall:-⚠️ no data}" >> overall.tsv
+          done < <(jq -r '.[] | [.name, .heading] | @tsv' <<< "$SCENARIOS")
           if [ -n "$NOTES" ]; then printf '\n%s\n' "$NOTES" >> report.md; fi
           cat report.md >> "$GITHUB_STEP_SUMMARY"
+
+          if [ "$SUITE" != true ]; then
+            cp report.md comment.md
+          else
+            {
+              printf '## Performance suite\n\n'
+              printf 'PR #%s · change: `%s` · base: main at `%s` · %s runs per build · [run](%s), whose summary holds each scenario'"'"'s full report\n\n' \
+                "$PR_NUMBER" "${CHANGE_SHA:0:7}" "${BASE_SHA:0:7}" "$EXPECTED_RUNS" "$RUN_URL"
+              jq -Rnr --argjson scenarios "$SCENARIOS" --arg labels "$EXPECTED_LABELS" \
+                --rawfile overall overall.tsv '
+                [inputs | split("\t") | {scenario: .[0], label: .[1], name: .[2], verdict: .[3]}] as $rows |
+                ($overall | split("\n") | map(select(. != "") | split("\t") | {key: .[0], value: .[1]}) |
+                  from_entries) as $overall |
+                ($labels | split(",")) as $labels |
+                "| Scenario | Overall | " +
+                  ($labels | map(. as $label | first($rows[] | select(.label == $label) | .name) // $label) |
+                    join(" | ")) + " |",
+                "| --- | --- |" + ($labels | map(" --- |") | join("")),
+                ($scenarios[] | . as $scenario |
+                  "| " + $scenario.title + " | " + ($overall[$scenario.name] // "⚠️ no data") + " | " +
+                  ($labels | map(. as $label |
+                    first($rows[] | select(.scenario == $scenario.name and .label == $label) | .verdict) //
+                    "⚠️ no results") | join(" | ")) + " |")' machines.tsv
+              if [ -n "$NOTES" ]; then printf '\n%s\n' "$NOTES"; fi
+            } > comment.md
+          fi
           echo "status=$status" >> "$GITHUB_OUTPUT"
       - name: Upload the report
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: benchmark-report
-          path: report.md
+          path: |
+            report.md
+            comment.md
           overwrite: true
           retention-days: ${{ needs.setup.outputs.retention_days }}
-  # Runs nothing it downloads: it only reads report.md, and checks out only the comment action.
+  # Runs nothing it downloads: it only reads report.md and comment.md, and checks out only the
+  # comment action.
   post:
     name: Post
     needs: [setup, gather]
@@ -378,7 +512,8 @@ jobs:
         with:
           name: benchmark-report
           path: report
-      # The badge reads the report's Overall line; a report without data (exit 2) says so.
+      # The badge reads the reports' Overall lines, a regression in any scenario first; a run
+      # without data (exit 2) says so.
       - name: Put the badge above the report
         env:
           STATUS: ${{ needs.gather.outputs.status }}
@@ -392,7 +527,7 @@ jobs:
           fi
           {
             printf '[![Performance](https://img.shields.io/badge/%s?logo=speedtest&logoColor=white&style=for-the-badge)](%s)\n\n' "$badge" "$RUN_URL"
-            cat report/report.md
+            cat report/comment.md
           } > section.md
       # The action truncates a section over its cap with a note; the full report stays in the
       # report job's summary and the benchmark-report artifact. A write it cannot confirm warns.

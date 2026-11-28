@@ -1,0 +1,28 @@
+{
+  "scenarios": [
+    {
+      "name": "spawn",
+      "title": "Standing at spawn",
+      "realm": "supportteam.dcl.eth",
+      "query": ""
+    },
+    {
+      "name": "genesis-walk",
+      "title": "Walking into Genesis Plaza",
+      "realm": "https://realm-provider-ea.decentraland.org/main",
+      "query": "position=-12,2&autopilotWalkTo=0,2"
+    },
+    {
+      "name": "avatars-100",
+      "title": "100 avatars at spawn",
+      "realm": "supportteam.dcl.eth",
+      "query": "autopilotAvatars=100"
+    },
+    {
+      "name": "avatars-400",
+      "title": "400 avatars at spawn",
+      "realm": "supportteam.dcl.eth",
+      "query": "autopilotAvatars=400"
+    }
+  ]
+}

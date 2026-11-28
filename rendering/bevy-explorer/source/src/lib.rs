@@ -329,17 +329,6 @@ pub struct DecentralandArguments {
     /// the performance harness parses
     #[arg(long, value_name = "path", help_heading = DEBUG)]
     pub csv: Option<std::path::PathBuf>,
-    /// Benchmark walk-in (`--autopilot` with `--csv`): once measuring starts, walk from where the
-    /// run arrived to the centre of this parcel at 6 m/s, then stand there; the scenes on the way
-    /// load during play, with no loading screen. Without it the run stands at spawn
-    #[arg(
-        long,
-        value_name = "x,y",
-        allow_hyphen_values = true,
-        value_parser = |value: &str| value.parse::<IVec2Arg>().map(|parcel| parcel.0),
-        help_heading = DEBUG
-    )]
-    pub autopilot_walk_to: Option<IVec2>,
     /// Write the whole session log here, in the performance harness's line format; the
     /// harness's spelling `-logFile` is accepted too
     #[arg(long, value_name = "path", help_heading = DEBUG)]
@@ -669,12 +658,46 @@ impl DecentralandApp {
             app.insert_resource(common::autopilot::Autopilot { measure })
                 .init_resource::<common::autopilot::AutopilotPhase>()
                 .add_plugins(autopilot::AutopilotPlugin);
-            match arguments.autopilot_walk_to {
-                Some(to) if measure => {
-                    app.insert_resource(autopilot::walk::AutopilotWalk { to });
-                }
+            match arguments.client.autopilot_walk_to.as_deref() {
+                Some(to) if measure => match system_api_types::launch_options::parcel(to) {
+                    Some((x, y)) => {
+                        app.insert_resource(autopilot::walk::AutopilotWalk {
+                            to: IVec2::new(x, y),
+                        });
+                    }
+                    // the web's value skips the native flag's check; a run that stood still
+                    // instead would be measured as the walk
+                    None => {
+                        error!(
+                            target: common::autopilot::LOG_TARGET,
+                            "autopilot walk target '{to}' is not a parcel as x,y"
+                        );
+                        app.insert_resource(common::autopilot::AutopilotPhase::Ending {
+                            exit_code: 1,
+                        });
+                    }
+                },
                 Some(_) => warn!(
                     "--autopilot-walk-to has no effect without --csv: the run ends once it arrives"
+                ),
+                None => (),
+            }
+            match arguments.client.autopilot_avatars {
+                Some(count) if measure => match system_api_types::launch_options::crowd(count) {
+                    Ok(count) => {
+                        app.insert_resource(common::autopilot::AutopilotCrowd { count });
+                    }
+                    // the web's value skips the native flag's check; a smaller crowd than asked
+                    // would be measured as the one asked for
+                    Err(reason) => {
+                        error!(target: common::autopilot::LOG_TARGET, "autopilot crowd: {reason}");
+                        app.insert_resource(common::autopilot::AutopilotPhase::Ending {
+                            exit_code: 1,
+                        });
+                    }
+                },
+                Some(_) => warn!(
+                    "--autopilot-avatars has no effect without --csv: no crowd spawns in a warm-up"
                 ),
                 None => (),
             }
@@ -694,10 +717,19 @@ impl DecentralandApp {
             }
             if decentraland_app_config
                 .arguments
+                .client
                 .autopilot_walk_to
                 .is_some()
             {
                 warn!("--autopilot-walk-to has no effect without --autopilot: nothing walks");
+            }
+            if decentraland_app_config
+                .arguments
+                .client
+                .autopilot_avatars
+                .is_some()
+            {
+                warn!("--autopilot-avatars has no effect without --autopilot: no crowd spawns");
             }
         }
 

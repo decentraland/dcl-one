@@ -1,4 +1,5 @@
 import type { BootMode } from '@explorer-core/hostContract'
+import { AUTOPILOT_PARAMS } from '@explorer-core/lib/webParams'
 import { isLoopbackHost } from './loopbackHost'
 
 // The interrelated "how does this page boot" decisions, derived from the entry URL in ONE
@@ -27,9 +28,9 @@ export function isNativeHud(): boolean {
   return typeof __NATIVE_HUD__ !== 'undefined' && __NATIVE_HUD__ && new URLSearchParams(location.search).get('native') === '1'
 }
 
-/** The benchmark's switches (docs/guidelines/benchmark.md): the unattended run, and where its log
- *  and CSV are streamed. */
-export const BENCHMARK_PARAMS = ['autopilot', 'perfStream', 'perfCsv']
+/** The benchmark's switches (docs/guidelines/benchmark.md): the unattended run and its scenario,
+ *  and where its log and CSV are streamed. */
+export const BENCHMARK_PARAMS = [...AUTOPILOT_PARAMS, 'perfStream', 'perfCsv']
 
 /**
  * Whether this page acts on the benchmark's switches: on a loopback host, where the harness serves

@@ -9,6 +9,9 @@ run, a CI run that built no web app because the PR changes no web input, main un
 release) skips silently; an unfit build skips with notes, which the workflow writes into the PR's
 CI status comment or the run's summary.
 
+A leg is one scenario of benchmark-scenarios.json on one laptop. Every explorer change runs the
+first scenario; a PR with the suite label, or a manual run asking for the suite, runs them all.
+
 The latest release is the web package of the newest successful rollout of every player at
 decentraland.org/play (a GitHub deployment to `org` at 100%); its version, 0.1.0-<CI run>.commit-<sha>,
 names the CI run whose web app is measured beside the change and the base. A release that cannot be
@@ -40,6 +43,41 @@ RUNNER = 'bevy-explorer-benchmark-'
 # + 45 s to close Chrome and settle) must stay under 5400 (bevy-explorer-benchmark-leg.yml).
 MAX_RUNS = (5400 - 1) // (3 * (480 + 45))
 SHA = re.compile(r'[0-9a-f]{40}')
+SCENARIOS = Path(__file__).with_name('benchmark-scenarios.json')
+# Adding this label to a PR runs every scenario; while it stays on, so does every passed CI run.
+SUITE_LABEL = 'performance-suite'
+# A scenario's name names its legs' artifacts, `benchmark-result-<name>--<label>`.
+SCENARIO_NAME = re.compile(r'[a-z0-9]+(?:-[a-z0-9]+)*')
+# The realm and the page parameters go into the page URL as they are: no space, fragment or line
+# end, and a realm adds no parameter of its own.
+SCENARIO_FIELDS = {'realm': re.compile(r'[A-Za-z0-9_.,:/%+-]+'), 'query': re.compile(r'[A-Za-z0-9_.,:/=&%+-]*')}
+
+
+def load_scenarios(path=SCENARIOS):
+    """The scenario list: each a name, a title for the report, the realm and extra page parameters."""
+    data = json.loads(Path(path).read_text(encoding='utf-8'))
+    rows = data.get('scenarios') if isinstance(data, dict) else None
+    if not isinstance(rows, list) or not rows:
+        raise ValueError(f'{path} lists no scenario')
+    scenarios = []
+    for row in rows:
+        if not isinstance(row, dict) or set(row) - {'name', 'title', 'realm', 'query'}:
+            raise ValueError(f'{path}: a scenario has a name, a title, a realm and optionally a query: {row}')
+        scenario = {key: row.get(key, '') for key in ('name', 'title', 'realm', 'query')}
+        if not all(isinstance(value, str) for value in scenario.values()):
+            raise ValueError(f'{path}: every field of a scenario is text: {row}')
+        if not SCENARIO_NAME.fullmatch(scenario['name']):
+            raise ValueError(f"{path}: {scenario['name']!r} is not a lowercase-and-hyphens name")
+        if any(scenario['name'] == other['name'] for other in scenarios):
+            raise ValueError(f"{path}: two scenarios are called {scenario['name']}")
+        if not scenario['title'].strip() or any(c in scenario['title'] for c in '\r\n\t|'):
+            raise ValueError(f"{path}: {scenario['name']} needs a one-line title without |")
+        for key, allowed in SCENARIO_FIELDS.items():
+            if not allowed.fullmatch(scenario[key]):
+                raise ValueError(f"{path}: {scenario['name']} needs a {key} a page URL carries as it is")
+        scenarios.append(scenario)
+    return scenarios
+
 # The latest release is the newest applied rollout of the web package to every player at
 # decentraland.org/play: a GitHub deployment that bevy-explorer-rollout-manual.yml records with
 # GITHUB_TOKEN as set-rollout-action's task (a record made by hand is not a release). Its own commit
@@ -247,22 +285,25 @@ def commits(inputs):
     return change_sha, base_sha
 
 
-def resolve(event_name, event, repo, enabled='', runs=''):
+def resolve(event_name, event, repo, enabled='', runs='', scenarios=None):
     global CACHE
     CACHE = {}
     try:
-        return resolve_event(event_name, event, repo, enabled, runs)
+        return resolve_event(event_name, event, repo, enabled, runs, scenarios)
     finally:
         CACHE = None
 
 
-def resolve_event(event_name, event, repo, enabled, runs):
+def resolve_event(event_name, event, repo, enabled, runs, scenarios):
+    scenarios = load_scenarios() if scenarios is None else scenarios
     inputs = {}
+    # None lets the PR label decide.
+    suite = None
     if event_name == 'schedule':
-        return resolve_main({}, repo, enabled, runs)
+        return resolve_main({}, repo, enabled, runs, scenarios)
     # Only an empty pr is a run of main: the concurrency group compares it untrimmed.
     if event_name == 'workflow_dispatch' and ((event.get('inputs') or {}).get('pr') or '') == '':
-        return resolve_main(event.get('inputs') or {}, repo, enabled, runs)
+        return resolve_main(event.get('inputs') or {}, repo, enabled, runs, scenarios)
     if event_name == 'workflow_run':
         trigger = event['workflow_run']
         if trigger['event'] != 'pull_request' or (trigger.get('head_repository') or {}).get('full_name') != repo:
@@ -276,6 +317,12 @@ def resolve_event(event_name, event, repo, enabled, runs):
     elif event_name == 'workflow_dispatch':
         inputs = event.get('inputs') or {}
         number = pr_number(inputs.get('pr'), repo)
+        suite = str(inputs.get('suite') or '').strip().lower() == 'true'
+    elif event_name == 'pull_request_target':
+        if event.get('action') != 'labeled' or (event.get('label') or {}).get('name') != SUITE_LABEL:
+            return skip(f'only adding the {SUITE_LABEL} label starts the benchmark')
+        number = event['pull_request']['number']
+        suite = True
     else:
         return skip(f'{event_name} does not start the benchmark')
 
@@ -284,6 +331,9 @@ def resolve_event(event_name, event, repo, enabled, runs):
         return skip(f'#{number} comes from a fork')
     if pr['state'] != 'open':
         return skip(f'#{number} is not open')
+    if suite is None:
+        suite = any(label.get('name') == SUITE_LABEL for label in pr.get('labels') or [])
+    chosen = scenarios if suite else scenarios[:1]
 
     change_sha, base_sha = commits(inputs)
     change_sha = change_sha or pr['head']['sha']
@@ -292,6 +342,7 @@ def resolve_event(event_name, event, repo, enabled, runs):
     runs = run_count(inputs, runs)
 
     result = outcome(str(number), change_sha, runs, 'pr')
+    result.update(scenario_plan(chosen, suite))
     candidates = api(f'repos/{repo}/{RUNS_PATH}?head_sha={change_sha}&status=success&per_page=100')['workflow_runs']
     changes = [run for run in candidates if ci_run(run, repo, ('pull_request', 'workflow_dispatch'))
                and run['head_sha'] == change_sha]
@@ -330,10 +381,10 @@ def resolve_event(event_name, event, repo, enabled, runs):
     # otherwise from the base run that has it.
     where = f'the CI run of {base_sha}' if base_sha else 'main'
     return measure(repo, result, enabled, (change, change_names, change_web), (base, base_web),
-                   base_runs(repo, base_sha), where, f'#{number} at {change_sha}')
+                   base_runs(repo, base_sha), where, f'#{number} at {change_sha}', chosen)
 
 
-def resolve_main(inputs, repo, enabled, runs):
+def resolve_main(inputs, repo, enabled, runs, scenarios):
     """Main's newest web build, or a given commit's, against the latest release or a given base."""
     change_sha, base_sha = commits(inputs)
     runs = run_count(inputs, runs)
@@ -341,7 +392,9 @@ def resolve_main(inputs, repo, enabled, runs):
     # `vars.BENCHMARK_ENABLED_RUNNERS == 'none'`, case does not matter.
     if (enabled or '').strip().lower() == 'none':
         return skip('BENCHMARK_ENABLED_RUNNERS is none: the fleet is off')
+    chosen = scenarios[:1]
     result = outcome('', change_sha, runs, 'main')
+    result.update(scenario_plan(chosen, False))
     if change_sha:
         candidates = api(f'repos/{repo}/{RUNS_PATH}?head_sha={change_sha}&status=success&per_page=100')['workflow_runs']
         changes = [run for run in candidates if run['head_sha'] == change_sha
@@ -417,7 +470,15 @@ def resolve_main(inputs, repo, enabled, runs):
     # format; a given commit's run is never searched, so its runner never writes the report.
     own = change['event'] == 'push' and change['head_branch'] == 'main'
     return measure(repo, result, enabled, (change, change_names if own else {}, change_web), (base, base_web),
-                   base_runs(repo, ''), 'main', change_description)
+                   base_runs(repo, ''), 'main', change_description, chosen)
+
+
+def scenario_plan(chosen, suite):
+    return {'suite': suite, 'scenarios': [
+        {'name': scenario['name'], 'title': scenario['title'],
+         'heading': f"Benchmark: {scenario['title']}" if suite else 'Benchmark'}
+        for scenario in chosen
+    ]}
 
 
 def outcome(pr, change_sha, runs, kind):
@@ -431,7 +492,7 @@ def fleet(enabled):
     return [(label, system) for label, system in FLEET if not enabled or label in enabled]
 
 
-def measure(repo, result, enabled, change_build, base_build, runner_runs, runner_where, description):
+def measure(repo, result, enabled, change_build, base_build, runner_runs, runner_where, description, chosen):
     """The legs of every enabled laptop that has a runner, or the note why none can run."""
     change, change_names, change_web = change_build
     base, base_web = base_build
@@ -453,6 +514,7 @@ def measure(repo, result, enabled, change_build, base_build, runner_runs, runner
         return stop(result, f'No benchmark runner for linux-amd64 to write the report: {lacking} one.')
     report_name, report_run = runners[PLATFORMS['linux']]
     notes = []
+    legs = []
     release = None
     if result['pr']:
         try:
@@ -468,7 +530,7 @@ def measure(repo, result, enabled, change_build, base_build, runner_runs, runner
             notes.append(f'{label}-chrome did not run: {lacking} a benchmark runner for {PLATFORMS[system]}.')
             continue
         runner_name, runner_run = runners[PLATFORMS[system]]
-        result['legs'].append({
+        legs.append({
             'label': f'{label}-chrome', 'runs_on': label, 'os': system,
             'runner_artifact': runner_name, 'runner_run_id': str(runner_run['id']),
             'change_artifact': change_web, 'change_run_id': str(change['id']),
@@ -476,13 +538,17 @@ def measure(repo, result, enabled, change_build, base_build, runner_runs, runner
             'release_artifact': release['artifact'] if release else '',
             'release_run_id': release['run_id'] if release else '',
         })
-    if not result['legs']:
+    if not legs:
         return stop(result, 'No laptop can run the benchmark.', notes)
-    labels = [leg['label'] for leg in result['legs']]
+    # scenario by scenario, so each laptop measures the first scenario first
+    result['legs'] = [{**laptop, 'scenario': scenario['name'], 'realm': scenario['realm'], 'query': scenario['query']}
+                      for scenario in chosen for laptop in legs]
+    labels = [laptop['label'] for laptop in legs]
+    measured = ', '.join(scenario['name'] for scenario in chosen)
     return {**result, 'run': True, 'expected_labels': ','.join(labels), 'notes': ' '.join(notes),
             'report_runner_artifact': report_name, 'report_runner_run_id': str(report_run['id']),
             'reason': f"{description} against {result['base_description']}"
-                      f"{' and release ' + release['version'] if release else ''} on {', '.join(labels)}"}
+                      f"{' and release ' + release['version'] if release else ''} on {', '.join(labels)}: {measured}"}
 
 
 def write_outputs(values):

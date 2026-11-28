@@ -6,6 +6,7 @@
 import { render } from '@testing-library/react'
 import { afterEach, describe, expect, it } from 'vitest'
 import { EngineRpc } from '@explorer-core/engine/engineRpc'
+import { AUTOPILOT_PARAMS } from '@explorer-core/lib/webParams'
 import { EngineHost } from '@hud/features/engine/EngineHost'
 import { entryEngineOptions } from '../lib/engineLaunch'
 import { benchmarkSwitchesHonoured, bootMode } from '../lib/bootMode'
@@ -85,7 +86,7 @@ describe('what the engine is handed', () => {
     expect('autopilot' in launch).toBe(false)
     expect(perfStream).toBeNull()
     // the rest of the entry url is handed over as it always was
-    expect(Object.keys(launch)).toEqual(Object.keys(entryEngineOptions(entry('?portables=a'), true).launch).filter((name) => name !== 'autopilot'))
+    expect(Object.keys(launch)).toEqual(Object.keys(entryEngineOptions(entry('?portables=a'), true).launch).filter((name) => !AUTOPILOT_PARAMS.includes(name)))
     expect(launch.portables).toBe('a;b')
   })
 

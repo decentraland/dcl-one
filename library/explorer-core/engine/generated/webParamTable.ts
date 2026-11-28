@@ -237,6 +237,18 @@ export const WEB_PARAMS: WebParam[] = [
     "doc": "Benchmark run, unattended: sign in as the local guest (an account of its own, made once and kept with this install, so its address never changes; a stored account is never used or replaced), wait until in world, stand at spawn for 90 s of real time while the CSV records, then quit. With no CSV destination it quits on arriving in world (the warm-up). For decentraland/performance-testing; `common::autopilot` has the details"
   },
   {
+    "name": "autopilotWalkTo",
+    "kind": "string",
+    "delivery": "launch",
+    "doc": "Benchmark walk-in (`autopilot` with a CSV): once measuring starts, walk from where the run arrived to the centre of this parcel at 6 m/s, then stand there; the scenes on the way load during play, with no loading screen. Without it the run stands at spawn"
+  },
+  {
+    "name": "autopilotAvatars",
+    "kind": "number",
+    "delivery": "launch",
+    "doc": "Benchmark crowd (`autopilot` with a CSV): once measuring starts, spawn this many demo avatars (1 to 1024), the same looks every run, in a grid in front of where the player faces, with the Max Avatars cap lifted for the session, so every avatar in the realm is shown; the measured time includes building them"
+  },
+  {
     "name": "editor",
     "kind": "flag",
     "delivery": "host",

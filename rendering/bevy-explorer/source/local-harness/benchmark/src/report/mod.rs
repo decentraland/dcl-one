@@ -68,8 +68,20 @@ pub struct BenchmarkReport {
     pub markdown: String,
     /// Whether any section has data.
     pub has_data: bool,
+    /// One line per section and per expected label without one, in the report's order.
+    pub machines: Vec<MachineVerdict>,
     /// What went wrong reading a section, for the job log.
     pub warnings: Vec<String>,
+}
+
+/// A machine's outcome in one line, for a summary across several reports.
+pub struct MachineVerdict {
+    /// The leg's label (`runs_on.txt`), or the folder's name when it has none.
+    pub label: String,
+    /// The section's title.
+    pub name: String,
+    /// Its 🔴 and 🟢 verdicts, or why it has none.
+    pub verdict: String,
 }
 
 /// One measured run of a build: its frame-time metrics and the exceptions its log holds.
@@ -166,6 +178,7 @@ enum RunnerCaveat {
 }
 
 struct RunnerSection {
+    label: String,
     title: String,
     change: BuildBenchmarkRunsStatistics,
     /// None when no baseline run produced data: the table shows the change alone.
@@ -274,12 +287,14 @@ pub fn build_report(options: &ReportOptions) -> Result<BenchmarkReport, Failure>
     let mut release_findings = Vec::new();
     let mut labels = Vec::new();
     let mut has_data = false;
+    let mut machines = Vec::new();
     // whether a section had baseline runs to compare with, and release runs
     let mut compared = false;
     let mut release_compared = false;
     // whether every section with data is one whose leg could not run the release
     let mut release_never_measured = true;
     for folder in &folders {
+        let labels_before = labels.len();
         let result = read_label(folder).and_then(|label| {
             labels.push(label.clone());
             read_section(
@@ -300,6 +315,11 @@ pub fn build_report(options: &ReportOptions) -> Result<BenchmarkReport, Failure>
                 findings.extend(section.significant_metric_changes());
                 release_findings.extend(section.release_metric_changes());
                 sections += &render::runner_section(&section);
+                machines.push(MachineVerdict {
+                    label: section.label.clone(),
+                    name: section.title.clone(),
+                    verdict: render::machine_verdict(&section),
+                });
                 has_data = true;
             }
             Err(message) => {
@@ -310,6 +330,14 @@ pub fn build_report(options: &ReportOptions) -> Result<BenchmarkReport, Failure>
                 };
                 warnings.push(format!("could not gather the results of {name}: {message}"));
                 sections += &render::failure(&name, &message);
+                let label = labels[labels_before..].first().cloned();
+                machines.push(MachineVerdict {
+                    name: label
+                        .as_deref()
+                        .map_or_else(|| name.clone(), render::display_name),
+                    label: label.unwrap_or(name),
+                    verdict: render::MACHINE_UNREADABLE.to_string(),
+                });
             }
         }
     }
@@ -319,6 +347,11 @@ pub fn build_report(options: &ReportOptions) -> Result<BenchmarkReport, Failure>
         if !labels.contains(label) && !reported.contains(&label.as_str()) {
             reported.push(label);
             sections += &render::missing(label);
+            machines.push(MachineVerdict {
+                label: label.clone(),
+                name: render::display_name(label),
+                verdict: render::MACHINE_MISSING.to_string(),
+            });
         }
     }
 
@@ -346,6 +379,7 @@ pub fn build_report(options: &ReportOptions) -> Result<BenchmarkReport, Failure>
     Ok(BenchmarkReport {
         markdown,
         has_data,
+        machines,
         warnings,
     })
 }
@@ -595,6 +629,7 @@ fn compare_builds(
 
     RunnerSection {
         title: render::display_name(&label),
+        label,
         change,
         baseline_comparison,
         release_comparison,

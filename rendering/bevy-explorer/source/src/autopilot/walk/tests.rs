@@ -35,20 +35,6 @@ fn a_walk_ends_exactly_on_its_target() {
 }
 
 #[test]
-fn the_walk_target_may_be_a_negative_parcel() {
-    use clap::Parser;
-
-    let arguments = crate::DecentralandArguments::try_parse_from([
-        "decentra-bevy",
-        "--autopilot-walk-to",
-        "-3,5",
-    ])
-    .unwrap();
-
-    assert_eq!(arguments.autopilot_walk_to, Some(IVec2::new(-3, 5)));
-}
-
-#[test]
 fn a_walk_to_where_it_stands_is_there_at_once() {
     let here = Vec2::new(8.0, -8.0);
     assert_eq!(walk_position(here, here, 6.0, 0.0), here);
