@@ -8,6 +8,8 @@ scene SDK toolchain, with the test suites that run from the tree alone and the
 development environment. End-to-end suites that need a live stack, the API
 conformance capture corpus and internal docs stay in the private repository.
 
+See the [contribution guide](docs/contributing.md) for branch names and PR titles.
+
 ## Layout
 
 | Path | Contents |
