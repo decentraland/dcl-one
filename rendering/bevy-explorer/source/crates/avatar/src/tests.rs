@@ -443,6 +443,132 @@ fn only_the_wearables_that_failed_are_left_out() {
 }
 
 #[test]
+fn a_built_avatar_draws_its_body_and_wearables_without_vertex_colours() {
+    let mut app = app_with_avatar_scenes();
+    // the scene spawner fails an instance whose component types are not registered
+    app.register_type::<Mesh3d>()
+        .register_type::<bevy::render::view::VisibilityClass>();
+    let coloured_mesh = |app: &mut App| {
+        app.world_mut().resource_mut::<Assets<Mesh>>().add(
+            Mesh::new(
+                bevy::render::mesh::PrimitiveTopology::TriangleList,
+                RenderAssetUsages::MAIN_WORLD,
+            )
+            .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, vec![[0.0f32; 3]; 3])
+            .with_inserted_attribute(Mesh::ATTRIBUTE_UV_0, vec![[0.0f32; 2]; 3])
+            .with_inserted_attribute(Mesh::ATTRIBUTE_COLOR, vec![[0.0f32, 0.0, 0.0, 1.0]; 3]),
+        )
+    };
+    let body_mesh = coloured_mesh(&mut app);
+    let hat_mesh = coloured_mesh(&mut app);
+    let bystander_mesh = coloured_mesh(&mut app);
+    // added through the asset server: a wearable's model is instanced only once the server
+    // holds it as loaded
+    let model = |app: &mut App, name: &'static str, mesh: &Handle<Mesh>| {
+        let mut scene = World::new();
+        let armature = scene
+            .spawn((
+                Name::new("Armature"),
+                Transform::default(),
+                Visibility::default(),
+            ))
+            .id();
+        scene.spawn((
+            Name::new("Avatar_Hips"),
+            Transform::default(),
+            Visibility::default(),
+            ChildOf(armature),
+        ));
+        scene.spawn((Name::new(name), Mesh3d(mesh.clone()), ChildOf(armature)));
+        let scene = app
+            .world_mut()
+            .resource_mut::<Assets<Scene>>()
+            .add(Scene::new(scene));
+        app.world()
+            .resource::<AssetServer>()
+            .add(gltf_with_scene(Some(scene)))
+    };
+    let body_gltf = model(&mut app, "Body", &body_mesh);
+    let hat_gltf = model(&mut app, "Hat", &hat_mesh);
+    app.update();
+    for gltf in [&body_gltf, &hat_gltf] {
+        assert!(app.world().resource::<AssetServer>().is_loaded(gltf));
+    }
+
+    let body = base_wearables::default_bodyshape_urn();
+    let hat = urn("urn:decentraland:off-chain:base-avatars:fake_hat");
+    register_test_body(app.world_mut(), body.clone(), body_gltf);
+    let (hat_urn, body_urn) = (hat.clone(), body.clone());
+    app.world_mut()
+        .run_system_once(move |mut wearables: CollectibleManager<Wearable>| {
+            wearables.add_builtin(
+                hat_urn.clone(),
+                Collectible {
+                    representations: HashMap::from_iter([(
+                        body_urn.as_str().to_owned(),
+                        Wearable {
+                            category: WearableCategory::UPPER_BODY,
+                            hides: HashSet::default(),
+                            model: Some(WearableModel {
+                                gltf: hat_gltf.clone(),
+                                outline_compatible: true,
+                                spring_bones: None,
+                            }),
+                            texture: None,
+                            mask: None,
+                        },
+                    )]),
+                    data: test_wearable_data(&hat_urn),
+                },
+            );
+        })
+        .unwrap();
+    let owner = app
+        .world_mut()
+        .spawn((
+            Transform::default(),
+            AvatarSelection {
+                scene: None,
+                shape: AvatarShape(PbAvatarShape {
+                    body_shape: Some(body.as_str().to_owned()),
+                    wearables: vec![hat.as_str().to_owned()],
+                    ..default()
+                }),
+                automatic_delete: true,
+                disable_dither: false,
+            },
+        ))
+        .id();
+
+    app.world_mut()
+        .run_system_once(update_render_avatar)
+        .unwrap();
+    app.world_mut().run_system_once(spawn_scenes).unwrap();
+    let build = avatar_build(app.world_mut(), owner);
+    let instances = &app
+        .world()
+        .get::<AvatarLoaded>(build)
+        .expect("the avatar's models are instanced")
+        .wearable_instances;
+    assert!(matches!(instances.as_slice(), [Some(_)]), "{instances:?}");
+    app.update();
+    app.world_mut().run_system_once(process_avatar).unwrap();
+    assert!(app.world().get::<AvatarProcessed>(build).is_some());
+
+    let meshes = app.world().resource::<Assets<Mesh>>();
+    for (part, handle) in [("body", &body_mesh), ("wearable", &hat_mesh)] {
+        let mesh = meshes.get(handle).unwrap();
+        assert!(!mesh.contains_attribute(Mesh::ATTRIBUTE_COLOR), "{part}");
+        assert!(mesh.contains_attribute(Mesh::ATTRIBUTE_POSITION), "{part}");
+        assert!(mesh.contains_attribute(Mesh::ATTRIBUTE_UV_0), "{part}");
+    }
+    assert!(meshes
+        .get(&bystander_mesh)
+        .unwrap()
+        .contains_attribute(Mesh::ATTRIBUTE_COLOR));
+}
+
+#[test]
 fn a_bone_is_scaled_below_its_avatar_whatever_scales_the_avatar() {
     let mut world = World::new();
     // a scene holds the avatar at a scale of nothing while its body is built

@@ -93,6 +93,10 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   multiplies that. Wearables are the exception: an avatar drops the strength, as Unity does, and
   draws a factor of 1 at 12.5 times a lit white surface, so a wearable glows as its creator saw
   it in Unity.
+- **Avatars ignore glTF vertex colours.** A scene glTF's `COLOR_0` multiplies its base colour.
+  An avatar drops the attribute from its body and wearable meshes, as Unity's avatar shader
+  takes no vertex colour: a wearable whose vertices are black draws its texture, not black.
+  Emote props keep theirs.
 - **A Material that names a glTF keeps the glTF's rules.** An SDK unlit material is opaque
   unless it has an alpha texture, whose brightness scales the alpha, and an SDK PBR emissive
   colour is drawn as it is, as in Unity. A glTF's own unlit material cuts out or blends through
