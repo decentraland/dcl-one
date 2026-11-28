@@ -27,6 +27,7 @@ fn app() -> App {
         .init_asset::<Mesh>()
         .init_resource::<AppConfig>()
         .init_resource::<GltfNameCache>()
+        .init_resource::<SharedMeshes>()
         .init_resource::<ProcessingDeadline>()
         .init_resource::<SlowestProcessing>()
         .register_type::<Transform>()
@@ -700,4 +701,331 @@ fn a_skinned_mesh_under_a_node_with_other_extras_gets_no_collider() {
     assert_eq!(processed_collider_mask::<CtCollider>(&mut app, root), None);
     // processed as a skinned mesh, which is what leaves it without a collider
     assert!(app.world().get::<NoFrustumCulling>(primitive).is_some());
+}
+
+#[test]
+fn a_file_with_its_data_inside_references_no_file() {
+    assert!(uris_in_file([None, Some("data:image/png;base64,AAAA")]));
+    assert!(uris_in_file([]));
+    assert!(!uris_in_file([None, Some("textures/wood.png")]));
+    assert!(!uris_in_file([Some("model.bin")]));
+    assert!(!uris_in_file([Some("data:tex.png")]));
+}
+
+#[test]
+fn two_scenes_with_the_same_mesh_draw_one_copy() {
+    let mut app = app();
+    let roots = [scene_root(&mut app), scene_root(&mut app)];
+    let primitives = ["primitive_a", "primitive_b"];
+    for (root, primitive) in roots.into_iter().zip(primitives) {
+        spawn_container(&mut app, root, &["top", primitive]);
+        app.update();
+        let mesh = app.world().resource::<AssetServer>().add(triangle());
+        let node = node(&mut app, primitive);
+        app.world_mut().entity_mut(node).insert(Mesh3d(mesh));
+    }
+    for root in roots {
+        give_context(&mut app, root);
+    }
+    app.update();
+
+    let [a, b] = primitives.map(|primitive| {
+        let node = node(&mut app, primitive);
+        app.world().get::<Mesh3d>(node).expect("a mesh").id()
+    });
+    assert_eq!(a, b);
+    assert_eq!(app.world().resource::<SharedMeshes>().meshes(), 1);
+    for root in roots {
+        let lookup = app.world().get::<SceneResourceLookup>(root).unwrap();
+        assert_eq!(lookup.mesh_ids_by_hash.len(), 1);
+    }
+}
+
+/// A container in `root` whose node `primitive` draws a new triangle, ready to be processed.
+fn spawn_triangle(app: &mut App, root: Entity, primitive: &str) -> Handle<Mesh> {
+    spawn_container(app, root, &[&format!("top_{primitive}"), primitive]);
+    app.update();
+    let mesh = app.world().resource::<AssetServer>().add(triangle());
+    let node = node(app, primitive);
+    app.world_mut()
+        .entity_mut(node)
+        .insert(Mesh3d(mesh.clone()));
+    mesh
+}
+
+/// The mesh the node `primitive` draws.
+fn drawn_mesh(app: &mut App, primitive: &str) -> AssetId<Mesh> {
+    let node = node(app, primitive);
+    app.world().get::<Mesh3d>(node).expect("a mesh").id()
+}
+
+#[test]
+fn without_a_salt_a_scene_takes_only_its_own_cached_mesh() {
+    let mut app = app();
+    // `getrandom` failing cannot be caused from a test
+    app.world_mut().resource_mut::<SharedMeshes>().hash_salt = None;
+    let [a, b] = [scene_root(&mut app), scene_root(&mut app)];
+
+    // scene A: two containers with the triangle
+    spawn_triangle(&mut app, a, "a_first");
+    spawn_triangle(&mut app, a, "a_second");
+    give_context(&mut app, a);
+    app.update();
+    let a_mesh = drawn_mesh(&mut app, "a_first");
+    assert_eq!(drawn_mesh(&mut app, "a_second"), a_mesh);
+
+    // scene B: one container with the same triangle
+    spawn_triangle(&mut app, b, "b_first");
+    give_context(&mut app, b);
+    app.update();
+    let b_mesh = drawn_mesh(&mut app, "b_first");
+    assert_ne!(b_mesh, a_mesh);
+
+    // a later container of A
+    let context = app
+        .world_mut()
+        .entity_mut(a)
+        .take::<RendererSceneContext>()
+        .expect("a context");
+    let a_later = spawn_triangle(&mut app, a, "a_later");
+    app.world_mut().entity_mut(a).insert(context);
+    app.update();
+    let lookup = app.world().get::<SceneResourceLookup>(a).unwrap();
+    assert!(lookup
+        .mesh_ids_by_hash
+        .values()
+        .any(|id| *id == a_later.id()));
+    assert_eq!(drawn_mesh(&mut app, "a_later"), a_later.id());
+}
+
+/// [`app`] that also runs `update_gltf`, with an ipfs client that has nothing to read.
+fn update_app() -> App {
+    use bevy::asset::io::memory::{Dir, MemoryAssetReader};
+
+    let mut app = app();
+    let ipfs = ipfs::IpfsResource {
+        inner: std::sync::Arc::new(ipfs::IpfsIo::new(
+            false,
+            Box::new(MemoryAssetReader {
+                root: Dir::default(),
+            }),
+            None,
+            Default::default(),
+            1,
+            tokio::sync::mpsc::unbounded_channel().0,
+        )),
+    };
+    app.init_asset::<ipfs::EntityDefinition>()
+        .init_asset::<Image>()
+        .init_resource::<SharedGltfs>()
+        .init_resource::<crate::ScenePointers>()
+        .init_resource::<crate::LiveScenes>()
+        .init_resource::<crate::PortableScenes>()
+        .insert_resource(ipfs)
+        .add_systems(Update, update_gltf);
+    app
+}
+
+/// A container in `root` whose model, a node named `name`, the asset server reports loaded, and
+/// whose definition is the source already acted on.
+fn spawn_loaded_container(app: &mut App, root: Entity, name: &str) -> Entity {
+    let mut model = World::new();
+    model.spawn((
+        Transform::default(),
+        Visibility::Inherited,
+        Name::new(name.to_owned()),
+    ));
+    let world = app.world_mut();
+    let h_scene = world.resource_mut::<Assets<Scene>>().add(Scene::new(model));
+    let h_gltf = world.resource::<AssetServer>().add(Gltf {
+        scenes: vec![h_scene.clone()],
+        named_scenes: HashMap::default(),
+        meshes: Vec::new(),
+        named_meshes: HashMap::default(),
+        materials: Vec::new(),
+        named_materials: HashMap::default(),
+        nodes: Vec::new(),
+        named_nodes: HashMap::default(),
+        skins: Vec::new(),
+        named_skins: HashMap::default(),
+        default_scene: Some(h_scene),
+        animations: Vec::new(),
+        named_animations: HashMap::default(),
+        source: None,
+    });
+    let definition = PbGltfContainer {
+        src: "model.glb".to_owned(),
+        ..Default::default()
+    };
+    world
+        .spawn((
+            SceneEntity {
+                root,
+                scene_id: SceneId(root),
+                id: SceneEntityId {
+                    id: 512,
+                    generation: 0,
+                },
+            },
+            GltfDefinition(definition.clone()),
+            GltfSource(definition),
+            GltfHandle(h_gltf),
+        ))
+        .id()
+}
+
+#[test]
+fn a_container_whose_definition_is_put_again_every_frame_is_spawned() {
+    let mut app = update_app();
+    let root = scene_root(&mut app);
+    give_context(&mut app, root);
+    let container = spawn_loaded_container(&mut app, root, "model_node");
+
+    // the same definition put again each frame
+    for _ in 0..3 {
+        let definition = app
+            .world()
+            .get::<GltfDefinition>(container)
+            .unwrap()
+            .0
+            .clone();
+        app.world_mut()
+            .entity_mut(container)
+            .insert(GltfDefinition(definition));
+        app.update();
+    }
+    assert!(app.world().get::<GltfLoaded>(container).is_some());
+}
+
+const URL: &str = "https://content.example/contents/bafkreimodel";
+
+/// An app that keeps the shared caches as the explorer does.
+fn sharing_app() -> App {
+    let mut app = App::new();
+    app.add_plugins((MinimalPlugins, AssetPlugin::default()))
+        .init_asset::<Gltf>()
+        .init_asset::<Mesh>()
+        .init_resource::<GltfNameCache>()
+        .init_resource::<SharedGltfs>()
+        .init_resource::<SharedMeshes>()
+        .add_systems(Update, (maintain_gltf_caches, maintain_shared_meshes));
+    app
+}
+
+/// A model loaded through the asset server, as a scene's glTF is.
+fn load_model(app: &mut App) -> Handle<Gltf> {
+    let model = Gltf {
+        scenes: Vec::new(),
+        named_scenes: HashMap::default(),
+        meshes: Vec::new(),
+        named_meshes: HashMap::default(),
+        materials: Vec::new(),
+        named_materials: HashMap::default(),
+        nodes: Vec::new(),
+        named_nodes: HashMap::default(),
+        skins: Vec::new(),
+        named_skins: HashMap::default(),
+        default_scene: None,
+        animations: Vec::new(),
+        named_animations: HashMap::default(),
+        source: None,
+    };
+    let handle = app.world().resource::<AssetServer>().add(model);
+    app.update();
+    handle
+}
+
+/// What a container whose model loaded as `h_gltf` from [`URL`] takes instead.
+fn adopt(app: &mut App, h_gltf: &Handle<Gltf>, references_no_file: bool) -> Option<AssetId<Gltf>> {
+    let asset_server = app.world().resource::<AssetServer>().clone();
+    app.world_mut()
+        .resource_mut::<SharedGltfs>()
+        .adopt(
+            &asset_server,
+            GltfUrl(URL.to_owned()),
+            h_gltf,
+            references_no_file,
+        )
+        .map(|h_shared| h_shared.id())
+}
+
+/// Frames enough for a dropped asset's removal to reach the caches.
+fn settle(app: &mut App) {
+    for _ in 0..3 {
+        app.update();
+    }
+}
+
+#[test]
+fn scenes_that_load_a_model_at_the_same_time_end_on_the_first_copy() {
+    let mut app = sharing_app();
+    let first = load_model(&mut app);
+    let second = load_model(&mut app);
+
+    assert_eq!(adopt(&mut app, &first, true), None);
+    // the second copy, loaded
+    assert_eq!(adopt(&mut app, &second, true), Some(first.id()));
+    // the first copy, for another container
+    assert_eq!(adopt(&mut app, &first, true), None);
+    assert_eq!(app.world().resource::<SharedGltfs>().models(), 1);
+}
+
+#[test]
+fn a_copy_that_loads_after_the_shared_one_goes_is_shared_instead() {
+    let mut app = sharing_app();
+    let first = load_model(&mut app);
+    assert_eq!(adopt(&mut app, &first, true), None);
+    let second = load_model(&mut app);
+
+    // the first copy dropped while the second loads
+    drop(first);
+    assert_eq!(adopt(&mut app, &second, true), None);
+
+    let third = load_model(&mut app);
+    assert_eq!(adopt(&mut app, &third, true), Some(second.id()));
+}
+
+#[test]
+fn a_model_that_references_other_files_is_not_shared() {
+    let mut app = sharing_app();
+    let first = load_model(&mut app);
+    let second = load_model(&mut app);
+    assert_eq!(adopt(&mut app, &first, false), None);
+    assert_eq!(adopt(&mut app, &second, false), None);
+    assert_eq!(app.world().resource::<SharedGltfs>().models(), 0);
+}
+
+#[test]
+fn a_removed_model_is_no_longer_shared() {
+    let mut app = sharing_app();
+    let first = load_model(&mut app);
+    assert_eq!(adopt(&mut app, &first, true), None);
+    assert_eq!(app.world().resource::<SharedGltfs>().models(), 1);
+
+    drop(first);
+    settle(&mut app);
+    assert_eq!(app.world().resource::<SharedGltfs>().models(), 0);
+}
+
+#[test]
+fn a_removed_mesh_leaves_the_shared_meshes() {
+    let mut app = sharing_app();
+    let mesh = app.world().resource::<AssetServer>().add(triangle());
+    app.update();
+    let mut shared = app.world_mut().resource_mut::<SharedMeshes>();
+    shared.hash_by_id.insert(mesh.id(), 7);
+    shared.by_hash.insert(
+        (7, true),
+        CachedMeshData {
+            mesh_id: mesh.id(),
+            is_skinned: false,
+            shape: None,
+            maybe_collider: None,
+        },
+    );
+    assert_eq!(app.world().resource::<SharedMeshes>().meshes(), 1);
+
+    drop(mesh);
+    settle(&mut app);
+    assert_eq!(app.world().resource::<SharedMeshes>().meshes(), 0);
 }

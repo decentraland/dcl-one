@@ -588,9 +588,9 @@ fn update_tracker(
     add_row(
         "Unique Gltf Meshes",
         &resource_lookup
-            .meshes_by_hash
+            .mesh_ids_by_hash
             .values()
-            .filter(|c| meshes.get(c.mesh_id).is_some())
+            .filter(|id| meshes.get(**id).is_some())
             .count(),
     );
     add_row(

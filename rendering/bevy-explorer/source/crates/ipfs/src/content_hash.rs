@@ -30,17 +30,38 @@ pub(crate) enum Check {
     Unknown,
 }
 
+/// The content hashes this module computes, told apart by their form.
+enum Kind {
+    /// `Qm…`
+    V0,
+    /// `bafkrei…`
+    Raw,
+    /// `bafybei…`
+    File,
+}
+
+fn kind(hash: &str) -> Option<Kind> {
+    match hash.len() {
+        46 if hash.starts_with("Qm") => Some(Kind::V0),
+        59 if hash.starts_with("bafkrei") => Some(Kind::Raw),
+        59 if hash.starts_with("bafybei") => Some(Kind::File),
+        _ => None,
+    }
+}
+
 pub(crate) fn check_content_hash(hash: &str, bytes: &[u8]) -> Check {
     // base58 of a sha-256 multihash, and base32 of a sha-256 CIDv1 behind its `b` prefix
-    let computed = match hash.len() {
-        46 if hash.starts_with("Qm") => {
+    let Some(kind) = kind(hash) else {
+        return Check::Unknown;
+    };
+    let computed = match kind {
+        Kind::V0 => {
             let mut multihash = vec![0x12, 0x20];
             multihash.extend(sha256(bytes));
             base58(&multihash)
         }
-        59 if hash.starts_with("bafkrei") => format!("b{}", base32(&cid(RAW, bytes))),
-        59 if hash.starts_with("bafybei") => format!("b{}", base32(&file_cid(bytes))),
-        _ => return Check::Unknown,
+        Kind::Raw => format!("b{}", base32(&cid(RAW, bytes))),
+        Kind::File => format!("b{}", base32(&file_cid(bytes))),
     };
     if hash == computed {
         Check::Matches
@@ -51,6 +72,12 @@ pub(crate) fn check_content_hash(hash: &str, bytes: &[u8]) -> Check {
 
 pub fn matches_content_hash(hash: &str, bytes: &[u8]) -> bool {
     check_content_hash(hash, bytes) == Check::Matches
+}
+
+/// True when `hash` has the form of a deployment's content hash: it names immutable bytes,
+/// whichever scene's content map holds it.
+pub(crate) fn is_content_hash(hash: &str) -> bool {
+    kind(hash).is_some()
 }
 
 /// The raw-leaf CIDv1 (`bafkrei…`) of `bytes`, for fixtures that need a matching hash.
@@ -288,6 +315,25 @@ mod tests {
         // not a content hash: the url digests of `IpfsType::UrlCached`, preview's `b64-` ids
         assert!(!matches_content_hash("b64-L1VzZXJz", &bytes));
         assert!(!matches_content_hash("", &bytes));
+    }
+
+    #[test]
+    fn content_hashes_are_told_from_other_names() {
+        for hash in [
+            "bafkreicojquuwmy7piqjti3zx3buxh47ya64i2vumxmzr5gwqpnfgsd6nu",
+            "bafybeiexg2oqkfnj56l7fcmawswqbijt5shq4b5rg6a546uwpkqqzwjioi",
+            "QmTcHsGD2NnEbei2GLnpWibHQf7VFbCCh8BwwDsCbizyEc",
+        ] {
+            assert!(is_content_hash(hash), "{hash}");
+        }
+        for name in [
+            "b64-L1VzZXJz",
+            "https://example.com/model.glb",
+            "models/tree.glb",
+            "",
+        ] {
+            assert!(!is_content_hash(name), "{name}");
+        }
     }
 
     #[test]
