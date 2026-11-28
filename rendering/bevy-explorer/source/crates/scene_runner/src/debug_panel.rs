@@ -431,6 +431,7 @@ fn scene_state(
             report["heap"] = c.heap_used.into();
             report["heapLimit"] = c.heap_limit.into();
             report["externalMemory"] = c.external_memory.into();
+            report["arrayBuffers"] = c.array_buffers.into();
         }
         report
     };

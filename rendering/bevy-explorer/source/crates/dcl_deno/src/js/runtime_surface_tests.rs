@@ -461,12 +461,15 @@ fn run_in_child(test: &str, body: impl FnOnce() -> String) {
 #[test]
 fn a_scene_over_its_heap_limit_is_terminated_not_the_process() {
     run_in_child("a_scene_over_its_heap_limit_is_terminated_not_the_process", || {
-        const CAP: usize = 64 * 1024 * 1024;
+        let limits = super::super::SceneLimits {
+            heap: 64 * 1024 * 1024,
+            ..super::super::SCENE_LIMITS
+        };
         // under the cap: runs to the end
         run_scene_with(
             false,
             false,
-            CAP,
+            limits,
             "globalThis.keep = []; for (let i = 0; i < 2; i++) { keep.push(new Array(1e6).fill(1.5)); }",
         )
         .unwrap();
@@ -475,13 +478,152 @@ fn a_scene_over_its_heap_limit_is_terminated_not_the_process() {
             let err = run_scene_with(
                 false,
                 false,
-                CAP,
+                limits,
                 &format!("globalThis.keep = []; for (;;) {{ keep.push(new Array({length}).fill(1.5)); }}"),
             )
             .expect_err("the scene ran past its heap limit");
             assert!(err.contains("terminated"), "{length}: {err}");
         }
         "terminated".to_owned()
+    });
+}
+
+/// A client runtime whose ArrayBuffers may hold `budget` bytes, with its budget and kill flag.
+fn budgeted_runtime(
+    budget: usize,
+) -> (JsRuntime, std::sync::Arc<super::super::array_buffers::ArrayBufferBudget>, dcl_js::KillFlag) {
+    let kill_flag = dcl_js::KillFlag::default();
+    let limits = super::super::SceneLimits {
+        array_buffers: budget,
+        ..super::super::SCENE_LIMITS
+    };
+    let (runtime, _) = super::super::create_runtime_with_limits(
+        false,
+        false,
+        "test-array-buffers",
+        kill_flag.clone(),
+        limits,
+    );
+    let budget = {
+        let state = runtime.op_state();
+        let mut state = state.borrow_mut();
+        state.put(context(false));
+        state.put(dcl_types::SceneResourceCounters::default());
+        state.put(Vec::<dcl_types::SceneLogMessage>::default());
+        state.put(dcl_types::SceneElapsedTime(0.0));
+        state
+            .borrow::<std::sync::Arc<super::super::array_buffers::ArrayBufferBudget>>()
+            .clone()
+    };
+    (runtime, budget, kill_flag)
+}
+
+const MIB: usize = 1024 * 1024;
+
+/// Buffers within the budget are counted and released with the runtime; the scene runs on.
+#[test]
+fn array_buffers_within_the_budget_are_counted() {
+    run_in_child("array_buffers_within_the_budget_are_counted", || {
+        let (mut runtime, budget, kill_flag) = budgeted_runtime(32 * MIB);
+        let outcome = eval(
+            &mut runtime,
+            "globalThis.keep = [new ArrayBuffer(4 << 20), new Uint8Array(4 << 20), new Float64Array(1 << 19)]; keep.length"
+                .to_owned(),
+        )
+        .unwrap();
+        assert_eq!(outcome, "3");
+        assert!(budget.used() >= 12 * MIB, "{}", budget.used());
+        assert!(!kill_flag.killed());
+        drop(runtime);
+        assert_eq!(budget.used(), 0);
+        "counted".to_owned()
+    });
+}
+
+/// A scene that keeps allocating buffers past its budget is terminated, not the process.
+#[test]
+fn a_scene_past_its_array_buffer_budget_is_terminated() {
+    run_in_child("a_scene_past_its_array_buffer_budget_is_terminated", || {
+        let (mut runtime, budget, kill_flag) = budgeted_runtime(32 * MIB);
+        let err = eval(
+            &mut runtime,
+            // eight times the budget, so a missing allocator fails instead of exhausting the host
+            "globalThis.keep = []; for (let i = 0; i < 64; i++) { keep.push(new Uint8Array(4 << 20)); } 'not terminated'"
+                .to_owned(),
+        )
+        .expect_err("the scene ran past its budget");
+        assert!(err.contains("terminated"), "{err}");
+        assert!(kill_flag.killed());
+        drop(runtime);
+        assert_eq!(budget.used(), 0);
+        "terminated".to_owned()
+    });
+}
+
+/// One request past twice the budget is refused with a `RangeError`. V8's last-resort
+/// collection for the failed allocation then reaches the heap-limit callback, which ends the
+/// scene; the process lives on.
+#[test]
+fn an_array_buffer_past_the_ceiling_is_refused() {
+    run_in_child("an_array_buffer_past_the_ceiling_is_refused", || {
+        let (mut runtime, budget, kill_flag) = budgeted_runtime(32 * MIB);
+        let outcome = eval(
+            &mut runtime,
+            "let refused; try { new ArrayBuffer(65 << 20); } catch (e) { refused = e.name; } refused"
+                .to_owned(),
+        )
+        .unwrap();
+        assert_eq!(outcome, "RangeError");
+        assert!(kill_flag.killed());
+        assert!(budget.used() < MIB, "{}", budget.used());
+        "refused".to_owned()
+    });
+}
+
+/// Buffers the runtime builds for the scene near the ceiling end at most the scene. Results
+/// V8 adopts from Rust memory (encoded text, request bodies) are not counted.
+#[test]
+fn host_buffers_near_the_ceiling_end_at_most_the_scene() {
+    run_in_child("host_buffers_near_the_ceiling_end_at_most_the_scene", || {
+        let handle = RT.with(|rt| rt.handle().clone());
+        let _guard = handle.enter();
+        for (copy, counted) in [
+            ("await new Request('https://a/', { method: 'POST', body: 'x'.repeat(40 << 20) }).arrayBuffer()", false),
+            ("new TextEncoder().encode('x'.repeat(40 << 20))", false),
+            ("await (await new Request('https://a/', { method: 'POST', body: 'x'.repeat(40 << 20) }).blob()).arrayBuffer()", true),
+            ("performance.mark('m', { detail: keep[0] })", true),
+            ("keep.push(new Uint8Array(20 << 20)); performance.mark('m', { detail: keep })", true),
+        ] {
+            let (mut runtime, _, kill_flag) = budgeted_runtime(32 * MIB);
+            let started = eval(
+                &mut runtime,
+                format!(
+                    "globalThis.keep = [new Uint8Array(31 << 20)];
+                    (async () => {{ {copy}; return 'ok'; }})().then((x) => {{ globalThis.__outcome = x; }});"
+                ),
+            );
+            let finished = started.and_then(|_| {
+                RT.with(|rt| {
+                    rt.block_on(tokio::time::timeout(
+                        Duration::from_secs(5),
+                        runtime.run_event_loop(Default::default()),
+                    ))
+                })
+                .expect("event loop did not settle")
+                .map_err(|e| e.to_string())?;
+                eval(&mut runtime, "String(globalThis.__outcome)".to_owned())
+            });
+            if counted {
+                assert!(
+                    finished.as_ref().is_err_and(|e| e.contains("terminated")) && kill_flag.killed(),
+                    "{copy}: {finished:?}"
+                );
+            } else {
+                assert_eq!(finished.as_deref(), Ok("ok"), "{copy}");
+                assert!(!kill_flag.killed(), "{copy}");
+            }
+        }
+        "survived".to_owned()
     });
 }
 

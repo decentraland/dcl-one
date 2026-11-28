@@ -295,6 +295,8 @@ pub struct SceneResourceCounters {
     pub heap_used: u64,
     pub heap_limit: u64,
     pub external_memory: u64,
+    /// Bytes of ArrayBuffers the scene allocated, counted against its budget.
+    pub array_buffers: u64,
     pub crdt_store_bytes: u64,
     pub crdt_entities: u64,
     pub crdt_components: u64,
