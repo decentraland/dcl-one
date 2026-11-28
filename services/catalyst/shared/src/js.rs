@@ -89,6 +89,7 @@ fn radix_integer_to_f64(digits: &str, radix: u32) -> f64 {
         }
     }
     if len <= 53 {
+        #[allow(clippy::cast_precision_loss, reason = "len <= 53 keeps it below 2^53")]
         return top as f64;
     }
     let kept = len.min(64);
@@ -107,7 +108,12 @@ fn radix_integer_to_f64(digits: &str, radix: u32) -> f64 {
     } else {
         f64::INFINITY
     };
-    mantissa as f64 * scale
+    #[allow(
+        clippy::cast_precision_loss,
+        reason = "the rounded mantissa is at most 2^53"
+    )]
+    let mantissa = mantissa as f64;
+    mantissa * scale
 }
 
 /// `[+-]? (digits [. digits?] | . digits) ([eE] [+-]? digits)?`

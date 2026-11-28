@@ -82,7 +82,13 @@ fn source_number(raw: &str) -> Result<f64, String> {
 fn source_idle_timeout(raw: &str) -> Result<u64, String> {
     let number = source_number(raw)?;
     let seconds = if number.is_finite() {
-        number.trunc().rem_euclid(65536.0) as u64
+        #[allow(
+            clippy::cast_possible_truncation,
+            clippy::cast_sign_loss,
+            reason = "rem_euclid keeps it in [0, 65536)"
+        )]
+        let seconds = number.trunc().rem_euclid(65536.0) as u64;
+        seconds
     } else {
         0
     };
@@ -120,7 +126,7 @@ fn source_body_limit(raw: &str) -> Result<usize, String> {
             "Invalid HTTP_MAX_REQUEST_BODY_BYTES: expected an integer number of bytes between 1 and 16777216, got {display}"
         ));
     }
-    Ok(value as usize)
+    Ok(catalyst_shared::casts::f64_to_usize(value))
 }
 
 /// Upstream's presence badge defaults (the badges processor's environment),
@@ -1141,6 +1147,10 @@ impl std::fmt::Debug for SocialConfig {
     }
 }
 
+#[allow(
+    clippy::cast_possible_truncation,
+    reason = "test fixtures use small literal values"
+)]
 #[cfg(test)]
 mod tests {
     use crate::config::Config;

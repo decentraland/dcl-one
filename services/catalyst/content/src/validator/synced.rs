@@ -330,6 +330,12 @@ async fn validate_synced_within(
     })
 }
 
+#[allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_possible_wrap,
+    clippy::cast_precision_loss,
+    reason = "test fixtures use small literal values"
+)]
 #[cfg(test)]
 mod tests {
     use super::super::types::EntityType;

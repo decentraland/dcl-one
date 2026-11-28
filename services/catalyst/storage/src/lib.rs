@@ -13,6 +13,14 @@
 //! thumbnails, the profile images) cannot forget it; `cross_tests::served_routes_tests` walks their router
 //! tables and proves it.
 
+// A silently truncated, wrapped or rounded cast is a bug.
+#![deny(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    clippy::cast_possible_wrap,
+    clippy::cast_precision_loss
+)]
+
 // The crates this one builds on, under their module names (AGENTS.md).
 #[cfg(test)]
 pub(crate) use catalyst_db as db;
@@ -490,7 +498,7 @@ pub(crate) async fn sweep_stale_staging(root: &Path, kind: &str) -> usize {
             kind,
             root = %root.display(),
             swept,
-            elapsed_ms = started.elapsed().as_millis() as u64,
+            elapsed_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
             "removed orphaned staging files from a previous run"
         );
     }

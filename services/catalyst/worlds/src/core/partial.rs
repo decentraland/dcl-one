@@ -20,6 +20,7 @@
 //! pending upload names, and [`delete_expired_uploads`] (the leased
 //! `worlds-partial-upload-cleanup` job and `/gc`) reclaims expired ones.
 
+use crate::shared::casts::{ApproxF64, len_i64, saturating_i64};
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::{Arc, LazyLock};
@@ -128,7 +129,7 @@ impl PartialUploadLimits {
                 anyhow::bail!("{name} must be a positive integer, got {value}");
             }
         }
-        if self.max_pending_bytes_per_deployer < world_size_cap.max(0) as u64 {
+        if self.max_pending_bytes_per_deployer < world_size_cap.max(0).unsigned_abs() {
             anyhow::bail!(
                 "MAX_PENDING_BYTES_PER_DEPLOYER ({}) must fit one world-size scene ({world_size_cap} bytes)",
                 self.max_pending_bytes_per_deployer
@@ -155,7 +156,7 @@ impl PartialUploadLimits {
     }
 
     fn ttl_ms(&self) -> i64 {
-        self.pending_deployment_ttl_ms as i64
+        saturating_i64(self.pending_deployment_ttl_ms)
     }
 }
 
@@ -384,7 +385,7 @@ fn throttled(reason: &'static str, message: String, retry_after: i64) -> Respons
 fn retry_after(limits: &PartialUploadLimits, oldest: Option<NaiveDateTime>) -> i64 {
     let now = now_ms();
     let until_expiry = oldest.map_or(0, |t| millis(t) + limits.ttl_ms() - now);
-    let interval = limits.cleanup_interval_ms as i64;
+    let interval = saturating_i64(limits.cleanup_interval_ms);
     let last = LAST_CLEANUP_FINISHED_MS.load(Ordering::Relaxed);
     let until_cleanup = if last == 0 {
         interval
@@ -461,7 +462,9 @@ async fn replay(
     )
     .bind(entity_id)
     .bind(signer.as_str())
-    .bind(naive(now_ms() - limits.completed_upload_ttl_ms as i64))
+    .bind(naive(
+        now_ms() - saturating_i64(limits.completed_upload_ttl_ms),
+    ))
     .fetch_optional(&mut *conn)
     .await?;
     if let Some((world_name, parcels, creation_timestamp)) = completed {
@@ -674,7 +677,7 @@ async fn stage_batch_on(
         let mut in_storage = Vec::new();
         for hash in &content {
             if let Some(info) = state.storage.file_info(hash).await.map_err(db_error)? {
-                in_storage.push((hash.clone(), info.size as i64));
+                in_storage.push((hash.clone(), saturating_i64(info.size)));
             }
         }
         let keys: Vec<String> = in_storage.iter().map(|(h, _)| h.clone()).collect();
@@ -700,10 +703,10 @@ async fn stage_batch_on(
         .filter(|h| !stored.contains_key(*h) && !receipts.iter().any(|r| &r.hash == *h))
         .filter_map(|h| uploads.by_name.get(h))
         .collect();
-    let incoming: i64 = files.iter().map(|f| f.len() as i64).sum();
+    let incoming: i64 = files.iter().map(|f| len_i64(f.len())).sum();
     receipts.extend(to_store.iter().map(|f| Receipt {
         hash: f.hash.clone(),
-        size: f.len() as i64,
+        size: len_i64(f.len()),
         stored: false,
         charged: true,
     }));
@@ -889,7 +892,7 @@ async fn stage_batch_on(
     )
     .await;
     worlds_metrics::partial_completed(
-        Duration::from_millis((now_ms - created_ms).max(0) as u64),
+        Duration::from_millis((now_ms - created_ms).max(0).unsigned_abs()),
         batches,
     );
     Ok(success(
@@ -945,7 +948,13 @@ async fn vanished(
          FOR SHARE",
     )
     .bind(entity_id)
-    .bind(state.settings.partial_uploads.pending_deployment_ttl_ms as f64)
+    .bind(
+        state
+            .settings
+            .partial_uploads
+            .pending_deployment_ttl_ms
+            .approx_f64(),
+    )
     .fetch_optional(&mut *tx)
     .await
     .map_err(db_error)?;
@@ -1015,7 +1024,7 @@ async fn upsert(
     .fetch_one(&mut *tx)
     .await
     .map_err(db_error)?;
-    let max = limits.max_pending_per_deployer as i64;
+    let max = saturating_i64(limits.max_pending_per_deployer);
     if count >= max {
         return Err(throttled(
             "uploads_per_account",
@@ -1048,7 +1057,7 @@ async fn upsert(
     .fetch_one(&mut *tx)
     .await
     .map_err(db_error)?;
-    let world_max = limits.max_pending_per_world as i64;
+    let world_max = saturating_i64(limits.max_pending_per_world);
     if world_count >= world_max {
         return Err(throttled(
             "uploads_per_world",
@@ -1156,12 +1165,12 @@ async fn reserve(
     .fetch_one(&mut *conn)
     .await
     .map_err(db_error)?;
-    let per_minute = limits.max_bytes_per_minute as i64;
+    let per_minute = saturating_i64(limits.max_bytes_per_minute);
     if incoming > per_minute {
         return Err(err_one(format!(
             "This batch is {}, above the partial upload limit of {} per minute. Send smaller batches.",
-            upload_limits::format_bytes(incoming.max(0) as u64),
-            upload_limits::format_bytes(per_minute.max(0) as u64)
+            upload_limits::format_bytes(incoming.max(0).unsigned_abs()),
+            upload_limits::format_bytes(per_minute.max(0).unsigned_abs())
         )));
     }
     if rate_bytes > per_minute {
@@ -1169,8 +1178,8 @@ async fn reserve(
             "bytes_per_minute",
             format!(
                 "This account sent {} of partial uploads this minute, above the limit of {} per minute. Retry in {rate_retry} s.",
-                upload_limits::format_bytes(rate_bytes.max(0) as u64),
-                upload_limits::format_bytes(per_minute.max(0) as u64)
+                upload_limits::format_bytes(rate_bytes.max(0).unsigned_abs()),
+                upload_limits::format_bytes(per_minute.max(0).unsigned_abs())
             ),
             i64::from(rate_retry),
         ));
@@ -1276,10 +1285,11 @@ async fn reserve(
     .fetch_one(&mut *tx)
     .await
     .map_err(db_error)?;
-    let source_bytes = limits.max_pending_bytes_per_source as i64;
-    let account_bytes = limits.max_pending_bytes_per_deployer as i64;
-    let world_bytes = world_scene_cap.saturating_mul(limits.pending_bytes_per_world_factor as i64);
-    let node_bytes = limits.max_pending_bytes as i64;
+    let source_bytes = saturating_i64(limits.max_pending_bytes_per_source);
+    let account_bytes = saturating_i64(limits.max_pending_bytes_per_deployer);
+    let world_bytes =
+        world_scene_cap.saturating_mul(saturating_i64(limits.pending_bytes_per_world_factor));
+    let node_bytes = saturating_i64(limits.max_pending_bytes);
     if t.scene > max_scene_bytes {
         return Err(failed(TOO_BIG_MESSAGE).into_response());
     }
@@ -1287,15 +1297,15 @@ async fn reserve(
     if t.own > account_bytes {
         return Err(err_one(format!(
             "This upload needs {} of staging, above the per-account partial upload limit of {}. Reduce its size.",
-            upload_limits::format_bytes(t.own.max(0) as u64),
-            upload_limits::format_bytes(account_bytes.max(0) as u64)
+            upload_limits::format_bytes(t.own.max(0).unsigned_abs()),
+            upload_limits::format_bytes(account_bytes.max(0).unsigned_abs())
         )));
     }
     if t.own_content > world_bytes {
         return Err(err_one(format!(
             "This upload needs {} of staging, above the per-world partial upload limit of {}. Reduce its size.",
-            upload_limits::format_bytes(t.own_content.max(0) as u64),
-            upload_limits::format_bytes(world_bytes.max(0) as u64)
+            upload_limits::format_bytes(t.own_content.max(0).unsigned_abs()),
+            upload_limits::format_bytes(world_bytes.max(0).unsigned_abs())
         )));
     }
     if t.account > account_bytes {
@@ -1303,8 +1313,8 @@ async fn reserve(
             "bytes_per_account",
             format!(
                 "This batch would stage {} for this account, above its limit of {}. Complete an upload or wait for expired uploads to be cleaned up.",
-                upload_limits::format_bytes(t.account.max(0) as u64),
-                upload_limits::format_bytes(account_bytes.max(0) as u64)
+                upload_limits::format_bytes(t.account.max(0).unsigned_abs()),
+                upload_limits::format_bytes(account_bytes.max(0).unsigned_abs())
             ),
             retry_after(limits, t.account_oldest),
         ));
@@ -1314,8 +1324,8 @@ async fn reserve(
             "bytes_per_world",
             format!(
                 "This batch would stage {} for this world, above its limit of {}. Complete an upload or wait for one to expire.",
-                upload_limits::format_bytes(t.world.max(0) as u64),
-                upload_limits::format_bytes(world_bytes.max(0) as u64)
+                upload_limits::format_bytes(t.world.max(0).unsigned_abs()),
+                upload_limits::format_bytes(world_bytes.max(0).unsigned_abs())
             ),
             retry_after(limits, t.world_oldest),
         ));
@@ -1325,8 +1335,8 @@ async fn reserve(
             "bytes_per_source",
             format!(
                 "This batch would stage {} for uploads from this source, above its limit of {}. Complete an upload or wait for one to expire.",
-                upload_limits::format_bytes(t.source.max(0) as u64),
-                upload_limits::format_bytes(source_bytes.max(0) as u64)
+                upload_limits::format_bytes(t.source.max(0).unsigned_abs()),
+                upload_limits::format_bytes(source_bytes.max(0).unsigned_abs())
             ),
             retry_after(limits, t.source_oldest),
         ));
@@ -1336,8 +1346,8 @@ async fn reserve(
             "bytes_per_server",
             format!(
                 "This batch would stage {} on the server, above its limit of {}. Retry later.",
-                upload_limits::format_bytes(t.total.max(0) as u64),
-                upload_limits::format_bytes(node_bytes.max(0) as u64)
+                upload_limits::format_bytes(t.total.max(0).unsigned_abs()),
+                upload_limits::format_bytes(node_bytes.max(0).unsigned_abs())
             ),
             retry_after(limits, t.oldest),
         ));
@@ -1461,7 +1471,7 @@ async fn run_cleanup(
     state: &CoreState,
     limits: &PartialUploadLimits,
 ) -> anyhow::Result<ExpiredUploadsCleanup> {
-    let ttl = limits.pending_deployment_ttl_ms as f64;
+    let ttl = limits.pending_deployment_ttl_ms.approx_f64();
     let mut report = ExpiredUploadsCleanup {
         outcome: "success",
         removed: 0,
@@ -1526,7 +1536,7 @@ async fn run_cleanup(
                 }
             }
         }
-        if (page.len() as i64) < CLEANUP_PAGE {
+        if (len_i64(page.len())) < CLEANUP_PAGE {
             break;
         }
     }
@@ -1595,7 +1605,7 @@ async fn reclaim(
          RETURNING entity_id",
     )
     .bind(entity_ids)
-    .bind(limits.pending_deployment_ttl_ms as f64)
+    .bind(limits.pending_deployment_ttl_ms.approx_f64())
     .fetch_all(&mut *lock)
     .await
     .map_err(|e| failed(&e))?;
@@ -1653,7 +1663,9 @@ async fn reclaim(
 /// Prunes completion receipts and rate windows and refreshes the staging gauges.
 async fn prune_and_report(pool: &PgPool, limits: &PartialUploadLimits) -> Result<(), sqlx::Error> {
     sqlx::query("DELETE FROM worlds.completed_scene_uploads WHERE completed_at < $1")
-        .bind(naive(now_ms() - limits.completed_upload_ttl_ms as i64))
+        .bind(naive(
+            now_ms() - saturating_i64(limits.completed_upload_ttl_ms),
+        ))
         .execute(pool)
         .await?;
     sqlx::query(

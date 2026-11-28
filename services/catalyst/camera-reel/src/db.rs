@@ -17,6 +17,7 @@
 //! including scenes hidden from listings. The configured cache bounds and
 //! expiry apply to these world-name lookups.
 
+use crate::shared::casts::{count_u64, len_i64, saturating_i64};
 use std::time::Duration;
 
 use chrono::NaiveDateTime;
@@ -330,7 +331,7 @@ impl Database {
         let mut qb = QueryBuilder::new(format!("SELECT COUNT(*) FROM {TABLE}"));
         Self::push_filter(&mut qb, filter, public_only)?;
         let count = qb.build_query_scalar::<i64>().fetch_one(&self.pool).await?;
-        Ok(count as u64)
+        Ok(count_u64(count))
     }
 
     /// Page plus total in one statement; only a page past the end (or `limit`
@@ -361,7 +362,7 @@ impl Database {
         }
         let rows = qb.build().fetch_all(&self.pool).await?;
         let total = match rows.first() {
-            Some(first) => first.try_get::<i64, _>("total")? as u64,
+            Some(first) => count_u64(first.try_get::<i64, _>("total")?),
             None => self.get_images_count(&filter, public_only).await?,
         };
         let images = rows
@@ -373,7 +374,7 @@ impl Database {
             Page::After(_) => Some(
                 images
                     .last()
-                    .filter(|_| limit > 0 && images.len() as i64 >= limit)
+                    .filter(|_| limit > 0 && len_i64(images.len()) >= limit)
                     .map(|last| Cursor {
                         created_at: last.created_at,
                         id: last.id,
@@ -508,13 +509,13 @@ impl Database {
         .bind(&image.thumbnail_hash)
         .bind(image.is_public)
         .bind(Json(&image.metadata))
-        .bind(max_images.min(i64::MAX as u64) as i64)
+        .bind(saturating_i64(max_images))
         .bind(original_filename)
         .bind(image_content_type)
         .fetch_optional(&mut *tx)
         .await?;
         tx.commit().await?;
-        Ok(count.map(|c| c as u64))
+        Ok(count.map(count_u64))
     }
 
     /// A new upload may reuse bytes whose last photo was deleted. Only lift
@@ -690,7 +691,7 @@ impl Database {
             image_hash,
             thumbnail_hash,
             deleted,
-            remaining: remaining.max(0) as u64,
+            remaining: count_u64(remaining),
             withheld,
         }))
     }

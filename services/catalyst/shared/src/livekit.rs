@@ -153,7 +153,8 @@ pub fn address_from_identity(identity: &str) -> Option<String> {
 }
 
 fn json_u64(v: &serde_json::Value) -> Option<u64> {
-    v.as_u64().or_else(|| v.as_f64().map(|f| f as u64))
+    v.as_u64()
+        .or_else(|| v.as_f64().map(crate::casts::f64_to_u64))
 }
 
 fn decode_body_digest(claim: &str) -> Option<Vec<u8>> {

@@ -289,7 +289,7 @@ where
         .bind(notification.occurred_at)
         .fetch_one(executor)
         .await?;
-    Ok(inserted as u64)
+    Ok(crate::casts::count_u64(inserted))
 }
 
 /// Inserts a notice and delivery once per source identity. Exact previous
@@ -345,7 +345,7 @@ pub async fn insert_keyed_notification_once(
         .bind(notification.occurred_at)
         .fetch_one(transaction)
         .await?;
-    Ok(inserted as u64)
+    Ok(crate::casts::count_u64(inserted))
 }
 
 async fn insert_batch<'e, E>(
@@ -442,7 +442,7 @@ where
         .bind(event_preferences)
         .fetch_one(executor)
         .await?;
-    Ok(inserted as u64)
+    Ok(crate::casts::count_u64(inserted))
 }
 
 /// `(Number(mana || '0') / 1e18).toFixed(2)`.

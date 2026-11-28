@@ -284,7 +284,7 @@ impl ExternalCalls for Sources {
 
     async fn fetch_content_file_size(&self, hash: &str) -> Result<Option<usize>, String> {
         match self.storage.file_info(hash).await {
-            Ok(info) => Ok(info.map(|i| i.size as usize)),
+            Ok(info) => Ok(info.map(|i| crate::shared::casts::to_usize(i.size))),
             Err(StorageError::InvalidId(_) | StorageError::PathTraversal(_)) => Ok(None),
             Err(e) => Err(e.to_string()),
         }

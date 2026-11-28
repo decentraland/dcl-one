@@ -12,6 +12,7 @@
 
 use bytes::Bytes;
 
+use crate::shared::casts::{len_u64, to_usize};
 use crate::storage::{OpenedContent, StorageError};
 
 pub(crate) mod catalyst;
@@ -45,8 +46,8 @@ pub(crate) trait Source {
 
 impl Source for &[u8] {
     async fn read_at(&mut self, start: u64, len: u64) -> Result<Bytes, StorageError> {
-        let from = (start.min(self.len() as u64)) as usize;
-        let to = (start.saturating_add(len).min(self.len() as u64)) as usize;
+        let from = to_usize(start.min(len_u64(self.len())));
+        let to = to_usize(start.saturating_add(len).min(len_u64(self.len())));
         Ok(Bytes::copy_from_slice(&self[from..to]))
     }
 }
@@ -118,12 +119,12 @@ impl Source for Window<'_> {
         let (at, cached) = &self.cached;
         let cache_end = at + cached.len() as u64;
         if *at <= start && end <= cache_end {
-            return Ok(cached.slice((start - at) as usize..(end - at) as usize));
+            return Ok(cached.slice(to_usize(start - at)..to_usize(end - at)));
         }
         // The first read is the sample at the base; later ones fetch a block from where they
         // start, or from the cache's end when they start inside it.
         let (from, kept) = if *at <= start && start < cache_end {
-            (cache_end, cached.slice((start - at) as usize..))
+            (cache_end, cached.slice(to_usize(start - at)..))
         } else {
             (start, Bytes::new())
         };
@@ -142,7 +143,7 @@ impl Source for Window<'_> {
             [kept, block].concat().into()
         };
         self.cached = (start, block);
-        let got = (end - start).min(self.cached.1.len() as u64) as usize;
+        let got = to_usize((end - start).min(len_u64(self.cached.1.len())));
         Ok(self.cached.1.slice(..got))
     }
 
@@ -161,7 +162,7 @@ impl<S: Source> Tokenizer<'_, S> {
     /// `peekBuffer(.., {mayBeLess: true})` into a zeroed buffer of `len`.
     async fn peek(&mut self, len: u64) -> Result<Vec<u8>, StorageError> {
         let got = self.src.read_at(self.pos, len).await?;
-        let mut buf = vec![0; len as usize];
+        let mut buf = vec![0; to_usize(len)];
         buf[..got.len()].copy_from_slice(&got);
         Ok(buf)
     }
@@ -216,7 +217,7 @@ pub(crate) async fn file_type(src: &mut impl Source) -> Result<Option<&'static s
                 | (i32::from(size[2]) << 7)
                 | (i32::from(size[1]) << 14)
                 | (i32::from(size[0]) << 21);
-            if !tok.ignore(len as u64).await? {
+            if !tok.ignore(u64::from(len.unsigned_abs())).await? {
                 return Ok(None);
             }
             continue;
@@ -475,7 +476,10 @@ async fn ebml_element<S: Source>(
     if id.len() > 6 {
         return Ok(None);
     }
-    len[0] ^= 0x80u8.checked_shr(len.len() as u32 - 1).unwrap_or(0);
+    len[0] ^= u32::try_from(len.len() - 1)
+        .ok()
+        .and_then(|shift| 0x80u8.checked_shr(shift))
+        .unwrap_or(0);
     let len = &len[len.len() - len.len().min(6)..];
     let be = |bytes: &[u8]| bytes.iter().fold(0u64, |n, &b| (n << 8) | u64::from(b));
     Ok(Some((be(&id), be(len))))
@@ -524,7 +528,7 @@ async fn png<S: Source>(tok: &mut Tokenizer<'_, S>) -> Result<Option<&'static st
         match &kind[..] {
             b"IDAT" => return Ok(Some("image/png")),
             b"acTL" => return Ok(Some("image/apng")),
-            _ if !tok.ignore(length as u64 + 4).await? => return Ok(None),
+            _ if !tok.ignore(u64::from(length.unsigned_abs()) + 4).await? => return Ok(None),
             _ => {}
         }
     }
@@ -545,6 +549,10 @@ fn mpeg_audio(b0: u8, b1: u8) -> Option<&'static str> {
     }
 }
 
+#[allow(
+    clippy::cast_possible_truncation,
+    reason = "test fixtures use small literal values"
+)]
 #[cfg(test)]
 mod tests {
     use super::*;

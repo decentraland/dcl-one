@@ -16,6 +16,14 @@
 //! `Retry-After`) and the console's read-only toggle (404, as upstream's
 //! `READ_ONLY` node, which does not register the route).
 
+// A silently truncated, wrapped or rounded cast is a bug.
+#![deny(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    clippy::cast_possible_wrap,
+    clippy::cast_precision_loss
+)]
+
 // The crates this one builds on, under their module names (AGENTS.md).
 pub(crate) use catalyst_chain_index as chain_index;
 pub(crate) use catalyst_config::config;

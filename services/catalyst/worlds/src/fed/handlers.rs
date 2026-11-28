@@ -8,6 +8,7 @@
 //! Every response is a typed struct rather than a `json!` macro, so the guarantee
 //! "**no `owner` key exists in the mirror response**" is checkable by a reviewer.
 
+use crate::shared::casts::saturating_i64;
 use std::sync::Arc;
 
 use axum::Json;
@@ -380,7 +381,7 @@ pub async fn refresh_federation_mirror(
                 peer_id: peer_id.as_str().to_string(),
                 ok: true,
                 worlds_observed: r.worlds_observed,
-                entries_skipped: r.entries_skipped as i64,
+                entries_skipped: saturating_i64(r.entries_skipped),
                 truncated: r.truncated,
                 local_name_collisions: r.collisions.checked().map(<[String]>::to_vec),
                 local_name_collisions_error: r.collisions.unavailable_reason().map(str::to_string),

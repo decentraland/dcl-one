@@ -8,6 +8,8 @@
 
 use std::path::{Path, PathBuf};
 
+use crate::casts::len_i64;
+
 const METHODS: [&str; 7] = ["any", "delete", "get", "on", "patch", "post", "put"];
 
 /// `#[cfg(..)]` forms that compile only into tests or test support.
@@ -94,7 +96,7 @@ fn test_module_paths(path: &Path, text: &str) -> Vec<PathBuf> {
     let (mut depth, mut test_only, mut at) = (0i64, false, None);
     for (line, original) in code.lines().zip(text.lines()) {
         let top = depth == 0;
-        depth += line.matches('{').count() as i64 - line.matches('}').count() as i64;
+        depth += len_i64(line.matches('{').count()) - len_i64(line.matches('}').count());
         let original = original.trim();
         if line.trim().is_empty() && !original.starts_with("#[") {
             continue;
@@ -252,7 +254,7 @@ fn production_lines(text: &str) -> Vec<(usize, String)> {
     let (mut depth, mut skip_until, mut pending) = (0i64, None, false);
     for (number, (line, original)) in code.lines().zip(text.lines()).enumerate() {
         let trimmed = line.trim();
-        let delta = line.matches('{').count() as i64 - line.matches('}').count() as i64;
+        let delta = len_i64(line.matches('{').count()) - len_i64(line.matches('}').count());
         if let Some(end) = skip_until {
             depth += delta;
             if depth <= end {

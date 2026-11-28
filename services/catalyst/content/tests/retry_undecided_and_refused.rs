@@ -2,6 +2,12 @@
 //! retry cap and the prune, and never retries one the validator refused. A retry cycle
 //! walks every due record in its database, so this runs in a binary of its own over a scratch
 //! database of its own.
+
+#![allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_possible_wrap,
+    reason = "test fixtures use small literal values"
+)]
 #![allow(clippy::unwrap_used, reason = "test support")]
 
 mod common;

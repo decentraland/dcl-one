@@ -605,9 +605,11 @@ pub(super) async fn listed_scenes(
         let page: Value =
             serde_json::from_slice(&read_body_capped(resp, MAX_SCENES_PAGE_BYTES).await?)
                 .with_context(|| format!("parsing {url}"))?;
-        total = page["total"]
-            .as_u64()
-            .with_context(|| format!("{url} answered no total"))? as usize;
+        total = crate::shared::casts::to_usize(
+            page["total"]
+                .as_u64()
+                .with_context(|| format!("{url} answered no total"))?,
+        );
         if total > MAX_LISTED_SCENES {
             bail!("{name} lists {total} scenes, over {MAX_LISTED_SCENES}");
         }

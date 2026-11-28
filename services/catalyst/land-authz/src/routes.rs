@@ -20,6 +20,7 @@ use super::{
     indexer, is_address,
 };
 use crate::chain_index::source::{Source, unavailable};
+use crate::shared::casts::{index_usize, len_i64};
 use crate::shared::http_util::{bad_request, internal_server_error, lambdas_error};
 use crate::shared::parcel::is_inside_world_limits;
 use crate::shared::query_params::{JsPagination, js_parse_int, parse_query_string};
@@ -56,7 +57,7 @@ pub fn router(state: SharedState) -> Router {
         .with_state(state)
 }
 
-fn parcel_or_estate_not_found(x: i64, y: i64) -> Response {
+fn parcel_or_estate_not_found(x: i32, y: i32) -> Response {
     lambdas_error(
         StatusCode::NOT_FOUND,
         "Bad Request",
@@ -88,26 +89,33 @@ fn unavailable_response(why: &Unavailable) -> Response {
     }
 }
 
+/// A pair inside Genesis City ([`is_inside_world_limits`]) as the index's
+/// `integer` coordinates.
+fn world_coords(x: i64, y: i64) -> Option<(i32, i32)> {
+    if !is_inside_world_limits(x, y) {
+        return None;
+    }
+    Some((i32::try_from(x).ok()?, i32::try_from(y).ok()?))
+}
+
 /// An integer pair inside Genesis City, the parcels `Parcel.validate`
 /// accepts upstream ([`is_inside_world_limits`]).
-pub(crate) fn validate_coords(x: &str, y: &str) -> Result<(i64, i64), Box<Response>> {
+pub(crate) fn validate_coords(x: &str, y: &str) -> Result<(i32, i32), Box<Response>> {
     let xi: i64 = x.parse().map_err(|_| bad_request(COORDS_ERR))?;
     let yi: i64 = y.parse().map_err(|_| bad_request(COORDS_ERR))?;
-    if !is_inside_world_limits(xi, yi) {
-        return Err(Box::new(bad_request(COORDS_ERR)));
-    }
-    Ok((xi, yi))
+    world_coords(xi, yi).ok_or_else(|| Box::new(bad_request(COORDS_ERR)))
 }
 
 /// The single-parcel routes' coordinates as lamb2 reads them: `parseInt(x)`
 /// (white space, a sign, a `0x` prefix; anything after the digits ignored),
 /// then the same [`is_inside_world_limits`]. The batch keeps
 /// [`validate_coords`].
-fn validate_path_coords(x: &str, y: &str) -> Result<(i64, i64), Box<Response>> {
+fn validate_path_coords(x: &str, y: &str) -> Result<(i32, i32), Box<Response>> {
     match (js_parse_int(x, true), js_parse_int(y, true)) {
-        (Some(xi), Some(yi)) if is_inside_world_limits(xi, yi) => Ok((xi, yi)),
-        _ => Err(Box::new(bad_request(COORDS_ERR))),
+        (Some(xi), Some(yi)) => world_coords(xi, yi),
+        _ => None,
     }
+    .ok_or_else(|| Box::new(bad_request(COORDS_ERR)))
 }
 
 /// `GET /lambdas/parcels/{x}/{y}/operators`: the subject and the four legs
@@ -124,11 +132,7 @@ async fn parcel_operators(
     let Some(mut snapshot) = state.ready_snapshot_within(LAMBDAS_FOLD_WINDOW).await else {
         return not_ready();
     };
-    match state
-        .store()
-        .rights_on(&mut snapshot.tx, xi as i32, yi as i32)
-        .await
-    {
+    match state.store().rights_on(&mut snapshot.tx, xi, yi).await {
         Ok(Some(rights)) => Json(json!({
             "owner": rights.subject.owner,
             "operator": rights.subject.operator,
@@ -172,8 +176,8 @@ async fn user_lands_permissions(
             .parcels_with_update_operator_page_on(&mut snapshot.tx, &update_operator, 0, 0)
             .await
             .map(|(_, total)| {
-                let r = p.range(total.max(0) as usize);
-                (r.start as i64, r.len() as i64)
+                let r = p.range(index_usize(total));
+                (len_i64(r.start), len_i64(r.len()))
             }),
     };
     let page = match window {
@@ -241,11 +245,7 @@ async fn parcel_permissions(
     let Some(mut snapshot) = state.ready_snapshot_within(LAMBDAS_FOLD_WINDOW).await else {
         return not_ready();
     };
-    match state
-        .store()
-        .rights_on(&mut snapshot.tx, xi as i32, yi as i32)
-        .await
-    {
+    match state.store().rights_on(&mut snapshot.tx, xi, yi).await {
         Ok(Some(rights)) => with_source(
             Json(rights.flags_for(&addr)).into_response(),
             "land-authz-index",
@@ -337,7 +337,7 @@ async fn user_lands_access(
 /// Genesis City bounds); any invalid entry rejects the whole request, naming the
 /// entry. Duplicates collapse silently to their first occurrence, so the
 /// response stays one element per distinct parcel in request order.
-pub(crate) fn parse_batch_parcels(entries: &[String]) -> Result<Vec<(i64, i64)>, String> {
+pub(crate) fn parse_batch_parcels(entries: &[String]) -> Result<Vec<(i32, i32)>, String> {
     if entries.len() > MAX_BATCH_PARCELS {
         return Err(format!(
             "Too many parcels: {} requested, the limit is {MAX_BATCH_PARCELS}",
@@ -377,14 +377,13 @@ async fn parcels_permissions_batch(
         Ok(p) => p,
         Err(msg) => return bad_request(&msg),
     };
-    let coords: Vec<(i32, i32)> = parcels.iter().map(|&(x, y)| (x as i32, y as i32)).collect();
-    match can_deploy_batch(&state, &coords, &addr).await {
+    match can_deploy_batch(&state, &parcels, &addr).await {
         Ok(decisions) => {
             let source = decisions
                 .first()
                 .map(|d| d.source.header_value())
                 .unwrap_or(super::INDEX_SOURCE);
-            let elements: Vec<Value> = coords
+            let elements: Vec<Value> = parcels
                 .iter()
                 .zip(decisions)
                 .map(|(&(x, y), d)| {
@@ -396,7 +395,7 @@ async fn parcels_permissions_batch(
                 })
                 .collect();
             let resp = Json(json!({ "elements": elements })).into_response();
-            if coords.is_empty() {
+            if parcels.is_empty() {
                 resp
             } else {
                 with_source(resp, source)

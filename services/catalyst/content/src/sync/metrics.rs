@@ -7,6 +7,7 @@
 //! Every label value comes from a closed set or from a configured peer's origin. Recording only
 //! touches the process recorder, a no-op without one, so it never fails or blocks a job.
 
+use crate::shared::casts::ApproxF64;
 use std::time::Duration;
 
 use dcl_metrics::{CounterFamily, Descriptor, GaugeFamily, HistogramFamily, SharedString};
@@ -271,7 +272,7 @@ pub fn download_hash_error(remote_server: &str) {
 
 /// A file download job starts with `servers` candidate peers.
 pub fn download_job_started(servers: usize) {
-    AVAILABLE_SERVERS.handle([]).record(servers as f64);
+    AVAILABLE_SERVERS.handle([]).record(servers.approx_f64());
 }
 
 /// A file download job stored its file on its `attempts`th request.
@@ -448,11 +449,11 @@ pub fn stream_failed(server: &str) {
 pub fn server_phases(from_snapshots: usize, from_pointer_changes: usize, syncing: usize) {
     BOOTSTRAPPING_SERVERS
         .handle([SNAPSHOTS])
-        .set(from_snapshots as f64);
+        .set(from_snapshots.approx_f64());
     BOOTSTRAPPING_SERVERS
         .handle([POINTER_CHANGES])
-        .set(from_pointer_changes as f64);
-    SYNCING_SERVERS.handle([]).set(syncing as f64);
+        .set(from_pointer_changes.approx_f64());
+    SYNCING_SERVERS.handle([]).set(syncing.approx_f64());
 }
 
 /// `stream_end`: a snapshot file was read to its end; `incomplete`: it had unreadable lines;
@@ -474,7 +475,7 @@ pub fn sync_state(state: &SyncState) {
 
 /// The rows of `content.failed_deployments`.
 pub fn failed_deployments(rows: u64) {
-    FAILED_DEPLOYMENTS.handle([]).set(rows as f64);
+    FAILED_DEPLOYMENTS.handle([]).set(rows.approx_f64());
 }
 
 /// Zeroes `dcl_content_server_failed_deployments` when dropped, unless a newer retry worker of

@@ -3,6 +3,11 @@
 //! Fixtures include formats whose bytes disagree with the accepted multipart
 //! MIME, unsupported encoders, alpha/16-bit/float images and malformed headers.
 
+#![allow(
+    clippy::cast_possible_truncation,
+    reason = "test fixtures use small literal values"
+)]
+
 use base64::Engine;
 use serde_json::Value;
 

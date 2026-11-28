@@ -298,6 +298,10 @@ pub fn content_peers(catalysts: &[Catalyst], own_urls: &[String]) -> Vec<String>
         .collect()
 }
 
+#[allow(
+    clippy::cast_possible_truncation,
+    reason = "test fixtures use small literal values"
+)]
 #[cfg(test)]
 mod tests {
     use super::*;

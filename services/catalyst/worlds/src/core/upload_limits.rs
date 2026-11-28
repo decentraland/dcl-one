@@ -2,6 +2,7 @@
 //! takes a concurrency slot plus a zero-byte lease grown from actual parsed payload
 //! bytes -- never from Content-Length, which includes multipart framing.
 
+use crate::shared::casts::ApproxF64;
 use std::collections::HashMap;
 use std::sync::LazyLock;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -53,7 +54,7 @@ pub const MAX_MULTIPART_PARTS: usize = 10_100;
 
 /// Upstream's `formatBytes` (`src/logic/utils.ts`).
 pub(super) fn format_bytes(bytes: u64) -> String {
-    let b = bytes as f64;
+    let b = bytes.approx_f64();
     const K: f64 = 1024.0;
     if b < K {
         format!("{bytes} bytes")
@@ -68,7 +69,7 @@ pub(super) fn format_bytes(bytes: u64) -> String {
 
 /// JavaScript's `Number` text of `ms / 1000`.
 pub(super) fn js_seconds(ms: u64) -> String {
-    (ms as f64 / 1000.0).to_string()
+    (ms.approx_f64() / 1000.0).to_string()
 }
 
 /// Upstream's `describeUploadTimeout`: what arrived on the wire before the upload timeout.
@@ -85,7 +86,7 @@ pub(super) fn describe_upload_timeout(
             format_bytes(declared)
         ),
     };
-    let rate = received_bytes as f64 / 1024.0 / (timeout_ms as f64 / 1000.0);
+    let rate = received_bytes.approx_f64() / 1024.0 / (timeout_ms.approx_f64() / 1000.0);
     format!(
         "The upload did not finish within {} s: received {received} (about {rate:.1} KiB/s). Retry on a faster connection or send smaller batches.",
         js_seconds(timeout_ms)

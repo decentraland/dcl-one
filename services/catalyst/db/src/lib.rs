@@ -1,3 +1,11 @@
+// A silently truncated, wrapped or rounded cast is a bug.
+#![deny(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    clippy::cast_possible_wrap,
+    clippy::cast_precision_loss
+)]
+
 pub mod schema_migrate;
 
 use parking_lot::Mutex;
@@ -678,7 +686,7 @@ pub mod scratch {
         if hash.len() != 16 || !hash.bytes().all(|b| b.is_ascii_hexdigit()) {
             return None;
         }
-        u64::from_str_radix(hash, 16).ok().map(|key| key as i64)
+        u64::from_str_radix(hash, 16).ok().map(u64::cast_signed)
     }
 
     async fn template_ready(conn: &mut sqlx::PgConnection, name: &str) -> bool {

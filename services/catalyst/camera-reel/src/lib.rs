@@ -100,6 +100,14 @@
 //! Request counts and latency are exposed by the host process under the camera-reel component.
 //! Documentation and Swagger UI assets are served locally under `/api/docs`.
 
+// A silently truncated, wrapped or rounded cast is a bug.
+#![deny(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    clippy::cast_possible_wrap,
+    clippy::cast_precision_loss
+)]
+
 // The crates this one builds on, under their module names (AGENTS.md).
 #[cfg(test)]
 pub(crate) use catalyst_builder as builder;

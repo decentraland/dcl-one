@@ -1047,6 +1047,11 @@ async fn spool_snapshot_attempt(
     Ok(spooled)
 }
 
+#[allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_precision_loss,
+    reason = "test fixtures use small literal values"
+)]
 #[cfg(test)]
 mod tests {
     use super::*;

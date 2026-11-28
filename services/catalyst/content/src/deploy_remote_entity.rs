@@ -3,6 +3,7 @@
 //! then hand it to the batching [`LiveSyncDeployer`]. Nothing unproven is ever
 //! stored, and a stored entity file that later fails its hash is evicted.
 
+use crate::shared::casts::{len_u64, to_usize};
 use std::collections::{HashMap, HashSet};
 use std::io::Write;
 use std::sync::{Arc, OnceLock};
@@ -181,7 +182,7 @@ pub(crate) async fn stream_body<S: DecodedSink>(
             .map_err(|e| e.to_string())?;
         for piece in chunk.chunks(decoder.input_step()) {
             // `run` holds decoded bytes not yet counted in `decoded_len`.
-            let left = (cap as u64).saturating_sub(stats.decoded_len) as usize;
+            let left = to_usize(len_u64(cap).saturating_sub(stats.decoded_len));
             decoder.push(piece, &mut run, left).map_err(|e| {
                 if run.len() > left {
                     format!("decoded body exceeds {cap} byte cap")
@@ -227,9 +228,12 @@ impl ByteBudget {
     /// `max_bytes` is clamped to what one hold can ask for (`u32::MAX`, the `acquire_many`
     /// bound), and 0 -- which would stall every download -- is raised to 1.
     pub fn new(max_bytes: u64) -> Self {
-        let max = max_bytes
-            .clamp(1, u32::MAX as u64)
-            .min(Semaphore::MAX_PERMITS as u64) as u32;
+        let max = u32::try_from(
+            max_bytes
+                .clamp(1, u64::from(u32::MAX))
+                .min(Semaphore::MAX_PERMITS as u64),
+        )
+        .unwrap_or(u32::MAX);
         Self {
             permits: Arc::new(Semaphore::new(max as usize)),
             max,
@@ -265,7 +269,7 @@ impl ByteBudget {
 /// Permits a body of `bytes` takes from a budget of `max`: its size, or the whole budget when
 /// it is larger.
 pub(crate) fn permits_for(bytes: u64, max: u32) -> u32 {
-    bytes.min(max as u64) as u32
+    u32::try_from(bytes.min(u64::from(max))).unwrap_or(max)
 }
 
 /// Permits a hold of `held` must add to cover `needed` bytes: at least `step` (so a chunked
@@ -276,7 +280,7 @@ pub(crate) fn growth_for(held: u32, needed: u64, max: u32, step: u64) -> u32 {
         return 0;
     }
     let room = (max - held) as u64;
-    (needed - held as u64).max(step).min(room) as u32
+    u32::try_from((needed - held as u64).max(step).min(room)).unwrap_or(max - held)
 }
 
 /// One download's hold on a [`ByteBudget`], released on drop.
@@ -1066,6 +1070,10 @@ async fn fetch_body(
     Ok(sink.into_parts())
 }
 
+#[allow(
+    clippy::cast_precision_loss,
+    reason = "test fixtures use small literal values"
+)]
 #[cfg(test)]
 mod tests {
     use super::*;

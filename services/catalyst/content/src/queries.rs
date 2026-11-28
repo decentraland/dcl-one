@@ -8,6 +8,7 @@
 //! pool pins `TimeZone=UTC`, so `date_part('epoch', col) * 1000` is the wire
 //! millisecond value and `to_timestamp($n / 1000.0)` the matching bound.
 
+use crate::shared::casts::{ApproxF64, f64_to_i64, index_usize, len_i64};
 use bytes::Bytes;
 use serde_json::{Value, json};
 use sqlx::{AssertSqlSafe, PgPool};
@@ -152,7 +153,7 @@ struct ActiveEntityJson<M = Value> {
 pub(crate) fn js_millis(ms: f64) -> Value {
     const MAX_SAFE_INTEGER: f64 = 9_007_199_254_740_991.0;
     if ms.fract() == 0.0 && ms.abs() <= MAX_SAFE_INTEGER {
-        json!(ms as i64)
+        json!(f64_to_i64(ms))
     } else {
         json!(ms)
     }
@@ -604,7 +605,7 @@ fn time_bound(
     tuple: Option<(&str, &str)>,
     param_idx: &mut usize,
 ) -> TimeBound {
-    let ms = ms as f64;
+    let ms = ms.approx_f64();
     match tuple {
         Some((cmp, last_id)) => {
             let next = *param_idx;
@@ -784,8 +785,8 @@ pub async fn get_deployments(
     query = query.bind(fetch_limit).bind(offset);
 
     let mut rows = query.fetch_all(pool).await?;
-    let more_data = rows.len() as i64 > limit;
-    rows.truncate(limit as usize);
+    let more_data = len_i64(rows.len()) > limit;
+    rows.truncate(index_usize(limit));
 
     let deployments = rows
         .into_iter()
@@ -798,7 +799,7 @@ pub async fn get_deployments(
                 entity_version: d.version.clone(),
                 entity_type: d.entity_type,
                 entity_id: d.entity_id,
-                entity_timestamp: d.entity_timestamp as i64,
+                entity_timestamp: f64_to_i64(d.entity_timestamp),
                 deployed_by: d.deployer_address,
                 pointers: Some(d.entity_pointers),
                 content: Some(content_items),
@@ -808,9 +809,9 @@ pub async fn get_deployments(
                 audit_info: Some(AuditInfo {
                     version: d.version,
                     auth_chain: d.auth_chain.unwrap_or_else(|| Value::Array(vec![])),
-                    local_timestamp: d.local_timestamp as i64,
+                    local_timestamp: f64_to_i64(d.local_timestamp),
                 }),
-                local_timestamp: d.local_timestamp as i64,
+                local_timestamp: f64_to_i64(d.local_timestamp),
             }
         })
         .collect();
@@ -961,21 +962,21 @@ pub async fn get_pointer_changes(
     query = query.bind(fetch_limit).bind(offset);
 
     let mut rows = query.fetch_all(pool).await?;
-    let more_data = rows.len() as i64 > limit;
-    rows.truncate(limit as usize);
+    let more_data = len_i64(rows.len()) > limit;
+    rows.truncate(index_usize(limit));
 
     let deltas = rows
         .into_iter()
         .map(|r| PointerChangeDelta {
-            deployment_id: r.deployment_id as i64,
+            deployment_id: i64::from(r.deployment_id),
             entity_type: r.entity_type,
             entity_id: r.entity_id,
             pointers: r.entity_pointers,
-            entity_timestamp: r.entity_timestamp as i64,
+            entity_timestamp: f64_to_i64(r.entity_timestamp),
             deployer_address: r.deployer_address,
             version: r.version,
             auth_chain: r.auth_chain,
-            local_timestamp: r.local_timestamp as i64,
+            local_timestamp: f64_to_i64(r.local_timestamp),
         })
         .collect();
 
@@ -1049,7 +1050,7 @@ pub async fn failed_deployments(
         .map(|r| FailedDeploymentResponse {
             entity_id: r.entity_id,
             entity_type: r.entity_type,
-            failure_timestamp: r.failure_timestamp as i64,
+            failure_timestamp: f64_to_i64(r.failure_timestamp),
             // Upstream's only reason; the description says which kind.
             reason: "Deployment error".to_string(),
             auth_chain: r.auth_chain,
@@ -1057,7 +1058,7 @@ pub async fn failed_deployments(
             // Upstream leaves the key out for a failure outside a snapshot.
             snapshot_hash: Some(r.snapshot_hash).filter(|h| !h.is_empty()),
             retry_count: r.retry_count,
-            next_retry_at: r.next_retry_at as i64,
+            next_retry_at: f64_to_i64(r.next_retry_at),
         })
         .collect())
 }
@@ -1079,8 +1080,8 @@ pub fn provenance_json(
     json!({
         "signer": signer,
         "origin": origin,
-        "publishedAt": published_at as i64,
-        "tombstonedAt": tombstoned_at.map(|t| t as i64),
+        "publishedAt": f64_to_i64(published_at),
+        "tombstonedAt": tombstoned_at.map(f64_to_i64),
         "superseded": superseded,
         "status": status,
     })
@@ -1175,12 +1176,12 @@ pub async fn all_snapshots(pool: &PgPool) -> Result<Vec<SnapshotMetadata>, sqlx:
         .map(|r| SnapshotMetadata {
             hash: r.hash.unwrap_or_default(),
             time_range: TimeRange {
-                init_timestamp: r.init_ts_ms as i64,
-                end_timestamp: r.end_ts_ms as i64,
+                init_timestamp: f64_to_i64(r.init_ts_ms),
+                end_timestamp: f64_to_i64(r.end_ts_ms),
             },
-            number_of_entities: r.number_of_entities.max(0) as u64,
+            number_of_entities: u64::try_from(r.number_of_entities).unwrap_or(0),
             replaced_snapshot_hashes: Some(r.replaced_hashes),
-            generation_timestamp: r.gen_ts_ms as i64,
+            generation_timestamp: f64_to_i64(r.gen_ts_ms),
         })
         .collect())
 }

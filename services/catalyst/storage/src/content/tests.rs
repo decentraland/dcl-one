@@ -1,3 +1,8 @@
+#![allow(
+    clippy::cast_possible_truncation,
+    reason = "test fixtures use small literal values"
+)]
+
 use super::*;
 use crate::wait_for_staging_cleanup;
 

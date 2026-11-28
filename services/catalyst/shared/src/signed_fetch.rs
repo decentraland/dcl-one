@@ -410,7 +410,11 @@ pub async fn require_signer_with(
         TimestampWindow::PastOnly { max_age_ms } => {
             let ts = header_str(headers, AUTH_TIMESTAMP_HEADER)
                 .ok_or_else(|| SignedFetchError::InvalidTimestamp(String::new()))?;
-            core::check_past_window(ts, now_ms.max(0) as u128, u128::from(max_age_ms))?;
+            core::check_past_window(
+                ts,
+                u128::from(now_ms.max(0).unsigned_abs()),
+                u128::from(max_age_ms),
+            )?;
             ts
         }
     };

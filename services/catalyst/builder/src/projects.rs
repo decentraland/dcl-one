@@ -936,7 +936,7 @@ pub async fn accept_blob(
         ))
         .into());
     }
-    let size = bytes.len() as i64;
+    let size = crate::shared::casts::len_i64(bytes.len());
     let mut tx = pool.begin().await?;
     crate::drafts::lock_store_shared(&mut tx).await?;
     if !blobs

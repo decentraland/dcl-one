@@ -1,3 +1,8 @@
+#![allow(
+    clippy::cast_precision_loss,
+    reason = "test fixtures use small literal values"
+)]
+
 use std::collections::HashSet;
 
 use axum::body::Body;

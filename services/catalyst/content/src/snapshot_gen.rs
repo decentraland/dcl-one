@@ -353,7 +353,7 @@ impl SnapshotGenerator {
                     pruned = summary.pruned,
                     entities = summary.entities_written,
                     bytes = summary.bytes_written,
-                    elapsed_ms = started.elapsed().as_millis() as u64,
+                    elapsed_ms = crate::shared::casts::millis(started.elapsed()),
                     "Snapshot generation complete"
                 );
                 last.succeeded = true;
@@ -872,7 +872,7 @@ async fn generate_window(
         entities,
         bytes = size,
         replaced = replaced.len(),
-        elapsed_ms = started.elapsed().as_millis() as u64,
+        elapsed_ms = crate::shared::casts::millis(started.elapsed()),
         "Snapshot generated"
     );
     Ok(Written {
@@ -1009,7 +1009,7 @@ async fn prune_outside(pool: &PgPool, windows: &[TimeRange]) -> Result<usize, Ge
     if pruned > 0 {
         info!(pruned, "Pruned snapshot rows outside the division windows");
     }
-    Ok(pruned as usize)
+    Ok(crate::shared::casts::to_usize(pruned))
 }
 
 /// Milliseconds since the epoch as the UTC `timestamp without time zone`

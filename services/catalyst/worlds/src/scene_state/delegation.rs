@@ -155,7 +155,8 @@ pub fn mint_envelope(
     now: DateTime<Utc>,
 ) -> Result<String> {
     let ephemeral = Wallet::random().context("generating the ephemeral key")?;
-    let expiration = now + chrono::Duration::seconds(ttl.as_secs().min(i64::MAX as u64) as i64);
+    let expiration =
+        now + chrono::Duration::seconds(crate::shared::casts::saturating_i64(ttl.as_secs()));
     let payload = claim_payload(
         &ephemeral.address(),
         &scope.world,

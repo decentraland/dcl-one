@@ -6,6 +6,11 @@
 //! so the old "schema detected at boot" variants collapse into one, and the
 //! functions come from the schema instead of a runtime `CREATE`.
 
+#![allow(
+    clippy::cast_precision_loss,
+    reason = "test fixtures use small literal values"
+)]
+
 use sqlx::PgPool;
 
 use super::*;

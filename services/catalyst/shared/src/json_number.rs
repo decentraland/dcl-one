@@ -42,7 +42,7 @@ impl JsonNumber {
             JsonNumber::Float(v) => {
                 let v = Self::integral(v)?;
                 if v >= -(2f64.powi(63)) && v < 2f64.powi(63) {
-                    Ok(v as i64)
+                    Ok(crate::casts::f64_to_i64(v))
                 } else {
                     Err(E::custom(format!("{v} does not fit in an i64")))
                 }
@@ -58,7 +58,7 @@ impl JsonNumber {
             JsonNumber::Float(v) => {
                 let v = Self::integral(v)?;
                 if (0.0..2f64.powi(64)).contains(&v) {
-                    Ok(v as u64)
+                    Ok(crate::casts::f64_to_u64(v))
                 } else {
                     Err(E::custom(format!("{v} does not fit in a u64")))
                 }

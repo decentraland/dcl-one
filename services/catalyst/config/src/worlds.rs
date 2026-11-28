@@ -619,7 +619,7 @@ pub fn parse_island_changed_dedup_ms(input: &str) -> Result<f64, String> {
 pub fn parse_ban_sweep_interval_ms(input: &str) -> Result<u64, String> {
     let ms = parse_numeric_prefix(input, "BAN_SWEEP_INTERVAL_MS")?;
     Ok(if (1.0..=2_147_483_647.0).contains(&ms) {
-        ms as u64
+        catalyst_shared::casts::f64_to_u64(ms)
     } else {
         1
     })

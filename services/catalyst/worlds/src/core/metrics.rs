@@ -12,6 +12,7 @@ pub(super) fn metrics_builder() -> anyhow::Result<dcl_metrics::PrometheusBuilder
         .builder(dcl_metrics::PrometheusBuilder::new())
 }
 
+use crate::shared::casts::ApproxF64;
 use std::time::{Duration, Instant};
 
 use axum::extract::{MatchedPath, Request};
@@ -89,22 +90,23 @@ pub fn upload_received(
         "content_length" => if content_length { "present" } else { "absent" },
         "outcome" => outcome
     )
-    .record(bytes as f64);
+    .record(bytes.approx_f64());
     upload_gauges();
 }
 
 /// The process-wide upload budget's current use.
 pub fn upload_gauges() {
-    dcl_metrics::gauge!("multipart_upload_active").set(upload_limits::active_uploads() as f64);
+    dcl_metrics::gauge!("multipart_upload_active")
+        .set(upload_limits::active_uploads().approx_f64());
     dcl_metrics::gauge!("multipart_upload_reserved_bytes")
-        .set(upload_limits::in_flight_upload_bytes() as f64);
+        .set(upload_limits::in_flight_upload_bytes().approx_f64());
     dcl_metrics::gauge!("multipart_upload_reserved_files")
-        .set(upload_limits::in_flight_upload_files() as f64);
+        .set(upload_limits::in_flight_upload_files().approx_f64());
 }
 
 pub fn upload_capacity(limits: &upload_limits::UploadLimits) {
     dcl_metrics::gauge!("multipart_upload_capacity_bytes")
-        .set(limits.max_in_flight_upload_bytes as f64);
+        .set(limits.max_in_flight_upload_bytes.approx_f64());
 }
 
 /// Processing after the body was parsed, as upstream's `total` stage; `mode` is `regular` or `partial`.
@@ -199,19 +201,19 @@ pub fn partial_completed(age: Duration, batches: i32) {
 }
 
 pub fn partial_reserved_bytes(bytes: i64) {
-    dcl_metrics::gauge!(PARTIAL_UPLOAD_RESERVED_BYTES).set(bytes as f64);
+    dcl_metrics::gauge!(PARTIAL_UPLOAD_RESERVED_BYTES).set(bytes.approx_f64());
 }
 
 pub fn partial_capacity(bytes: u64) {
-    dcl_metrics::gauge!(PARTIAL_UPLOAD_CAPACITY_BYTES).set(bytes as f64);
+    dcl_metrics::gauge!(PARTIAL_UPLOAD_CAPACITY_BYTES).set(bytes.approx_f64());
 }
 
 /// The database snapshot a cleanup run reports: charged and expired bytes, live and expired uploads.
 pub fn partial_snapshot(charged: i64, expired_bytes: i64, live: i64, expired: i64) {
     partial_reserved_bytes(charged);
-    dcl_metrics::gauge!(PARTIAL_UPLOAD_CLEANUP_BACKLOG_BYTES).set(expired_bytes as f64);
-    dcl_metrics::gauge!(PARTIAL_UPLOADS_PENDING, "state" => "live").set(live as f64);
-    dcl_metrics::gauge!(PARTIAL_UPLOADS_PENDING, "state" => "expired").set(expired as f64);
+    dcl_metrics::gauge!(PARTIAL_UPLOAD_CLEANUP_BACKLOG_BYTES).set(expired_bytes.approx_f64());
+    dcl_metrics::gauge!(PARTIAL_UPLOADS_PENDING, "state" => "live").set(live.approx_f64());
+    dcl_metrics::gauge!(PARTIAL_UPLOADS_PENDING, "state" => "expired").set(expired.approx_f64());
 }
 
 pub fn partial_expired_reclaimed() {

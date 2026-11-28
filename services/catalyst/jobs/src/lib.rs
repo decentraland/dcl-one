@@ -27,6 +27,14 @@
 //! fleet-wide job whose durable effects must not be applied twice fences them
 //! itself (a row lock, a claim, or a compare against a stamp it read).
 
+// A silently truncated, wrapped or rounded cast is a bug.
+#![deny(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    clippy::cast_possible_wrap,
+    clippy::cast_precision_loss
+)]
+
 mod instrumentation;
 pub use instrumentation::FAMILIES;
 
@@ -445,7 +453,7 @@ impl Jobs {
                             .poll
                             .saturating_mul(1u32 << failures.min(6))
                             .min(Duration::from_secs(600));
-                        tracing::error!(job = %lease_name, error = %format!("{err:#}"), wait_ms = wait.as_millis() as u64, "leased job failed; releasing the lease and retrying");
+                        tracing::error!(job = %lease_name, error = %format!("{err:#}"), wait_ms = millis(wait), "leased job failed; releasing the lease and retrying");
                         ctx.error(format!("{err:#}"));
                         ctx.progress(format!("failed; retrying in {} s", wait.as_secs()));
                         guard.release().await;
@@ -637,7 +645,7 @@ async fn run_periodic(
     let first_delay = cfg.first_delay(&log_name);
     tracing::info!(
         job = %log_name,
-        first_pass_in_ms = first_delay.as_millis() as u64,
+        first_pass_in_ms = millis(first_delay),
         "periodic job armed"
     );
     if !sleep_or_cancel(&ctx.cancel, first_delay).await {
@@ -645,7 +653,7 @@ async fn run_periodic(
     }
     tracing::info!(
         job = %log_name,
-        interval_ms = cfg.interval.as_millis() as u64,
+        interval_ms = millis(cfg.interval),
         "periodic job started"
     );
     let mut pass: u64 = 0;
@@ -660,7 +668,7 @@ async fn run_periodic(
         })
         .await;
         let elapsed = started.elapsed();
-        let elapsed_ms = elapsed.as_millis() as u64;
+        let elapsed_ms = millis(elapsed);
         observation.finish(
             match &outcome {
                 Ok(Ok(())) => "success",
@@ -679,7 +687,7 @@ async fn run_periodic(
             Ok(Err(err)) => {
                 failures += 1;
                 let wait = cfg.wait_after_failure(failures);
-                tracing::warn!(job = %log_name, pass, elapsed_ms, err = %format!("{err:#}"), wait_ms = wait.as_millis() as u64, "pass failed");
+                tracing::warn!(job = %log_name, pass, elapsed_ms, err = %format!("{err:#}"), wait_ms = millis(wait), "pass failed");
                 ctx.error(format!("pass {pass}: {err:#}"));
                 ctx.progress(format!("pass {pass} failed; next in {} s", wait.as_secs()));
                 wait
@@ -1153,7 +1161,7 @@ impl Leases {
             }
             Err(_) => {
                 tracing::warn!(
-                    timeout_ms = self.settings.keepalive.as_millis() as u64,
+                    timeout_ms = millis(self.settings.keepalive),
                     "lease keepalive timed out"
                 );
                 *slot = None;
@@ -1294,8 +1302,13 @@ fn panic_message(payload: &(dyn std::any::Any + Send)) -> &str {
     }
 }
 
+/// Whole milliseconds for a log field, saturated.
+fn millis(d: Duration) -> u64 {
+    u64::try_from(d.as_millis()).unwrap_or(u64::MAX)
+}
+
 fn first_fire_jitter(name: &str, bound: Duration) -> Duration {
-    let bound_nanos = bound.as_nanos().min(u64::MAX as u128) as u64;
+    let bound_nanos = u64::try_from(bound.as_nanos()).unwrap_or(u64::MAX);
     if bound_nanos == 0 {
         return Duration::ZERO;
     }
@@ -1306,7 +1319,14 @@ fn first_fire_jitter(name: &str, bound: Duration) -> Duration {
     }
     let entropy = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_nanos() as u64)
+        .map(|d| {
+            #[allow(
+                clippy::cast_possible_truncation,
+                reason = "keeps the low 64 bits as entropy by design"
+            )]
+            let low = d.as_nanos() as u64;
+            low
+        })
         .unwrap_or(0);
     h ^= entropy.wrapping_mul(0x9e37_79b9_7f4a_7c15);
     h = h.wrapping_mul(0x0000_0100_0000_01b3);

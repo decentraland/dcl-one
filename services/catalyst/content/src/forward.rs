@@ -164,7 +164,7 @@ pub struct Retry {
 impl Retry {
     pub fn new(max_attempts: u32, base_secs: u64) -> Self {
         Self {
-            max_attempts: max_attempts.clamp(1, i32::MAX as u32) as i32,
+            max_attempts: crate::shared::casts::sat_i32(max_attempts.max(1)),
             base: Duration::from_secs(base_secs),
         }
     }
@@ -172,7 +172,7 @@ impl Retry {
     /// The wait after the `attempts`-th send failed: the base, doubling,
     /// capped at five minutes (or the base, when that is longer).
     fn delay(&self, attempts: i32) -> Duration {
-        let doublings = attempts.saturating_sub(1).clamp(0, 16) as u32;
+        let doublings = attempts.saturating_sub(1).clamp(0, 16).unsigned_abs();
         self.base
             .saturating_mul(1u32 << doublings)
             .min(MAX_RETRY_DELAY.max(self.base))
@@ -594,7 +594,8 @@ impl Forwarder {
             .bind(state)
             .bind(next)
             .bind(error.map(capped))
-            .bind(upstream.map(|s| s as i16))
+            // HTTP statuses stay below 1000.
+            .bind(upstream.map(|s| i16::try_from(s).unwrap_or(i16::MAX)))
             .bind(now)
             .execute(&self.pool)
             .await?;

@@ -19,6 +19,7 @@
 //! batches through [`super::sync_deployer::LiveSyncDeployer`], which shares
 //! [`lock_deployment_pointers`].
 
+use crate::shared::casts::ApproxF64;
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::{Arc, LazyLock};
@@ -860,7 +861,7 @@ impl WriteDeployer {
         )
         .bind(entity.entity_type.as_str())
         .bind(&entity.pointers)
-        .bind(entity.timestamp as f64)
+        .bind(entity.timestamp.approx_f64())
         .bind(&entity.id)
         .fetch_one(&self.pool)
         .await
@@ -877,7 +878,7 @@ impl WriteDeployer {
     pub(crate) fn rate_limit_retry_after(&self, etype: &str, pointers: &[String]) -> Option<u64> {
         self.rate_limiter
             .retry_after(etype, pointers)
-            .map(|d| d.as_secs_f64().ceil().max(1.0) as u64)
+            .map(|d| crate::shared::casts::f64_to_u64(d.as_secs_f64().ceil().max(1.0)))
     }
 
     /// The chain checked against `entity_id` at `at_ms`, as the deploy
@@ -1357,7 +1358,7 @@ impl WriteDeployer {
         let uploads = hash_uploads(files)
             .await
             .map_err(|e| deploy_error(entity_id, &e))?;
-        let hash_us = started.elapsed().as_micros() as u64;
+        let hash_us = crate::shared::casts::micros(started.elapsed());
         let (entity, entity_bytes) = entity_of(&uploads, entity_id)?;
 
         self.refuse_denylisted(&entity)?;
@@ -1535,7 +1536,7 @@ impl WriteDeployer {
             return Err(failure);
         }
 
-        let validation_us = validation_started.elapsed().as_micros() as u64;
+        let validation_us = crate::shared::casts::micros(validation_started.elapsed());
         // Claimed once validation passed, so a deploy without rights never holds a pointer;
         // the deploy function's per-pointer locks stay the binding serializer.
         let _claim = self
@@ -1572,11 +1573,11 @@ impl WriteDeployer {
             reservation.release();
         }
 
-        let persist_us = persist_started.elapsed().as_micros() as u64;
+        let persist_us = crate::shared::casts::micros(persist_started.elapsed());
         let cleanup_started = Instant::now();
         drop(vfiles);
         drop(uploads);
-        tracing::debug!(target: "catalyst_perf", phase="deploy", entity_id, hash_us, validation_us, persist_us, cleanup_us=cleanup_started.elapsed().as_micros() as u64, elapsed_us=started.elapsed().as_micros() as u64);
+        tracing::debug!(target: "catalyst_perf", phase="deploy", entity_id, hash_us, validation_us, persist_us, cleanup_us=crate::shared::casts::micros(cleanup_started.elapsed()), elapsed_us=crate::shared::casts::micros(started.elapsed()));
         Ok(persisted.creation_ts)
     }
 }
@@ -1789,7 +1790,7 @@ impl WriteDeployer {
         .await
         .map_err(unavailable)?;
 
-        let storage_us = started.elapsed().as_micros() as u64;
+        let storage_us = crate::shared::casts::micros(started.elapsed());
         let db_started = Instant::now();
         let deployer_address = auth_chain
             .first()
@@ -1836,7 +1837,7 @@ impl WriteDeployer {
             .bind(entity.entity_type.as_str())
             .bind(&entity.id)
             .bind(&metadata)
-            .bind(entity.timestamp as f64)
+            .bind(entity.timestamp.approx_f64())
             .bind(&pointers)
             .bind(&auth_chain_json)
             .bind(&hashes)
@@ -1898,7 +1899,7 @@ impl WriteDeployer {
         })?;
         tx.commit().await.map_err(write_failed)?;
 
-        tracing::debug!(target: "catalyst_perf", phase="persist", entity_id=%entity.id, storage_us, db_us=db_started.elapsed().as_micros() as u64);
+        tracing::debug!(target: "catalyst_perf", phase="persist", entity_id=%entity.id, storage_us, db_us=crate::shared::casts::micros(db_started.elapsed()));
 
         if outcome.newer {
             return Err(DeployFailure::Rejected(

@@ -22,6 +22,13 @@
 //! [`app_router`] composes them at the old gateway's prefixes behind the
 //! [`writes`] switch.
 
+// A silently truncated, wrapped or rounded cast is a bug.
+#![deny(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    clippy::cast_possible_wrap,
+    clippy::cast_precision_loss
+)]
 // Production routes go through `shared::routing` (worlds/clippy.toml); test routers may use axum's.
 #![cfg_attr(not(test), deny(clippy::disallowed_methods))]
 #![cfg_attr(

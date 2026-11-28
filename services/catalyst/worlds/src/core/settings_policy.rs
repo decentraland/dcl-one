@@ -38,7 +38,7 @@ pub fn storable_skybox_time(n: f64) -> Option<i32> {
     if !n.is_finite() || n.fract() != 0.0 {
         return None;
     }
-    i32::try_from(n as i64).ok()
+    i32::try_from(crate::shared::casts::f64_to_i64(n)).ok()
 }
 
 /// Longest magic-byte signature checked below (RIFF....WEBP).

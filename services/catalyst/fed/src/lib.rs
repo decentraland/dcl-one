@@ -14,6 +14,14 @@
 //! unless `FED_GOSSIP=nats` and a peer file with pinned roots were
 //! configured, which no deployment did; peers reconcile by pulling the feeds.
 
+// A silently truncated, wrapped or rounded cast is a bug.
+#![deny(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    clippy::cast_possible_wrap,
+    clippy::cast_precision_loss
+)]
+
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use sqlx::PgPool;

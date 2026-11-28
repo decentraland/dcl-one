@@ -221,6 +221,15 @@ pub fn decode_batch(buf: &[u8]) -> Vec<CrdtMessage> {
     out
 }
 
+/// A CRDT length as its u32 wire field.
+#[allow(
+    clippy::cast_possible_truncation,
+    reason = "the wire length is u32; a CRDT message stays far below 4 GiB"
+)]
+fn wire_len(n: usize) -> u32 {
+    n as u32
+}
+
 pub fn encode_message(msg: &CrdtMessage, out: &mut Vec<u8>) {
     match msg {
         CrdtMessage::Put {
@@ -240,13 +249,13 @@ pub fn encode_message(msg: &CrdtMessage, out: &mut Vec<u8>) {
             } else {
                 msg_type::APPEND_VALUE
             };
-            let len = (HEADER_LEN + 16 + data.len()) as u32;
+            let len = wire_len(HEADER_LEN + 16 + data.len());
             write_u32(out, len);
             write_u32(out, ty);
             write_u32(out, *entity);
             write_u32(out, *component_id);
             write_u32(out, *timestamp);
-            write_u32(out, data.len() as u32);
+            write_u32(out, wire_len(data.len()));
             out.extend_from_slice(data);
         }
         CrdtMessage::DeleteComponent {
@@ -254,14 +263,14 @@ pub fn encode_message(msg: &CrdtMessage, out: &mut Vec<u8>) {
             component_id,
             timestamp,
         } => {
-            write_u32(out, (HEADER_LEN + 12) as u32);
+            write_u32(out, wire_len(HEADER_LEN + 12));
             write_u32(out, msg_type::DELETE_COMPONENT);
             write_u32(out, *entity);
             write_u32(out, *component_id);
             write_u32(out, *timestamp);
         }
         CrdtMessage::DeleteEntity { entity } => {
-            write_u32(out, (HEADER_LEN + 4) as u32);
+            write_u32(out, wire_len(HEADER_LEN + 4));
             write_u32(out, msg_type::DELETE_ENTITY);
             write_u32(out, *entity);
         }
@@ -699,13 +708,19 @@ impl CrdtEngine {
     /// G-Set rule also removes every earlier generation.
     pub fn reclaim_range(&mut self, start: u32, size: u32) -> Vec<CrdtMessage> {
         let end = start.saturating_add(size);
-        let lo = start.min(MAX_ENTITY_NUMBERS as u32);
-        let hi = end.min(MAX_ENTITY_NUMBERS as u32);
+        let numbers = u32::from(u16::MAX) + 1;
+        let lo = start.min(numbers);
+        let hi = end.min(numbers);
         if lo >= hi {
             return Vec::new();
         }
-        let lo_key: CellKey = (lo as u16, 0, 0);
-        let hi_key: CellKey = ((hi - 1) as u16, u16::MAX, u32::MAX);
+        // lo < hi <= 2^16, so both bounds fit.
+        let lo_key: CellKey = (u16::try_from(lo).unwrap_or(u16::MAX), 0, 0);
+        let hi_key: CellKey = (
+            u16::try_from(hi - 1).unwrap_or(u16::MAX),
+            u16::MAX,
+            u32::MAX,
+        );
 
         let mut victims: BTreeMap<u16, u16> = BTreeMap::new();
         for (&(number, generation, _), _) in self.lww.range(lo_key..=hi_key) {
@@ -728,6 +743,10 @@ impl CrdtEngine {
 }
 
 #[allow(clippy::indexing_slicing, clippy::expect_used, reason = "test support")]
+#[allow(
+    clippy::cast_possible_truncation,
+    reason = "test fixtures use small literal values"
+)]
 #[cfg(test)]
 mod tests {
     use super::*;

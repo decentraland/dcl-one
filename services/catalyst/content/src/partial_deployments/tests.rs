@@ -2,6 +2,13 @@
 //! scratch database (each test signs with a fresh wallet on parcels of its
 //! own), and the pure quota arithmetic.
 
+#![allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_possible_wrap,
+    clippy::cast_precision_loss,
+    reason = "test fixtures use small literal values"
+)]
+
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -1357,7 +1364,10 @@ async fn a_busy_store_lock_ends_the_cleanup_run() {
     );
     assert_eq!(cleaned.unwrap(), 0);
     assert_eq!(attempts.len(), 1, "one exclusive attempt: {attempts:?}");
-    assert_eq!(pending_among(&pool, &ids).await, ids.len() as i64);
+    assert_eq!(
+        pending_among(&pool, &ids).await,
+        crate::shared::casts::len_i64(ids.len())
+    );
     let held = (10 * ids.len()) as f64;
     for name in [
         crate::series::PARTIAL_RESERVED.descriptor.name,
@@ -1460,7 +1470,10 @@ async fn an_unreadable_content_list_ends_the_cleanup_run() {
         .await
         .unwrap_err();
     assert!(error.to_string().contains("content list"), "{error}");
-    assert_eq!(pending_among(&pool, &first).await, first.len() as i64);
+    assert_eq!(
+        pending_among(&pool, &first).await,
+        crate::shared::casts::len_i64(first.len())
+    );
     assert_eq!(pending_among(&pool, &later).await, 1, "the run stopped");
 
     sqlx::query("DELETE FROM worlds.world_scenes WHERE world_name = $1")

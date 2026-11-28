@@ -251,7 +251,8 @@ impl ItemsComponent {
         cheque.verify(
             signer,
             &state.preparation.third_party_id,
-            state.preparation.item_ids.len() as u32,
+            // Saturating never matches a signed count, so the cheque is refused.
+            u32::try_from(state.preparation.item_ids.len()).unwrap_or(u32::MAX),
             &state.salt,
         )?;
         if let Some(existing) = &state.cheque {

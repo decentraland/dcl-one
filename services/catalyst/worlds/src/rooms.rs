@@ -171,7 +171,7 @@ pub async fn world_scene_count(pool: &PgPool, world: &WorldName) -> Result<usize
     .bind(world.key())
     .fetch_one(pool)
     .await?;
-    Ok(count as usize)
+    Ok(crate::shared::casts::index_usize(count))
 }
 
 /// A named scene of a world, when deployed there or retired within

@@ -473,7 +473,7 @@ impl Leader {
             .context("loading deployed entity ids into the bloom filter")?;
         tracing::info!(
             count,
-            elapsed_ms = seeding.elapsed().as_millis() as u64,
+            elapsed_ms = crate::shared::casts::millis(seeding.elapsed()),
             pool_size = self.pool.size(),
             pool_idle = self.pool.num_idle(),
             "Bloom filter populated"

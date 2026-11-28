@@ -47,7 +47,7 @@ pub async fn get_wearable_images(
         ));
     }
 
-    let offset = q.offset as i64;
+    let offset = crate::handlers::offset(q.offset)?;
     let found = match state
         .db
         .get_wearable_images_page(&item, offset, capped_limit(q.limit))

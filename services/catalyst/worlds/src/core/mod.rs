@@ -346,7 +346,7 @@ impl CoreState {
             .max_concurrent_uploads
             .min(u64::from((pool.options().get_max_connections() / 4).max(1)));
         let partial_sessions = Arc::new(tokio::sync::Semaphore::new(
-            partial_session_capacity as usize,
+            crate::shared::casts::to_usize(partial_session_capacity),
         ));
         Self {
             pool,

@@ -1,3 +1,9 @@
+#![allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_precision_loss,
+    reason = "test fixtures use small literal values"
+)]
+
 use super::*;
 use serde_json::{Value, json};
 use std::collections::BTreeMap;

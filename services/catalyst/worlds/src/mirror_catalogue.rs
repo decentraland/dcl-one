@@ -1,5 +1,6 @@
 //! Worlds mirror catalogue.
 use super::*;
+use crate::shared::casts::len_i64;
 
 pub(super) struct CatalogueEntry {
     pub(super) name: String,
@@ -134,7 +135,7 @@ pub(super) async fn catalogue_pass(
         .execute(&mut *tx)
         .await?
         .rows_affected();
-        (n as usize, true, None)
+        (crate::shared::casts::to_usize(n), true, None)
     };
     let outcome = CatalogueOutcome {
         listed: entries.len(),
@@ -184,7 +185,7 @@ pub(super) async fn due_total(pool: &PgPool, settings: &MirrorSettings) -> Resul
              LIMIT $2) s"#,
     )
     .bind(&settings.names)
-    .bind(settings.limit.map(|l| l as i64).unwrap_or(i64::MAX))
+    .bind(settings.limit.map_or(i64::MAX, len_i64))
     .fetch_one(pool)
     .await?;
     Ok(n)
@@ -207,7 +208,7 @@ pub(super) async fn due_batch(
         )
         .bind(&settings.names)
         .bind(cursor)
-        .bind(settings.concurrency as i64)
+        .bind(len_i64(settings.concurrency))
         .fetch_all(pool)
         .await?);
     }
@@ -223,9 +224,9 @@ pub(super) async fn due_batch(
            LIMIT $4"#,
     )
     .bind(&settings.names)
-    .bind(settings.limit.map(|l| l as i64).unwrap_or(i64::MAX))
+    .bind(settings.limit.map_or(i64::MAX, len_i64))
     .bind(cursor)
-    .bind(settings.concurrency as i64)
+    .bind(len_i64(settings.concurrency))
     .fetch_all(pool)
     .await?;
     Ok(rows

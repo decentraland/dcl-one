@@ -16,6 +16,11 @@
 //! The oracle for every A-vs-B disagreement is upstream `@dcl/ecs`
 //! (`js-sdk-toolchain/packages/@dcl/ecs`); the relevant citations are inline.
 
+#![allow(
+    clippy::cast_possible_truncation,
+    reason = "test fixtures use small literal values"
+)]
+
 use crate::scene_state::crdt::{
     ApplyResult, CrdtEngine, CrdtMessage, decode_batch, decode_client_batch, encode_batch,
     pack_entity,

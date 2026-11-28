@@ -2,6 +2,14 @@
 //! `lib.rs`). It reads the database, asks the gatekeeper for its token, and serves `/metrics`
 //! and `/health/*` on `MESSAGE_ROUTER_METRICS_BIND` until SIGINT or SIGTERM.
 
+// A silently truncated, wrapped or rounded cast is a bug.
+#![deny(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    clippy::cast_possible_wrap,
+    clippy::cast_precision_loss
+)]
+
 use std::sync::Arc;
 
 use clap::Parser;

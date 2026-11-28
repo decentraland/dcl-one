@@ -110,7 +110,7 @@ pub async fn list(
         .bind(limit)
         .fetch_all(pool)
         .await?;
-    let next = (rows.len() as i64 == limit)
+    let next = (crate::shared::casts::len_i64(rows.len()) == limit)
         .then(|| rows.last().map(|r| r.id))
         .flatten();
     Ok(json!({

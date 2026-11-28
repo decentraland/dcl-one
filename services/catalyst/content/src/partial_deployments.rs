@@ -69,6 +69,7 @@
 //! store lock against the collector: the receipts are written before the
 //! blobs, and the collector reads them.
 
+use crate::shared::casts::{ApproxF64, f64_to_i64, f64_to_u64, len_i64, saturating_i64};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -239,7 +240,7 @@ pub async fn admit_before_files(
     if window_bytes <= limits.bytes_per_minute {
         return None;
     }
-    let retry_after = (ends_in_ms / 1000.0).ceil().max(1.0) as u64;
+    let retry_after = f64_to_u64((ends_in_ms / 1000.0).ceil().max(1.0));
     Some(
         Refusal::throttled(
             Some("bytes_per_minute"),
@@ -447,10 +448,19 @@ fn seconds_until_cleanup_frees_quota(
 ) -> u64 {
     let reclaimable_at = oldest_created_at.map_or(now, |oldest| now.max(oldest + ttl_ms));
     let base = last_cleanup_at.unwrap_or(now);
-    let runs = ((reclaimable_at - base) as f64 / interval_ms as f64)
-        .ceil()
-        .max(1.0) as i64;
-    (((base + runs * interval_ms - now) as f64 / 1000.0).ceil() as i64).max(1) as u64
+    let runs = f64_to_i64(
+        ((reclaimable_at - base).approx_f64() / interval_ms.approx_f64())
+            .ceil()
+            .max(1.0),
+    );
+    ceil_secs(base + runs * interval_ms - now)
+}
+
+/// Milliseconds as whole seconds, rounded up, at least 1.
+fn ceil_secs(ms: i64) -> u64 {
+    f64_to_i64((ms.approx_f64() / 1000.0).ceil())
+        .max(1)
+        .unsigned_abs()
 }
 
 /// One pointer's live uploads, overall and by the batch's account.
@@ -476,7 +486,7 @@ fn check_pointer_quotas(
     let max_per_deployer = (max_per_pointer - 1).max(1);
     let retry_after = |oldest: &[i64]| {
         let latest = oldest.iter().copied().max().unwrap_or(now);
-        (((latest + ttl_ms - now) as f64 / 1000.0).ceil() as i64).max(1) as u64
+        ceil_secs(latest + ttl_ms - now)
     };
     let describe = |full: &[&PointerUsage]| {
         let mut text = full
@@ -929,11 +939,11 @@ async fn prepare(
         .map(|c| c.hash.clone())
         .filter(|h| seen_hashes.insert(h.clone()))
         .collect();
-    let max_scene_bytes = super::validator::types::max_size_mb(EntityType::Scene).unwrap_or(15)
-        as i64
-        * 1024
-        * 1024
-        * entity.pointers.len() as i64;
+    let max_scene_bytes =
+        saturating_i64(super::validator::types::max_size_mb(EntityType::Scene).unwrap_or(15))
+            * 1024
+            * 1024
+            * len_i64(entity.pointers.len());
 
     // A fast refusal for new uploads only; publication enforces the order.
     if seen.is_none() && deployer.has_newer_deployment(&entity).await? {
@@ -1134,7 +1144,7 @@ async fn commit(
                 store_unreadable(entity_id, &e)
             })?;
             if let Some(info) = info {
-                sizes.push((hash.clone(), info.size as i64));
+                sizes.push((hash.clone(), saturating_i64(info.size)));
             }
         }
         crate::series::partial_stage("inventory", inventory_started);
@@ -1167,7 +1177,7 @@ async fn commit(
     let mut incoming_bytes: i64 = 0;
     let mut to_store: Vec<(String, UploadedFile)> = Vec::new();
     for (hash, file) in &files {
-        incoming_bytes += file.len() as i64;
+        incoming_bytes += saturating_i64(file.len());
         if already_stored.contains(hash) {
             continue;
         }
@@ -1175,7 +1185,7 @@ async fn commit(
             hash.clone(),
             Receipt {
                 hash: hash.clone(),
-                size: file.len() as i64,
+                size: saturating_i64(file.len()),
                 stored: false,
                 charged: true,
                 written: true,
@@ -1262,7 +1272,7 @@ async fn commit(
          RETURNING batches",
     )
     .bind(entity_id)
-    .bind((now_ms() - limits.ttl_ms) as f64)
+    .bind((now_ms() - limits.ttl_ms).approx_f64())
     .fetch_optional(&mut *tx)
     .await?;
     let Some(batches) = batches else {
@@ -1442,7 +1452,7 @@ async fn create_upload(
     )
     .bind(&entity.pointers)
     .bind(deployer_address)
-    .bind((now_ms() - limits.ttl_ms) as f64)
+    .bind((now_ms() - limits.ttl_ms).approx_f64())
     .fetch_all(&mut *tx)
     .await?;
     if let Some((reason, message, retry_after)) =
@@ -1464,7 +1474,7 @@ async fn create_upload(
     .bind(&entity.pointers)
     .bind(content_hashes)
     .bind(deployer_address)
-    .bind(requested_at as f64)
+    .bind(requested_at.approx_f64())
     .execute(&mut *tx)
     .await?;
     tx.commit().await?;
@@ -1558,7 +1568,7 @@ async fn reserve(
         )));
     }
     if window_bytes > limits.bytes_per_minute {
-        let retry_after = (ends_in_ms / 1000.0).ceil().max(1.0) as u64;
+        let retry_after = f64_to_u64((ends_in_ms / 1000.0).ceil().max(1.0));
         return Err(Refusal::throttled(
             Some("bytes_per_minute"),
             format!(
@@ -1898,7 +1908,7 @@ async fn reclaim_uploads(
              RETURNING entity_id",
         )
         .bind(ids.into_iter().cloned().collect::<Vec<String>>())
-        .bind(expired_before as f64)
+        .bind(expired_before.approx_f64())
     };
     let unbuffered = || {
         entity_ids
@@ -2011,7 +2021,7 @@ async fn record_totals(pool: &PgPool, limits: &Limits) {
            count(*) FILTER (WHERE created_at < to_timestamp($1 / 1000.0))
          FROM content.pending_deployments",
     )
-    .bind((now_ms() - limits.ttl_ms) as f64)
+    .bind((now_ms() - limits.ttl_ms).approx_f64())
     .fetch_one(pool)
     .await;
     match totals {
@@ -2038,7 +2048,7 @@ async fn reclaim_expired(
                AND ($2::float8 IS NULL OR (created_at, entity_id) > (to_timestamp($2 / 1000.0)::timestamp, $3))
              ORDER BY created_at, entity_id LIMIT $4",
         )
-        .bind(cutoff as f64)
+        .bind(cutoff.approx_f64())
         .bind(after.as_ref().map(|(ts, _)| *ts))
         .bind(after.as_ref().map(|(_, id)| id.clone()).unwrap_or_default())
         .bind(EXPIRED_UPLOADS_PER_PAGE)
@@ -2091,7 +2101,7 @@ async fn reclaim_expired(
                 }
             }
         }
-        if (page.len() as i64) < EXPIRED_UPLOADS_PER_PAGE {
+        if len_i64(page.len()) < EXPIRED_UPLOADS_PER_PAGE {
             break;
         }
         after = page.last().cloned();
@@ -2109,7 +2119,8 @@ fn run_result(removed: usize, failed: usize) -> anyhow::Result<usize> {
 
 /// The leased cleanup job, on a node taking local writes.
 pub fn spawn(jobs: &Jobs, pool: PgPool, storage: Arc<Storage>, limits: Limits) {
-    let interval = Duration::from_millis(limits.cleanup_interval_ms as u64);
+    // `Limits::from_config` keeps it positive.
+    let interval = Duration::from_millis(limits.cleanup_interval_ms.unsigned_abs());
     jobs.spawn_periodic_leased(JOB_NAME, PeriodicCfg::every(interval), move |ctx| {
         let (pool, storage, limits) = (pool.clone(), storage.clone(), limits.clone());
         async move {

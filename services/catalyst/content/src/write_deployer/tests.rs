@@ -3,6 +3,12 @@
 //! schema, with uuid-prefixed ids and pointers so concurrent tests never
 //! meet, and are skipped without the variable.
 
+#![allow(
+    clippy::cast_sign_loss,
+    clippy::cast_precision_loss,
+    reason = "test fixtures use small literal values"
+)]
+
 use super::*;
 use crate::auth::AuthLinkType;
 use crate::storage::hex_prefix;

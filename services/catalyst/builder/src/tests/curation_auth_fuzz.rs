@@ -1,6 +1,12 @@
 //! The old run was 100,000 iterations; a debug build of the k256 recovery
 //! makes that minutes, so the default here is 5,000 with the same seed and
 //! `CATALYST_BUILDER_FUZZ_ITERATIONS` restores the full run.
+
+#![allow(
+    clippy::cast_possible_truncation,
+    reason = "test fixtures use small literal values"
+)]
+
 use alloy::signers::{Signer, local::PrivateKeySigner};
 use axum::http::{HeaderMap, HeaderName, HeaderValue};
 

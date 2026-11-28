@@ -33,6 +33,7 @@
 //! to a week, and never retries a refusal.
 
 use crate::failed_deployments_store::LiveFailedDeploymentsStore;
+use crate::shared::casts::{ApproxF64, f64_to_i64};
 
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -140,7 +141,7 @@ fn flush_failure_record(
         failure_timestamp: now_ms,
         snapshot_hash: None,
         retry_count: retry.0,
-        next_retry_at: now_ms + retry.1 as i64,
+        next_retry_at: now_ms + crate::shared::casts::saturating_i64(retry.1),
     }
 }
 
@@ -692,7 +693,7 @@ impl LiveSyncDeployer {
             #[cfg(any(test, feature = "test-support"))]
             SyncValidation::AuthChainOnly => {
                 let parsed = parse_entity_for_deploy(entity_data, entity_id, auth_chain)?;
-                verify_peer_entity_chain(entity_id, auth_chain, parsed.entity_timestamp as i64)
+                verify_peer_entity_chain(entity_id, auth_chain, f64_to_i64(parsed.entity_timestamp))
                     .await
             }
         }
@@ -1328,7 +1329,7 @@ pub async fn is_entity_deployed(
                        WHERE entity_id = $1 AND entity_timestamp >= to_timestamp($2 / 1000.0))",
     )
     .bind(entity_id)
-    .bind(timestamp_ms as f64)
+    .bind(timestamp_ms.approx_f64())
     .fetch_one(pool)
     .await
     .map_err(|e| SyncError::Storage(e.to_string()))?;
@@ -1342,7 +1343,7 @@ pub async fn deployed_entity_ids(
     entities: &[(&str, Timestamp)],
 ) -> Result<HashSet<String>, SyncError> {
     let ids: Vec<&str> = entities.iter().map(|(id, _)| *id).collect();
-    let timestamps: Vec<f64> = entities.iter().map(|(_, ts)| *ts as f64).collect();
+    let timestamps: Vec<f64> = entities.iter().map(|(_, ts)| ts.approx_f64()).collect();
     let rows: Vec<String> = sqlx::query_scalar(
         "SELECT d.entity_id FROM unnest($1::text[], $2::float8[]) AS r(entity_id, ts)
          JOIN content.deployments d

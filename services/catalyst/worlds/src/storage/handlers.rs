@@ -869,6 +869,10 @@ pub async fn usage_env(
     }))
 }
 
+#[allow(
+    clippy::cast_possible_truncation,
+    reason = "test fixtures use small literal values"
+)]
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -84,6 +84,7 @@
 //! quota and not resuming its signer's own upload, or from an account over
 //! its byte rate, is turned away (429) before any file is buffered.
 
+use crate::shared::casts::ApproxF64;
 use std::collections::{BTreeMap, HashSet};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -523,7 +524,7 @@ fn spool_unavailable(e: &std::io::Error) -> Response {
 /// `upload_budget_refused_received_bytes`.
 fn budget_exhausted_after(received: u64) -> Response {
     dcl_metrics::histogram!(crate::metrics::REFUSED_BYTES, "route" => SPOOL_ROUTE)
-        .record(received as f64);
+        .record(received.approx_f64());
     budget_exhausted()
 }
 
@@ -735,7 +736,7 @@ pub fn deployment_failure_response(failure: DeployFailure) -> Response {
 /// (a retry then answers the stored timestamp) or did not.
 fn processing_timed_out(timeout: Duration) -> Response {
     tracing::warn!(
-        timeout_ms = timeout.as_millis() as u64,
+        timeout_ms = crate::shared::casts::millis(timeout),
         "POST /entities: deployment processing timed out"
     );
     deployment_failure_response(DeployFailure::Unavailable(vec![format!(
@@ -973,13 +974,13 @@ fn counting_body(
 /// Upstream's 408 for a body that did not arrive within `timeout`, with
 /// what did arrive (`uploadTimedOutMessage`).
 fn upload_timed_out(timeout: Duration, received: u64, declared: Option<u64>) -> Response {
-    let timeout_ms = timeout.as_millis() as f64;
+    let timeout_ms = timeout.as_millis().approx_f64();
     let received_text = match declared {
         Some(declared) => format!("{received} of {declared}"),
         None => received.to_string(),
     };
     let bytes_per_second = if timeout_ms > 0.0 {
-        received as f64 * 1000.0 / timeout_ms
+        received.approx_f64() * 1000.0 / timeout_ms
     } else {
         0.0
     };
@@ -1225,7 +1226,7 @@ async fn deploy_regular(
     );
 
     let refundable = is_refundable(entity.as_ref());
-    let multipart_us = request_started.elapsed().as_micros() as u64;
+    let multipart_us = crate::shared::casts::micros(request_started.elapsed());
     let deploy_started = std::time::Instant::now();
     match deployer
         .deploy_entity(uploads, &entity_id, auth_chain, "LOCAL")
@@ -1240,8 +1241,8 @@ async fn deploy_regular(
                 phase = "publish",
                 entity_id,
                 multipart_us,
-                deploy_us = deploy_started.elapsed().as_micros() as u64,
-                elapsed_us = request_started.elapsed().as_micros() as u64
+                deploy_us = crate::shared::casts::micros(deploy_started.elapsed()),
+                elapsed_us = crate::shared::casts::micros(request_started.elapsed())
             );
             Ok(Answer::Decided(created_response(creation_timestamp)))
         }
@@ -1292,7 +1293,9 @@ async fn partial_batch(
         auth_chain,
         files,
         requested_at_ms: chrono::Utc::now().timestamp_millis()
-            - request.started.elapsed().as_millis() as i64,
+            - crate::shared::casts::saturating_i64(crate::shared::casts::millis(
+                request.started.elapsed(),
+            )),
     };
     let mut admission = partial_deployments::Admission::default();
     let timeout = state.settings.deployment_processing_timeout;

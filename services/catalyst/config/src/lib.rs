@@ -3,6 +3,14 @@
 //! under theirs, so its code reads as it did in the application crate (AGENTS.md, docs/module-
 //! layers.toml).
 
+// A silently truncated, wrapped or rounded cast is a bug.
+#![deny(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    clippy::cast_possible_wrap,
+    clippy::cast_precision_loss
+)]
+
 pub mod config;
 mod content;
 mod create;

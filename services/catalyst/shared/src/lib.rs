@@ -5,6 +5,14 @@
 //! and HTTP/upstream helpers. It sits below the domains and uses only the
 //! leaf crates.
 
+// A silently truncated, wrapped or rounded cast is a bug.
+#![deny(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    clippy::cast_possible_wrap,
+    clippy::cast_precision_loss
+)]
+
 // The crates this one builds on, under their module names (AGENTS.md).
 pub(crate) use dcl_auth as auth;
 pub(crate) use dcl_http as http;
@@ -12,6 +20,7 @@ pub(crate) use dcl_http as http;
 pub mod as_of;
 pub mod audit;
 pub mod cache;
+pub mod casts;
 pub mod client_ip;
 pub mod collections;
 pub mod cors;

@@ -12,6 +12,7 @@
 //! this surface's own: the shared `dcl_auth::signed_fetch` window also serves
 //! services ported from other upstreams.
 
+use crate::shared::casts::ApproxF64;
 use axum::http::HeaderMap;
 
 use crate::auth::eip1654::Eip1654Validator;
@@ -208,7 +209,7 @@ pub fn check_freshness(raw: Option<&str>, now_ms: i64) -> Result<f64, AuthChainE
     if !timestamp.is_finite() {
         return Err(AuthChainError::InvalidTimestamp(raw.to_string()));
     }
-    let now = now_ms as f64;
+    let now = now_ms.approx_f64();
     if timestamp + EXPIRATION_MS < now {
         return Err(AuthChainError::Expired(format!(
             "Expired signature: signature timestamp: {}, timestamp expiration: {}, local timestamp: {now_ms}",

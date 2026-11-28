@@ -55,6 +55,14 @@
 //! readers answer from a fold another process publishes into the same
 //! database, and are unavailable without one.
 
+// A silently truncated, wrapped or rounded cast is a bug.
+#![deny(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    clippy::cast_possible_wrap,
+    clippy::cast_precision_loss
+)]
+
 // The crates this one builds on, under their module names (AGENTS.md).
 pub(crate) use catalyst_chain_index as chain_index;
 #[cfg(test)]
@@ -77,6 +85,8 @@ use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize};
 use std::time::Duration;
 
 use sqlx::PgPool;
+
+use crate::shared::casts::ApproxF64;
 
 use crate::jobs::{Jobs, PeriodicCfg};
 pub use indexer::{Cursor, HEAD_LAG_BLOCKS, READY_WINDOW, index_ready};
@@ -167,7 +177,7 @@ pub fn decode_land_token_id(token_id_hex: &str) -> Option<(i32, i32)> {
     }
     let hi = u128::from_str_radix(&hex[..32], 16).ok()?;
     let lo = u128::from_str_radix(&hex[32..], 16).ok()?;
-    let sign_extend = |v: u128| -> i32 { (v & 0xffff_ffff) as u32 as i32 };
+    let sign_extend = |v: u128| -> i32 { ((v & 0xffff_ffff) as u32).cast_signed() };
     Some((sign_extend(hi), sign_extend(lo)))
 }
 
@@ -436,7 +446,7 @@ impl LandAuthzState {
         .bind(&self.settings.estate_registry)
         .bind(x)
         .bind(y)
-        .bind(indexer::READY_WINDOW.num_seconds() as f64)
+        .bind(indexer::READY_WINDOW.num_seconds().approx_f64())
         .fetch_optional(conn)
         .await?;
         Ok(answer.map(|(estate_id,)| EstateMembership { estate_id }))

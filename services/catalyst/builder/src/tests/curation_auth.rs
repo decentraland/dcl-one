@@ -1,3 +1,8 @@
+#![allow(
+    clippy::cast_possible_truncation,
+    reason = "test fixtures use small literal values"
+)]
+
 use alloy::signers::{Signer, local::PrivateKeySigner};
 use axum::http::{HeaderMap, HeaderName, HeaderValue};
 

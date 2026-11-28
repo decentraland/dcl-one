@@ -19,6 +19,7 @@
 //! `GET /env/{key}`, `GET /usage/world` and `GET /usage/players/{address}`.
 //! The guest never holds SQL, a key, or another scene's namespace.
 
+use crate::shared::casts::ApproxF64;
 use alloy_primitives::Signature;
 use chrono::{DateTime, Utc};
 
@@ -128,7 +129,7 @@ pub fn verify_storage_delegation_at(
         return Err("claim parcel does not match target parcel");
     }
     // `Date.parse` never yields NaN here (`date_parse` returns None instead).
-    if claim.expiration <= now.timestamp_millis() as f64 {
+    if claim.expiration <= now.timestamp_millis().approx_f64() {
         return Err("delegation expired");
     }
 

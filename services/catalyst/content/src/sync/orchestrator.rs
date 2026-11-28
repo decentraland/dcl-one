@@ -12,6 +12,7 @@
 //! a node unready. Deploys of a type are taken only once that type is ready
 //! ([`SyncStatus::takes_deploys_of`]).
 
+use crate::shared::casts::{ApproxF64, f64_to_u64};
 use futures::future::{BoxFuture, Shared};
 use futures::{FutureExt, StreamExt};
 use parking_lot::Mutex as SyncMutex;
@@ -500,7 +501,7 @@ fn heartbeat_while_busy(repo: Arc<LiveDeploymentRepository>) -> HeartbeatGuard {
 }
 
 fn backoff(ms: f64, exponent: f64, max_ms: u64) -> f64 {
-    (ms * exponent).min(max_ms as f64)
+    (ms * exponent).min(max_ms.approx_f64())
 }
 
 impl SyncOrchestratorConfig {
@@ -520,7 +521,7 @@ impl SyncOrchestratorConfig {
                 .max(self.syncing_reconnect_time_ms),
         );
         if !failed || (settled_poll && run >= healthy_run) {
-            self.syncing_reconnect_time_ms as f64
+            self.syncing_reconnect_time_ms.approx_f64()
         } else {
             backoff(
                 backoff_ms,
@@ -553,7 +554,7 @@ impl SyncOrchestratorRefs {
     }
 
     fn bootstrap_backoff_start(&self) -> f64 {
-        self.config.bootstrap_reconnect_time_ms.max(1) as f64
+        self.config.bootstrap_reconnect_time_ms.max(1).approx_f64()
     }
 
     fn bootstrap_backoff(&self, ms: f64) -> f64 {
@@ -669,7 +670,7 @@ impl SyncOrchestratorRefs {
                 Err(SyncError::Stopped) => return Err(SyncError::Stopped),
                 Err(e) => {
                     warn!(error = %e, backoff_ms, "Bootstrap failed; retrying");
-                    if self.sleep_or_stop(backoff_ms as u64).await {
+                    if self.sleep_or_stop(f64_to_u64(backoff_ms)).await {
                         return Err(SyncError::Stopped);
                     }
                     backoff_ms = self.bootstrap_backoff(backoff_ms);
@@ -741,7 +742,7 @@ impl SyncOrchestratorRefs {
             if let Some(state) = servers.get_mut(&peer.url)
                 && state.phase != ServerPhase::Syncing
             {
-                state.retry_at = now + Duration::from_millis(state.retry_delay_ms as u64);
+                state.retry_at = now + Duration::from_millis(f64_to_u64(state.retry_delay_ms));
                 state.retry_delay_ms = self.bootstrap_backoff(state.retry_delay_ms);
             }
         }
@@ -1367,7 +1368,7 @@ impl SyncOrchestratorRefs {
 
             let handle = tokio::spawn(async move {
                 let cfg = &refs.config;
-                let mut backoff_ms = cfg.syncing_reconnect_time_ms as f64;
+                let mut backoff_ms = cfg.syncing_reconnect_time_ms.approx_f64();
                 loop {
                     if refs.control.wait_while_paused(&cancel).await {
                         return;
@@ -1433,7 +1434,7 @@ impl SyncOrchestratorRefs {
                     }
                     tokio::select! {
                         _ = cancel.cancelled() => return,
-                        _ = tokio::time::sleep(Duration::from_millis(backoff_ms as u64)) => {}
+                        _ = tokio::time::sleep(Duration::from_millis(f64_to_u64(backoff_ms))) => {}
                         _ = refs.control.changed() => {}
                     }
                 }

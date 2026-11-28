@@ -179,6 +179,10 @@ async fn resolve_places_ids(
     Ok(resolved)
 }
 
+#[allow(
+    clippy::cast_possible_wrap,
+    reason = "test fixtures use small literal values"
+)]
 #[cfg(test)]
 mod tests {
     use super::{MAX_PLACES_IDS, validate_places_ids, world_place_lookup_error};

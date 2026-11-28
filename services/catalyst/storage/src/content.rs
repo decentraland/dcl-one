@@ -422,7 +422,8 @@ impl OpenedContent {
         if start >= self.size {
             return Ok(Bytes::new());
         }
-        let len = (end.min(self.size - 1) - start + 1) as usize;
+        // Lossless where usize is 64 bits.
+        let len = usize::try_from(end.min(self.size - 1) - start + 1).unwrap_or(usize::MAX);
         self.file.seek(std::io::SeekFrom::Start(start)).await?;
         let mut buf = vec![0u8; len];
         let mut filled = 0;

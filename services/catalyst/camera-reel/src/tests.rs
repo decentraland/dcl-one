@@ -8,6 +8,12 @@
 //! uuid-suffixed hashes, and delete their rows at the end; without the
 //! variable they skip.
 
+#![allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_possible_wrap,
+    reason = "test fixtures use small literal values"
+)]
+
 use std::sync::Arc;
 
 use alloy::signers::{Signer as _, local::PrivateKeySigner};

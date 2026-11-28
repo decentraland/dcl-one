@@ -4,6 +4,12 @@
 //! `multicall`) and to item contracts, each question answered by the test.
 //! A JSON-RPC batch is answered element by element unless batches are off.
 
+#![allow(
+    clippy::cast_sign_loss,
+    clippy::cast_possible_wrap,
+    reason = "a fake chain over small block numbers"
+)]
+
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 

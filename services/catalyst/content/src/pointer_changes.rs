@@ -136,6 +136,10 @@ async fn fetch_pointer_changes(state: &SharedState, query_string: &str) -> AppRe
     .map_err(|e| AppError::Internal(e.to_string()))
 }
 
+#[allow(
+    clippy::cast_precision_loss,
+    reason = "test fixtures use small literal values"
+)]
 #[cfg(test)]
 mod tests {
     use super::*;

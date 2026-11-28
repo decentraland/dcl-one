@@ -4,6 +4,11 @@
 //! per-project asset packs, and the in-place upgrade of a database that
 //! predates the project tables.
 
+#![allow(
+    clippy::cast_possible_wrap,
+    reason = "test fixtures use small literal values"
+)]
+
 use std::sync::Arc;
 
 use axum::Router;

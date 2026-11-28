@@ -8,6 +8,13 @@
 //! (523) and the item gallery to its (12). No blob is stored: no captured
 //! answer carries image bytes.
 
+#![allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_possible_wrap,
+    clippy::cast_precision_loss,
+    reason = "test fixtures use small literal values"
+)]
+
 use axum::Router;
 use serde_json::{Value, json};
 use uuid::Uuid;

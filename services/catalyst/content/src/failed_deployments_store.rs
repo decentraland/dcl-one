@@ -1,6 +1,7 @@
 //! Persistence and due-order reads for failed content deployments.
 //! Publication removes records in its existing transaction; retry scheduling stays in sync.
 
+use crate::shared::casts::{ApproxF64, clamp_i32, count_u64, f64_to_i64, len_i64, sat_i32};
 use crate::sync_types::{FailedDeployment, FailureReason, SyncError};
 use serde_json::Value;
 use sqlx::PgPool;
@@ -86,14 +87,14 @@ impl From<FailedRow> for FailedDeployment {
             reason: reason_from_label(&r.reason),
             auth_chain: serde_json::from_value(r.auth_chain).unwrap_or_default(),
             error_description: r.error_description,
-            failure_timestamp: r.failure_timestamp as i64,
+            failure_timestamp: f64_to_i64(r.failure_timestamp),
             snapshot_hash: if r.snapshot_hash.is_empty() {
                 None
             } else {
                 Some(r.snapshot_hash)
             },
-            retry_count: r.retry_count.max(0) as u32,
-            next_retry_at: r.next_retry_at as i64,
+            retry_count: u32::try_from(r.retry_count).unwrap_or(0),
+            next_retry_at: f64_to_i64(r.next_retry_at),
         }
     }
 }
@@ -161,9 +162,9 @@ impl LiveFailedDeploymentsStore {
         .bind(serde_json::to_value(&failure.auth_chain).unwrap_or_else(|_| Value::Array(Vec::new())))
         .bind(&failure.error_description)
         .bind(failure.snapshot_hash.as_deref().unwrap_or(""))
-        .bind(failure.retry_count as i32)
-        .bind(failure.next_retry_at as f64)
-        .bind(failure.failure_timestamp as f64)
+        .bind(sat_i32(failure.retry_count))
+        .bind(failure.next_retry_at.approx_f64())
+        .bind(failure.failure_timestamp.approx_f64())
         .execute(&self.pool)
         .await
         .map_err(|e| SyncError::Storage(e.to_string()))?;
@@ -226,8 +227,8 @@ impl LiveFailedDeploymentsStore {
             Some(_) => sqlx::query_as::<_, FailedRow>(NEXT),
         }
         .bind(naive_utc(now_ms))
-        .bind(max_retries.min(i32::MAX as u32) as i32)
-        .bind(limit.min(i64::MAX as usize) as i64);
+        .bind(sat_i32(max_retries))
+        .bind(len_i64(limit));
         let query = match after {
             None => query,
             Some(cursor) => query.bind(cursor.next_retry_at).bind(&cursor.entity_id),
@@ -275,8 +276,8 @@ impl LiveFailedDeploymentsStore {
              RETURNING entity_id, entity_type, retry_count"
         ))
         .bind(naive_utc(now_ms))
-        .bind(max_retries.min(i32::MAX as u32) as i32)
-        .bind(limit.min(i64::MAX as usize) as i64)
+        .bind(sat_i32(max_retries))
+        .bind(len_i64(limit))
         .fetch_all(&self.pool)
         .await
         .map_err(|e| SyncError::Storage(e.to_string()))?;
@@ -285,7 +286,7 @@ impl LiveFailedDeploymentsStore {
             .map(|(entity_id, entity_type, retry_count)| EvictedRecord {
                 entity_id,
                 entity_type,
-                retry_count: retry_count.max(0) as u32,
+                retry_count: u32::try_from(retry_count).unwrap_or(0),
             })
             .collect())
     }
@@ -298,7 +299,7 @@ impl LiveFailedDeploymentsStore {
             .fetch_one(&self.pool)
             .await
             .map_err(|e| SyncError::Storage(e.to_string()))?;
-        Ok(count.max(0) as u64)
+        Ok(count_u64(count))
     }
 
     /// Records waiting for a verdict.
@@ -309,7 +310,7 @@ impl LiveFailedDeploymentsStore {
         .fetch_one(&self.pool)
         .await
         .map_err(|e| SyncError::Storage(e.to_string()))?;
-        Ok(count.max(0) as u64)
+        Ok(count_u64(count))
     }
 
     /// Records whose deadline is still ahead of `now_ms`: the backlog gauge of the cycle report.
@@ -323,7 +324,7 @@ impl LiveFailedDeploymentsStore {
         .fetch_one(&self.pool)
         .await
         .map_err(|e| SyncError::Storage(e.to_string()))?;
-        Ok(count.max(0) as u64)
+        Ok(count_u64(count))
     }
 
     /// Drops the entries that have burned through the retry cap, answering which ones actually
@@ -347,7 +348,7 @@ impl LiveFailedDeploymentsStore {
                 ),
             )
             .bind(chunk)
-            .bind(min_retry_count as i32)
+            .bind(sat_i32(min_retry_count))
             .fetch_all(&self.pool)
             .await
             .map_err(|e| SyncError::Storage(e.to_string()))?;
@@ -392,7 +393,7 @@ pub async fn prune_failed_deployments(
          WHERE failure_time < timezone('UTC', now()) - make_interval(days => $1)
            AND reason <> 'Validation undecided'",
     )
-    .bind(ttl_days as i32)
+    .bind(clamp_i32(ttl_days))
     .execute(pool)
     .await
     .map_err(|e| SyncError::Storage(e.to_string()))?;

@@ -10,6 +10,7 @@
 //! through [`entity_type`] first. Recording only touches the process recorder, a no-op
 //! without one, so it never fails or blocks a request or a job.
 
+use crate::shared::casts::ApproxF64;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Instant;
@@ -327,13 +328,13 @@ pub fn rate_limited(entity_type: &str, reason: &'static str) {
 pub fn rate_limiter_keys(entity_type: &str, cache_type: &'static str, keys: usize) {
     RATE_LIMITER_KEYS
         .handle([self::entity_type(entity_type), cache_type])
-        .set(keys as f64);
+        .set(keys.approx_f64());
 }
 
 pub fn rate_limiter_max_size(entity_type: &str, max_size: usize) {
     RATE_LIMITER_MAX_SIZE
         .handle([self::entity_type(entity_type)])
-        .set(max_size as f64);
+        .set(max_size.approx_f64());
 }
 
 /// A block read asked again; `network` is `mainnet`, `sepolia`, `polygon` or `amoy`.
@@ -374,10 +375,10 @@ pub fn partial_completed(created_at_ms: i64, batches: i64) {
     let elapsed_ms = chrono::Utc::now().timestamp_millis() - created_at_ms;
     PARTIAL_DURATION
         .handle([])
-        .record(elapsed_ms.max(0) as f64 / 1000.0);
+        .record(elapsed_ms.max(0).approx_f64() / 1000.0);
     PARTIAL_BATCHES_PER_UPLOAD
         .handle([])
-        .record(batches.max(0) as f64);
+        .record(batches.max(0).approx_f64());
 }
 
 /// One timed stage of a partial upload batch.
@@ -421,19 +422,23 @@ pub fn partial_batch(complete: bool) {
 }
 
 pub fn partial_capacity(bytes: i64) {
-    PARTIAL_CAPACITY.handle([]).set(bytes as f64);
+    PARTIAL_CAPACITY.handle([]).set(bytes.approx_f64());
 }
 
 pub fn partial_reserved(bytes: i64) {
-    PARTIAL_RESERVED.handle([]).set(bytes as f64);
+    PARTIAL_RESERVED.handle([]).set(bytes.approx_f64());
 }
 
 /// What `content.pending_deployments` holds at the end of a cleanup run.
 pub fn partial_totals(reserved: i64, expired_bytes: i64, live: i64, expired: i64) {
     partial_reserved(reserved);
-    PARTIAL_CLEANUP_BACKLOG.handle([]).set(expired_bytes as f64);
-    PARTIAL_PENDING.handle(["live"]).set(live as f64);
-    PARTIAL_PENDING.handle(["expired"]).set(expired as f64);
+    PARTIAL_CLEANUP_BACKLOG
+        .handle([])
+        .set(expired_bytes.approx_f64());
+    PARTIAL_PENDING.handle(["live"]).set(live.approx_f64());
+    PARTIAL_PENDING
+        .handle(["expired"])
+        .set(expired.approx_f64());
 }
 
 /// A cleanup run ended: `success`, `deferred` or `error`, `removed` uploads reclaimed.
@@ -465,7 +470,9 @@ pub struct UploadBudgetSeries {
 impl UploadBudgetSeries {
     /// The series of `budget` (`memory` or `disk`), its capacity set and nothing reserved.
     pub fn new(budget: &'static str, capacity: u64) -> Self {
-        UPLOAD_BUDGET_CAPACITY.handle([budget]).set(capacity as f64);
+        UPLOAD_BUDGET_CAPACITY
+            .handle([budget])
+            .set(capacity.approx_f64());
         let series = Self {
             reserved: UPLOAD_BUDGET_RESERVED.handle([budget]),
             active: UPLOAD_BUDGET_ACTIVE.handle([budget]),
@@ -477,8 +484,8 @@ impl UploadBudgetSeries {
 
     /// The bytes reserved and the uploads holding some of them.
     pub fn usage(&self, reserved: u64, active: u64) {
-        self.reserved.set(reserved as f64);
-        self.active.set(active as f64);
+        self.reserved.set(reserved.approx_f64());
+        self.active.set(active.approx_f64());
     }
 
     pub fn rejected(&self) {

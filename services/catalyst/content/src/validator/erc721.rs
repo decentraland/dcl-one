@@ -3,6 +3,7 @@
 //! content server, root and `/content`): the active entity at the item's URN
 //! formatted as the token metadata marketplaces read.
 
+use crate::shared::casts::{ApproxF64, f64_to_i64};
 use std::sync::Arc;
 
 use axum::Json;
@@ -203,10 +204,10 @@ fn checked_f64_to_i64(v: f64) -> Option<i64> {
     if !v.is_finite() {
         return None;
     }
-    if v < i64::MIN as f64 || v > i64::MAX as f64 {
+    if v < i64::MIN.approx_f64() || v > i64::MAX.approx_f64() {
         return None;
     }
-    Some(v as i64)
+    Some(f64_to_i64(v))
 }
 
 /// The served entity document back into an [`Entity`]; `content` entries

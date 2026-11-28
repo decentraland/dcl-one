@@ -31,6 +31,10 @@ sol! {
 const MIB_PER_UNIT: u64 = 100;
 const MANA_PER_UNIT_WEI: u128 = 2_000 * 1_000_000_000_000_000_000;
 /// 2000 MANA in wei.
+#[allow(
+    clippy::cast_possible_truncation,
+    reason = "splits the u128 into its 64-bit limbs"
+)]
 const MANA_PER_UNIT: U256 = U256::from_limbs([
     MANA_PER_UNIT_WEI as u64,
     (MANA_PER_UNIT_WEI >> 64) as u64,
@@ -379,6 +383,10 @@ impl SpaceAllowance for ChainHoldings {
     }
 }
 
+#[allow(
+    clippy::cast_possible_truncation,
+    reason = "test fixtures use small literal values"
+)]
 #[cfg(test)]
 mod tests {
     use std::collections::HashMap;

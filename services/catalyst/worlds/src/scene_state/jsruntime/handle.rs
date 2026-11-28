@@ -145,7 +145,7 @@ impl Watchdog {
     }
 
     fn now_ms(&self) -> u64 {
-        self.epoch.elapsed().as_millis() as u64
+        crate::shared::casts::millis(self.epoch.elapsed())
     }
 }
 

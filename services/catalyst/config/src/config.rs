@@ -608,7 +608,8 @@ impl Config {
     /// the snapshot's age reaches one poll interval plus the upstream's own
     /// lag (`PRICE_UPSTREAM_LAG_SECS`) before the next poll lands.
     pub fn price_staleness_warning(&self) -> Option<String> {
-        let floor = self.price.price_poll_interval_secs as i64 + Self::PRICE_UPSTREAM_LAG_SECS;
+        let floor = catalyst_shared::casts::saturating_i64(self.price.price_poll_interval_secs)
+            .saturating_add(Self::PRICE_UPSTREAM_LAG_SECS);
         (self.shop.mana_price_max_staleness_secs < floor).then(|| {
             format!(
                 "MANA_PRICE_MAX_STALENESS_SECS={} is below PRICE_POLL_INTERVAL_SECS={} plus the upstream's {} s lag: credits price reads will answer 503 \"oracle is stale\" for part of every poll cycle; raise it to at least {floor}",

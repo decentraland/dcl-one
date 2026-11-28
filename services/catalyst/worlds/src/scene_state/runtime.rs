@@ -77,7 +77,8 @@ impl ServerTransportConfig {
         if limit == 0 || base >= ENTITY_NUMBER_SPACE as u64 {
             return 0;
         }
-        ((ENTITY_NUMBER_SPACE as u64 - base) / limit) as u32
+        // At most ENTITY_NUMBER_SPACE, a u32.
+        u32::try_from((u64::from(ENTITY_NUMBER_SPACE) - base) / limit).unwrap_or(u32::MAX)
     }
 
     /// The half-open range `[start, start+size)` for `index`, or `None` when
@@ -92,7 +93,10 @@ impl ServerTransportConfig {
         debug_assert!(
             start + self.client_network_entities_limit as u64 <= ENTITY_NUMBER_SPACE as u64
         );
-        Some((start as u32, self.client_network_entities_limit))
+        Some((
+            u32::try_from(start).ok()?,
+            self.client_network_entities_limit,
+        ))
     }
 
     pub fn range_for_client(&self, index: u32) -> (u32, u32) {
@@ -877,6 +881,10 @@ pub fn frame_crdt(body: &[u8]) -> Vec<u8> {
     )
 }
 
+#[allow(
+    clippy::cast_possible_truncation,
+    reason = "test fixtures use small literal values"
+)]
 #[cfg(test)]
 mod tests {
     use super::*;
