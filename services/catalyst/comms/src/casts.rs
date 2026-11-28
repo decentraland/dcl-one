@@ -74,3 +74,40 @@ pub fn non_negative(n: i64) -> u64 {
 pub fn len_i64(n: usize) -> i64 {
     i64::try_from(n).unwrap_or(i64::MAX)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn durations_saturate_instead_of_wrapping() {
+        assert_eq!(millis(Duration::from_millis(1500)), 1500);
+        assert_eq!(micros(Duration::from_micros(7)), 7);
+        assert_eq!(millis(Duration::MAX), u64::MAX);
+        assert_eq!(micros(Duration::MAX), u64::MAX);
+        assert_eq!(millis_i64(Duration::MAX), i64::MAX);
+    }
+
+    #[test]
+    fn negative_values_read_as_zero() {
+        assert_eq!(non_negative(-7), 0);
+        assert_eq!(non_negative(i64::MIN), 0);
+        assert_eq!(non_negative(0), 0);
+        assert_eq!(non_negative(42), 42);
+        assert_eq!(non_negative(i64::MAX), 9_223_372_036_854_775_807);
+    }
+
+    #[test]
+    fn lengths_and_floats_keep_their_value() {
+        assert_eq!(len_i64(3), 3);
+        assert_eq!(usize_f64(1 << 20), 1_048_576.0);
+        assert_eq!(i64_f64(-5), -5.0);
+        assert_eq!(u64_f64(1 << 52), 4_503_599_627_370_496.0);
+    }
+
+    #[test]
+    fn the_clock_reads_after_the_epoch() {
+        assert!(unix_secs() > 1_700_000_000);
+        assert!(unix_millis() > 1_700_000_000_000);
+    }
+}

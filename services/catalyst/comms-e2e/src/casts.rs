@@ -60,3 +60,26 @@ pub fn index_u32(n: usize) -> u32 {
 pub fn trunc_i64(v: f64) -> i64 {
     v as i64
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn float_truncation_saturates_and_maps_nan_to_zero() {
+        assert_eq!(trunc_i32(-2.9), -2);
+        assert_eq!(trunc_i32(f32::NAN), 0);
+        assert_eq!(trunc_i32(f32::INFINITY), i32::MAX);
+        assert_eq!(trunc_i32(f32::NEG_INFINITY), i32::MIN);
+        assert_eq!(trunc_i64(3.99), 3);
+        assert_eq!(trunc_i64(f64::NAN), 0);
+        assert_eq!(trunc_i64(f64::INFINITY), i64::MAX);
+        assert_eq!(trunc_i64(f64::NEG_INFINITY), i64::MIN);
+    }
+
+    #[test]
+    fn indices_saturate() {
+        assert_eq!(index_u32(9), 9);
+        assert_eq!(index_u32(usize::MAX), u32::MAX);
+    }
+}
