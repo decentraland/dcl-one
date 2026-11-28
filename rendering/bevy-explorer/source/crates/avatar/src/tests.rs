@@ -1332,3 +1332,145 @@ fn a_wearable_opts_out_of_the_hover_glow() {
         );
     }
 }
+
+/// An emote GLB that carries a prop: the avatar clip, the prop's clip, and a default scene whose
+/// root is the prop's animation player.
+#[cfg(feature = "explorer")]
+fn prop_emote_gltf(world: &mut World) -> Handle<Gltf> {
+    let mut clip = AnimationClip::default();
+    clip.set_duration(1.0);
+    let avatar_clip = world
+        .resource_mut::<Assets<AnimationClip>>()
+        .add(clip.clone());
+    let prop_clip = world.resource_mut::<Assets<AnimationClip>>().add(clip);
+    let mut scene = World::new();
+    scene.spawn((
+        Name::new("Glider"),
+        Transform::default(),
+        Visibility::default(),
+        AnimationPlayer::default(),
+    ));
+    let scene = world.resource_mut::<Assets<Scene>>().add(Scene::new(scene));
+    let mut gltf = gltf_with_scene(Some(scene));
+    gltf.meshes.push(Handle::default());
+    gltf.named_animations
+        .insert("Glide_Avatar".into(), avatar_clip);
+    gltf.named_animations
+        .insert("Glider_Prop".into(), prop_clip);
+    world.resource_mut::<Assets<Gltf>>().add(gltf)
+}
+
+/// The play systems in their frame order, and the player with a body animation player and no
+/// emote yet.
+#[cfg(feature = "explorer")]
+fn app_with_prop_emote_player() -> (App, Entity, Entity) {
+    let mut app = app_with_avatar_scenes();
+    app.init_asset::<AnimationClip>()
+        .init_asset::<bevy_kira_audio::AudioSource>()
+        .init_resource::<common::structs::SceneDrivenAnimationFeedback>()
+        .init_resource::<animate::PropCache>()
+        .register_type::<AnimationPlayer>()
+        .add_systems(Update, animate::play_systems());
+    let world = app.world_mut();
+    let player = spawn_preloading_player(world, &[], TEST_BODY_SHAPE);
+    let graph = world
+        .resource_mut::<Assets<AnimationGraph>>()
+        .add(AnimationGraph::new());
+    let body = world
+        .spawn((
+            AnimationPlayer::default(),
+            AnimationTransitions::new(),
+            common::structs::Clips::default(),
+            AnimationGraphHandle(graph),
+            ChildOf(player),
+        ))
+        .id();
+    world.entity_mut(player).insert(AvatarAnimPlayer(body));
+    (app, player, body)
+}
+
+const PROP_EMOTE: &str = "urn:decentraland:matic:collections-v2:0xabc:2";
+
+/// a clip with a prop whose GLB a scene preloaded starts on the frame it is asked for, the body,
+/// the prop's clip and the prop's visibility together, as a clip without a prop does
+#[cfg(feature = "explorer")]
+#[test]
+fn a_preloaded_prop_clip_starts_with_its_prop_on_the_frame_it_is_asked_for() {
+    use crate::animate::ActiveEmote;
+    use scene_runner::asset_preload::plugin::PreloadedGltf;
+
+    let (mut app, player, body) = app_with_prop_emote_player();
+    let world = app.world_mut();
+    let gltf = prop_emote_gltf(world);
+    register_test_emote_gltf(world, PROP_EMOTE, gltf.clone());
+    world.spawn(PreloadedGltf {
+        scene_hash: "scene".to_owned(),
+        content_hash: "glider".to_owned(),
+        handle: gltf,
+    });
+    // the scene has been up a while before it asks for the clip
+    for _ in 0..3 {
+        app.update();
+    }
+
+    let mut request = ActiveEmote::default();
+    request.urn = collectibles::EmoteUrn::new(PROP_EMOTE).unwrap();
+    request.restart = true;
+    app.world_mut().entity_mut(player).insert(request);
+    app.update();
+
+    let world = app.world_mut();
+    let body_player = world.get::<AnimationPlayer>(body).unwrap();
+    assert_eq!(
+        body_player.playing_animations().count(),
+        1,
+        "the body plays the clip on the frame it is asked for"
+    );
+    let mut props = world.query::<(Entity, &AnimationPlayer, &ChildOf)>();
+    let playing: Vec<_> = props
+        .iter(world)
+        .filter(|(entity, player, _)| *entity != body && player.playing_animations().count() > 0)
+        .map(|(_, _, wrapper)| wrapper.parent())
+        .collect();
+    assert_eq!(playing.len(), 1, "the prop plays its clip with the body");
+    assert_eq!(
+        world.get::<Visibility>(playing[0]),
+        Some(&Visibility::Inherited),
+        "the prop shows with the body"
+    );
+}
+
+/// the player keeps one hidden copy of a preloaded prop, and drops it with the preload
+#[cfg(feature = "explorer")]
+#[test]
+fn the_hidden_copy_of_a_preloaded_prop_goes_with_its_preload() {
+    use scene_runner::asset_preload::plugin::PreloadedGltf;
+
+    let (mut app, player, _) = app_with_prop_emote_player();
+    let world = app.world_mut();
+    let gltf = prop_emote_gltf(world);
+    let preload = world
+        .spawn(PreloadedGltf {
+            scene_hash: "scene".to_owned(),
+            content_hash: "glider".to_owned(),
+            handle: gltf,
+        })
+        .id();
+    let hidden_copies = |world: &mut World| {
+        world
+            .query::<(&Visibility, &ChildOf)>()
+            .iter(world)
+            .filter(|(visibility, parent)| {
+                parent.parent() == player && **visibility == Visibility::Hidden
+            })
+            .count()
+    };
+    for _ in 0..3 {
+        app.update();
+    }
+    assert_eq!(hidden_copies(app.world_mut()), 1);
+
+    app.world_mut().despawn(preload);
+    app.update();
+    assert_eq!(hidden_copies(app.world_mut()), 0);
+}

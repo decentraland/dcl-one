@@ -417,11 +417,16 @@ impl Emote {
         gltfs: &Assets<Gltf>,
     ) -> Result<Option<Handle<Scene>>, CollectibleError> {
         let gltf = gltfs.get(self.gltf.id()).ok_or(CollectibleError::Loading)?;
-        Ok(if gltf.meshes.is_empty() {
+        Ok(Self::prop_scene_of(gltf))
+    }
+
+    /// The prop an emote GLB carries: its default scene, when it has meshes.
+    pub fn prop_scene_of(gltf: &Gltf) -> Option<Handle<Scene>> {
+        if gltf.meshes.is_empty() {
             None
         } else {
             gltf.default_scene.clone()
-        })
+        }
     }
 
     pub fn prop_anim(
