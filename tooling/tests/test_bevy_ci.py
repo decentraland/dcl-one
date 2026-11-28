@@ -128,6 +128,18 @@ class WorkflowTest(unittest.TestCase):
             with self.subTest(path=path):
                 self.assertTrue(any(fnmatch.fnmatchcase(path.lstrip('/'), pattern) for pattern in ci.IMAGES_INPUTS))
 
+    def test_every_path_the_play_contract_reads_is_watched_by_image_selection(self):
+        # The Sites image carries the Explorer build play.nix verifies, the avatar preview among it: a change
+        # to any path that build is checked against has to rebuild the image, or the old build keeps serving.
+        contract = (ci.ROOT / 'infra/packages/play.nix').read_text()
+        listed = contract.split('lib.fileset.maybeMissing (root + p)) [', 1)[1].split(']', 1)[0]
+        paths = re.findall(r'(?<![\w.-])/([\w.-][\w./-]*)', listed)
+        self.assertIn('rendering/avatar-preview', paths)
+        for path in paths:
+            with self.subTest(path=path):
+                self.assertTrue(any(fnmatch.fnmatchcase(candidate, pattern)
+                                    for candidate in (path, path + '/file') for pattern in ci.IMAGES_INPUTS))
+
     def test_workflow_filters_watch_the_in_tree_crates_and_only_this_workflow_watches_the_patch_tool(self):
         def watched(name, path):
             patterns = re.findall(r"^ +- '?([^'\n]+)'?$", (ci.ROOT / name).read_text(), re.M)
@@ -1051,6 +1063,14 @@ class SelectionTest(unittest.TestCase):
             self.assertTrue(selected['headless'])
             self.assertFalse(selected['web'])
             self.assertFalse(selected['test'])
+
+    def test_avatar_preview_page_change_rebuilds_images(self):
+        # The page Sites serves at /avatar-preview/ comes from this tree: changing only it must still
+        # build the images, or dcl.dev keeps the previous page.
+        self.write('rendering/avatar-preview/web/index.html', 'changed')
+        head = self.commit()
+        self.assertTrue(ci.consumer_changed(self.base, head, 'images'))
+        self.assertTrue(ci.select(self.base, head)['web'])
 
     def test_image_only_change_selects_consumer_without_engine(self):
         self.write('apps/sites/server.ts', 'changed')

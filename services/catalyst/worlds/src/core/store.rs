@@ -331,6 +331,25 @@ pub struct SceneDeployment<'a> {
     pub forward_to: Option<&'a str>,
     /// The storage allowance the publish is charged to, re-checked before commit.
     pub quota: Option<&'a super::quota::QuotaCharge>,
+    /// The NAME authorization the publish was validated under, re-checked
+    /// in the write's transaction after the world's locks ([`PublishCheck`]).
+    pub name_check: Option<&'a dyn PublishCheck>,
+}
+
+/// What a publish re-checks inside the transaction that writes it, after
+/// that transaction took the world's locks: the authorization it was
+/// validated under, still standing. An `Err` rolls the write back and is
+/// the publish's answer.
+#[async_trait::async_trait]
+pub trait PublishCheck: Send + Sync {
+    async fn confirm_on(&self, conn: &mut sqlx::PgConnection) -> Result<(), ApiError>;
+}
+
+#[cfg(test)]
+tokio::task_local! {
+    /// Tests: pauses a publish's write transaction right after its
+    /// [`PublishCheck`], with everything it holds still held.
+    pub(crate) static AFTER_NAME_CHECK: (std::sync::Arc<tokio::sync::Notify>, std::sync::Arc<tokio::sync::Notify>);
 }
 
 pub(crate) struct DerivedSceneSettings {

@@ -193,9 +193,10 @@ one transaction (`store.rs`).
 | Over `MAX_PARCELS` | 400 | `Deployment failed: Max allowed scene dimensions is <n> parcels.` | same | `scene.ts:167-178` | `deploy.rs` `validate` | MATCH |
 | Name on the DAO deny list | 400 | `Deployment failed: Deployment failed: World "<name>" can not be deployed because the name is in the name deny list managed by Decentraland DAO.` | same (prefix twice in both); the name is refused when its whole lowercased form is in `BLOCKED_WORLD_NAMES` or its suffix-stripped form is on the list | `scene.ts:86-101`, `name-deny-list-checker.ts:8-13,45-59` | `deploy.rs` `validate`, `names.rs` `BannedNames::allows` | MATCH (WD-28) |
 | No permission | 400 | `Deployment failed: Deployment failed: Your wallet has no permission to publish this scene because it does not have permission to deploy under "<name>". Check scene.json to select a name that either you own or you were given permission to deploy.` | same | `scene.ts:108-163`, tests `deploy.spec.ts:1251-1303`, `deploy-parcel-permission.spec.ts:104-250` | `deploy.rs` `validate` | MATCH |
-| Name authority cannot answer | 500 `{"error":"Internal Server Error"}` (the fetch throws) | | 403 `Not authorized: could not verify deployment permissions (deploy denied)` | `dcl-name-checker.ts:9-20` | `deploy.rs` `validate` | intended (worlds-compatibility.md, WD-14) |
+| Name authority cannot answer | 500 `{"error":"Internal Server Error"}` (the fetch throws) | | 503 with `source: nft-index` and `Retry-After` while the names index can't establish the holder (not current, a fold holds its publication, or a transient database fault cut its read short); 403 `Not authorized: could not verify deployment permissions (deploy denied)` for any other fault, an ambiguous label included | `dcl-name-checker.ts:9-20` | `deploy.rs` `validate`, `authority_undetermined` | intended (worlds-compatibility.md, WD-14) |
+| NAME authorization gone at the write | — | | 503 `nft-index` for a fold withdrawn since validation; the owner's 400 "no permission", or 409 to a scoped grantee, for a holder replaced since then; nothing is written | none | `store_publication.rs` (`PublishCheck`), `deploy.rs` `NameHolderCheck` | dcl-one only |
 | World disabled by an operator | — | | 403 with the disabled message | none | `deploy.rs` `validate` (`store::is_world_disabled`) | dcl-one only |
-| Grantee publish, owner unresolved | 500 (`Cannot deploy scene … owner address could not be resolved.` thrown as `Error`) | | 400 with that message; 503 when the authority faults | `entity-deployer.ts:162-169` | `deploy.rs` `validate` | intended (worlds-compatibility.md, WD-14) |
+| Grantee publish, owner unresolved | 500 (`Cannot deploy scene … owner address could not be resolved.` thrown as `Error`) | | 400 with that message; when the owner lookup faults, the permission check's answers (503 `nft-index` while the names index can't establish the holder, else 403), as for the storage allowance's NAME reads (a resumed partial batch's owner, the owner's NAMEs) | `entity-deployer.ts:162-169` | `deploy.rs` `validate` | intended (worlds-compatibility.md, WD-14) |
 | Minimap / skybox / thumbnail | 400 | `Deployment failed: The file <f> is not present in the entity.` / `The texture file <f> …` / `Scene thumbnail '<t>' must be a relative path …` / `… must be a file included in the deployment.` | same | `scene.ts:320-402` | `deploy.rs` `validate`, `deploy_validate.rs` (`missing_minimap_images`, `missing_skybox_textures`, `validate_navmap_thumbnail`) | MATCH |
 | Extra / missing files | 400 | `Deployment failed: Extra file detected <name>, …` + `The file <h> (<f>) is neither present in the storage or in the provided entity` | same; the extra file is named by its form name | `common.ts:89-164` | `deploy.rs` `Uploads::file_errors`, `validate` | MATCH (WD-06) |
 | Hash ≠ form name / name not CIDv1 | 400 | `The hashed file doesn't match the provided content: <name>` / `Only CIDv1 are allowed for content files: <name>` | same, with the missing files on a publish and right after the window on a batch | `common.ts:106-124` | `deploy.rs` `Uploads::file_errors` | MATCH (WD-06) |
@@ -512,9 +513,12 @@ dcl-one (`scenes.rs` `delete_scene`): world name parsed first, the strict signed
       (`src/adapters/entity-deployer.ts:162-169`, `limits-manager/component.ts:66-71`).
     - dcl-one: a deploy 500 is `{"error":"Internal Server Error"}` (`deploy.rs` `rejection`,
       pinned by `deploy.rs` `refusals_answer_the_old_envelope_and_body_limits_413`). Authority
-      faults fail closed: 403 `Not authorized: could not verify deployment permissions (deploy denied)`,
-      400 `Cannot deploy scene … owner address could not be resolved.`, 503 for owner/allowance
-      faults (`deploy.rs` `validate`); listed under "Authority faults on writes fail closed".
+      faults fail closed: 503 `nft-index` (with `Retry-After`) while the names index can't
+      establish a NAME's holder, otherwise 403 `Not authorized: could not verify deployment
+      permissions (deploy denied)`; 400 `Cannot deploy scene … owner address could not be
+      resolved.`; 503 for allowance faults (`deploy.rs` `validate`). The NAME holder is
+      checked again in the write's transaction under the held names publication. Listed under
+      "Authority faults on writes fail closed".
     - Severity: none (closed).
 
 15. **WD-15 · `POST /entities` · a newer-scene refusal before any blob is stored.** Status: MATCH, no work.

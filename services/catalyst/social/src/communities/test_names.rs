@@ -8,10 +8,13 @@ use crate::chain_index::names::{
     Answer, NameAuthority, NamesError, Observation, OwnedName, Purpose,
 };
 
+/// How every read fails while set: a [`NamesError`] variant.
+type Failure = fn(String) -> NamesError;
+
 #[derive(Default)]
 pub(crate) struct Held {
     names: Mutex<HashMap<String, Vec<OwnedName>>>,
-    unavailable: Mutex<bool>,
+    failing: Mutex<Option<Failure>>,
 }
 
 impl Held {
@@ -33,18 +36,16 @@ impl Held {
         self.names.lock().unwrap().clear();
     }
 
-    /// Every read answers "not established" until called with `false`.
-    pub(crate) fn set_unavailable(&self, unavailable: bool) {
-        *self.unavailable.lock().unwrap() = unavailable;
+    /// Every read fails with `failure` (`NamesError::NotEstablished`, a
+    /// transient fault, ...) until called with `None`.
+    pub(crate) fn fail_with(&self, failure: Option<Failure>) {
+        *self.failing.lock().unwrap() = failure;
     }
 
     fn available(&self) -> Result<(), NamesError> {
-        if *self.unavailable.lock().unwrap() {
-            Err(NamesError::NotEstablished(
-                "the test NAME source is not current".into(),
-            ))
-        } else {
-            Ok(())
+        match *self.failing.lock().unwrap() {
+            Some(failure) => Err(failure("the test NAME source cannot answer".into())),
+            None => Ok(()),
         }
     }
 

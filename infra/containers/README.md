@@ -249,6 +249,17 @@ entries. Use `ethereum`, `polygon`, `amoy` or `sepolia` for the network and `def
 `amoy:0x5309ae874fc4eb21adcd63f8b6c3f766cc3b1849:publicationFees`. When Wert is enabled,
 a configured `CREDITS_MANAGER_CONTRACT` must be a 20-byte hex EVM address on Polygon or Amoy.
 
+`WERT_SIGN_REQUESTS_PER_MINUTE` is a positive integer, defaulting to 10. It sets the
+burst and the number of tokens refilled continuously over each 60-second window.
+One verified wallet shares its budget across both route mounts and every approved
+network, contract and signing target. The route checks both wallet fields and the
+allow-list before spending a token. An exhausted wallet receives 429 before partner
+signing or session creation. `Retry-After` is the wait for the next token in the charged
+bucket, rounded up to whole seconds with a minimum of one. With the default limit,
+a fully depleted bucket earns a token in six seconds. At limiter capacity, wallets
+assigned to the same overflow bucket share its quota. Each replica has its own
+in-memory budget, which starts fresh on restart.
+
 The Transak card on-ramp (`/v1/transak/widget-url`, `/v1/transak/orders/{id}` and
 `PUT /v1/transak/access-token`, under `/shop-api` and `/marketplace-api`) needs
 six settings:

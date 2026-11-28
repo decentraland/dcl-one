@@ -2342,6 +2342,58 @@ async fn polygon_mainnet_walks_use_the_polygon_endpoint_if_no_chain_137_override
     );
 }
 
+/// The committee index is walked, and the Builder's curation console reads a
+/// missing publication as this deployment's own lag, only where its job runs:
+/// the switch on a node serving mainnet Polygon with a Polygon mainnet RPC.
+#[tokio::test]
+async fn the_committee_is_walked_only_where_its_job_can_run() {
+    let state = |network: &str, committee: bool, polygon: Option<&str>| {
+        let mut s = Settings::for_tests();
+        s.eth_network = network.to_string();
+        s.polygon_rpc_url = polygon.map(str::to_string);
+        s.market.indexes.committee_enabled = committee;
+        if network == "sepolia" {
+            s.market.indexes.chain_id_ethereum = 11_155_111;
+            s.market.indexes.chain_id_matic = 80_002;
+        }
+        support::state_without_db_settings(s)
+    };
+    let rpc = Some("https://polygon.example/");
+    assert!(state("mainnet", true, rpc).walks_committee());
+    assert!(
+        !state("mainnet", true, None).walks_committee(),
+        "no Polygon RPC: the job is not scheduled"
+    );
+    assert!(!state("mainnet", false, rpc).walks_committee());
+    assert!(
+        !state("sepolia", true, rpc).walks_committee(),
+        "a testnet schedules no committee walk"
+    );
+    // Without the RPC nothing is scheduled, but the cursor stays monitored
+    // (its URL unset): the misconfiguration is an alertable gap.
+    use super::chain_walk::{ChainNet, INDEXER_COMMITTEE};
+    let missing = state("mainnet", true, None);
+    assert!(
+        super::chain_jobs::projections(&missing, ChainNet::Matic, Some(false))
+            .iter()
+            .all(|job| !job.lease.starts_with("committee-index")),
+        "no committee job without an RPC"
+    );
+    let monitored = super::chain_jobs::expected_cursors(&missing, ChainNet::Matic, Some(false));
+    assert!(
+        monitored
+            .iter()
+            .any(|(index, url)| index.indexer() == INDEXER_COMMITTEE && url.is_none()),
+        "the committee cursor is monitored with no URL"
+    );
+    let walked = state("mainnet", true, rpc);
+    assert!(
+        super::chain_jobs::projections(&walked, ChainNet::Matic, Some(false))
+            .iter()
+            .any(|job| job.lease.starts_with("committee-index"))
+    );
+}
+
 #[tokio::test]
 async fn the_third_party_registry_projection_requires_its_switch_and_polygon_endpoint() {
     use super::chain_walk::{ChainNet, INDEXER_THIRD_PARTY_REGISTRY};
