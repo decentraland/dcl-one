@@ -895,3 +895,120 @@ describe('when a Button names the default appearance', () => {
     expect(button.querySelector('[data-button-label]')).not.toBeNull()
   })
 })
+
+describe('when an icon-only Button is round', () => {
+  it.each([
+    [24, 'text'],
+    [28, 'dark'],
+    [34, 'outline']
+  ] as const)('should carry its %ipx diameter and the %s look', (round, variant) => {
+    render(
+      <Button variant={variant} iconOnly round={round} aria-label="Copy">
+        <svg data-testid="glyph" />
+      </Button>
+    )
+    const button = screen.getByRole('button', { name: 'Copy' })
+    expect(button).toHaveAttribute('data-round', String(round))
+    expect(button).toHaveAttribute('data-variant', variant)
+    expect(button).toHaveAttribute('data-icon-only', 'true')
+  })
+
+  it('should stay a link with its destination when given an href', () => {
+    render(
+      <Button
+        variant="outline"
+        iconOnly
+        round={34}
+        href="https://example.com/share"
+        target="_blank"
+        aria-label="Share (opens in a new tab)"
+      >
+        <svg />
+      </Button>
+    )
+    const link = screen.getByRole('link', { name: 'Share (opens in a new tab)' })
+    expect(link).toHaveAttribute('href', 'https://example.com/share')
+    expect(link).toHaveAttribute('rel', expect.stringContaining('noopener'))
+    expect(link).toHaveAttribute('data-round', '34')
+  })
+
+  it('should ignore activation while disabled', async () => {
+    const onClick = vi.fn()
+    render(
+      <Button variant="text" iconOnly round={24} aria-label="Copy" disabled onClick={onClick}>
+        <svg />
+      </Button>
+    )
+    await userEvent.click(screen.getByRole('button', { name: 'Copy' }))
+    expect(onClick).not.toHaveBeenCalled()
+  })
+
+  it('should take no round look on a Button with a text label', () => {
+    // An untyped caller: the types allow `round` on icon-only Buttons only.
+    const props = { round: 24, variant: 'text' } as unknown as ComponentProps<typeof Button>
+    render(<Button {...props}>Copy</Button>)
+    expect(screen.getByRole('button', { name: 'Copy' })).not.toHaveAttribute('data-round')
+  })
+
+  it('should not type-check without the icon-only contract or with another look', () => {
+    // @ts-expect-error A round Button is icon-only.
+    void (<Button variant="text" round={24} label="Copy" />)
+    // @ts-expect-error A round Button takes the text, outline or dark look.
+    void (<Button variant="primary" iconOnly round={24} aria-label="Copy" />)
+    // @ts-expect-error A round Button has no size: its diameter is its size.
+    void (<Button variant="text" iconOnly round={24} size="sm" aria-label="Copy" />)
+    // @ts-expect-error The diameters are 24, 28 and 34px.
+    void (<Button variant="text" iconOnly round={30} aria-label="Copy" />)
+    expect(true).toBe(true)
+  })
+})
+
+describe('when an icon-only Button sets its icon size', () => {
+  it.each([14, 16, 20, 24] as const)('should carry the %ipx icon size', (iconSize) => {
+    render(
+      <Button variant="text" size="sm" iconOnly iconSize={iconSize} aria-label="Next">
+        <svg />
+      </Button>
+    )
+    expect(screen.getByRole('button', { name: 'Next' })).toHaveAttribute(
+      'data-icon-size',
+      String(iconSize)
+    )
+  })
+
+  it('should accept the iconOnly variant', () => {
+    render(
+      <Button variant="iconOnly" iconSize={20} aria-label="Share">
+        <svg />
+      </Button>
+    )
+    expect(screen.getByRole('button', { name: 'Share' })).toHaveAttribute('data-icon-size', '20')
+  })
+
+  it('should take no icon size on a Button with a text label', () => {
+    const props = { iconSize: 16 } as unknown as ComponentProps<typeof Button>
+    render(<Button {...props}>Next</Button>)
+    const button = screen.getByRole('button', { name: 'Next' })
+    expect(button).not.toHaveAttribute('data-icon-size')
+    expect(button).not.toHaveAttribute('data-round')
+  })
+
+  it('should not type-check on a Button with a text label', () => {
+    // @ts-expect-error An icon size needs an icon-only Button.
+    void (<Button iconSize={16}>Next</Button>)
+    expect(true).toBe(true)
+  })
+})
+
+describe('when a default Button sets neither round nor icon size', () => {
+  it('should render neither attribute', () => {
+    render(
+      <Button variant="text" size="sm" iconOnly aria-label="Next">
+        <svg />
+      </Button>
+    )
+    const button = screen.getByRole('button', { name: 'Next' })
+    expect(button).not.toHaveAttribute('data-round')
+    expect(button).not.toHaveAttribute('data-icon-size')
+  })
+})

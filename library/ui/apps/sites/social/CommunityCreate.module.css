@@ -57,23 +57,8 @@
   top: -6px;
   right: -6px;
   display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 28px;
-  height: 28px;
-  padding: 0;
-  border: 2px solid var(--dcl-transparencies-white-40);
-  border-radius: var(--dcl-radius-full);
-  background: var(--dcl-bg-surface-brand);
-  color: var(--dcl-text-primary);
-  cursor: pointer;
 }
 
-.pictureEdit:hover {
-  background: var(--dcl-bg-hover);
-}
-
-.pictureEdit:focus-visible,
 .link:focus-visible {
   outline: 2px solid var(--dcl-text-primary);
   outline-offset: 2px;

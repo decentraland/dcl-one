@@ -1,29 +1,4 @@
-/* The copy button beside a wallet address and the note it shows for two seconds. */
-.copy {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 24px;
-  height: 24px;
-  padding: 0;
-  border: 0;
-  border-radius: var(--dcl-radius-full);
-  background: transparent;
-  color: var(--dcl-text-secondary);
-  cursor: pointer;
-}
-
-@media (hover: hover) {
-  .copy:hover {
-    background: var(--dcl-bg-hover);
-  }
-}
-
-.copy:focus-visible {
-  outline: 2px solid var(--dcl-text-primary);
-  outline-offset: 2px;
-}
-
+/* The note the address copy shows for two seconds. */
 .copied {
   position: absolute;
   bottom: calc(100% + var(--dcl-space-8));
