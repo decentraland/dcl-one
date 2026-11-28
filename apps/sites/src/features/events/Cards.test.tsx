@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ComponentProps } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from "vitest";
@@ -257,6 +257,10 @@ describe("when event cards reveal their actions", () => {
           expect(screen.getByRole("status").textContent).toBe("Copied"),
         );
       });
+      it("should describe the Copy link button with the visible confirmation", async () => {
+        const tooltip = await screen.findByRole("tooltip", { name: "Copied" });
+        expect(screen.getByRole("button", { name: "Copy link: Poker Night" }).getAttribute("aria-describedby")).toBe(tooltip.id);
+      });
       it("should copy the actual card link without navigating", async () => {
         await waitFor(() => expect(copy).toHaveBeenCalled());
         expect(copy).toHaveBeenCalledWith(
@@ -277,6 +281,14 @@ describe("when event cards reveal their actions", () => {
         await waitFor(() =>
           expect(screen.getByRole("status").textContent).toContain("Couldn't copy"),
         );
+      });
+      it("should keep the failure visible after pointer leave and dismiss it on Escape", async () => {
+        const button = screen.getByRole("button", { name: "Copy link: Poker Night" });
+        const tooltip = await screen.findByRole("tooltip");
+        fireEvent.mouseLeave(button);
+        expect(screen.getByRole("tooltip")).toBe(tooltip);
+        fireEvent.keyDown(button, { key: "Escape" });
+        expect(screen.queryByRole("tooltip")).toBeNull();
       });
       it("should not change the reminder", async () => {
         await waitFor(() =>

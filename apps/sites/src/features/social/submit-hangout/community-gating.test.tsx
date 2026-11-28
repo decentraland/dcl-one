@@ -63,3 +63,44 @@ describe.each([
     expect(notice?.dataset.tone).toBe(tone);
   });
 });
+
+describe("when the managed community names include in-world formatting", () => {
+  beforeEach(() => {
+    const options: HangoutOptions = {
+      profile: null,
+      profileError: null,
+      communities: [
+        { id: "aliens", name: "<size=400%><color=#00FF00>👽👽" },
+        { id: "rich", name: "<b>Built</b> <#0f0><U>together</U>" },
+        { id: "math", name: "Math <3 & friends" },
+        { id: "formatting", name: "<color=green></color>" },
+      ],
+      communitiesError: null,
+      worlds: [],
+      worldsError: null,
+    };
+    render(
+      <MemoryRouter initialEntries={["/events/new-event"]}>
+        <SubmitHangout trackCtx={{ sid: "test", story: "landings/submit-hangout", variant: "wizard" }} categories={[]} signedIn editor draft={emptyDraft()} options={options} track={vi.fn()} />
+      </MemoryRouter>,
+    );
+  });
+
+  afterEach(cleanup);
+
+  it("should hide formatting instructions and keep the community ID", () => {
+    expect(screen.getByRole("option", { name: "👽👽" })).toHaveProperty("value", "aliens");
+  });
+
+  it("should hide style tags and shorthand colors", () => {
+    expect(screen.getByRole("option", { name: "Built together" })).toHaveProperty("value", "rich");
+  });
+
+  it("should keep angle brackets that are part of the text", () => {
+    expect(screen.getByRole("option", { name: "Math <3 & friends" })).toHaveProperty("value", "math");
+  });
+
+  it("should label a community whose name contains only formatting", () => {
+    expect(screen.getByRole("option", { name: "Untitled community" })).toHaveProperty("value", "formatting");
+  });
+});

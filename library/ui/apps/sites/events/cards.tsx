@@ -5,6 +5,7 @@ import {
   EventCardActionLink,
   type EventCardCreator as PublicCreator
 } from '../../../components/EventCard/EventCard'
+import { Tooltip } from '../../../components/Tooltip/Tooltip'
 import { JumpInCTA } from '../../../components/JumpInCTA/JumpInCTA'
 import { PlaceCard } from '../../../components/PlaceCard/PlaceCard'
 import {
@@ -109,7 +110,7 @@ function useCopyLink(href: string) {
       : status === 'failed'
         ? text("Couldn't copy the link. Try again.")
         : ''
-  return { status: message, copy }
+  return { status: message, copy, dismiss: () => setStatus('idle') }
 }
 
 /**
@@ -124,25 +125,43 @@ function EventActions({
   jumpIn,
   remind,
   calendarHref,
-  onCopy
+  copyFeedback
 }: ActionProps & {
   size: 'small' | 'day'
   live?: boolean
   jumpIn?: JumpIn
-  onCopy: () => void
+  copyFeedback: ReturnType<typeof useCopyLink>
 }) {
   const { text } = useEventsCopy()
   const small = size === 'small'
   const glyph = small ? 24 : 20
   const [requestedReminder, setRequestedReminder] = useState(false)
+  const [copyAnchor, setCopyAnchor] = useState<HTMLButtonElement | null>(null)
   const Reminder = remind?.active ? GeneralReminderOn : GeneralReminderOff
   const Share = small ? MenusShare : GeneralCopy
   const share = (
-    <EventCardAction
-      aria-label={text('{action}: {title}', { action: text('Copy link'), title })}
-      icon={<Share size={glyph} aria-hidden="true" />}
-      onClick={onCopy}
-    />
+    <Tooltip
+      anchor={copyAnchor}
+      label={copyFeedback.status}
+      open={Boolean(copyFeedback.status)}
+      trigger="manual"
+      closeOnScroll
+      onOpenChange={(open) => {
+        if (!open) copyFeedback.dismiss()
+      }}
+      side="top"
+      keepInViewport
+      maxWidth={240}
+    >
+      <EventCardAction
+        aria-label={text('{action}: {title}', { action: text('Copy link'), title })}
+        icon={<Share size={glyph} aria-hidden="true" />}
+        onClick={(event) => {
+          setCopyAnchor(event.currentTarget)
+          void copyFeedback.copy()
+        }}
+      />
+    </Tooltip>
   )
   if (live)
     return (
@@ -213,7 +232,7 @@ function UpcomingCard({
   jumpIn
 }: DayListCardProps) {
   const { text } = useEventsCopy()
-  const { status, copy } = useCopyLink(href)
+  const copyFeedback = useCopyLink(href)
   return (
     <EventCard
       variant="small"
@@ -236,11 +255,10 @@ function UpcomingCard({
           jumpIn={jumpIn}
           remind={remind}
           calendarHref={calendarHref}
-          onCopy={() => void copy()}
+          copyFeedback={copyFeedback}
         />
       }
-      announcement={status}
-      showAnnouncement
+      announcement={copyFeedback.status}
     />
   )
 }
@@ -261,7 +279,7 @@ function DayCard({
   jumpIn
 }: ExperienceCardProps) {
   const { text } = useEventsCopy()
-  const { status, copy } = useCopyLink(href)
+  const copyFeedback = useCopyLink(href)
   return (
     <EventCard
       variant="day"
@@ -284,11 +302,10 @@ function DayCard({
           jumpIn={jumpIn}
           remind={remind}
           calendarHref={calendarHref}
-          onCopy={() => void copy()}
+          copyFeedback={copyFeedback}
         />
       }
-      announcement={status}
-      showAnnouncement
+      announcement={copyFeedback.status}
     />
   )
 }

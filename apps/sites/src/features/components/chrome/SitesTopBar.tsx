@@ -46,6 +46,7 @@ import {
   unreadCount,
 } from "@web-core/notifications/notificationsView";
 import { useMarketplaceHere } from "@/data/lib/shop/marketplace-access";
+import { sitesNavigationLabel } from "./sites-navigation-copy";
 import { navProfileCopy } from "./nav-profile-copy";
 import { useChromeNotifications } from "./useChromeNotifications";
 import styles from "./SitesTopBar.module.css";
@@ -267,7 +268,11 @@ export default function SitesTopBar({
   const bare = landing && !isIn;
   const { desktop, mobile } = bare
     ? { desktop: [], mobile: [] }
-    : decentralandPublicNavSections(active, pathname, { search, marketplaceEligible });
+    : decentralandPublicNavSections(active, pathname, {
+        search,
+        marketplaceEligible,
+        translateLabel: (label) => sitesNavigationLabel(locale, label),
+      });
   const avatarColor = profileMatches ? auth.avatarColor : undefined;
   return (
     <>
