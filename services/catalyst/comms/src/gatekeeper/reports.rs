@@ -50,14 +50,18 @@ use crate::shared::{cors, nul_guard};
 
 /// Evidence files of one report: the report form's count (`REPORT_LIMITS`
 /// in `apps/sites/src/data/lib/catalyst/landings/report.ts`).
+const MAX_FILES: usize = 5;
 const MAX_FILES_U32: u32 = 5;
-const MAX_FILES: usize = MAX_FILES_U32 as usize;
 /// The node's cap on one evidence file, enough for a screenshot or a short
 /// clip. It is half the form's 10 MB: the bytes stay in the shared store for
 /// as long as the report does.
+const MAX_FILE_BYTES: usize = 5 * 1024 * 1024;
 const MAX_FILE_BYTES_U32: u32 = 5 * 1024 * 1024;
-const MAX_FILE_BYTES: usize = MAX_FILE_BYTES_U32 as usize;
 const MAX_FILE_BYTES_I64: i64 = MAX_FILE_BYTES_U32 as i64;
+// The typed copies must match the literals the form and gateway tests read.
+const _: () = assert!(
+    MAX_FILES_U32 as usize == MAX_FILES && MAX_FILE_BYTES_U32 as usize == MAX_FILE_BYTES
+);
 /// Reports one wallet may file in a rolling hour (`player_reports_reporter_idx`):
 /// a person writes each report by hand, and five an hour is above what the
 /// whole node receives in a day.
