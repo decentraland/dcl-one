@@ -1,13 +1,19 @@
-/* from: shop@3a322cf9:app/src/components/OutfitsRow/OutfitsRow.styles.ts, app/src/components/OutfitCard/OutfitCard.styles.ts,
-   app/src/components/Button/Button.styles.ts (the glass CTA) */
+/* from: shop@3a322cf9:app/src/components/OutfitsRow/OutfitsRow.styles.ts, app/src/components/OutfitCard/OutfitCard.styles.ts.
+   Desktop card as the design system's outfits-web (portrait): a card of 230x356 with 7.6% head room over its
+   background, the brand pattern screened over the gradient, 48px between cards (32px between stages that carry
+   ~8px of ring room on each side), a 4px cerise ring 8px out on hover, and the secondary md Button.
+   The column count follows the row's own width: it steps up only once every card is at least 214px wide, which
+   leaves the CTA room for its longer label ("Added to cart", 185px with the Button's padding) and for wider fonts.
+   The thresholds are that minimum plus the gaps, plus 18px because the track bleeds 18px left and pads 18px. */
 .shop-chrome .shop-outfits-row__viewport {
   --rail-arrow-top: 55%;
+  container-type: inline-size;
 }
 .shop-chrome .shop-outfits-row__track {
   display: grid;
   grid-auto-flow: column;
-  grid-auto-columns: calc((100% - 80px) / 6);
-  gap: 16px;
+  grid-auto-columns: calc((100% - 48px) / 2);
+  gap: 48px;
   overflow-x: auto;
   overflow-y: hidden;
   padding: 18px;
@@ -23,18 +29,22 @@
   scroll-snap-align: start;
   min-width: 0;
 }
-@media (max-width: 1200px) {
-  .shop-chrome .shop-outfits-row__track { grid-auto-columns: calc((100% - 48px) / 4); }
+@container (min-width: 756px) {
+  .shop-chrome .shop-outfits-row__track { grid-auto-columns: calc((100% - 2 * 48px) / 3); }
 }
-@media (max-width: 900px) {
-  .shop-chrome .shop-outfits-row__track { grid-auto-columns: calc((100% - 32px) / 3); }
+@container (min-width: 1018px) {
+  .shop-chrome .shop-outfits-row__track { grid-auto-columns: calc((100% - 3 * 48px) / 4); }
 }
-@media (max-width: 720px) {
-  .shop-chrome .shop-outfits-row__track { grid-auto-columns: calc((100% - 16px) / 2); }
+@container (min-width: 1280px) {
+  .shop-chrome .shop-outfits-row__track { grid-auto-columns: calc((100% - 4 * 48px) / 5); }
+}
+@container (min-width: 1542px) {
+  .shop-chrome .shop-outfits-row__track { grid-auto-columns: calc((100% - 5 * 48px) / 6); }
 }
 @media (max-width: 768px) {
   .shop-chrome .shop-outfits-row__track {
     grid-auto-columns: 100%;
+    gap: 16px;
     padding: 12px 0;
     margin-left: 0;
     scroll-padding-inline: 0;
@@ -44,25 +54,34 @@
 .shop-chrome .shop-outfit-card {
   position: relative;
   display: block;
-  aspect-ratio: 27 / 40;
-  color: #fff;
+  aspect-ratio: 230 / 356;
+  color: #fcfcfc;
   text-decoration: none;
 }
-.shop-chrome .shop-outfit-card__frame {
+.shop-chrome .shop-outfit-card__frame,
+.shop-chrome .shop-outfit-card__pattern {
   position: absolute;
-  top: 10%;
+  top: 7.6%;
   left: 0;
   right: 0;
   bottom: 0;
-  border-radius: 15px;
+  border-radius: 16px;
 }
+/* The brand pattern, screened over the outfit's gradient at 65%. */
+.shop-chrome .shop-outfit-card__pattern {
+  background: url("./assets/overview/outfit-card-pattern.webp") 0 0 / 184.32px 184.32px repeat;
+  mix-blend-mode: screen;
+  opacity: 0.65;
+  pointer-events: none;
+}
+/* The ring: the cerise gradient, cut to a 4px band by masking out its content box. */
 .shop-chrome .shop-outfit-card__frame::after {
   content: "";
   position: absolute;
-  inset: -4px;
-  border-radius: 20px;
-  padding: 2px;
-  background: linear-gradient(69deg, #ffbc5b 0%, #ff2d55 100%);
+  inset: -8px;
+  padding: 4px;
+  border-radius: 23px;
+  background: var(--dcl-gradient-cerise);
   -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
   -webkit-mask-composite: xor;
   mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
@@ -74,7 +93,7 @@
 .shop-chrome .shop-outfit-card__mask {
   position: absolute;
   inset: 0;
-  clip-path: inset(-1000px 0 0 0 round 0 0 15px 15px);
+  clip-path: inset(-1000px 0 0 0 round 0 0 16px 16px);
   pointer-events: none;
 }
 .shop-chrome .shop-outfit-card__thumb {
@@ -90,15 +109,17 @@
 .shop-chrome .shop-outfit-card__fade,
 .shop-chrome .shop-outfit-card__scrim {
   position: absolute;
-  top: 50%;
+  top: 7.6%;
   left: 0;
   right: 0;
   bottom: 0;
-  border-radius: 0 0 15px 15px;
+  border-radius: 16px;
   pointer-events: none;
   transition: opacity 0.2s ease;
 }
 .shop-chrome .shop-outfit-card__scrim {
+  top: 42.6%;
+  border-radius: 0 0 16px 16px;
   background: linear-gradient(180deg, rgba(0, 0, 0, 0) 0%, rgba(0, 0, 0, 0.8) 80%);
   opacity: 0;
 }
@@ -126,16 +147,16 @@
   grid-column: 1;
   font-size: 14px;
   font-weight: 600;
-  line-height: 1.6;
+  line-height: 1.5;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 .shop-chrome .shop-outfit-card__meta {
   grid-column: 1;
-  font-size: 11px;
-  font-weight: 500;
-  line-height: 1.4;
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 1.5;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -143,11 +164,17 @@
 .shop-chrome .shop-outfit-card__price {
   grid-column: 2;
   grid-row: 1 / span 2;
+  align-self: end;
   display: inline-flex;
   align-items: center;
-  gap: 5px;
-  font-size: 17px;
+  gap: 2px;
+  font-size: 16px;
   font-weight: 600;
+  line-height: 1.5;
+}
+.shop-chrome .shop-outfit-card__coin {
+  display: block;
+  flex: none;
 }
 .shop-chrome .shop-outfit-card__price-sk {
   display: block;
@@ -156,44 +183,20 @@
   border-radius: 6px;
   background: rgba(255, 255, 255, 0.2);
 }
+/* The secondary md Button, across the card. */
 .shop-chrome .shop-outfit-card__cta {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
   width: 100%;
-  min-height: 40px;
-  padding: 12px 22px;
-  border: 0;
-  border-radius: 12px;
-  background: rgba(255, 255, 255, 0.2);
-  color: #fcfcfc;
-  font: inherit;
-  font-size: 13px;
-  font-weight: 600;
-  letter-spacing: 0.46px;
-  text-transform: uppercase;
-  cursor: pointer;
-}
-.shop-chrome .shop-outfit-card__cta:disabled {
-  opacity: 0.5;
-  cursor: default;
-}
-@media (hover: hover) {
-  .shop-chrome .shop-outfit-card__cta:hover:not(:disabled) { background: #fcfcfc; color: #242129; }
 }
 @media (hover: hover) {
   .shop-chrome .shop-outfit-card:hover .shop-outfit-card__frame::after { opacity: 1; }
   .shop-chrome .shop-outfit-card:hover .shop-outfit-card__thumb { transform: scale(1.035); }
   .shop-chrome .shop-outfit-card:hover .shop-outfit-card__body { opacity: 1; pointer-events: auto; }
   .shop-chrome .shop-outfit-card:hover .shop-outfit-card__scrim { opacity: 1; }
-  .shop-chrome .shop-outfit-card:hover .shop-outfit-card__fade { opacity: 0; }
 }
 .shop-chrome .shop-outfit-card:focus-within .shop-outfit-card__frame::after { opacity: 1; }
 .shop-chrome .shop-outfit-card:focus-within .shop-outfit-card__thumb { transform: scale(1.035); }
 .shop-chrome .shop-outfit-card:focus-within .shop-outfit-card__body { opacity: 1; pointer-events: auto; }
 .shop-chrome .shop-outfit-card:focus-within .shop-outfit-card__scrim { opacity: 1; }
-.shop-chrome .shop-outfit-card:focus-within .shop-outfit-card__fade { opacity: 0; }
 @media (hover: none) {
   .shop-chrome .shop-outfit-card__body { opacity: 1; pointer-events: auto; }
   .shop-chrome .shop-outfit-card__scrim { opacity: 1; }
@@ -204,8 +207,10 @@
 }
 @media (max-width: 768px) {
   .shop-chrome .shop-outfit-card { aspect-ratio: 5 / 6; }
-  .shop-chrome .shop-outfit-card__frame { top: 0; }
-  .shop-chrome .shop-outfit-card__mask { clip-path: inset(0 round 15px); }
+  .shop-chrome .shop-outfit-card__frame,
+  .shop-chrome .shop-outfit-card__pattern,
+  .shop-chrome .shop-outfit-card__fade { top: 0; }
+  .shop-chrome .shop-outfit-card__mask { clip-path: inset(0 round 16px); }
   .shop-chrome .shop-outfit-card__thumb { object-position: top; }
   .shop-chrome .shop-outfit-card__name { font-size: 15px; }
   .shop-chrome .shop-outfit-card__price { grid-row: 2; font-size: 15px; }
