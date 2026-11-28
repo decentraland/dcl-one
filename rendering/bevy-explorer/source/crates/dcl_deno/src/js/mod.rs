@@ -38,6 +38,7 @@ mod errors;
 pub mod fetch;
 #[cfg(feature = "inspect")]
 pub mod inspector;
+mod isolate_hooks;
 pub mod local_storage;
 pub mod op_wrappers;
 mod plain;
@@ -281,6 +282,7 @@ pub fn create_runtime(
         ),
         ..Default::default()
     });
+    isolate_hooks::install(runtime.v8_isolate());
 
     runtime
         .op_state()
@@ -807,6 +809,9 @@ fn op_error(state: Rc<RefCell<OpState>>, #[string] message: String) {
 mod tests {
     mod system_scene_network {
         include!("system_scene_network_tests.rs");
+    }
+    mod isolate_hooks {
+        include!("isolate_hooks_tests.rs");
     }
     mod websocket {
         include!("websocket_tests.rs");
