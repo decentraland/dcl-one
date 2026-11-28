@@ -280,7 +280,7 @@ fn sql_limit(limit: usize) -> i64 {
     if limit == ALL {
         -1
     } else {
-        limit.clamp(1, i64::MAX as usize) as i64
+        crate::casts::len_i64(limit.max(1))
     }
 }
 
@@ -390,7 +390,7 @@ fn implied_total(offset: usize, limit: usize, rows: usize) -> Option<usize> {
 fn now_ms() -> i64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_millis() as i64)
+        .map(crate::casts::millis_i64)
         .unwrap_or(0)
 }
 
@@ -503,7 +503,7 @@ impl Db {
                     address,
                     prefix,
                     sql_limit(limit),
-                    offset as i64
+                    crate::casts::len_i64(offset)
                 ],
                 |row| {
                     Ok(Entry {
@@ -527,7 +527,7 @@ impl Db {
                         |row| row.get(0),
                     )
                     .context("counting storage values")?;
-                total.max(0) as usize
+                crate::casts::nonneg_usize(total)
             }
         };
         Ok(Page {
@@ -549,7 +549,7 @@ impl Db {
                 |row| row.get(0),
             )
             .context("measuring storage usage")?;
-        Ok(used.max(0) as usize)
+        Ok(crate::casts::nonneg_usize(used))
     }
 
     /// The service's total-size rule: the scope's bytes with `key` replaced
@@ -570,9 +570,9 @@ impl Db {
                 |row| Ok((row.get(0)?, row.get(1)?)),
             )
             .context("measuring storage usage")?;
-        let used = used.max(0) as usize;
+        let used = crate::casts::nonneg_usize(used);
         let (_, max_total) = scope.limits();
-        let projected = used - (existing.max(0) as usize).min(used) + size;
+        let projected = used - crate::casts::nonneg_usize(existing).min(used) + size;
         Ok(if projected > max_total {
             Err(format!(
                 "Total storage size would exceed the maximum allowed ({max_total} bytes). Current usage: {used} bytes. Delete existing data to free up space"
@@ -623,9 +623,10 @@ impl Db {
             .prepare("SELECT DISTINCT address FROM kv WHERE scope = 'player' ORDER BY address LIMIT ?1 OFFSET ?2")
             .context("listing players")?;
         let rows = stmt
-            .query_map(params![sql_limit(limit), offset as i64], |row| {
-                row.get::<_, String>(0)
-            })
+            .query_map(
+                params![sql_limit(limit), crate::casts::len_i64(offset)],
+                |row| row.get::<_, String>(0),
+            )
             .context("listing players")?
             .collect::<Result<Vec<_>, _>>()
             .context("reading players")?;
@@ -639,7 +640,7 @@ impl Db {
                         |row| row.get(0),
                     )
                     .context("counting players")?;
-                total.max(0) as usize
+                crate::casts::nonneg_usize(total)
             }
         };
         Ok((rows, total))
@@ -653,7 +654,10 @@ impl Db {
             .context("listing players")?;
         let rows = stmt
             .query_map([], |row| {
-                Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)? as usize))
+                Ok((
+                    row.get::<_, String>(0)?,
+                    crate::casts::nonneg_usize(row.get::<_, i64>(1)?),
+                ))
             })
             .context("listing players")?
             .collect::<Result<Vec<_>, _>>()
@@ -693,7 +697,7 @@ impl Db {
             .context("counting storage values")?;
         for row in rows {
             let (scope, n) = row.context("counting storage values")?;
-            let n = n.max(0) as usize;
+            let n = crate::casts::nonneg_usize(n);
             match scope.as_str() {
                 "scene" => counts.0 = n,
                 "player" => counts.1 = n,
@@ -753,7 +757,7 @@ impl Db {
             .prepare("SELECT at, scope, address, key, op, source FROM activity ORDER BY id DESC LIMIT ?1")
             .context("reading the storage log")?;
         let rows = stmt
-            .query_map(params![limit as i64], |row| {
+            .query_map(params![crate::casts::len_i64(limit)], |row| {
                 Ok(Activity {
                     at: row.get(0)?,
                     scope: row.get(1)?,

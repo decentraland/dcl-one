@@ -179,7 +179,7 @@ pub async fn spawn(first_port: u16) -> Option<Running> {
     }
     #[cfg(unix)]
     PGID.store(
-        child.id().map(|id| id as i32).unwrap_or(0),
+        child.id().and_then(crate::casts::pid_i32).unwrap_or(0),
         std::sync::atomic::Ordering::SeqCst,
     );
 

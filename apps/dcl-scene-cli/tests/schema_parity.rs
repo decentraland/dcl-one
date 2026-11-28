@@ -131,7 +131,7 @@ impl Rng {
     }
 
     fn below(&mut self, n: usize) -> usize {
-        (self.next() % n as u64) as usize
+        usize::try_from(self.next() % n as u64).unwrap()
     }
 
     fn chance(&mut self, percent: u64) -> bool {
@@ -626,8 +626,10 @@ fn the_rust_encoder_agrees_with_dcl_ecs_on_generated_schemas() {
         eprintln!("skipping: node is not on PATH");
         return;
     }
-    let tmp =
-        Tmp(std::env::temp_dir().join(format!("dcl-scene-cli-schema-parity-{}", std::process::id())));
+    let tmp = Tmp(std::env::temp_dir().join(format!(
+        "dcl-scene-cli-schema-parity-{}",
+        std::process::id()
+    )));
     let _ = std::fs::remove_dir_all(&tmp.0);
     std::fs::create_dir_all(&tmp.0).unwrap();
     assert!(

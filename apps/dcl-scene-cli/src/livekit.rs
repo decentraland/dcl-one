@@ -149,9 +149,11 @@ impl Livekit {
             can_publish_sources: None,
         };
         AccessToken::new(&self.api_key, &self.api_secret, identity, grants)
-            .with_ttl(Duration::from_secs(self.ttl_secs.max(0) as u64))
+            .with_ttl(Duration::from_secs(
+                u64::try_from(self.ttl_secs).unwrap_or(0),
+            ))
             .with_clock_skew(Duration::from_secs(10))
-            .to_jwt_at(now.max(0) as u64)
+            .to_jwt_at(u64::try_from(now).unwrap_or(0))
             .expect("HMAC accepts a key of any length and the claims are plain JSON")
     }
 
@@ -322,7 +324,7 @@ fn normalize_url(url: &str) -> Result<String> {
 fn unix_now() -> i64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_secs() as i64)
+        .map(|d| i64::try_from(d.as_secs()).unwrap_or(i64::MAX))
         .unwrap_or(0)
 }
 

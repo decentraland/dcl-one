@@ -46,8 +46,10 @@ fn write(path: &Path, contents: &str) {
 }
 
 fn fresh_tmp(name: &str) -> PathBuf {
-    let tmp = PathBuf::from(env!("CARGO_TARGET_TMPDIR"))
-        .join(format!("dcl-scene-cli-livekit-{name}-{}", std::process::id()));
+    let tmp = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join(format!(
+        "dcl-scene-cli-livekit-{name}-{}",
+        std::process::id()
+    ));
     let _ = std::fs::remove_dir_all(&tmp);
     std::fs::create_dir_all(&tmp).unwrap();
     tmp
@@ -264,7 +266,7 @@ async fn assert_dies_with_preview(
 ) {
     #[cfg(unix)]
     {
-        let pid = guard.0.id() as i32;
+        let pid = i32::try_from(guard.0.id()).unwrap();
         // SAFETY: kill(2) takes plain integers and reads no memory of ours.
         assert_eq!(unsafe { libc::kill(pid, libc::SIGTERM) }, 0);
         common::wait::until(Duration::from_secs(20), async || {

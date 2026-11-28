@@ -47,7 +47,7 @@ pub async fn get_context_files(dir: &Path, api_base: &str, offline: bool) -> Res
         crate::skills::EMBEDDED.len(),
         crate::skills::SKILLS_DIR,
         written.len(),
-        bytes as f64 / (1024.0 * 1024.0),
+        crate::casts::approx(bytes as u64) / (1024.0 * 1024.0),
     );
     debug_assert_eq!(
         written.len(),

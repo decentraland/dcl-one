@@ -38,7 +38,7 @@ pub fn ensure_extracted() -> Option<PathBuf> {
 }
 
 fn extract_to(path: &Path) -> std::io::Result<()> {
-    if std::fs::metadata(path).is_ok_and(|m| m.len() as usize == RAW_LEN) {
+    if std::fs::metadata(path).is_ok_and(|m| m.len() == RAW_LEN as u64) {
         return Ok(());
     }
     if let Some(parent) = path.parent() {

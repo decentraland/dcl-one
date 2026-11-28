@@ -137,7 +137,7 @@ impl History {
                     r.get(0)
                 })
                 .map_err(failure)?;
-            if bytes as usize + data.len() <= MAX_BYTES {
+            if usize::try_from(bytes).is_ok_and(|b| b.saturating_add(data.len()) <= MAX_BYTES) {
                 tx.execute(
                     "INSERT INTO events(conversation,data) VALUES(?1,?2)",
                     params![id, data],
@@ -145,7 +145,11 @@ impl History {
                 .map_err(failure)?;
                 tx.execute(
                     "UPDATE conversations SET bytes=bytes+?2,updated=?3 WHERE id=?1",
-                    params![id, data.len() as i64, chrono::Utc::now().timestamp_millis()],
+                    params![
+                        id,
+                        crate::casts::len_i64(data.len()),
+                        chrono::Utc::now().timestamp_millis()
+                    ],
                 )
                 .map_err(failure)?;
             } else {

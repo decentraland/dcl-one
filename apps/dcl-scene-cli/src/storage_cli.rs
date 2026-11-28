@@ -296,9 +296,10 @@ fn print(outcome: Outcome, as_json: bool) -> Result<()> {
                     None => println!("{key}={value}"),
                 }
             }
-            if total as usize > rows.len() {
+            if crate::casts::to_usize(total) > rows.len() {
                 let offset =
-                    page["pagination"]["offset"].as_u64().unwrap_or(0) as usize + rows.len();
+                    crate::casts::to_usize(page["pagination"]["offset"].as_u64().unwrap_or(0))
+                        .saturating_add(rows.len());
                 println!(
                     "({} of {total} keys; --offset {offset} continues)",
                     rows.len()

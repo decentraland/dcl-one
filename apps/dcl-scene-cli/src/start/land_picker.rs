@@ -278,7 +278,7 @@ pub(super) fn land_picker(
             0 => String::new(),
             n => format!(
                 " Parcels inside its {n} estate{} are not included in this list.",
-                plural(n as usize)
+                plural(crate::casts::nonneg_usize(n))
             ),
         };
         return wrap(
@@ -346,7 +346,9 @@ pub(super) fn land_picker(
         })
         .collect();
     let mut notes: Vec<String> = Vec::new();
-    if h.parcels > h.owned.len() as i64 || h.operated > h.operated_coords.len() as i64 {
+    if h.parcels > crate::casts::len_i64(h.owned.len())
+        || h.operated > crate::casts::len_i64(h.operated_coords.len())
+    {
         notes.push(format!("The account reports {} owned and {} operated parcels; {} parcel coordinates are available here.", h.parcels, h.operated, h.coords.len()));
     }
     match r.land_use.as_ref() {
@@ -365,7 +367,7 @@ pub(super) fn land_picker(
         notes.push(format!(
             "Parcels inside {} estate{} are not included in this list.",
             h.estates,
-            plural(h.estates as usize)
+            plural(crate::casts::nonneg_usize(h.estates))
         ));
     }
     if !land_target {
@@ -556,7 +558,7 @@ mod tests {
 
     fn holdings(coords: &[(i64, i64)]) -> Holdings {
         Holdings {
-            parcels: coords.len() as i64,
+            parcels: crate::casts::len_i64(coords.len()),
             estates: 0,
             operated: 0,
             coords: coords.to_vec(),

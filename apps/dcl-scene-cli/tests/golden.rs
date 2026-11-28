@@ -25,7 +25,6 @@
 //! backstop counts passing tests and never checks for a dirty tree, so an
 //! auto-written golden would report green having asserted nothing.
 #![allow(clippy::unwrap_used, reason = "test support")]
-
 // Unix only: every staged fixture shares the toolchain's node_modules by symlink.
 #![cfg(unix)]
 #![recursion_limit = "256"]
@@ -598,6 +597,7 @@ fn short_sha256(bytes: &[u8]) -> String {
 }
 
 /// Upstream's unit: thousands of bytes with one decimal.
+#[allow(clippy::cast_precision_loss, reason = "a fixture size, far below 2^53")]
 fn kilobytes(bytes: usize) -> String {
     format!("{:.1}k", bytes as f64 / 1000.0)
 }

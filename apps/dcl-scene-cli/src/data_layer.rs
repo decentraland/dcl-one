@@ -221,8 +221,9 @@ async fn launch(node: &Path, driver: &Path, root: &Path) -> Result<Driver> {
             if let Ok(v) = serde_json::from_str::<serde_json::Value>(&line)
                 && v.get("ready").and_then(|r| r.as_bool()) == Some(true)
                 && let Some(port) = v.get("port").and_then(|p| p.as_u64())
+                && let Ok(port) = u16::try_from(port)
             {
-                return Some(port as u16);
+                return Some(port);
             }
         }
         None

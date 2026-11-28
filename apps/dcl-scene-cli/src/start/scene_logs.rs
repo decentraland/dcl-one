@@ -391,7 +391,10 @@ fn map_frame(bundle: &Path, line: u32, col: u32, context: SourceContext) -> Opti
             let first = src_line.saturating_sub(context.before) as usize;
             let last = (src_line + context.after) as usize;
             (first..=last.min(lines.len().saturating_sub(1)))
-                .map(|i| (i as u32 + 1, lines[i].trim_end().to_string()))
+                .map(|i| {
+                    let line = u32::try_from(i + 1).unwrap_or(u32::MAX);
+                    (line, lines[i].trim_end().to_string())
+                })
                 .collect()
         })
         .unwrap_or_default();

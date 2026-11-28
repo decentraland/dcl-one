@@ -37,7 +37,7 @@ fn extract_into(root: &Path) -> std::io::Result<()> {
     static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
     for (rel, packed, raw_len) in FILES {
         let path = root.join(rel);
-        if std::fs::metadata(&path).is_ok_and(|m| m.len() as usize == *raw_len) {
+        if std::fs::metadata(&path).is_ok_and(|m| m.len() == *raw_len as u64) {
             continue;
         }
         if let Some(parent) = path.parent() {

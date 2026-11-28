@@ -324,7 +324,7 @@ pub fn spawn_sidecar(preview_port: u16, project_root: &Path) -> Option<Sidecar> 
                 relay_output(err, true, project_root.to_path_buf(), gpu.clone());
             }
             #[cfg(unix)]
-            let pgid = child.id().map(|id| id as i32).unwrap_or(0);
+            let pgid = child.id().and_then(crate::casts::pid_i32).unwrap_or(0);
             #[cfg(unix)]
             SIDECAR_PGID.store(pgid, std::sync::atomic::Ordering::SeqCst);
             let (tx, exited) = tokio::sync::watch::channel(false);
@@ -590,7 +590,7 @@ mod tests {
             .unwrap();
         // Held past the checks below: its end of file would end both on its own.
         let held = child.stdin.take();
-        let pgid = child.id() as i32;
+        let pgid = crate::casts::pid_i32(child.id()).unwrap();
         let mut line = String::new();
         std::io::BufReader::new(child.stdout.take().unwrap())
             .read_line(&mut line)

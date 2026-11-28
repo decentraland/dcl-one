@@ -481,7 +481,7 @@ fn with_board<T>(f: impl FnOnce(&mut Board) -> T) -> T {
 fn record(topic: Topic, what: String, why: Option<String>, steps: Vec<String>) {
     let at = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_millis() as u64)
+        .map(crate::casts::millis_u64)
         .unwrap_or_default();
     let what = sanitize(&strip_sgr(&what));
     let why = why.as_deref().map(sanitize_block);
@@ -1054,17 +1054,17 @@ pub fn fmt_elapsed(d: Duration) -> String {
     if secs < 60.0 && prints_below(secs, 60.0) {
         return format!("{} sec", sig3(secs));
     }
-    let whole_secs = secs.round() as u64;
+    let whole_secs = crate::casts::round_u64(secs);
     if whole_secs < 3_600 {
         return format!("{}min {}sec", whole_secs / 60, whole_secs % 60);
     }
-    let whole_mins = (secs / 60.0).round() as u64;
+    let whole_mins = crate::casts::round_u64(secs / 60.0);
     format!("{}hr {}min", whole_mins / 60, whole_mins % 60)
 }
 
 pub fn fmt_bytes(n: u64) -> String {
     const KB: f64 = 1024.0;
-    let v = n as f64;
+    let v = crate::casts::approx(n);
     if v < KB {
         format!("{n}b")
     } else if v < KB * KB {

@@ -307,9 +307,11 @@ pub(super) fn parse_holdings(lands: &Value, operated: &Value) -> Holdings {
         v.get("elements")
             .and_then(|e| e.as_array())
             .map(|arr| {
-                arr.iter()
-                    .filter(|e| e.get("category").and_then(|c| c.as_str()) == Some(cat))
-                    .count() as i64
+                crate::casts::len_i64(
+                    arr.iter()
+                        .filter(|e| e.get("category").and_then(|c| c.as_str()) == Some(cat))
+                        .count(),
+                )
             })
             .unwrap_or(0)
     };

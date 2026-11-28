@@ -409,7 +409,7 @@ fn xyz_value(xyz: &Xyz) -> Result<Value, String> {
             ));
         }
         Ok(if v.fract() == 0.0 {
-            json!(v as i64)
+            json!(crate::casts::trunc_i64(v))
         } else {
             json!(v)
         })

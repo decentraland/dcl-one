@@ -29,7 +29,8 @@ impl Encoder for FakeEncoder {
 fn noise_png(w: u32, h: u32, seed: u32) -> Vec<u8> {
     let img = image::RgbImage::from_fn(w, h, |x, y| {
         let v = (x.wrapping_mul(7919) ^ y.wrapping_mul(104_729) ^ seed).wrapping_mul(2_654_435_761);
-        image::Rgb([(v >> 8) as u8, (v >> 16) as u8, (v >> 24) as u8])
+        let [_, a, b, c] = v.to_le_bytes();
+        image::Rgb([a, b, c])
     });
     let mut out = std::io::Cursor::new(Vec::new());
     image::DynamicImage::ImageRgb8(img)
@@ -88,7 +89,8 @@ fn scene(tag: &str) -> (TempTree, PathBuf, Vec<u8>) {
         bin: Some(bin),
         glb: true,
     }
-    .to_bytes();
+    .to_bytes()
+    .unwrap();
     write(&root, "models/a.glb", &glb);
     t.write(
         "models/b.gltf",
@@ -833,7 +835,7 @@ fn a_copy_with_the_same_size_and_time_moves_the_key() {
     let path = root.join("images/wall.png");
     let before = file_key(&path).unwrap();
     let modified = std::fs::metadata(&path).unwrap().modified().unwrap();
-    let len = std::fs::metadata(&path).unwrap().len() as usize;
+    let len = usize::try_from(std::fs::metadata(&path).unwrap().len()).unwrap();
     // the same size, other bytes, renamed over it with the old time
     let other = noise_png(64, 64, 31);
     let mut bytes = other.clone();

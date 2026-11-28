@@ -98,9 +98,12 @@ fn size_cell(len: usize) -> (&'static str, String) {
     let human = if len < 1024 {
         format!("{len} B")
     } else if len < 1024 * 1024 {
-        format!("{:.1} KB", len as f64 / 1024.0)
+        format!("{:.1} KB", crate::casts::approx(len as u64) / 1024.0)
     } else {
-        format!("{:.2} MB", len as f64 / (1024.0 * 1024.0))
+        format!(
+            "{:.2} MB",
+            crate::casts::approx(len as u64) / (1024.0 * 1024.0)
+        )
     };
     (sgr, human)
 }

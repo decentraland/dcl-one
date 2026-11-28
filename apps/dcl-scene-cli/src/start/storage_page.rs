@@ -997,7 +997,7 @@ fn listing_from_reply(reply: Result<Reply, anyhow::Error>) -> Listing {
             let total = body
                 .pointer("/pagination/total")
                 .and_then(Value::as_u64)
-                .map(|n| n as usize)
+                .map(crate::casts::to_usize)
                 .unwrap_or(rows.len());
             Listing {
                 rows,

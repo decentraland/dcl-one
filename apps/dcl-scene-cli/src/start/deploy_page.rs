@@ -2116,15 +2116,15 @@ fn upload_panel(p: &deploy::DeployPreview, status: &LiveStatus) -> String {
     let total_bytes = r.upload_bytes + r.reused_bytes;
     let (total_size, unit) = split_size(total_bytes);
     let upload_size = match unit.as_str() {
-        "MB" => format!("{:.1}", r.upload_bytes as f64 / 1_000_000.0),
-        "KB" => format!("{:.1}", r.upload_bytes as f64 / 1_000.0),
+        "MB" => format!("{:.1}", crate::casts::approx(r.upload_bytes) / 1_000_000.0),
+        "KB" => format!("{:.1}", crate::casts::approx(r.upload_bytes) / 1_000.0),
         _ => r.upload_bytes.to_string(),
     };
     let meter = |label: &str, bytes: u64| {
         let percent = if total_bytes == 0 {
             0.0
         } else {
-            bytes as f64 / total_bytes as f64 * 100.0
+            crate::casts::approx(bytes) / crate::casts::approx(total_bytes) * 100.0
         };
         format!(
             r#"<div class="u-progress" role="meter" aria-label="{label}" aria-valuemin="0" aria-valuemax="100" aria-valuenow="{percent:.1}"><span style="width:{percent:.1}%"></span></div>"#
@@ -3073,7 +3073,7 @@ fn after_map(remote: &RemoteState, ours: &[(i64, i64)], base: (i64, i64)) -> Str
         let pad = 6;
         let width = xs.1 - xs.0 + 1 + pad * 2;
         let height = ys.1 - ys.0 + 1 + pad * 2;
-        let font = width.max(height) as f64 * 0.025;
+        let font = crate::casts::approx_signed(width.max(height)) * 0.025;
         let mut cells = String::new();
         let mut sorted = all.clone();
         sorted.sort_unstable();
@@ -3106,7 +3106,7 @@ fn after_map(remote: &RemoteState, ours: &[(i64, i64)], base: (i64, i64)) -> Str
             let (x0, x1) = span(coords.iter().map(|p| p.0));
             let (y0, y1) = span(coords.iter().map(|p| p.1));
             controls.push_str(&format!(r#"<button type="button" class="tgt__view" data-map-viewbox="{} {} {} {}" aria-pressed="false">{x},{y}</button>"#,x0-2,-y1-3,x1-x0+5,y1-y0+5));
-            labels.push_str(&format!(r##"<a href="#world-scene-{x}-{y}"><text x="{x}" y="{}" font-size="{font}">{x},{y}</text></a>"##, -y as f64+font));
+            labels.push_str(&format!(r##"<a href="#world-scene-{x}-{y}"><text x="{x}" y="{}" font-size="{font}">{x},{y}</text></a>"##, crate::casts::approx_signed(-y)+font));
         }
         return format!(
             r#"<div class="tgt__map-controls" aria-label="Focus world map">{controls}</div><svg class="tgt__world-plot" viewBox="{} {} {width} {height}" role="img" aria-label="World scene locations after publishing"><rect class="tgt__plot-bg" x="{}" y="{}" width="{width}" height="{height}"/>{cells}{labels}</svg><div class="tgt__map-key"><span><i class="lay__swatch lay__swatch--in"></i>This publish</span><span><i class="lay__swatch dep__cell--kept"></i>Kept</span></div>"#,

@@ -1206,7 +1206,7 @@ async fn a_long_payload_lists_eight_and_folds_the_rest() {
     for i in 1..=12u64 {
         std::fs::write(
             project.root.join(format!("assets/a{i:02}.glb")),
-            vec![0u8; (13 - i) as usize * 1000],
+            vec![0u8; usize::try_from(13 - i).unwrap() * 1000],
         )
         .unwrap();
     }
@@ -2251,7 +2251,7 @@ fn the_land_view_offers_the_wallets_areas_to_move_to() {
     let rights = Rights {
         verdict: Verdict::May("rights held on all 24 declared parcels".into()),
         holdings: Some(holdings(
-            held.len() as i64,
+            i64::try_from(held.len()).unwrap(),
             0,
             0,
             held.clone(),

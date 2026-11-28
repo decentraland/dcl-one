@@ -104,11 +104,11 @@ impl Model {
         })
     }
 
-    pub fn to_bytes(&self) -> Vec<u8> {
+    pub fn to_bytes(&self) -> Result<Vec<u8>> {
         if !self.glb {
             let mut out = serde_json::to_vec_pretty(&self.json).expect("JSON values serialize");
             out.push(b'\n');
-            return out;
+            return Ok(out);
         }
         let mut json = serde_json::to_vec(&self.json).expect("JSON values serialize");
         while !json.len().is_multiple_of(4) {
@@ -122,19 +122,20 @@ impl Model {
             b
         });
         let total = 12 + 8 + json.len() + bin.as_ref().map_or(0, |b| 8 + b.len());
+        let glb_len = |n: usize| u32::try_from(n).context("a GLB is larger than 4 GiB");
         let mut out = Vec::with_capacity(total);
         out.extend_from_slice(GLB_MAGIC);
         out.extend_from_slice(&2u32.to_le_bytes());
-        out.extend_from_slice(&(total as u32).to_le_bytes());
-        out.extend_from_slice(&(json.len() as u32).to_le_bytes());
+        out.extend_from_slice(&glb_len(total)?.to_le_bytes());
+        out.extend_from_slice(&glb_len(json.len())?.to_le_bytes());
         out.extend_from_slice(&CHUNK_JSON.to_le_bytes());
         out.extend_from_slice(&json);
         if let Some(bin) = bin {
-            out.extend_from_slice(&(bin.len() as u32).to_le_bytes());
+            out.extend_from_slice(&glb_len(bin.len())?.to_le_bytes());
             out.extend_from_slice(&CHUNK_BIN.to_le_bytes());
             out.extend_from_slice(&bin);
         }
-        out
+        Ok(out)
     }
 
     fn array(&self, key: &str) -> &[Value] {
@@ -154,7 +155,7 @@ impl Model {
 }
 
 fn index(v: &Value, key: &str) -> Option<usize> {
-    v.get(key)?.as_u64().map(|i| i as usize)
+    v.get(key)?.as_u64().map(crate::casts::to_usize)
 }
 
 /// Where an image's bytes are.
@@ -447,7 +448,7 @@ pub fn apply(model: &mut Model, replacements: &BTreeMap<usize, String>) -> bool 
                 continue;
             };
             if let Some(v) = image.remove("bufferView").and_then(|v| v.as_u64()) {
-                freed_views.insert(v as usize);
+                freed_views.insert(crate::casts::to_usize(v));
             }
             image.remove("uri");
             image.remove("mimeType");
@@ -460,7 +461,7 @@ pub fn apply(model: &mut Model, replacements: &BTreeMap<usize, String>) -> bool 
             let Some(source) = texture.get("source").and_then(Value::as_u64) else {
                 continue;
             };
-            if !replacements.contains_key(&(source as usize)) {
+            if !replacements.contains_key(&crate::casts::to_usize(source)) {
                 continue;
             }
             texture.remove("source");
@@ -560,7 +561,7 @@ fn view_refs(json: &mut Value) -> Vec<&mut Value> {
 fn repack(model: &mut Model, freed: &BTreeSet<usize>) -> bool {
     let referenced: BTreeSet<usize> = view_refs(&mut model.json)
         .into_iter()
-        .filter_map(|v| v.as_u64().map(|i| i as usize))
+        .filter_map(|v| v.as_u64().map(crate::casts::to_usize))
         .collect();
     let dropped: BTreeSet<usize> = freed.difference(&referenced).copied().collect();
     if dropped.is_empty() {
@@ -596,7 +597,10 @@ fn repack(model: &mut Model, freed: &BTreeSet<usize>) -> bool {
         new_views.push(view);
     }
     for r in view_refs(&mut model.json) {
-        if let Some(new) = r.as_u64().and_then(|old| renumber.get(&(old as usize))) {
+        if let Some(new) = r
+            .as_u64()
+            .and_then(|old| renumber.get(&crate::casts::to_usize(old)))
+        {
             *r = json!(new);
         }
     }
@@ -628,6 +632,7 @@ mod tests {
             glb: true,
         }
         .to_bytes()
+        .unwrap()
     }
 
     /// positions (view 0), a PNG (view 1), a Draco blob (view 2), and an
@@ -670,7 +675,7 @@ mod tests {
         let (json, bin) = sample();
         let bytes = glb(json.clone(), &bin);
         assert!(bytes.len().is_multiple_of(4));
-        assert_eq!(u32_at(&bytes, 8), Some(bytes.len() as u32));
+        assert_eq!(u32_at(&bytes, 8), u32::try_from(bytes.len()).ok());
         let model = Model::parse(&bytes).unwrap();
         assert_eq!(model.json, json);
         assert_eq!(model.bin.as_deref(), Some(bin.as_slice()));
@@ -714,7 +719,7 @@ mod tests {
         assert_eq!(&bin[12..20], b"DRACO!!!");
         assert!(!bin.windows(8).any(|w| w == b"PNGBYTES"));
         // and it still parses as a GLB
-        let again = Model::parse(&model.to_bytes()).unwrap();
+        let again = Model::parse(&model.to_bytes().unwrap()).unwrap();
         assert_eq!(&again.json, j);
     }
 
@@ -790,9 +795,9 @@ mod tests {
         let source = image_source(&model, "m/a.gltf", 0, &|_| None).unwrap();
         assert_eq!(source, ImageSource::Embedded(png.to_vec()));
         apply(&mut model, &BTreeMap::from([(0, "../k.ktx2".to_string())]));
-        let out = Model::parse(&model.to_bytes()).unwrap();
+        let out = Model::parse(&model.to_bytes().unwrap()).unwrap();
         assert_eq!(out.json["images"][0]["uri"], json!("../k.ktx2"));
-        assert!(!String::from_utf8_lossy(&model.to_bytes()).contains("base64"));
+        assert!(!String::from_utf8_lossy(&model.to_bytes().unwrap()).contains("base64"));
     }
 
     #[test]
