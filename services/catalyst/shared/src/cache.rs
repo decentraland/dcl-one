@@ -7,14 +7,20 @@
 //!
 //! [`TtlCache`] is the simpler keyed memo behind a std mutex (no
 //! single-flight), recomputed at most once per TTL.
+//!
+//! [`Coalesce`] is single-flight with no memo: callers that ask while a read
+//! is in flight share its output, and nothing outlives the read.
 
+use std::collections::HashSet;
 use std::future::Future;
 use std::hash::Hash;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use dashmap::DashMap;
-use tokio::sync::Notify;
+use dashmap::mapref::entry::Entry as MapEntry;
+use tokio::sync::{Notify, watch};
 use tokio::time::Instant;
 
 struct Entry<V> {
@@ -349,6 +355,188 @@ where
     }
 }
 
+/// Single-flight with no memo. A caller that asks for a key while a read of
+/// it is in flight gets that read's output; once the output is out the key
+/// is free again, so a caller arriving after starts a read of its own (an
+/// answer is never served past the read that produced it). The caller that
+/// starts a read runs it inline, so it may borrow what that caller holds. A
+/// read whose caller is cancelled ends without output, and the callers that
+/// joined it get its keys back to read again, never a value nobody read.
+pub struct Coalesce<K, O>
+where
+    K: Eq + Hash + Clone,
+    O: Clone,
+{
+    flights: DashMap<K, (u64, watch::Receiver<Option<O>>)>,
+    next: AtomicU64,
+    reads: AtomicU64,
+}
+
+/// The flights a caller joined: each one's output channel and the caller's
+/// keys it reads.
+type Joined<K, O> = Vec<(u64, watch::Receiver<Option<O>>, Vec<K>)>;
+
+/// The read a caller leads: its keys leave the map when it ends, published
+/// or cancelled (only while they still name this flight), and its joiners
+/// then see its output or, without one, the channel closed.
+struct Flight<'a, K, O>
+where
+    K: Eq + Hash + Clone,
+    O: Clone,
+{
+    flights: &'a DashMap<K, (u64, watch::Receiver<Option<O>>)>,
+    id: u64,
+    keys: Vec<K>,
+    output: watch::Sender<Option<O>>,
+}
+
+impl<K, O> Flight<'_, K, O>
+where
+    K: Eq + Hash + Clone,
+    O: Clone,
+{
+    fn publish(&self, output: &O) {
+        self.output.send_replace(Some(output.clone()));
+    }
+}
+
+impl<K, O> Drop for Flight<'_, K, O>
+where
+    K: Eq + Hash + Clone,
+    O: Clone,
+{
+    fn drop(&mut self) {
+        for key in &self.keys {
+            self.flights.remove_if(key, |_, (id, _)| *id == self.id);
+        }
+    }
+}
+
+impl<K, O> Default for Coalesce<K, O>
+where
+    K: Eq + Hash + Clone,
+    O: Clone,
+{
+    fn default() -> Self {
+        Self {
+            flights: DashMap::new(),
+            next: AtomicU64::new(0),
+            reads: AtomicU64::new(0),
+        }
+    }
+}
+
+impl<K, O> Coalesce<K, O>
+where
+    K: Eq + Hash + Clone,
+    O: Clone,
+{
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Joins the flights `keys` are in and claims the others for one read of
+    /// this caller's (`None` when every key is in flight).
+    fn claim(&self, keys: &[K]) -> (Option<Flight<'_, K, O>>, Joined<K, O>) {
+        let id = self.next.fetch_add(1, Ordering::Relaxed);
+        let (output, receiver) = watch::channel(None);
+        let mut led = Vec::new();
+        let mut joined: Joined<K, O> = Vec::new();
+        let mut seen = HashSet::new();
+        for key in keys {
+            if !seen.insert(key) {
+                continue;
+            }
+            match self.flights.entry(key.clone()) {
+                MapEntry::Occupied(flight) => {
+                    let (other, channel) = flight.get();
+                    match joined.iter_mut().find(|(id, _, _)| id == other) {
+                        Some((_, _, keys)) => keys.push(key.clone()),
+                        None => joined.push((*other, channel.clone(), vec![key.clone()])),
+                    }
+                }
+                MapEntry::Vacant(free) => {
+                    free.insert((id, receiver.clone()));
+                    led.push(key.clone());
+                }
+            }
+        }
+        if !led.is_empty() {
+            self.reads.fetch_add(1, Ordering::Relaxed);
+        }
+        let flight = (!led.is_empty()).then(|| Flight {
+            flights: &self.flights,
+            id,
+            keys: led,
+            output,
+        });
+        (flight, joined)
+    }
+
+    /// The output of `key`'s flight, joined or read here with `read`.
+    pub async fn run<F, Fut>(&self, key: K, read: F) -> O
+    where
+        F: FnOnce() -> Fut,
+        Fut: Future<Output = O>,
+    {
+        let mut read = Some(read);
+        loop {
+            match self.claim(std::slice::from_ref(&key)) {
+                (Some(flight), _) => {
+                    let read = read.take().expect("a caller leads one read");
+                    let output = read().await;
+                    flight.publish(&output);
+                    return output;
+                }
+                (None, joined) => {
+                    for (_, mut channel, _) in joined {
+                        if let Ok(output) = channel.wait_for(Option::is_some).await {
+                            return (*output).clone().expect("waited for an output");
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// The outputs for many keys: the keys in flight join those flights, and
+    /// `read` reads the rest in one flight (called only when some key is not
+    /// in flight). Answers this caller's read's output first, then each
+    /// joined flight's, and the keys whose joined flight ended without one,
+    /// which the caller reads again.
+    pub async fn run_many<F, Fut>(&self, keys: &[K], read: F) -> (Vec<O>, Vec<K>)
+    where
+        F: FnOnce(Vec<K>) -> Fut,
+        Fut: Future<Output = O>,
+    {
+        let (flight, joined) = self.claim(keys);
+        let mut outputs = Vec::with_capacity(joined.len() + 1);
+        if let Some(flight) = flight {
+            let output = read(flight.keys.clone()).await;
+            flight.publish(&output);
+            outputs.push(output);
+        }
+        let mut orphaned = Vec::new();
+        for (_, mut channel, keys) in joined {
+            match channel.wait_for(Option::is_some).await {
+                Ok(output) => outputs.push((*output).clone().expect("waited for an output")),
+                Err(_) => orphaned.extend(keys),
+            }
+        }
+        (outputs, orphaned)
+    }
+
+    /// The keys in flight now.
+    pub fn in_flight(&self) -> usize {
+        self.flights.len()
+    }
+
+    /// How many reads were started (each joined by any number of callers).
+    pub fn reads_started(&self) -> u64 {
+        self.reads.load(Ordering::Relaxed)
+    }
+}
+
 /// A keyed TTL memo behind a mutex: the category counts, the parcel aliases and
 /// the moderator set are recomputed at most once per TTL.
 pub struct Cached<T> {
@@ -396,6 +584,159 @@ pub fn cache_put<T>(cache: &TtlCache<T>, key: String, value: T, ttl: Duration) {
 mod tests {
     use super::*;
     use std::sync::atomic::{AtomicUsize, Ordering};
+
+    /// A gate the reads in a test wait on, and how many reads started.
+    #[derive(Default)]
+    struct Gate {
+        reads: AtomicUsize,
+        open: Notify,
+        opened: std::sync::atomic::AtomicBool,
+    }
+
+    impl Gate {
+        async fn pass(&self) {
+            self.reads.fetch_add(1, Ordering::SeqCst);
+            while !self.opened.load(Ordering::SeqCst) {
+                let _ = tokio::time::timeout(Duration::from_millis(5), self.open.notified()).await;
+            }
+        }
+
+        fn open(&self) {
+            self.opened.store(true, Ordering::SeqCst);
+            self.open.notify_waiters();
+        }
+
+        fn reads(&self) -> usize {
+            self.reads.load(Ordering::SeqCst)
+        }
+    }
+
+    /// Lets every spawned caller reach its `run` before the test goes on.
+    async fn settle() {
+        for _ in 0..20 {
+            tokio::task::yield_now().await;
+        }
+    }
+
+    #[tokio::test]
+    async fn concurrent_callers_share_one_read_and_nothing_is_kept() {
+        let coalesce: Arc<Coalesce<&'static str, u32>> = Arc::new(Coalesce::new());
+        let gate = Arc::new(Gate::default());
+        let callers: Vec<_> = (0..8)
+            .map(|_| {
+                let (coalesce, gate) = (coalesce.clone(), gate.clone());
+                tokio::spawn(async move {
+                    coalesce
+                        .run("k", || async {
+                            gate.pass().await;
+                            7
+                        })
+                        .await
+                })
+            })
+            .collect();
+        settle().await;
+        assert_eq!(gate.reads(), 1, "one read in flight");
+        gate.open();
+        for caller in callers {
+            assert_eq!(caller.await.unwrap(), 7);
+        }
+        assert_eq!(gate.reads(), 1, "every caller got the one read");
+        assert_eq!(coalesce.reads_started(), 1);
+        assert_eq!(coalesce.in_flight(), 0, "nothing is kept");
+        assert_eq!(
+            coalesce.run("k", || async { 8 }).await,
+            8,
+            "a later caller reads again"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_cancelled_read_hands_its_key_back() {
+        let coalesce: Arc<Coalesce<&'static str, u32>> = Arc::new(Coalesce::new());
+        let gate = Arc::new(Gate::default());
+        let leader = {
+            let coalesce = coalesce.clone();
+            tokio::spawn(async move { coalesce.run("k", std::future::pending::<u32>).await })
+        };
+        settle().await;
+        let joiner = {
+            let (coalesce, gate) = (coalesce.clone(), gate.clone());
+            tokio::spawn(async move {
+                coalesce
+                    .run("k", || async {
+                        gate.pass().await;
+                        9
+                    })
+                    .await
+            })
+        };
+        settle().await;
+        assert_eq!(gate.reads(), 0, "the joiner waits on the leader's read");
+        leader.abort();
+        let _ = leader.await;
+        gate.open();
+        assert_eq!(joiner.await.unwrap(), 9, "the joiner read it itself");
+        assert_eq!(gate.reads(), 1);
+        assert_eq!(coalesce.in_flight(), 0);
+    }
+
+    #[tokio::test]
+    async fn overlapping_sets_read_each_key_once() {
+        let coalesce: Arc<Coalesce<u32, Vec<u32>>> = Arc::new(Coalesce::new());
+        let gate = Arc::new(Gate::default());
+        let asked = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let call = |keys: Vec<u32>| {
+            let (coalesce, gate, asked) = (coalesce.clone(), gate.clone(), asked.clone());
+            tokio::spawn(async move {
+                coalesce
+                    .run_many(&keys, |led| async move {
+                        asked.lock().unwrap().push(led.clone());
+                        gate.pass().await;
+                        led
+                    })
+                    .await
+            })
+        };
+        let first = call(vec![1, 2, 2]);
+        settle().await;
+        let second = call(vec![2, 3]);
+        settle().await;
+        gate.open();
+        let (first, orphaned) = first.await.unwrap();
+        assert_eq!((first, orphaned), (vec![vec![1, 2]], vec![]));
+        let (second, orphaned) = second.await.unwrap();
+        assert_eq!(
+            (second, orphaned),
+            (vec![vec![3], vec![1, 2]], vec![]),
+            "its own read, then the joined one"
+        );
+        assert_eq!(*asked.lock().unwrap(), vec![vec![1, 2], vec![3]]);
+        assert_eq!(coalesce.in_flight(), 0);
+    }
+
+    #[tokio::test]
+    async fn a_set_joined_to_a_cancelled_read_gets_its_keys_back() {
+        let coalesce: Arc<Coalesce<u32, Vec<u32>>> = Arc::new(Coalesce::new());
+        let leader = {
+            let coalesce = coalesce.clone();
+            tokio::spawn(async move {
+                coalesce
+                    .run_many(&[1, 2], |_| std::future::pending::<Vec<u32>>())
+                    .await
+            })
+        };
+        settle().await;
+        let joiner = {
+            let coalesce = coalesce.clone();
+            tokio::spawn(async move { coalesce.run_many(&[2, 3], |led| async move { led }).await })
+        };
+        settle().await;
+        leader.abort();
+        let _ = leader.await;
+        assert_eq!(joiner.await.unwrap(), (vec![vec![3]], vec![2]));
+        assert_eq!(coalesce.in_flight(), 0);
+    }
 
     #[tokio::test]
     async fn fresh_hits_skip_the_fetch_and_clear_forces_one() {

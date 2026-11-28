@@ -24,7 +24,7 @@ use axum::extract::{Path, Request, State};
 use axum::response::{IntoResponse, Response};
 use serde_json::{Map, Value, json};
 
-use crate::shared::cache::TtlMap;
+use crate::shared::cache::{Coalesce, TtlMap};
 use crate::shared::http_util::lambdas_internal_error;
 use crate::shared::query_params::{parse_int_js, parse_query_string, qs_get_array, qs_get_string};
 
@@ -61,6 +61,38 @@ pub struct Caches {
     /// networks it needed stop being fresh (a hit past it reads again).
     outfits:
         TtlMap<(String, super::owned_items::Publications), (Value, Option<chrono::NaiveDateTime>)>,
+    /// `(address, publications)` -> the outfits read in flight: concurrent
+    /// misses of one address under one publication share it.
+    pub(super) outfit_flights:
+        Coalesce<(String, super::owned_items::Publications), Result<Value, SharedFailure>>,
+}
+
+/// A failed read's response, buffered, so every caller that joined the read
+/// answers with it.
+#[derive(Clone)]
+pub(super) struct SharedFailure {
+    status: axum::http::StatusCode,
+    headers: axum::http::HeaderMap,
+    body: bytes::Bytes,
+}
+
+impl SharedFailure {
+    async fn of(response: Response) -> Self {
+        let (parts, body) = response.into_parts();
+        Self {
+            status: parts.status,
+            headers: parts.headers,
+            body: axum::body::to_bytes(body, usize::MAX)
+                .await
+                .unwrap_or_default(),
+        }
+    }
+}
+
+impl IntoResponse for SharedFailure {
+    fn into_response(self) -> Response {
+        (self.status, self.headers, self.body).into_response()
+    }
 }
 
 impl Default for Caches {
@@ -71,6 +103,7 @@ impl Default for Caches {
             catalog_urns: TtlMap::bounded(CATALOG_TTL, 4096),
             base_wearables: TtlMap::bounded(BASE_WEARABLES_TTL, 1),
             outfits: TtlMap::bounded(OUTFITS_TTL, 50_000),
+            outfit_flights: Coalesce::new(),
         }
     }
 }
@@ -1228,9 +1261,21 @@ pub async fn outfits(State(state): State<SharedState>, Path(id): Path<String>) -
     {
         return answer(v);
     }
-    match fill_outfits(&state, &address, looked_up).await {
+    // A miss another request is reading under the same publications joins
+    // that read.
+    let read = state
+        .lambdas
+        .outfit_flights
+        .run((address.clone(), looked_up), || async {
+            match fill_outfits(&state, &address, looked_up).await {
+                Ok(v) => Ok(v),
+                Err(resp) => Err(SharedFailure::of(resp).await),
+            }
+        })
+        .await;
+    match read {
         Ok(v) => answer(v),
-        Err(resp) => resp,
+        Err(failure) => failure.into_response(),
     }
 }
 

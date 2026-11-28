@@ -694,6 +694,10 @@ pub struct MarketplaceState {
     /// `(pointer, publications)` -> the processed profile (`Null`: none),
     /// read under that publication of the nft index.
     pub(crate) profile_cache: TtlMap<(String, owned_items::Publications), Value>,
+    /// `(pointer, publications)` -> the profile read in flight: concurrent
+    /// misses of one pointer under one publication share it.
+    pub(crate) profile_flights:
+        crate::shared::cache::Coalesce<(String, owned_items::Publications), profiles::ProfileRead>,
     /// `(owner, category, includeDefinitions, publications)`: an answer
     /// read under another publication of the nft index is never served.
     pub(crate) by_owner_cache: TtlMap<(String, String, bool, owned_items::Publications), Value>,
@@ -800,6 +804,7 @@ impl MarketplaceState {
                 profiles::PROFILE_CACHE_TTL,
                 profiles::PROFILE_CACHE_MAX_ENTRIES,
             ),
+            profile_flights: Default::default(),
             by_owner_cache: TtlMap::bounded(Duration::from_secs(30), 50_000),
             contracts: contracts::Caches::default(),
             readers: readers::Caches::default(),

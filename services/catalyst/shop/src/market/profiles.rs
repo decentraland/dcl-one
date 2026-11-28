@@ -698,10 +698,15 @@ pub(super) async fn process_and_cache_profiles(
     Ok(out)
 }
 
-enum Failure {
+#[derive(Clone, Debug)]
+pub(crate) enum Failure {
     Db,
     Reader(String),
 }
+
+/// What one profile read answers every caller that joined it: pointer ->
+/// its processed profile (`Null`: none), or the read's failure.
+pub(crate) type ProfileRead = Result<std::sync::Arc<HashMap<String, Value>>, Failure>;
 
 impl Failure {
     fn layer(&self) -> &'static str {
@@ -719,8 +724,34 @@ impl Failure {
     }
 }
 
+/// Reads `pointers`' entities and processes them under `looked_up`
+/// ([`process_and_cache_profiles`], which fills the per-id cache): pointer
+/// -> its profile, `Null` for a pointer without one.
+async fn read_profiles(
+    state: &MarketplaceState,
+    pointers: &[String],
+    looked_up: owned_items::Publications,
+) -> Result<HashMap<String, Value>, Failure> {
+    let entities = active_entities(state, pointers)
+        .await
+        .map_err(|()| Failure::Db)?;
+    let mut read: HashMap<String, Value> = HashMap::with_capacity(pointers.len());
+    for (key, profile) in process_and_cache_profiles(state, pointers, &entities, looked_up)
+        .await
+        .map_err(Failure::Reader)?
+    {
+        read.entry(key).or_insert(profile);
+    }
+    for pointer in pointers {
+        read.entry(pointer.clone()).or_insert(Value::Null);
+    }
+    Ok(read)
+}
+
 /// Per-id hits are reused across id sets; only misses are fetched; answer
-/// `(pointer, profile)` in request order, each pointer once.
+/// `(pointer, profile)` in request order, each pointer once. A miss another
+/// request is reading under the same publications joins that read
+/// (`profile_flights`), and the rest are read together in one.
 async fn profiles_via_cache(
     state: &MarketplaceState,
     pointers: &[String],
@@ -744,16 +775,31 @@ async fn profiles_via_cache(
             None => missing.push(pointer.clone()),
         }
     }
-    if !missing.is_empty() {
-        let entities = active_entities(state, &missing)
-            .await
-            .map_err(|()| Failure::Db)?;
-        for (key, profile) in process_and_cache_profiles(state, &missing, &entities, publications)
-            .await
-            .map_err(Failure::Reader)?
-        {
-            found.entry(key).or_insert(profile);
+    let mut pending: Vec<(String, owned_items::Publications)> = missing
+        .iter()
+        .map(|pointer| (pointer.clone(), publications))
+        .collect();
+    // A read another request joined and then dropped hands its keys back.
+    while !pending.is_empty() {
+        let (reads, orphaned) = state
+            .profile_flights
+            .run_many(&pending, |led| async move {
+                let pointers: Vec<String> = led.into_iter().map(|(pointer, _)| pointer).collect();
+                read_profiles(state, &pointers, publications)
+                    .await
+                    .map(std::sync::Arc::new)
+            })
+            .await;
+        for read in reads {
+            for (pointer, profile) in read?.iter() {
+                if missing.contains(pointer) && !profile.is_null() {
+                    found
+                        .entry(pointer.clone())
+                        .or_insert_with(|| profile.clone());
+                }
+            }
         }
+        pending = orphaned;
     }
     Ok(wanted
         .into_iter()
@@ -1215,6 +1261,143 @@ mod tests {
         let resp = super::super::lambdas_catalog::outfits(State(with), Path(address.clone())).await;
         assert_eq!(resp.status(), StatusCode::NOT_FOUND);
         assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 2);
+        let _ = std::fs::remove_dir_all(tmp);
+    }
+
+    /// A face hook that counts the profile reads: each read warms its
+    /// entities' faces once, whether it found any.
+    struct CountingFaces(Arc<std::sync::atomic::AtomicUsize>);
+
+    impl super::super::ProfileFaces for CountingFaces {
+        fn derives_faces(&self) -> bool {
+            false
+        }
+
+        fn warm(&self, _: Vec<String>) {
+            self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        }
+    }
+
+    /// A state whose content reads go to a peer that holds nothing and
+    /// answers each `/entities/active` after `delay`, with a face hook that
+    /// counts the profile reads; `None` without a test database.
+    async fn slow_read_through_state(
+        delay: std::time::Duration,
+    ) -> Option<(
+        Arc<MarketplaceState>,
+        Arc<std::sync::atomic::AtomicUsize>,
+        std::path::PathBuf,
+    )> {
+        use axum::routing::post;
+        let pool = crate::db::scratch::pool(8).await?;
+        let app = axum::Router::new().route(
+            "/content/entities/active",
+            post(move || async move {
+                tokio::time::sleep(delay).await;
+                Json(json!([]))
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let tmp = std::env::temp_dir().join(format!(
+            "catalyst-shop-coalesce-{}-{}",
+            std::process::id(),
+            uuid::Uuid::new_v4().simple()
+        ));
+        let storage = Arc::new(crate::storage::Storage::from_config(&tmp).await.unwrap());
+        let read_through = Arc::new(crate::content::read_through::ReadThrough::new(
+            pool.clone(),
+            storage,
+            crate::content::sync::test_sync_client(reqwest::Client::new()),
+            vec![format!("http://{addr}/content")],
+            None,
+            crate::content::read_through::Fills::new(1, std::time::Duration::from_secs(30)),
+            crate::content::sync_deployer::SyncValidation::AuthChainOnly,
+        ));
+        let state = MarketplaceState::new(
+            pool,
+            crate::http::Outbound::for_tests(),
+            super::super::Settings::for_tests(),
+        )
+        .with_read_through(Some(read_through));
+        let reads = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        assert!(
+            state
+                .profile_images
+                .set(Arc::new(CountingFaces(reads.clone())))
+                .is_ok()
+        );
+        Some((Arc::new(state), reads, tmp))
+    }
+
+    /// Concurrent misses of one profile under one publication share one read
+    /// (#2219): eight requests while the content read is slow make one
+    /// profile read, and the filed miss then answers a later request.
+    #[tokio::test]
+    async fn concurrent_profile_misses_share_one_read() {
+        let Some((state, reads, tmp)) =
+            slow_read_through_state(std::time::Duration::from_millis(200)).await
+        else {
+            eprintln!("skipping: CATALYST_TEST_DATABASE_URL not set");
+            return;
+        };
+        let address = format!("0x{}{}", uuid::Uuid::new_v4().simple(), "00000000");
+        let requests: Vec<_> = (0..8)
+            .map(|_| {
+                let (state, address) = (state.clone(), address.clone());
+                tokio::spawn(async move {
+                    fetch_profile_for_id(&state, &address)
+                        .await
+                        .map_err(|e| e.layer())
+                })
+            })
+            .collect();
+        for request in requests {
+            assert_eq!(request.await.unwrap(), Ok(None));
+        }
+        assert_eq!(reads.load(std::sync::atomic::Ordering::SeqCst), 1);
+        assert_eq!(state.profile_flights.reads_started(), 1);
+        assert_eq!(state.profile_flights.in_flight(), 0);
+        assert_eq!(
+            fetch_profile_for_id(&state, &address)
+                .await
+                .map_err(|e| e.layer()),
+            Ok(None)
+        );
+        assert_eq!(
+            reads.load(std::sync::atomic::Ordering::SeqCst),
+            1,
+            "the filed miss answers"
+        );
+        let _ = std::fs::remove_dir_all(tmp);
+    }
+
+    /// Concurrent misses of one address's outfits share one read too.
+    #[tokio::test]
+    async fn concurrent_outfits_misses_share_one_read() {
+        let Some((state, _, tmp)) =
+            slow_read_through_state(std::time::Duration::from_millis(200)).await
+        else {
+            eprintln!("skipping: CATALYST_TEST_DATABASE_URL not set");
+            return;
+        };
+        let address = format!("0x{}{}", uuid::Uuid::new_v4().simple(), "00000000");
+        let requests: Vec<_> = (0..8)
+            .map(|_| {
+                let (state, address) = (state.clone(), address.clone());
+                tokio::spawn(async move {
+                    super::super::lambdas_catalog::outfits(State(state), Path(address))
+                        .await
+                        .status()
+                })
+            })
+            .collect();
+        for request in requests {
+            assert_eq!(request.await.unwrap(), StatusCode::NOT_FOUND);
+        }
+        assert_eq!(state.lambdas.outfit_flights.reads_started(), 1);
+        assert_eq!(state.lambdas.outfit_flights.in_flight(), 0);
         let _ = std::fs::remove_dir_all(tmp);
     }
 

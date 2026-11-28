@@ -53,7 +53,7 @@ use crate::comms::world_identity::{Parcel, ParcelSet, SceneId, WorldName};
 use crate::ens::EnsResolver;
 use crate::http::Outbound;
 use crate::land_authz::{self, LandAuthzState};
-use crate::shared::cache::TtlMap;
+use crate::shared::cache::{Coalesce, TtlMap};
 use crate::shared::identity::{
     Address, AuthorityNotEstablished, COMMUNITY_MEMBERSHIP_SQL, PermissionDecision,
 };
@@ -413,6 +413,15 @@ pub struct Policy {
     /// publication it was read under (a hit is served only while that
     /// publication stands and is current), single-flight.
     admission_owners: TtlMap<String, MemoizedOwner>,
+    /// `(world key, the publication its memo entry was read under)` -> the
+    /// re-read in flight once that publication no longer stands: the
+    /// admissions holding the same obsolete entry share it.
+    admission_refreshes: Coalesce<(String, Observation), MemoizedOwner>,
+    /// A publication -> whether it still stands and is current, the check in
+    /// flight: concurrent memo hits under one publication share one read.
+    /// Nothing is kept past the check (no window in which a withdrawn
+    /// publication is still served).
+    admission_checks: Coalesce<Observation, bool>,
     /// The DAO name deny list and `BLOCKED_WORLD_NAMES`, which
     /// [`AccessPolicy::world_admission`](crate::comms::interfaces::AccessPolicy::world_admission)
     /// applies (upstream `isWorldValid`'s `checkNameDenyList`). ONE list, with ONE memo, shared
@@ -452,6 +461,8 @@ impl Policy {
             ens: None,
             ens_max_size_bytes: DEFAULT_ENS_MAX_SIZE_BYTES,
             admission_owners: TtlMap::bounded(ADMISSION_OWNER_MEMO, ADMISSION_OWNER_MAX_ENTRIES),
+            admission_refreshes: Coalesce::new(),
+            admission_checks: Coalesce::new(),
             names: Arc::default(),
         }
     }
@@ -871,7 +882,10 @@ impl Policy {
     /// validated: one read under a publication is served only while that
     /// publication stands and is current enough to authorize; otherwise the
     /// owner is read again and filed over it (a slot another caller waits on
-    /// is never dropped). The wait, the validation and any re-read share one
+    /// is never dropped). Concurrent validations of one publication share
+    /// one check, and concurrent re-reads of one world over one obsolete
+    /// entry share one read; neither keeps its answer past the read. The
+    /// wait, the validation and any re-read share one
     /// [`ADMISSION_OWNER_TIMEOUT`] deadline.
     async fn admission_owner(
         &self,
@@ -905,21 +919,31 @@ impl Policy {
                 return entry;
             };
             let current = match self.names_reader() {
-                Some(names) => names
-                    .still_current(&observed, Purpose::Authorize)
-                    .await
-                    .unwrap_or(false),
+                Some(names) => {
+                    self.admission_checks
+                        .run(observed, || async move {
+                            names
+                                .still_current(&observed, Purpose::Authorize)
+                                .await
+                                .unwrap_or(false)
+                        })
+                        .await
+                }
                 None => false,
             };
             if current {
                 return entry;
             }
-            let (fresh, not_current) =
-                timed_owner_lookup(self.name_owner_lookup(world), left()).await;
-            if !not_current {
-                self.admission_owners.insert(key.clone(), fresh.clone());
-            }
-            fresh
+            self.admission_refreshes
+                .run((key.clone(), observed), || async {
+                    let (fresh, not_current) =
+                        timed_owner_lookup(self.name_owner_lookup(world), left()).await;
+                    if !not_current {
+                        self.admission_owners.insert(key.clone(), fresh.clone());
+                    }
+                    fresh
+                })
+                .await
         })
         .await
         .unwrap_or_else(|_| (Err("owner lookup timed out".to_string()), None));
@@ -2781,6 +2805,12 @@ mod tests {
         entered: tokio::sync::Notify,
         /// A validation that never answers.
         stall: std::sync::atomic::AtomicBool,
+        /// How many validations (`still_current`) were asked.
+        checks: std::sync::atomic::AtomicUsize,
+        /// While set, a validation waits on it before answering
+        /// (`check_entered` tells the test it got there).
+        check_pause: std::sync::Mutex<Option<Arc<tokio::sync::Notify>>>,
+        check_entered: tokio::sync::Notify,
     }
 
     impl Indexed {
@@ -2895,8 +2925,14 @@ mod tests {
 
         async fn still_current(&self, o: &Observation, _: Purpose) -> Result<bool, NamesError> {
             use std::sync::atomic::Ordering::SeqCst;
+            self.checks.fetch_add(1, SeqCst);
             if self.stall.load(SeqCst) {
                 std::future::pending::<()>().await;
+            }
+            let pause = self.check_pause.lock().unwrap().clone();
+            if let Some(pause) = pause {
+                self.check_entered.notify_one();
+                pause.notified().await;
             }
             Ok(!self.held.load(SeqCst) && o.folded_block == self.block.load(SeqCst))
         }
@@ -3030,6 +3066,79 @@ mod tests {
         pause.notify_waiters();
         assert_eq!(waiter.await.unwrap().unwrap(), Some(b.clone()));
         assert_eq!(leader.await.unwrap().unwrap(), Some(b));
+    }
+
+    /// After a publication, the admissions that hold the world's obsolete
+    /// entry share one re-read (#2219): with the re-read held in flight,
+    /// eight concurrent admissions ask the source once, and every one of
+    /// them is answered the new holder, which the memo then serves.
+    #[tokio::test]
+    async fn admissions_after_a_publication_share_one_refresh() {
+        use crate::comms::interfaces::AccessPolicy;
+        let (p, indexed) = indexed_policy();
+        let p = Arc::new(p);
+        let (world, a, b) = (world_name(), wallet(), wallet());
+        let label = world.owner_label().unwrap().to_string();
+        indexed.publish(&label, Some(&a));
+        assert_eq!(p.world_owner(&world).await.unwrap(), Some(a));
+        indexed.publish(&label, Some(&b));
+        let asked = || indexed.asked.lock().unwrap().len();
+        let before = asked();
+        let pause = Arc::new(tokio::sync::Notify::new());
+        *indexed.pause.lock().unwrap() = Some(pause.clone());
+        let admissions: Vec<_> = (0..8)
+            .map(|_| {
+                let (p, world) = (p.clone(), world.clone());
+                tokio::spawn(async move { p.world_owner(&world).await })
+            })
+            .collect();
+        indexed.entered.notified().await;
+        // The others reach the re-read in flight before it answers.
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        *indexed.pause.lock().unwrap() = None;
+        pause.notify_waiters();
+        for admission in admissions {
+            assert_eq!(admission.await.unwrap().unwrap(), Some(b.clone()));
+        }
+        assert_eq!(asked() - before, 1, "one re-read for every admission");
+        assert_eq!(p.world_owner(&world).await.unwrap(), Some(b));
+        assert_eq!(asked() - before, 1, "the memo serves the re-read");
+    }
+
+    /// Concurrent memo hits under one publication share one validation, and
+    /// none outlives it: a hit after it validates again.
+    #[tokio::test]
+    async fn hits_under_one_publication_share_one_validation() {
+        use crate::comms::interfaces::AccessPolicy;
+        use std::sync::atomic::Ordering::SeqCst;
+        let (p, indexed) = indexed_policy();
+        let p = Arc::new(p);
+        let (world, a) = (world_name(), wallet());
+        indexed.publish(world.owner_label().unwrap(), Some(&a));
+        assert_eq!(p.world_owner(&world).await.unwrap(), Some(a.clone()));
+        let checks = indexed.checks.load(SeqCst);
+        let pause = Arc::new(tokio::sync::Notify::new());
+        *indexed.check_pause.lock().unwrap() = Some(pause.clone());
+        let hits: Vec<_> = (0..8)
+            .map(|_| {
+                let (p, world) = (p.clone(), world.clone());
+                tokio::spawn(async move { p.world_owner(&world).await })
+            })
+            .collect();
+        indexed.check_entered.notified().await;
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        *indexed.check_pause.lock().unwrap() = None;
+        pause.notify_waiters();
+        for hit in hits {
+            assert_eq!(hit.await.unwrap().unwrap(), Some(a.clone()));
+        }
+        assert_eq!(indexed.checks.load(SeqCst) - checks, 1);
+        assert_eq!(p.world_owner(&world).await.unwrap(), Some(a));
+        assert_eq!(
+            indexed.checks.load(SeqCst) - checks,
+            2,
+            "nothing is kept past the check"
+        );
     }
 
     /// The validation of a warm hit is under the admission deadline: a
