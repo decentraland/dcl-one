@@ -455,7 +455,7 @@ async fn read_name_owner(
                     .map_err(|error| NameOwnerError::Store(error.to_string()))
             })
             .transpose(),
-        Err(NamesError::NotEstablished(message)) => {
+        Err(NamesError::NotEstablished(message) | NamesError::Ambiguous(message)) => {
             Err(NameOwnerError::Unavailable(source, message))
         }
         // A failed read, of either source, is lamb2's 502 for the name.

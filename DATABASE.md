@@ -119,6 +119,24 @@ from a deployment's content hash. Each world scene has a stable identity
 exactly one active scene retains it, including a moved base; overlapping none
 or several creates a new identity. Retired identities keep their storage rows.
 
+A DCL NAME world's publish is authorized during validation, before its write
+transaction, and re-checked inside that transaction. After the transaction
+takes the world's publish lock and row lock, it holds the names index's
+publication row (the Ethereum `nft` cursor) `FOR SHARE` and reads the NAME's
+holder under it. A fold withdrawn since validation answers 503 `nft-index`; a
+holder replaced since then answers the owner's 400 refusal, or 409 to a scoped
+grantee, who retries against the new owner. Either way the world keeps its scene
+and owner. No withdrawal, refold or publication of the NFT index commits while
+the share is held. The NFT fold locks that row `FOR UPDATE` from its first
+projection write to its commit, and the sales fold locks it `FOR UPDATE` at its
+publication step. Every publication or withdrawal updates it. None of those
+transactions takes a world lock, so the order (world locks, then the cursor)
+cannot deadlock. The share is taken only in that short write transaction, after
+upload, hashing and validation. A fold's publication waits for at most one scene
+write, and a publish that arrives during a fold waits for that fold's commit
+and reads its publication. Personal and ENS worlds, and a node reading NAMEs
+from the subgraph, hold nothing.
+
 Partial batches for one entity hold a session advisory lock from their first
 pending-upload/replay read through the staging or committed-publication decision.
 The guard owns one connection from the shared pool, and every guarded query and
@@ -3682,9 +3700,10 @@ runs. When Polygon is in scope, Shop accounts require a fresh committee
 fold covering the published sales block and include every indexed member
 through that block, including former members. An index that is off, not yet published or
 published more than 30 minutes ago (`READY_WINDOW`) admits only the
-configured addresses, and a failed read answers 503. In that state the
+configured addresses, and a failed read answers 503. With the index on
+(`MARKETPLACE_COMMITTEE_INDEX_ENABLED`) but not yet published or stale, the
 curation console's committee list answers 503 too, never an empty
-committee. Changing a column builder reads updates this section
+committee; with it off, the console lists no indexed members. Changing a column builder reads updates this section
 and the AGENTS.md "Ownership" entry in the same change.
 
 ## Third-party registry

@@ -519,6 +519,7 @@ async fn deploy(
             replacement,
             forward_to: None,
             quota: None,
+            name_check: None,
         },
     )
     .await
@@ -7733,6 +7734,7 @@ async fn a_deploy_reusing_a_blob_the_collector_removed_is_deferred_under_the_sto
                     replacement: &Deploy::Owner,
                     forward_to: None,
                     quota: None,
+                    name_check: None,
                 },
             )
             .await
@@ -8489,6 +8491,7 @@ async fn concurrent_first_publishes_by_different_holders_report_the_replaced_own
                     replacement: &Deploy::Owner,
                     forward_to: None,
                     quota: None,
+                    name_check: None,
                 },
             )
             .await
@@ -9072,6 +9075,7 @@ async fn concurrent_publishes_cannot_overrun_the_allowance_together() {
                     replacement: &Deploy::Owner,
                     forward_to: None,
                     quota: Some(&charge),
+                    name_check: None,
                 },
             )
             .await
@@ -9165,6 +9169,7 @@ async fn a_quota_block_follows_the_live_name_holder() {
         .unwrap();
 }
 
+mod names_fence;
 mod names_unavailable;
 mod partial_uploads;
 mod reprocess_ab;

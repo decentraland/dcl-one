@@ -320,7 +320,7 @@ fn sole_holder(label: &str, holders: Option<&Vec<String>>) -> Result<Option<Stri
     match holders.map(Vec::as_slice) {
         None | Some([]) => Ok(None),
         Some([owner]) => Ok(Some(owner.clone())),
-        Some(_) => Err(NamesError::NotEstablished(format!(
+        Some(_) => Err(NamesError::Ambiguous(format!(
             "the DCL NAME {label} has more than one holder in the nft index once lowercased: its owner cannot be established"
         ))),
     }
@@ -383,6 +383,17 @@ impl NameAuthority for IndexNames {
         purpose: Purpose,
     ) -> Result<Answer<Option<String>>, NamesError> {
         name_owner_on(self.catalogue, conn, label, purpose).await
+    }
+
+    /// The Ethereum nft cursor held `FOR SHARE`
+    /// ([`crate::chain_index::names::hold_index_publication`]); no cursor is
+    /// no publication to authorize under.
+    async fn hold_publication_on(&self, conn: &mut PgConnection) -> Result<(), NamesError> {
+        match crate::chain_index::names::hold_index_publication(conn).await {
+            Ok(true) => Ok(()),
+            Ok(false) => Err(not_established(Purpose::Authorize)),
+            Err(e) => Err(failed(e)),
+        }
     }
 
     /// An ambiguous label is left out of the map: unknown, never `None`.
@@ -504,6 +515,46 @@ mod tests {
         Some((db, names))
     }
 
+    /// A held publication holds back the walker: a cursor update (a fold's
+    /// publication, a withdrawal) waits for the holder's commit and commits
+    /// right after it. No cursor is no publication to hold.
+    #[tokio::test]
+    async fn a_held_publication_holds_back_the_walker_until_commit() {
+        let Some((db, names)) = published().await else {
+            return;
+        };
+        let mut tx = db.pool.begin().await.unwrap();
+        names.hold_publication_on(&mut tx).await.unwrap();
+        let pool = db.pool.clone();
+        let walker = tokio::spawn(async move {
+            sqlx::query(
+                "UPDATE shop.chain_cursor SET folded_block = NULL, folded_at = NULL \
+                 WHERE indexer = 'nft' AND network = 'ethereum'",
+            )
+            .execute(&pool)
+            .await
+            .unwrap();
+        });
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        assert!(!walker.is_finished(), "the withdrawal waits for the hold");
+        tx.commit().await.unwrap();
+        tokio::time::timeout(Duration::from_secs(2), walker)
+            .await
+            .expect("the withdrawal commits right after the hold ends")
+            .unwrap();
+        sqlx::query("DELETE FROM shop.chain_cursor WHERE indexer = 'nft' AND network = 'ethereum'")
+            .execute(&db.pool)
+            .await
+            .unwrap();
+        let mut conn = db.pool.acquire().await.unwrap();
+        assert!(matches!(
+            names.hold_publication_on(&mut conn).await,
+            Err(NamesError::NotEstablished(_))
+        ));
+        drop(conn);
+        db.drop().await;
+    }
+
     /// An authorization waits for the fold: a pass that walked a transfer
     /// and has not folded it establishes no holder (the fold still names the
     /// former one) and withdraws every observation read before it; a display
@@ -601,7 +652,7 @@ mod tests {
         mint(&db.pool, 3, B, "solo").await;
         assert!(matches!(
             names.name_owner("twin", Purpose::Authorize).await,
-            Err(NamesError::NotEstablished(_))
+            Err(NamesError::Ambiguous(_))
         ));
         let labels = ["Twin".to_string(), "solo".into(), "nobody".into()];
         let owners = names

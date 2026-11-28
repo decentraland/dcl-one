@@ -169,6 +169,77 @@ pub(super) fn source_unavailable(source: Source, message: impl Into<String>) -> 
     )
 }
 
+/// The refusal of a signer who neither holds `world_name`'s NAME nor was
+/// granted it, worded as the old service.
+fn no_permission(world_name: &str) -> String {
+    format!(
+        "Deployment failed: Your wallet has no permission to publish this scene because it does not have permission to deploy under \"{world_name}\". Check scene.json to select a name that either you own or you were given permission to deploy."
+    )
+}
+
+/// The NAME authorization of a publish, re-checked in its write's
+/// transaction ([`crate::policy::Policy::confirm_name_holder_on`]): the
+/// names index's publication held until that transaction ends and `holder`
+/// still its NAME's holder. Answered as the publish's own refusals: a names
+/// index that cannot establish the holder now is the retryable 503 naming
+/// it; a holder replaced since validation refuses the signer (an owner's
+/// publish) or asks a scoped grantee's to be retried against the new owner
+/// (409); anything else is the fail-closed 403.
+struct NameHolderCheck<'a> {
+    state: &'a SharedState,
+    world: &'a WorldName,
+    world_name: &'a str,
+    holder: &'a Address,
+    scoped: bool,
+}
+
+#[async_trait::async_trait]
+impl store::PublishCheck for NameHolderCheck<'_> {
+    async fn confirm_on(
+        &self,
+        conn: &mut sqlx::PgConnection,
+    ) -> Result<(), crate::comms::worlds_envelope::ApiError> {
+        use crate::comms::worlds_envelope::ApiError;
+        let Err(why) = self
+            .state
+            .policy
+            .confirm_name_holder_on(conn, self.world, self.holder)
+            .await
+        else {
+            return Ok(());
+        };
+        if let Some(reason) = crate::policy::names_not_current(&why) {
+            tracing::warn!(world = %self.world, %reason, "publish deferred at write: the names index cannot establish the NAME's holder");
+            return Err(ApiError::SourceUnavailable {
+                index: Source::NftIndex,
+                message: reason.to_string(),
+            });
+        }
+        tracing::info!(world = %self.world, error = %why, "publish refused at write: the NAME authorization no longer stands");
+        Err(match why {
+            AuthorityNotEstablished::RefusedLacksAuthority { .. } if self.scoped => {
+                ApiError::conflict(format!(
+                    "Deployment failed: the owner of \"{}\" changed during the publish; retry it.",
+                    self.world_name
+                ))
+            }
+            AuthorityNotEstablished::RefusedLacksAuthority { .. } => {
+                ApiError::bad_request(failed(no_permission(self.world_name)).1)
+            }
+            _ => ApiError::forbidden(
+                "Not authorized: could not verify deployment permissions (deploy denied)",
+            ),
+        })
+    }
+}
+
+#[cfg(test)]
+tokio::task_local! {
+    /// Tests: pauses a publish after its validation, before the transaction
+    /// that writes it begins.
+    pub(super) static BEFORE_PERSIST: (std::sync::Arc<tokio::sync::Notify>, std::sync::Arc<tokio::sync::Notify>);
+}
+
 /// Upstream's newer-scene refusal, checked before anything is stored or staged: an overlapping
 /// scene with a greater entity timestamp (ties by entity id) answers 400. Shared by the
 /// single-request publish and the first partial batch.
@@ -858,21 +929,20 @@ pub(super) async fn validate(
                 return Err(if detail.starts_with("Not authorized:") {
                     failed(detail)
                 } else {
-                    failed(format!(
-                        "Deployment failed: Your wallet has no permission to publish this scene because it does not have permission to deploy under \"{world_name}\". Check scene.json to select a name that either you own or you were given permission to deploy."
-                    ))
+                    failed(no_permission(world_name))
                 });
             }
-            // The names index cannot establish the NAME's holder right now
-            // (not current, or a registrar event walked past its fold): a
-            // transient readiness condition, refused as the names index being
-            // unavailable, never as a denial a client would not retry.
-            Err(undetermined) if crate::policy::names_not_current(&undetermined).is_some() => {
-                let reason = crate::policy::names_not_current(&undetermined).unwrap_or_default();
-                tracing::warn!(world = %world, signer = %signer.as_str(), %reason, "deploy deferred: the names index cannot establish the NAME's holder");
-                return Err(source_unavailable(Source::NftIndex, reason));
-            }
             Err(undetermined) => {
+                // The names index cannot establish the NAME's holder right
+                // now (not current, or a registrar event walked past its
+                // fold): a transient readiness condition, refused as the names
+                // index being unavailable, never as a denial a client would
+                // not retry. Anything else, an ambiguous label included, is
+                // the fail-closed 403.
+                if let Some(reason) = crate::policy::names_not_current(&undetermined) {
+                    tracing::warn!(world = %world, signer = %signer.as_str(), %reason, "deploy deferred: the names index cannot establish the NAME's holder");
+                    return Err(source_unavailable(Source::NftIndex, reason));
+                }
                 tracing::warn!(world = %world, signer = %signer.as_str(), error = %undetermined, "deploy denied: authority undetermined (fail-closed)");
                 return Err(forbidden(
                     "Not authorized: could not verify deployment permissions (deploy denied)",
@@ -917,6 +987,10 @@ pub(super) async fn validate(
             }
             Err(e) => {
                 tracing::warn!(world = %world, error = %e, "deploy denied: NAME owner undetermined");
+                // The same names-index wait the owner's own publish answers.
+                if let Some(reason) = crate::policy::names_not_current(&e) {
+                    return Err(source_unavailable(Source::NftIndex, reason));
+                }
                 return Err(unavailable(
                     "Deployment failed: the world's owner could not be resolved right now",
                 ));
@@ -1096,6 +1170,18 @@ pub(super) async fn persist_publish_on(
     let (Some(replacement), Some(name_owner)) = (replacement, name_owner) else {
         return Err(internal("Publish without a deploy authorization").into_response());
     };
+    #[cfg(test)]
+    if let Ok((reached, resume)) = BEFORE_PERSIST.try_with(Clone::clone) {
+        reached.notify_one();
+        resume.notified().await;
+    }
+    let name_check = NameHolderCheck {
+        state,
+        world,
+        world_name: &validated.world_name,
+        holder: name_owner,
+        scoped: matches!(replacement, Deploy::Scoped(_)),
+    };
 
     let persisted = store::deploy_scene_with_on(
         &mut *conn,
@@ -1112,12 +1198,16 @@ pub(super) async fn persist_publish_on(
             replacement,
             forward_to: state.forwarder.as_deref().map(|f| f.target()),
             quota: charge.as_ref(),
+            name_check: Some(&name_check),
         },
         completion,
     )
     .await;
     let deployed = match persisted {
         Ok(deployed) => deployed,
+        Err(crate::comms::worlds_envelope::ApiError::SourceUnavailable { index, message }) => {
+            return Err(source_unavailable(index, message).into_response());
+        }
         Err(e) => {
             let reason = e.public_message();
             if e.is_conflict() {

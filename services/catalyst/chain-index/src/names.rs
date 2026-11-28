@@ -51,9 +51,14 @@ pub struct Observation {
 pub enum NamesError {
     /// The authority cannot answer now: the index is not current for the
     /// purpose (catching up, an unfolded advance, a withdrawn publication,
-    /// quarantined), two holders claim one label, or no source is selected.
+    /// quarantined), or no source is selected.
     #[error("{0}")]
     NotEstablished(String),
+    /// Two holders claim one label once lowercased: no owner can be named,
+    /// and waiting for the index does not change that (only a transfer
+    /// does), so a write refuses it rather than asking to be retried.
+    #[error("{0}")]
+    Ambiguous(String),
     /// The source failed (a database or subgraph error).
     #[error("{0}")]
     Failed(String),
@@ -164,6 +169,31 @@ pub trait NameAuthority: Send + Sync {
     /// Whether this source reads publications (the index): a memo may then
     /// keep an answer only with its observation.
     fn observes(&self) -> bool;
+
+    /// Holds this source's publication on `conn` until the caller's
+    /// transaction ends: no writer withdraws or replaces it meanwhile, so a
+    /// read on `conn` after this answers under the publication the caller's
+    /// write commits under. A source without publications (the subgraph)
+    /// holds nothing.
+    async fn hold_publication_on(&self, conn: &mut sqlx::PgConnection) -> Result<(), NamesError> {
+        let _ = conn;
+        Ok(())
+    }
+}
+
+/// The names index's publication row, the Ethereum `nft` cursor, locked
+/// `FOR SHARE` on `conn` until its transaction ends; `false` when there is
+/// none. The nft fold locks that row `FOR UPDATE` from its first projection
+/// write to its commit, and every publication, withdrawal or refold of the
+/// index updates it, so none of them commits while the share is held.
+/// Take it only inside a short transaction: a fold waits for its end.
+pub async fn hold_index_publication(conn: &mut sqlx::PgConnection) -> Result<bool, sqlx::Error> {
+    let held: Option<i32> = sqlx::query_scalar(
+        "SELECT 1 FROM shop.chain_cursor WHERE indexer = 'nft' AND network = 'ethereum' FOR SHARE",
+    )
+    .fetch_optional(conn)
+    .await?;
+    Ok(held.is_some())
 }
 
 /// The marketplace subgraph as the NAME source, where the operator selects

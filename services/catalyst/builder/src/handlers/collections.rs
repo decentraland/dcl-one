@@ -407,10 +407,17 @@ mod tests {
     }
 
     async fn state_on(pool: sqlx::PgPool, committee: &str) -> SharedState {
-        let settings = crate::Settings {
-            admin_addresses: vec![committee.to_string()],
-            ..Default::default()
-        };
+        state_with(
+            pool,
+            crate::Settings {
+                admin_addresses: vec![committee.to_string()],
+                ..Default::default()
+            },
+        )
+        .await
+    }
+
+    async fn state_with(pool: sqlx::PgPool, settings: crate::Settings) -> SharedState {
         Arc::new(
             crate::State::new(
                 pool,
@@ -807,9 +814,12 @@ mod tests {
         pool.close().await;
     }
 
-    /// The curation console lists the published index's current members,
-    /// and answers 503 while the index is unpublished or stale (never an
-    /// empty committee) and when the index cannot be read.
+    /// With the committee index on, the curation console lists the published
+    /// index's current members, and answers 503 while the index is
+    /// unpublished or stale (never an empty committee) and when it cannot be
+    /// read. With the index off, a supported mode in which only the
+    /// configured admins curate, the console lists the queue with no indexed
+    /// members.
     #[tokio::test]
     async fn curation_console_lists_the_indexed_committee() {
         let Some(pool) = crate::db::scratch::isolated_pool(4).await else {
@@ -817,8 +827,17 @@ mod tests {
             return;
         };
         let admin = address_of(OWNER_KEY);
-        let state = state_on(pool.clone(), &admin).await;
+        let state = state_with(
+            pool.clone(),
+            crate::Settings {
+                admin_addresses: vec![admin.clone()],
+                committee_index_enabled: true,
+                ..Default::default()
+            },
+        )
+        .await;
         let app = crate::router(state);
+        let index_off = crate::router(state_on(pool.clone(), &admin).await);
         let (removed, member) = (
             "0x00000000000000000000000000000000000000aa",
             "0x00000000000000000000000000000000000000bb",
@@ -862,6 +881,9 @@ mod tests {
             "unpublished index: {body}"
         );
         assert!(unpublished(&body), "{body}");
+        let (status, body) = get(&index_off, "/v1/collections/curation", Some(OWNER_KEY)).await;
+        assert_eq!(status, StatusCode::OK, "index off: {body}");
+        assert!(committee(&body).is_empty(), "index off: {body}");
 
         sqlx::query(
             "INSERT INTO shop.chain_cursor (indexer, network, start_block, last_block, folded_block, fold_through, folded_at, full_history, chain_id) \
