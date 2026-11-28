@@ -329,7 +329,7 @@ pub(crate) fn array_index(k: &str) -> Option<u32> {
         return None;
     }
     let n: u64 = k.parse().ok()?;
-    (n < u32::MAX as u64).then_some(n as u32)
+    u32::try_from(n).ok().filter(|&n| n != u32::MAX)
 }
 
 /// `for...in` order: array indices ascending, then the rest in insertion order.
