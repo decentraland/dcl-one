@@ -45,7 +45,6 @@ use axum::Router;
 use sqlx::PgPool;
 
 use crate::auth::eip1654::Eip1654Validator;
-use crate::chain_index::ChainIndex;
 use crate::http::Outbound;
 use crate::jobs::{Jobs, PeriodicCfg};
 
@@ -147,9 +146,9 @@ pub struct State {
     /// Contract-wallet (EIP-1654) signature check for signed-fetch chains;
     /// `None` refuses such chains (the old binary had no validator either).
     pub eip1654: Option<Arc<dyn Eip1654Validator>>,
-    /// The collections subgraph reader the first-wear producer resolves
-    /// items through; `None` means no first wear is ever notifiable.
-    pub market: Option<Arc<ChainIndex>>,
+    /// The catalogue the first-wear producer resolves items through
+    /// ([`State::set_item_source`]); unset, no first wear is notifiable.
+    items: OnceLock<Arc<dyn first_wear::ItemSource>>,
     /// The data-warehouse events client (`context: notification_server`).
     analytics: OnceLock<crate::analytics::Analytics>,
 }
@@ -162,7 +161,6 @@ impl State {
         settings: Settings,
         http: Outbound,
         eip1654: Option<Arc<dyn Eip1654Validator>>,
-        market: Option<Arc<ChainIndex>>,
     ) -> Self {
         Self {
             store: NotificationsStore::new(pool).with_broadcast_horizon(settings.broadcast_horizon),
@@ -171,9 +169,15 @@ impl State {
             settings,
             http,
             eip1654,
-            market,
+            items: OnceLock::new(),
             analytics: OnceLock::new(),
         }
+    }
+
+    /// The catalogue the first-wear producer looks worn items up in; set
+    /// before [`State::spawn_jobs`].
+    pub fn set_item_source(&self, items: Arc<dyn first_wear::ItemSource>) {
+        let _ = self.items.set(items);
     }
 
     /// Emits the old inbox's data-warehouse events through `analytics`.
@@ -294,7 +298,7 @@ impl State {
         if self.settings.first_wear_enabled {
             first_wear::spawn(self, jobs);
             tracing::info!(
-                market = self.market.is_some(),
+                items = self.items.get().is_some(),
                 "friend_first_wear producer up"
             );
         } else {

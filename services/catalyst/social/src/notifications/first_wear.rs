@@ -3,8 +3,8 @@
 //! wallet's active friends, rate limited per recipient by the `ffw_rules`
 //! arms. One pool now: profiles come from `content.deployments`, friends
 //! from `social.friendships`; the item's name/creator/image/buyability come
-//! from the collections subgraph through the marketplace reader (the old
-//! crate read the squid mirror, which v2 does not run). The telemetry store
+//! from the node's Shop catalogue through an [`ItemSource`] `serve` wires
+//! (the old crate read the squid mirror, which v2 does not run). The telemetry store
 //! that could override the arms and the funnel events are not carried.
 
 use crate::shared::now_utc;
@@ -19,10 +19,7 @@ use uuid::Uuid;
 
 use super::store::{NewNotification, insert_notifications, ms_to_naive, naive_to_ms};
 use crate::badges::jobs::{IdSource, Keyed, Pass, ProcessorSettings, read_ids};
-use crate::chain_index::ChainIndex;
-use crate::chain_index::graph::{
-    GraphQueryError, Network, graph_query_classified, normalize_urn as graph_urn,
-};
+use crate::chain_index::graph::Network;
 use crate::identity::Address;
 
 pub const POLL_SECS: u64 = 60;
@@ -214,11 +211,34 @@ impl Default for FirstWearSettings {
     }
 }
 
-struct ResolvedItem {
-    item_id: String,
-    name: String,
-    creator: String,
-    image: Option<String>,
+/// The item a first wear names, when it can be bought now.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct BuyableItem {
+    /// `<contract>-<item id>`, the marketplace item page's id.
+    pub item_id: String,
+    pub name: String,
+    /// Lowercase.
+    pub creator: String,
+    pub image: Option<String>,
+}
+
+/// Why an [`ItemSource`] gave no answer.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ItemLookupError {
+    /// Asking again cannot help (a request the source refuses): the wear is
+    /// passed without a notice.
+    Invalid(String),
+    /// The source cannot answer now (not ready, a fault): the wear is
+    /// retried with backoff.
+    Transient(String),
+}
+
+/// Where the producer looks up a worn item: the node's Shop catalogue, read
+/// as its `/v1/items` and `/v1/orders` routes read it. `Ok(None)`: unknown,
+/// or nothing to buy.
+#[async_trait::async_trait]
+pub trait ItemSource: Send + Sync {
+    async fn buyable_item(&self, urn: &str) -> Result<Option<BuyableItem>, ItemLookupError>;
 }
 
 /// The producer's row of `social.badge_cursors` (and its gaps in
@@ -282,12 +302,12 @@ struct FirstWear {
 
 /// One pass: the profile deployments past the cursor, in `id` order (the
 /// order the node stored them, whatever their signed timestamps), batch by
-/// batch. Returns the notifications emitted. Without a marketplace reader
+/// batch. Returns the notifications emitted. Without an item source
 /// nothing can be resolved as buyable, so the pass only seeds baselines and
 /// claims first wears.
 pub async fn run_once(
     pool: &PgPool,
-    market: Option<&ChainIndex>,
+    items: Option<&dyn ItemSource>,
     settings: &FirstWearSettings,
 ) -> anyhow::Result<u64> {
     let pass = Pass {
@@ -319,7 +339,7 @@ pub async fn run_once(
         anyhow::Ok(())
     }
     .await;
-    let emitted = drain_outbox(pool, market, settings).await?;
+    let emitted = drain_outbox(pool, items, settings).await?;
     intake?;
     crate::badges::jobs::report_id_lag(pool, &READ).await;
     Ok(emitted)
@@ -327,7 +347,7 @@ pub async fn run_once(
 
 async fn drain_outbox(
     pool: &PgPool,
-    market: Option<&ChainIndex>,
+    items: Option<&dyn ItemSource>,
     settings: &FirstWearSettings,
 ) -> anyhow::Result<u64> {
     let experiment = FfwExperiment::default();
@@ -370,7 +390,7 @@ async fn drain_outbox(
                 continue;
             }
             let (count, transient_failure) =
-                notify(pool, market, settings, &experiment, &wear).await?;
+                notify(pool, items, settings, &experiment, &wear).await?;
             emitted += count;
             if let Some(network) = network {
                 if transient_failure {
@@ -495,33 +515,30 @@ async fn claim_batch(pass: &Pass) -> anyhow::Result<bool> {
 /// notification insertion and queue completion commit together.
 async fn notify(
     pool: &PgPool,
-    market: Option<&ChainIndex>,
+    items: Option<&dyn ItemSource>,
     settings: &FirstWearSettings,
     experiment: &FfwExperiment,
     wear: &FirstWear,
 ) -> anyhow::Result<(u64, bool)> {
     let (address, urn) = (&wear.address, wear.urn.as_str());
-    let Some(market) = market else {
-        tracing::debug!(
-            urn,
-            "first wear not notifiable (no marketplace reader configured)"
-        );
+    let Some(items) = items else {
+        tracing::debug!(urn, "first wear not notifiable (no item source configured)");
         return Ok((complete_wear(pool, wear, &[]).await?, false));
     };
-    let result = tokio::time::timeout(ITEM_LOOKUP_BUDGET, resolve_buyable_item(market, urn))
+    let result = tokio::time::timeout(ITEM_LOOKUP_BUDGET, buyable_item(items, urn))
         .await
         .unwrap_or_else(|_| {
-            Err(GraphQueryError::Transient(
+            Err(ItemLookupError::Transient(
                 "first wear lookup timed out".into(),
             ))
         });
     let item = match result {
         Ok(item) => item,
-        Err(GraphQueryError::Invalid(error)) => {
+        Err(ItemLookupError::Invalid(error)) => {
             tracing::warn!(urn, %error, "invalid first wear lookup");
             return Ok((complete_wear(pool, wear, &[]).await?, false));
         }
-        Err(GraphQueryError::Transient(error)) => {
+        Err(ItemLookupError::Transient(error)) => {
             let attempts = wear.attempts + 1;
             if attempts >= super::delivery::MAX_ATTEMPTS {
                 tracing::warn!(urn, attempts, %error, "first wear lookup retries exhausted");
@@ -700,66 +717,16 @@ async fn seed_history(
     Ok(())
 }
 
-/// The item behind a normalized URN, if the collections subgraph of its
-/// network knows it and it can be bought (store-minted with stock, or an
-/// open order). Third-party and off-chain URNs have no reader.
-async fn resolve_buyable_item(
-    market: &ChainIndex,
+/// The item behind a normalized URN, if its catalogue knows it and it can
+/// be bought. Third-party and off-chain URNs are in no catalogue.
+async fn buyable_item(
+    items: &dyn ItemSource,
     urn: &str,
-) -> Result<Option<ResolvedItem>, GraphQueryError> {
-    let Some(network) = Network::of_urn(urn) else {
-        return Ok(None);
-    };
-    let url = match network {
-        Network::Ethereum => market.settings.eth_collections_subgraph_url.as_deref(),
-        Network::Matic => market.settings.matic_collections_subgraph_url.as_deref(),
-    };
-    let Some(url) = url else {
-        return Ok(None);
-    };
-    let doc = "query($urn: String!) { items(first: 1, where: { urn: $urn }) { id available searchIsStoreMinter creator image metadata { wearable { name } emote { name } } } }";
-    let answer = graph_query_classified(market, url, doc, json!({ "urn": graph_urn(urn) })).await?;
-    let item = &answer["items"][0];
-    if item.is_null() {
+) -> Result<Option<BuyableItem>, ItemLookupError> {
+    if Network::of_urn(urn).is_none() {
         return Ok(None);
     }
-    let Some(item_id) = item["id"].as_str() else {
-        return Ok(None);
-    };
-    let name = item["metadata"]["wearable"]["name"]
-        .as_str()
-        .or_else(|| item["metadata"]["emote"]["name"].as_str())
-        .map(str::to_string);
-    let Some(name) = name else {
-        return Ok(None);
-    };
-    let available = item["available"]
-        .as_str()
-        .and_then(|s| s.parse::<u64>().ok())
-        .unwrap_or(0);
-    let store_minter = item["searchIsStoreMinter"].as_bool().unwrap_or(false);
-    let buyable = if store_minter && available > 0 {
-        true
-    } else {
-        let now = chrono::Utc::now().timestamp().to_string();
-        let orders = graph_query_classified(
-            market,
-            url,
-            "query($item: String!, $now: BigInt!) { orders(first: 1, where: { item: $item, status: open, expiresAt_gt: $now }) { id } }",
-            json!({ "item": item_id, "now": now }),
-        )
-        .await?;
-        orders["orders"].as_array().is_some_and(|o| !o.is_empty())
-    };
-    if !buyable {
-        return Ok(None);
-    }
-    Ok(Some(ResolvedItem {
-        item_id: item_id.to_string(),
-        name,
-        creator: item["creator"].as_str().unwrap_or_default().to_lowercase(),
-        image: item["image"].as_str().map(str::to_string),
-    }))
+    items.buyable_item(urn).await
 }
 
 async fn active_friends(pool: &PgPool, address: &Address) -> anyhow::Result<Vec<Address>> {
@@ -849,7 +816,7 @@ pub fn spawn(state: &Arc<super::State>, jobs: &crate::jobs::Jobs) {
                     _ = ctx.cancel.cancelled() => return Ok(()),
                     result = run_once(
                     state.store.pool(),
-                    state.market.as_deref(),
+                    state.items.get().map(AsRef::as_ref),
                     &state.settings.first_wear,
                 ) => result?,
                 };
@@ -1123,13 +1090,9 @@ mod pg_tests {
             return;
         };
         let failed = queued_wear(&pool, "urn:decentraland:matic:collections-v2:0xeee:1").await;
-        let market = mock_market(axum::Router::new().route(
-            "/",
-            axum::routing::post(|| async { axum::http::StatusCode::SERVICE_UNAVAILABLE }),
-        ))
-        .await;
+        let items = Stub(|_| Err(ItemLookupError::Transient("not ready".into())));
         let settings = FirstWearSettings::default();
-        run_once(&pool, Some(&market), &settings).await.unwrap();
+        run_once(&pool, Some(&items), &settings).await.unwrap();
         let (attempts, delayed): (i32, bool) = sqlx::query_as(
             "SELECT attempts, retry_at > timezone('UTC', now()) FROM social.first_wear_outbox",
         )
@@ -1137,7 +1100,7 @@ mod pg_tests {
         .await
         .unwrap();
         assert_eq!((attempts, delayed), (1, true));
-        run_once(&pool, Some(&market), &settings).await.unwrap();
+        run_once(&pool, Some(&items), &settings).await.unwrap();
         assert_eq!(pending_wears(&pool, 1).await.unwrap()[0].attempts, 1);
         sqlx::query(
             "UPDATE social.first_wear_outbox SET attempts = $1, retry_at = timezone('UTC', now())",
@@ -1146,7 +1109,7 @@ mod pg_tests {
         .execute(&pool)
         .await
         .unwrap();
-        run_once(&pool, Some(&market), &settings).await.unwrap();
+        run_once(&pool, Some(&items), &settings).await.unwrap();
         assert!(pending_wears(&pool, 1).await.unwrap().is_empty());
         assert_eq!(worn(&pool, &failed.address).await, vec![failed.urn]);
     }
@@ -1156,23 +1119,14 @@ mod pg_tests {
         let Some(pool) = private_pool("ffw_chains").await else {
             return;
         };
-        let mut market = mock_market(
-            axum::Router::new()
-                .route(
-                    "/",
-                    axum::routing::post(|| async { axum::http::StatusCode::SERVICE_UNAVAILABLE }),
-                )
-                .route(
-                    "/eth",
-                    axum::routing::post(|| async { axum::Json(json!({"data":{"items":[]}})) }),
-                ),
-        )
-        .await;
-        market.settings.eth_collections_subgraph_url = market
-            .settings
-            .matic_collections_subgraph_url
-            .as_ref()
-            .map(|url| format!("{url}eth"));
+        // Polygon's catalogue cannot answer; Ethereum's knows no such item.
+        let items = Stub(|urn| {
+            if urn.contains(":ethereum:") {
+                Ok(None)
+            } else {
+                Err(ItemLookupError::Transient("not ready".into()))
+            }
+        });
         for n in 0..OUTBOX_PAGE_SIZE + 1 {
             let network = if n % 2 == 0 { "matic" } else { "polygon" };
             queued_wear(
@@ -1182,7 +1136,7 @@ mod pg_tests {
             .await;
         }
         let eth = queued_wear(&pool, "urn:decentraland:ethereum:collections-v2:0xeee:1").await;
-        run_once(&pool, Some(&market), &FirstWearSettings::default())
+        run_once(&pool, Some(&items), &FirstWearSettings::default())
             .await
             .unwrap();
         let pending = pending_wears(&pool, 100).await.unwrap();
@@ -1194,43 +1148,61 @@ mod pg_tests {
         );
     }
 
-    async fn mock_market(router: axum::Router) -> ChainIndex {
-        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
-            .await
-            .unwrap();
-        let url = format!("http://{}/", listener.local_addr().unwrap());
-        tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
-        let market = ChainIndex::new(
-            crate::http::Outbound::for_tests(),
-            crate::chain_index::IndexSettings {
-                matic_collections_subgraph_url: Some(url),
-                ..crate::chain_index::IndexSettings::for_tests()
-            },
-        );
-        market.allow_loopback_for_tests();
-        market
+    /// An item source answering every URN with `0`'s answer.
+    struct Stub(fn(&str) -> Result<Option<BuyableItem>, ItemLookupError>);
+
+    #[async_trait::async_trait]
+    impl ItemSource for Stub {
+        async fn buyable_item(&self, urn: &str) -> Result<Option<BuyableItem>, ItemLookupError> {
+            (self.0)(urn)
+        }
     }
 
+    /// A buyable first wear notifies the wearer's active friends with the
+    /// item the source names; a third-party URN is in no catalogue and is
+    /// never looked up.
     #[tokio::test]
-    async fn buyable_item_reads_graph_data_and_open_orders() {
-        let market = mock_market(axum::Router::new().route(
-            "/",
-            axum::routing::post(|axum::Json(body): axum::Json<Json>| async move {
-                axum::Json(if body["query"].as_str().unwrap().contains("orders(") {
-                    json!({"data": {"orders": [{"id": "order"}]}})
-                } else {
-                    json!({"data": {"items": [{"id":"123","metadata":{"wearable":{"name":"hat"}},
-                        "available":"0","searchIsStoreMinter":false}]}})
-                })
-            }),
-        ))
-        .await;
-        let item = resolve_buyable_item(&market, "urn:decentraland:matic:collections-v2:0xeee:1")
+    async fn a_buyable_first_wear_notifies_the_active_friends() {
+        let Some(pool) = private_pool("ffw_notify").await else {
+            return;
+        };
+        let wear = queued_wear(&pool, "urn:decentraland:matic:collections-v2:0xeee:1").await;
+        let friend = fresh_address();
+        sqlx::query(
+            "INSERT INTO social.friendships (id, address_requester, address_requested, is_active, last_action, last_actor) \
+             VALUES ($1, $2, $3, true, 'accept', $3)",
+        )
+        .bind(Uuid::new_v4())
+        .bind(&wear.address)
+        .bind(&friend)
+        .execute(&pool)
+        .await
+        .unwrap();
+        let items = Stub(|urn| {
+            assert!(urn.contains(":matic:"), "{urn}");
+            Ok(Some(BuyableItem {
+                item_id: "0xeee-1".into(),
+                name: "Hat".into(),
+                creator: "0x00000000000000000000000000000000000000c0".into(),
+                image: None,
+            }))
+        });
+        queued_wear(&pool, "urn:decentraland:amoy:collections-thirdparty:tp:1").await;
+        let emitted = run_once(&pool, Some(&items), &FirstWearSettings::default())
             .await
-            .unwrap()
             .unwrap();
-        assert_eq!(item.item_id, "123");
-        assert_eq!(item.name, "hat");
+        assert_eq!(emitted, 1);
+        let metadata: Json = sqlx::query_scalar(
+            "SELECT metadata FROM social.notifications WHERE address = $1 AND type = $2",
+        )
+        .bind(&friend)
+        .bind(FIRST_WEAR_TYPE)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(metadata["itemId"], "0xeee-1", "{metadata}");
+        assert_eq!(metadata["wearableName"], "Hat", "{metadata}");
+        assert!(pending_wears(&pool, 10).await.unwrap().is_empty());
     }
 
     #[tokio::test]
@@ -1496,23 +1468,17 @@ mod pg_tests {
             )
             .await;
         }
-        // A subgraph URL the reader refuses: every resolution errors.
-        let market = ChainIndex::new(
-            crate::http::Outbound::for_tests(),
-            crate::chain_index::IndexSettings {
-                matic_collections_subgraph_url: Some("http://127.0.0.1:9/graph".to_string()),
-                ..crate::chain_index::IndexSettings::for_tests()
-            },
-        );
+        // A source that refuses every lookup.
+        let items = Stub(|_| Err(ItemLookupError::Invalid("refused".into())));
         assert_eq!(
-            run_once(&pool, Some(&market), &settings).await.unwrap(),
+            run_once(&pool, Some(&items), &settings).await.unwrap(),
             0,
             "a failed resolution is logged, not returned"
         );
         assert_eq!(
             pending_wears(&pool, 10).await.unwrap().len(),
             0,
-            "invalid reader configuration is terminal"
+            "a refused lookup is terminal"
         );
         for wearer in &wearers {
             assert_eq!(

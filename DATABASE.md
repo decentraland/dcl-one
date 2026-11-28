@@ -2944,16 +2944,26 @@ can cross this threshold. The queue continues to drain when intake is paused or
 fails. The worker claims up to 16 due wears in one statement, ordered by
 `(retry_at, address, urn)`. A two-minute reservation makes interrupted work
 eligible again. It starts at most 50 pages and stops starting items after one
-minute per drain. Each item's marketplace lookup has a 20-second timeout.
+minute per drain. Each item's lookup has a 20-second timeout.
 Losing the job lease cancels the pass.
 
-Failed transport or timed-out lookups retry after the notification delivery
+The lookup reads the node's Shop catalogue, as its routes read it
+(`shop::market::items::buyable_item`, wired by `serve`). The item is the row
+`/v1/items?urn=` answers. It can be bought when it mints (`isOnSale`:
+store-minted with stock, or a v3 mint), or else while `/v1/orders` answers an
+open listing of it (a legacy order or a v3 resale). Each read is answered under
+its route's readiness: the native indexes on a node that walks them, the
+mirrors elsewhere. A catalogue or order book that cannot answer now is a
+transient failure, so the wear is retried rather than dropped. No subgraph is
+read.
+
+Failed or timed-out lookups retry after the notification delivery
 backoff (30 seconds, doubling per failure). The fifth failure ends the
 obligation. Each drain expires obligations 24 hours after the wear's signed timestamp
 or enqueue time, whichever came first. The worker logs expiry counts and pauses
 in intake. Two consecutive transient failures on one network pause lookups on
-that network for the rest of the drain, leaving the other network eligible. Invalid reader URLs,
-invalid subgraph responses, missing readers, unknown or unbuyable items,
+that network for the rest of the drain, leaving the other network eligible. Lookups the
+catalogue refuses (a 4xx), a node without an item source, unknown or unbuyable items,
 no active friends and suppressed recipients also complete without a notice.
 The wear stays in history after completion. External reads run outside the
 completion transaction. A transaction advisory lock serializes recipient rate

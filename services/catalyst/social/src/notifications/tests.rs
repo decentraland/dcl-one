@@ -29,7 +29,6 @@ async fn state(settings: Settings) -> Option<SharedState> {
         settings,
         crate::http::Outbound::for_tests(),
         None,
-        None,
     )))
 }
 
@@ -2303,7 +2302,6 @@ mod ingest {
                 ..Settings::default()
             },
             crate::http::Outbound::for_tests(),
-            None,
             None,
         )))
     }

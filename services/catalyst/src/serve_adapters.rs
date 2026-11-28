@@ -1,7 +1,8 @@
 //! What `serve` hands Shop from Social, Shop's answer Comms asks for, the
-//! live participants Comms gives Explore, and Shop's LAND listings Explore's
-//! map grid reads: those crates build without each other, so these wrappers
-//! connect them here.
+//! live participants Comms gives Explore, Shop's LAND listings Explore's
+//! map grid reads and Shop's catalogue Social's first-wear notices read:
+//! those crates build without each other, so these wrappers connect them
+//! here.
 
 use std::sync::Arc;
 
@@ -477,6 +478,79 @@ mod credits_room_event_tests {
         assert_eq!(post().await.unwrap().status(), StatusCode::OK);
         assert_eq!(post().await.unwrap().status(), StatusCode::OK);
         assert_eq!(facts().await.unwrap(), (1, 1));
+        db.drop().await;
+    }
+}
+
+/// Shop's catalogue as the first-wear producer's item source
+/// ([`shop::market::items::buyable_item`]): the item as `/v1/items` reads it,
+/// buyable when it mints or while `/v1/orders` reads an open listing of it.
+/// A refused request (4xx) is final; anything else, an index or mirror not
+/// ready included, is retried.
+pub(super) struct ShopBuyableItems(pub(super) Arc<shop::market::MarketplaceState>);
+
+#[async_trait::async_trait]
+impl social::notifications::first_wear::ItemSource for ShopBuyableItems {
+    async fn buyable_item(
+        &self,
+        urn: &str,
+    ) -> Result<
+        Option<social::notifications::first_wear::BuyableItem>,
+        social::notifications::first_wear::ItemLookupError,
+    > {
+        use social::notifications::first_wear::{BuyableItem, ItemLookupError};
+        match shop::market::items::buyable_item(&self.0, urn).await {
+            Ok(item) => Ok(item.map(|item| BuyableItem {
+                item_id: item.id,
+                name: item.name,
+                creator: item.creator.to_lowercase(),
+                image: Some(item.thumbnail).filter(|image| !image.is_empty()),
+            })),
+            Err(response) => {
+                let status = response.status();
+                let body = axum::body::to_bytes(response.into_body(), 4096)
+                    .await
+                    .unwrap_or_default();
+                let why = format!(
+                    "the shop catalogue answered {status}: {}",
+                    String::from_utf8_lossy(&body)
+                );
+                Err(if status.is_client_error() {
+                    ItemLookupError::Invalid(why)
+                } else {
+                    ItemLookupError::Transient(why)
+                })
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod shop_buyable_items_tests {
+    use super::*;
+    use social::notifications::first_wear::{ItemLookupError, ItemSource};
+
+    /// A catalogue that cannot answer yet (nothing published) is a
+    /// transient failure the producer retries, carrying the route's status;
+    /// never "nothing to buy".
+    #[tokio::test]
+    async fn an_unready_catalogue_is_retried_not_dropped() {
+        use crate::db::scratch::{OwnedDatabase, Schema};
+        let Some(db) = OwnedDatabase::new("first_wear_items", Schema::Full, 2).await else {
+            return;
+        };
+        let items = ShopBuyableItems(Arc::new(shop::market::MarketplaceState::new(
+            db.pool.clone(),
+            crate::http::Outbound::for_tests(),
+            shop::market::Settings::for_tests(),
+        )));
+        let answer = items
+            .buyable_item("urn:decentraland:matic:collections-v2:0xeee:1")
+            .await;
+        assert!(
+            matches!(&answer, Err(ItemLookupError::Transient(why)) if why.contains("503")),
+            "{answer:?}"
+        );
         db.drop().await;
     }
 }
