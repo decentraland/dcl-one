@@ -269,13 +269,25 @@ async fn copies_of(
             wearable: row.try_get("wearable_id")?,
         }));
     }
-    // An id wider than the token id's top 40 bits encodes no token.
-    if item.bit_len() > 256 - V2_ISSUED_BITS {
+    // An id wider than the token id's top 40 bits encodes no token: the
+    // shift would drop its high bits and name another item's range.
+    let Some(low) = item.checked_shl(V2_ISSUED_BITS) else {
         return Ok(None);
-    }
-    let low = item << V2_ISSUED_BITS;
+    };
     let high = low | ((U256::from(1u8) << V2_ISSUED_BITS) - U256::from(1u8));
     Ok(Some(Copies::Polygon { low, high, item }))
+}
+
+/// `raw` as an item's blockchain id, in the subgraph's spelling: decimal
+/// digits without a leading zero (`0` itself aside), nothing else, so an
+/// empty or padded id never names another item.
+fn item_id_of(raw: &str) -> Option<U256> {
+    let canonical = !raw.is_empty()
+        && raw.bytes().all(|b| b.is_ascii_digit())
+        && (raw == "0" || !raw.starts_with('0'));
+    canonical
+        .then(|| U256::from_str_radix(raw, 10).ok())
+        .flatten()
 }
 
 /// `/v1/owners` from the nft index: on one read-only snapshot, both
@@ -287,7 +299,7 @@ async fn indexed_owners(
     f: &OwnersFilters,
 ) -> Result<(Vec<Owner>, i64), Response> {
     let (first, skip) = readers::deep_page(f.first, f.skip, OWNERS_QUERY_DEFAULT_LIMIT)?;
-    let Ok(item) = U256::from_str_radix(&f.item_id, 10) else {
+    let Some(item) = item_id_of(&f.item_id) else {
         return Err(ApiError::bad_request("itemId must be a decimal item id").into_response());
     };
     let descending = f.order_direction.as_deref() != Some("asc");
@@ -418,6 +430,34 @@ pub async fn get_top_owners(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Only the subgraph's spelling of an item id names an item: the parser
+    /// alone would read an empty id as item 0 and skip separators.
+    #[test]
+    fn an_item_id_is_read_only_in_its_canonical_spelling() {
+        for (raw, want) in [
+            ("0", Some(0u64)),
+            ("3", Some(3)),
+            ("1099511627776", Some(1 << 40)),
+        ] {
+            assert_eq!(item_id_of(raw), want.map(U256::from), "{raw:?}");
+        }
+        let past_u256 = format!("1{}", "0".repeat(78));
+        for raw in [
+            "",
+            "03",
+            "00",
+            "3_0",
+            "+3",
+            " 3",
+            "3 ",
+            "0x3",
+            "three",
+            past_u256.as_str(),
+        ] {
+            assert_eq!(item_id_of(raw), None, "{raw:?}");
+        }
+    }
 
     #[test]
     fn an_owner_row_keeps_its_wire_names() {

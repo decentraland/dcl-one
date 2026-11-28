@@ -326,15 +326,37 @@ async fn owners_from_the_nft_index_wait_for_a_published_fresh_fold() {
     let (status, body) = get(walker.clone(), &uri).await;
     assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body}");
     assert_eq!(source(&body).as_deref(), Some("nft-index"), "{body}");
+    // A catalogue row whose id no token id encodes (2^40: shifted by 216 bits
+    // it would wrap to item 0's range, where a copy is held), and the NAME
+    // registrar's tokens dressed as a v1 collection's: neither names copies.
+    let registrar = super::super::nft_index::DCL_REGISTRAR;
+    sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
+        "INSERT INTO shop.items (network, contract_address, item_id, chain_id, item_type, urn, creator, rarity, total_supply, max_supply, available, price, image, name, category, body_shapes, search_is_collection_approved, created_at, updated_at, reviewed_at, mirrored_at) \
+         VALUES ('matic', '{polygon_contract}', 1099511627776, 137, 'wearable_v2', 'urn:wide', '{CREATOR}', 'mythic', 1, 1, 0, 0, 'i', 'Wide', 'hat', ARRAY['BaseMale'], true, 1, 1, 1, now()), \
+                ('ethereum', '{registrar}', 0, 1, 'wearable_v1', 'urn:decentraland:ethereum:collections-v1:names:held', '{CREATOR}', 'mythic', 1, 1, 0, 0, 'i', 'Names', 'hat', ARRAY['BaseMale'], true, 1, 1, 1, now()); \
+         INSERT INTO shop.collections (network, contract_address, chain_id, name, creator, owner, urn, is_completed, is_approved, is_editable, created_at, updated_at, reviewed_at, mirrored_at) \
+         VALUES ('ethereum', '{registrar}', 1, 'Names', '{CREATOR}', '{CREATOR}', 'urn:decentraland:ethereum:collections-v1:names', true, true, false, 1, 1, 1, now()); \
+         INSERT INTO shop.nft (network, contract_address, token_id, owner, item_id, issued_id, wearable_id, minted_block, minted_at, transferred_block, transferred_log, transferred_at) \
+         VALUES ('matic', '{polygon_contract}', 1, '{WALLET_B}', 0, 1, NULL, 10, 1, 10, 0, 1), \
+                ('ethereum', '{registrar}', 77, '{WALLET_B}', NULL, 1, 'held', 10, 1, 10, 0, 1)",
+        polygon_contract = text(polygon, "contractAddress"),
+    )))
+    .execute(&pool)
+    .await
+    .unwrap();
     super::super::owned_items::test_support::publish(&pool, &ChainNet::ALL, true, Duration::ZERO)
         .await;
     for (query, total) in [
         // An item the catalogue does not name, and one no token id encodes.
         ("itemId=77", 0),
         ("itemId=1099511627776", 0),
-        // Another contract.
+        // Another contract, and the registrar.
         (
             "itemId=3&contractAddress=0x00000000000000000000000000000000000000c9",
+            0,
+        ),
+        (
+            "itemId=0&contractAddress=0x2a187453064356c898cae034eaed119e1663acb8",
             0,
         ),
     ] {
@@ -353,8 +375,15 @@ async fn owners_from_the_nft_index_wait_for_a_published_fresh_fold() {
             "{uri}"
         );
     }
+    assert_eq!(
+        registrar, "0x2a187453064356c898cae034eaed119e1663acb8",
+        "the registrar case above"
+    );
     for (query, message) in [
         ("itemId=three", "itemId must be a decimal item id"),
+        // The parser alone reads an empty id as 0 and a padded one as 3.
+        ("itemId=", "itemId must be a decimal item id"),
+        ("itemId=03", "itemId must be a decimal item id"),
         (
             "itemId=3&first=100&skip=24901",
             "first + skip may not exceed 25000",
@@ -367,6 +396,75 @@ async fn owners_from_the_nft_index_wait_for_a_published_fresh_fold() {
         let (status, body) = get(walker.clone(), &uri).await;
         assert_eq!(status, StatusCode::BAD_REQUEST, "{uri}: {body}");
         assert_eq!(body["message"], message, "{uri}");
+    }
+    own.drop().await;
+}
+
+/// On a testnet the catalogue names an item's copies only when its
+/// collection and the item are both verified on the catalogue's chain of
+/// their network (Sepolia for v1, Amoy for v2), as the `/v1/nfts`
+/// collection candidates do.
+#[tokio::test]
+async fn owners_on_a_testnet_read_only_items_verified_on_its_chains() {
+    let Some(own) = super::super::tests::support::OwnDb::create("owners_testnet").await else {
+        return;
+    };
+    let pool = own.pool.clone();
+    let mut settings = Settings::for_tests();
+    settings.eth_network = "sepolia".into();
+    settings.market.indexes.nft_enabled = true;
+    settings.market.indexes.chain_id_ethereum = 11_155_111;
+    settings.market.indexes.chain_id_matic = 80_002;
+    let app = router_over(&pool, settings);
+    let (verified, unverified, v1) = (
+        "0x00000000000000000000000000000000000000a1",
+        "0x00000000000000000000000000000000000000a2",
+        "0x00000000000000000000000000000000000000a3",
+    );
+    sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
+        "INSERT INTO shop.collections (network, contract_address, chain_id, name, creator, owner, urn, is_completed, is_approved, is_editable, created_at, updated_at, reviewed_at, mirrored_at, testnet_verified) \
+         VALUES ('matic', '{verified}', 80002, 'Verified', '{CREATOR}', '{CREATOR}', 'urn:decentraland:amoy:collections-v2:{verified}', true, true, false, 1, 1, 1, now(), true), \
+                ('matic', '{unverified}', 80002, 'Unverified', '{CREATOR}', '{CREATOR}', 'urn:decentraland:amoy:collections-v2:{unverified}', true, true, false, 1, 1, 1, now(), false), \
+                ('ethereum', '{v1}', 11155111, 'Sepolia v1', '{CREATOR}', '{CREATOR}', 'urn:decentraland:sepolia:collections-v1:sepolia_v1', true, true, false, 1, 1, 1, now(), true); \
+         INSERT INTO shop.items (network, contract_address, item_id, chain_id, item_type, urn, creator, rarity, total_supply, max_supply, available, price, image, name, category, body_shapes, search_is_collection_approved, created_at, updated_at, reviewed_at, mirrored_at, testnet_verified) \
+         SELECT v.network, v.contract, v.item, v.chain, v.kind, v.urn, '{CREATOR}', 'mythic', 1, 1, 0, 0, 'i', 'Item', 'hat', ARRAY['BaseMale'], true, 1, 1, 1, now(), v.proved \
+         FROM (VALUES \
+             ('matic', '{verified}', 1, 80002, 'wearable_v2', 'urn:decentraland:amoy:collections-v2:{verified}:1', true), \
+             ('matic', '{verified}', 2, 80002, 'wearable_v2', 'urn:decentraland:amoy:collections-v2:{verified}:2', false), \
+             ('matic', '{verified}', 3, 137, 'wearable_v2', 'urn:decentraland:amoy:collections-v2:{verified}:3', true), \
+             ('matic', '{unverified}', 1, 80002, 'wearable_v2', 'urn:decentraland:amoy:collections-v2:{unverified}:1', true), \
+             ('ethereum', '{v1}', 1, 11155111, 'wearable_v1', 'urn:decentraland:sepolia:collections-v1:sepolia_v1:hat', true) \
+         ) AS v(network, contract, item, chain, kind, urn, proved); \
+         INSERT INTO shop.nft (network, contract_address, token_id, owner, item_id, issued_id, wearable_id, minted_block, minted_at, transferred_block, transferred_log, transferred_at) \
+         SELECT 'matic', c.contract, (c.item::numeric * 2::numeric ^ 216)::numeric(78,0) + 1, '{WALLET_A}', c.item, 1, NULL, 10, 1, 10, 0, 1 \
+         FROM (VALUES ('{verified}', 1), ('{verified}', 2), ('{verified}', 3), ('{unverified}', 1)) AS c(contract, item) \
+         UNION ALL SELECT 'ethereum', '{v1}', 5, '{WALLET_A}', NULL, 1, 'hat', 10, 1, 10, 0, 1; \
+         INSERT INTO shop.chain_cursor (indexer, network, start_block, last_block, fold_through, folded_block, folded_at, full_history, chain_id) \
+         VALUES ('nft', 'ethereum', 1, 100, 100, 100, timezone('UTC', now()), true, 11155111), \
+                ('nft', 'matic', 1, 100, 100, 100, timezone('UTC', now()), true, 80002); \
+         INSERT INTO shop.mirror_state (mirror, network, source_url, chain_id, last_complete_pass_at, marks_item_rows) \
+         VALUES ('items', 'ethereum', 'graph', 11155111, timezone('UTC', now()), true), \
+                ('items', 'matic', 'graph', 80002, timezone('UTC', now()), true)"
+    )))
+    .execute(&pool)
+    .await
+    .unwrap();
+    for (contract, item, held) in [
+        (verified, "1", true),
+        // The item unverified, verified on another chain, or its collection
+        // unverified.
+        (verified, "2", false),
+        (verified, "3", false),
+        (unverified, "1", false),
+        (v1, "1", true),
+    ] {
+        let uri = format!("/v1/owners?contractAddress={contract}&itemId={item}");
+        let (status, body) = get(app.clone(), &uri).await;
+        assert_eq!(status, StatusCode::OK, "{uri}: {body}");
+        assert_eq!(body["total"], i64::from(held), "{uri}: {body}");
+        if held {
+            assert_eq!(body["data"][0]["ownerId"], WALLET_A, "{uri}: {body}");
+        }
     }
     own.drop().await;
 }
