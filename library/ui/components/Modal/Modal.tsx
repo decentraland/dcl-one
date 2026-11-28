@@ -67,7 +67,8 @@ export type ModalProps = Omit<
   initialFocusRef?: RefObject<HTMLElement | null>
 }
 
-// The width below which a `pageContent` dialog sits in the page instead of above it.
+// The width below which a `pageContent` dialog sits in the page instead of above it. Modal.module.css
+// repeats it for the in-page and pre-hydration styles; change the three together.
 const PAGE_ON_PHONE = '(max-width: 599.95px)'
 
 function isOutside(dialog: HTMLDialogElement, x: number, y: number) {

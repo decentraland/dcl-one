@@ -17220,11 +17220,11 @@
     },
     {
       "path": "library/ui/components/Modal/Modal.module.css",
-      "sha256": "3d098b69de911bd24de7dd80188bd7db3557fb6b36b2d16831c3f4801ba2aeb8"
+      "sha256": "9e2d627928ca4fa20c1e7f6ca6da6b0052e04fff86917b7de6fa9388d2e65afc"
     },
     {
       "path": "library/ui/components/Modal/Modal.tsx",
-      "sha256": "c6b739a8ad43b75a3d89ce293170ef5bba7466d2121a1f04ad7570f267e8a7a2"
+      "sha256": "beb24a8854847a1d50ee45adbd129fba185a1adea587c49d5f127c2978add73c"
     },
     {
       "path": "library/ui/components/ModalCard/ModalCard.module.css",

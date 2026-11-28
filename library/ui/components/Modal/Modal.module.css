@@ -116,6 +116,18 @@
     background: color-mix(in srgb, var(--dcl-neutrals-black) 80%, transparent);
   }
 
+  /* Before the page hydrates a page's own card is shown but not modal: no top layer and no
+   * backdrop. Above a phone it is lifted over the site header and draws the backdrop as a shadow
+   * until the effect reopens it modal. The width is `PAGE_ON_PHONE` in Modal.tsx. */
+  @media (min-width: 600px) {
+    .root[data-layout='scene'][data-page]:not(:modal) {
+      z-index: 1300;
+      box-shadow:
+        0 4px 25px color-mix(in srgb, var(--dcl-neutrals-white) 25%, transparent),
+        0 0 0 100vmax color-mix(in srgb, var(--dcl-neutrals-black) 80%, transparent);
+    }
+  }
+
   .root:is([data-layout='detail'], [data-layout='scene']) > .close {
     top: var(--dcl-space-16);
     right: var(--dcl-space-16);
@@ -142,7 +154,8 @@
     }
   }
 
-  /* A page's own card on a phone is part of the page: in the flow, full width, square. */
+  /* A page's own card on a phone is part of the page: in the flow, full width, square. The width
+   * is `PAGE_ON_PHONE` in Modal.tsx; change them together. */
   @media (max-width: 599.95px) {
     .root[data-layout='scene'][data-page] {
       position: relative;

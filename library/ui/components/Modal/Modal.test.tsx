@@ -1,6 +1,7 @@
 import { useRef, useState } from 'react'
 import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { hydrateRoot } from 'react-dom/client'
 import { renderToString } from 'react-dom/server'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { Modal } from './Modal'
@@ -530,6 +531,42 @@ describe("when the modal is a page's own content", () => {
     act(() => listeners.forEach((listener) => listener()))
     expect(showModal).toHaveBeenCalledTimes(2)
     expect(document.documentElement.style.overflow).toBe('hidden')
+  })
+
+  it('should ignore the late close event of its own reopening, so the page does not close', async () => {
+    const onClose = vi.fn()
+    render(<Modal layout="scene" pageContent title="Genesis Plaza" onClose={onClose} />)
+    const dialog = screen.getByRole('dialog', { name: 'Genesis Plaza' })
+    // A browser queues `close` after close(); by then the effect has shown the dialog again.
+    await act(async () => {
+      dialog.dispatchEvent(new Event('close'))
+    })
+    expect(dialog).toHaveAttribute('open')
+    expect(onClose).not.toHaveBeenCalled()
+  })
+
+  it('should hydrate over its server-rendered open dialog and reopen it modal', async () => {
+    const onClose = vi.fn()
+    const container = document.createElement('div')
+    container.innerHTML = renderToString(
+      <Modal layout="scene" pageContent title="Genesis Plaza" onClose={onClose} />
+    )
+    document.body.append(container)
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const root = await act(async () =>
+      hydrateRoot(
+        container,
+        <Modal layout="scene" pageContent title="Genesis Plaza" onClose={onClose} />
+      )
+    )
+    expect(errors).not.toHaveBeenCalled()
+    expect(close).toHaveBeenCalledTimes(1)
+    expect(showModal).toHaveBeenCalledTimes(1)
+    expect(container.querySelector('dialog')).toHaveAttribute('open')
+    expect(onClose).not.toHaveBeenCalled()
+    act(() => root.unmount())
+    container.remove()
+    errors.mockRestore()
   })
 
   it('should stop listening to the width once it is removed', () => {

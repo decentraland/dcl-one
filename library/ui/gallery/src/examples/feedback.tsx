@@ -335,6 +335,21 @@ export const feedbackEntries: GalleryEntry[] = [
         )
       },
       {
+        id: 'scene-page',
+        title: "Scene layout as a page's own content: in the page flow below 600px",
+        render: () => (
+          <ModalDemo
+            trigger="Open page card"
+            layout="scene"
+            pageContent
+            title="Genesis Plaza"
+            image={<DetailCover title="Genesis Plaza" src={covers.plaza} />}
+          >
+            <DetailBody />
+          </ModalDemo>
+        )
+      },
+      {
         id: 'busy',
         title: 'Not dismissible, without close button',
         render: () => (
