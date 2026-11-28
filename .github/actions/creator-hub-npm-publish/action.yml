@@ -11,7 +11,7 @@ inputs:
     required: false
     default: 'commit'
   additional-tags:
-    description: 'Comma-separated list of additional dist-tags to add (opt-in). Leave empty when initial-tag already covers the desired tag. Under OIDC this works only if the npm trusted publisher of the package allows the npm dist-tag action.'
+    description: 'Comma-separated list of additional dist-tags to add (opt-in). Leave empty when initial-tag already covers the desired tag. Under OIDC this works only if the trusted publisher of the package allows dist-tag changes.'
     required: false
     default: ''
   access:
