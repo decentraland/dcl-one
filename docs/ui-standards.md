@@ -236,11 +236,13 @@ A review of a change to web UI, by a person or an agent, checks each point and r
 - No new component file under `apps/ui3/src/components` or `library/ui/apps/sites/shared` (the `--kit-ceiling` kits), and no new import of an `apps/ui3` atom or component in added code, through the alias (`@ui/atoms/…`, `@ui/components/…`) or through a relative path into those folders, as the web Shop's are. A test, or a file that only moved, is not a new component.
 - No new component that duplicates one `@dcl/one-ui` exports. Compare the added components with [`docs/ui-components.md`](ui-components.md).
 - A new shared component lives in `library/ui/components`, is exported from `library/ui/index.ts`, and has tests, a gallery page and a row in `docs/ui-components.md`.
-- Shared components are imported from `@dcl/one-ui`, not from a path inside it. The exceptions are stylesheets, the `@dcl/one-ui/apps/hud/…` and `@dcl/one-ui/apps/shop/…` subpaths in the Explorer HUD's paths (a web Shop view uses the entry), and the specifiers `SHARED_IMPORT_KEPT` lists in `tooling/ui_standards.py`. The `--shared-imports` check does not scan files inside `library/ui`, where a relative import of a shared component is not a finding.
+- Shared components are imported from `@dcl/one-ui`. Consumers may also import public stylesheets, host-specific in-world Shop and HUD modules, and the file/specifier pairs in `SHARED_IMPORT_KEPT` in `tooling/ui_standards.py`. The Shop web preview entry has four allowed importers: ItemPreview, AvatarStage, LivePromo and the AvatarStage test. No consumer, including the HUD, may import its internal modules or stylesheets. The guard excludes imports within `library/ui`.
 - A component more than one surface needs, missing from both the shared library and the Figma library, has a linked issue that asks design for it. App-specific UI in `library/ui/apps/<app>/` needs none.
 - Colours, spacing, radii and type sizes come from `--dcl-*` tokens where one has the value.
 
 ## App-specific UI
+
+The Shop web adapters load avatar preview UI through the public `@dcl/one-ui/apps/shop/preview` entry. Its iframe, renderer protocol and styles are outside the root entry used by the HUD. See the [Shop web preview entry decision](adr/2026-11-26-shop-web-preview-entry.md).
 
 App-specific UI is used by one app only: its layouts, app chrome and feature
 components, with their styles. It lives in `library/ui/apps/<app>/`, apart from

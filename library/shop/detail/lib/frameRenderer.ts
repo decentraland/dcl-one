@@ -1,8 +1,6 @@
 // Which renderer draws a Shop avatar in its preview iframe: the Bevy avatar preview where its flag allows it, then
 // wearable-preview's Unity where that flag does, then Babylon.
 
-import type { PreviewFrameOptions } from "../components/PreviewFrame";
-
 export type FrameRenderer = "bevy" | "unity" | "babylon";
 
 /**
@@ -23,6 +21,6 @@ export function frameRenderer(
 }
 
 /** The options that ask the iframe for this renderer. Unity's mode is Bevy's too; Babylon has none. */
-export function rendererOptions(renderer: FrameRenderer, mode: "marketplace" | "builder"): Pick<PreviewFrameOptions, "bevy" | "unity" | "unityMode"> {
+export function rendererOptions(renderer: FrameRenderer, mode: "marketplace" | "builder") {
   return { bevy: renderer === "bevy" || undefined, unity: renderer === "unity" || undefined, unityMode: renderer === "babylon" ? undefined : mode };
 }

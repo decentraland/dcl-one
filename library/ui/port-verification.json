@@ -1,6 +1,6 @@
 {
   "schema": 2,
-  "portInputHash": "c83ef74828817d8c9c67b4b3436788fe9be05ae65f8331178056dad4b89888e0",
+  "portInputHash": "06bb2bebf064803b98f0418414b3b0035b5c10712dd3e59440cf176794e2533c",
   "fdsRevision": "9c6dfbe61b2c218ff0b820841aac722df4ebd8aa",
   "snapshotRevision": "9c6dfbe61b2c218ff0b820841aac722df4ebd8aa",
   "checks": {
@@ -18,7 +18,7 @@
     },
     "check-mappings": {
       "result": "pass",
-      "detail": "Fresh check passes with 46 public mappings and no errors"
+      "detail": "Fresh check passes with 48 public mappings and no errors"
     },
     "review-manifest": {
       "result": "pass",

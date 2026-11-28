@@ -25,9 +25,10 @@ either kind, which is the floor of an unlisted one.
 `--shared-imports` is a check over the whole tree: a script under apps/, library/
 (outside library/ui itself) or tooling/ that names a `@dcl/one-ui/<path>` module
 fails, because shared UI comes only from the `@dcl/one-ui` entry
-(docs/ui-standards.md, "Shared UI: library/ui"). Stylesheets (`.css`) keep their
-paths. In-world Shop and HUD modules that require host aliases can use their
-app subpaths. Web Shop views use the public entry.
+(docs/ui-standards.md, "Shared UI: library/ui"). Public stylesheets keep their paths. In-world Shop
+and HUD modules that require host aliases can use their app subpaths. Only the
+listed Shop adapters and AvatarStage test import the public web preview entry.
+Its internal modules and stylesheets are private, including for HUD consumers.
 A script under apps/ that imports a library/ui module by a relative path
 (`import`, `export ... from`, `import()`, `require()`, `vi.mock()`) fails the same
 way; stylesheets and the Node-only Figma review tooling listed in
@@ -381,6 +382,7 @@ def check(base='HEAD', staged=False):
 
 SHARED_IMPORT_ROOTS = ('apps/', 'library/', 'tooling/')
 SHARED_IMPORT_EXTENSIONS = SCRIPT_EXTENSIONS + ('.mts', '.cts')
+SHOP_PREVIEW_ENTRY = '@dcl/one-ui/apps/shop/preview'
 SHARED_UI_DEEP = re.compile(r'^@dcl/one-ui/(?!apps/(?:shop|hud)/)(?!\S*\.css(?:\?\S*)?$)[\w.-]\S*$')
 # Preserve the isolated lazy chunk and mock the exact module that LivePromo loads.
 LAZY_ANIMATED_BACKGROUND = '@dcl/one-ui/components/AnimatedBackground/AnimatedBackground'
@@ -388,6 +390,10 @@ SHARED_IMPORT_KEPT = frozenset(
     (f'apps/ui3/src/shop/discovery/components/{name}', LAZY_ANIMATED_BACKGROUND)
     for name in ('LivePromo.tsx', 'LivePromo.test.tsx')
 ) | {
+    ('apps/ui3/src/shop/detail/components/ItemPreview.tsx', SHOP_PREVIEW_ENTRY),
+    ('apps/ui3/src/shop/detail/components/AvatarStage.tsx', SHOP_PREVIEW_ENTRY),
+    ('apps/ui3/src/shop/detail/components/AvatarStage.test.tsx', SHOP_PREVIEW_ENTRY),
+    ('apps/ui3/src/shop/discovery/components/LivePromo.tsx', SHOP_PREVIEW_ENTRY),
     ('apps/creator-hub/packages/inspector/src/components/ui/Tooltip.ts',
      '@dcl/one-ui/components/Tooltip/Tooltip'),
 }
@@ -434,7 +440,8 @@ def relative_shared_imports(name, text):
 
 def deep_shared_imports(text):
     """The @dcl/one-ui/<path> specifiers in source text that name shared code, comments excluded."""
-    return [value for kind, value in tokens(text) if kind == 'string' and SHARED_UI_DEEP.match(value)]
+    return [value for kind, value in tokens(text) if kind == 'string' and
+            (value == SHOP_PREVIEW_ENTRY or value.startswith(SHOP_PREVIEW_ENTRY + '/') or SHARED_UI_DEEP.match(value))]
 
 
 def shared_import_issues(paths, read):
@@ -453,7 +460,12 @@ def shared_import_issues(paths, read):
         for specifier in deep_shared_imports(text):
             if (name, specifier) in SHARED_IMPORT_KEPT:
                 continue
-            issues.append(f"{name}: import {specifier!r} from '@dcl/one-ui' instead")
+            if specifier.startswith(SHOP_PREVIEW_ENTRY + '/'):
+                issues.append(f'{name}: {specifier!r} is private to the Shop web preview')
+            elif specifier == SHOP_PREVIEW_ENTRY:
+                issues.append(f'{name}: {specifier!r} is restricted to the listed Shop web preview adapters')
+            else:
+                issues.append(f"{name}: import {specifier!r} from '@dcl/one-ui' instead")
     return issues
 
 

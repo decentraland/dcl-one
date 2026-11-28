@@ -1,7 +1,7 @@
 /* from: shop@2d3bf62:app/src/components/ItemPreview/ItemPreview.styles.ts, app/src/pages/ItemDetail.styles.ts (Preview's
    overlay placement: [data-preview-note], [data-preview-loading]); v2 marketplace/components/tryonpreview.css */
 
-.shop-preview {
+.root {
   position: relative;
   width: 100%;
   height: 100%;
@@ -11,7 +11,7 @@
   place-items: center;
   background: transparent;
 }
-.shop-preview canvas {
+.root canvas {
   -webkit-mask-image:
     linear-gradient(to bottom, transparent 0%, #000 3%, #000 92%, transparent 100%),
     linear-gradient(to right, transparent 0%, #000 3%, #000 97%, transparent 100%);
@@ -21,28 +21,28 @@
     linear-gradient(to right, transparent 0%, #000 3%, #000 97%, transparent 100%);
   mask-composite: intersect;
 }
-.shop-preview__thumb {
+.thumb {
   width: 72%;
   height: 72%;
   object-fit: contain;
 }
-.shop-preview__thumb--cover {
+.thumb[data-cover] {
   position: absolute;
   top: 14%;
   left: 14%;
   z-index: 1;
 }
-.shop-preview__loading,
-.shop-preview__note {
+.loading,
+.note {
   position: absolute;
   left: 50%;
   transform: translateX(-50%);
   z-index: 2;
   margin: 0;
-  padding: 6px 12px;
+  padding: 6px var(--dcl-space-12);
   border-radius: 999px;
   background: rgba(22, 21, 24, 0.78);
-  color: #fff;
+  color: var(--dcl-neutrals-white);
   font-size: 12px;
   font-weight: 500;
   white-space: nowrap;
@@ -50,26 +50,26 @@
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.shop-preview__loading {
+.loading {
   top: 50%;
   transform: translate(-50%, -50%);
 }
-.shop-preview__note {
+.note {
   bottom: 14px;
 }
-.shop-preview__show {
+.show {
   position: absolute;
-  top: 16px;
-  left: 16px;
+  top: var(--dcl-space-16);
+  left: var(--dcl-space-16);
   z-index: 2;
   display: inline-flex;
   align-items: center;
-  padding: 6px 16px;
-  border: 1px solid #ecebed;
+  padding: 6px var(--dcl-space-16);
+  border: 1px solid var(--dcl-neutrals-pearl);
   border-radius: 999px;
   background: rgba(255, 255, 255, 0.92);
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.12);
-  color: #161518;
+  color: var(--dcl-neutrals-shadow);
   font: inherit;
   font-size: 12px;
   font-weight: 600;
@@ -77,22 +77,22 @@
   text-transform: uppercase;
   cursor: pointer;
 }
-.shop-preview__show:hover {
-  background: #fff;
+.show:hover {
+  background: var(--dcl-neutrals-white);
 }
 @media (max-width: 900px) {
-  .shop-preview__show {
+  .show {
     top: auto;
     left: auto;
-    right: 12px;
-    bottom: 12px;
+    right: var(--dcl-space-12);
+    bottom: var(--dcl-space-12);
   }
 }
 
-.shop-preview__toggle {
+.toggle {
   position: absolute;
-  top: 16px;
-  left: 16px;
+  top: var(--dcl-space-16);
+  left: var(--dcl-space-16);
   z-index: 2;
   display: inline-flex;
   gap: 2px;
@@ -102,36 +102,38 @@
   border-radius: 999px;
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.12);
 }
-.shop-preview__toggle button {
+.toggle button {
   display: inline-flex;
   align-items: center;
   border: 0;
   background: none;
   cursor: pointer;
-  padding: 6px 16px;
+  padding: 6px var(--dcl-space-16);
   border-radius: 999px;
   font: inherit;
   font-weight: 600;
   font-size: 12px;
   text-transform: uppercase;
   letter-spacing: 0.04em;
-  color: #716b7c;
-  transition: background 0.12s ease, color 0.12s ease;
+  color: var(--dcl-neutrals-cloudy-sky);
+  transition:
+    background 0.12s ease,
+    color 0.12s ease;
 }
-.shop-preview__toggle button[data-active] {
-  background: #161518;
-  color: #fff;
+.toggle button[data-active] {
+  background: var(--dcl-neutrals-shadow);
+  color: var(--dcl-neutrals-white);
 }
-.shop-preview__toggle button:not([data-active]):hover {
-  color: #161518;
+.toggle button:not([data-active]):hover {
+  color: var(--dcl-neutrals-shadow);
 }
-.shop-preview__toggle-ico {
+.toggleIco {
   display: none;
 }
 
-.shop-preview__playbar {
+.playbar {
   position: absolute;
-  bottom: 16px;
+  bottom: var(--dcl-space-16);
   left: 50%;
   transform: translateX(-50%);
   z-index: 2;
@@ -139,14 +141,14 @@
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 6px 12px;
+  padding: 6px var(--dcl-space-12);
   background: rgba(255, 255, 255, 0.94);
   backdrop-filter: blur(6px);
   border: 1px solid #e6e4ea;
   border-radius: 999px;
   box-shadow: 0 2px 10px rgba(22, 21, 24, 0.12);
 }
-.shop-preview__play {
+.play {
   flex: none;
   display: inline-flex;
   align-items: center;
@@ -156,22 +158,22 @@
   padding: 0;
   border: 0;
   border-radius: 50%;
-  background: #691fa9;
-  color: #fff;
+  background: var(--dcl-brand-purple);
+  color: var(--dcl-neutrals-white);
   cursor: pointer;
   transition: background 0.12s ease;
 }
-.shop-preview__play:hover {
-  background: #161518;
+.play:hover {
+  background: var(--dcl-neutrals-shadow);
 }
-.shop-preview__track {
+.track {
   position: relative;
   flex: 1 1 auto;
   height: 4px;
   border-radius: 999px;
-  background: #a09ba8;
+  background: var(--dcl-neutrals-silver);
 }
-.shop-preview__knob {
+.knob {
   position: absolute;
   top: 50%;
   left: 0;
@@ -179,17 +181,17 @@
   height: 13px;
   margin-top: -6.5px;
   border-radius: 50%;
-  background: #691fa9;
-  border: 2px solid #fff;
+  background: var(--dcl-brand-purple);
+  border: 2px solid var(--dcl-neutrals-white);
   box-shadow: 0 1px 3px rgba(22, 21, 24, 0.3);
 }
 
 @media (max-width: 900px) {
-  .shop-preview__toggle {
+  .toggle {
     top: auto;
     left: auto;
-    right: 12px;
-    bottom: 12px;
+    right: var(--dcl-space-12);
+    bottom: var(--dcl-space-12);
     gap: 0;
     padding: 0;
     background: transparent;
@@ -197,20 +199,20 @@
     box-shadow: 0 1px 4px rgba(22, 21, 24, 0.18);
     overflow: hidden;
   }
-  .shop-preview__toggle button {
-    padding: 6px 12px;
+  .toggle button {
+    padding: 6px var(--dcl-space-12);
     border-radius: 0;
-    background: #fff;
+    background: var(--dcl-neutrals-white);
     color: #242129;
   }
-  .shop-preview__toggle button[data-active] {
-    background: #161518;
-    color: #fff;
+  .toggle button[data-active] {
+    background: var(--dcl-neutrals-shadow);
+    color: var(--dcl-neutrals-white);
   }
-  .shop-preview__toggle-label {
+  .toggleLabel {
     display: none;
   }
-  .shop-preview__toggle-ico {
+  .toggleIco {
     display: block;
     line-height: 0;
   }
