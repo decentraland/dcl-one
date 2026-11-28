@@ -24,8 +24,8 @@ const ICONS = {
 } as const
 
 /**
- * The help center's section switcher: the shared pill tabs, which wrap onto rows. The arrow keys, Home and End
- * move focus and select (TabsBar).
+ * The help center's section switcher: the shared pill tabs in a vertical tab list, a column on desktop and wrapping
+ * rows on narrower screens. The arrow keys of either axis, Home and End move focus and select (TabsBar).
  */
 function HelpTabs<Id extends string>({
   tabs,
@@ -36,7 +36,7 @@ function HelpTabs<Id extends string>({
   panelId
 }: HelpTabsProps<Id>) {
   return (
-    <TabsBar label={label} variant="pill">
+    <TabsBar label={label} variant="pill" orientation="vertical">
       {tabs.map((tab) => {
         const Icon = ICONS[tab.icon]
         return (

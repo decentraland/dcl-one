@@ -16420,7 +16420,7 @@
     },
     {
       "path": "library/ui/apps/sites/help/HelpPage.module.css",
-      "sha256": "dcd906fe90ea8d075172e411ab428b391a74c9b04da22ff28ce7dc800b703455"
+      "sha256": "7775a31d3a3bdc41bd457462af8b8bb0c01e30a9269fcc7c5310437322b9a44f"
     },
     {
       "path": "library/ui/apps/sites/help/HelpPage.tsx",
@@ -16448,7 +16448,7 @@
     },
     {
       "path": "library/ui/apps/sites/help/HelpTabs.tsx",
-      "sha256": "242373be0225d9481f3074165d3a96e69e71a67465282979e3b7d2c4725cb8bf"
+      "sha256": "0f9211b6a6f569d3f16f2e3698fd9b80a748cf63fad98e43391d7f41c57ba7ba"
     },
     {
       "path": "library/ui/apps/sites/home/CatchTheVibe.module.css",
@@ -17464,7 +17464,7 @@
     },
     {
       "path": "library/ui/components/TabsBar/TabsBar.module.css",
-      "sha256": "f37be88aca6407349dc2bc531ee52e7b2843c0352698e1a63e207e99b0827061"
+      "sha256": "1b0d4b93aacc3dd8b0dd79a47dc42fbae4f265a4088aa74793d84c75e222fa1d"
     },
     {
       "path": "library/ui/components/TabsBar/TabsBar.module.css.d.ts",
@@ -17472,7 +17472,7 @@
     },
     {
       "path": "library/ui/components/TabsBar/TabsBar.tsx",
-      "sha256": "b11c7bb428b2d568df48bdea98622f398d11d1fcef24f2d78ad87902d185c0ef"
+      "sha256": "a6959a65de270a34dc3eeb2b4876f6133d4aa4026cbe93e2fbd8feee71021169"
     },
     {
       "path": "library/ui/components/Tag/Tag.module.css",
@@ -65071,6 +65071,21 @@
     {
       "from": "library/ui/components/TabsBar/TabsBar.tsx",
       "to": "library/ui/components/TabsBar/TabsBar.module.css",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/components/TabsBar/TabsBar.tsx",
+      "to": "library/ui/foundations/layout/layout.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/components/TabsBar/TabsBar.tsx",
+      "to": "library/ui/foundations/layout/layout.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/components/TabsBar/TabsBar.tsx",
+      "to": "library/ui/foundations/layout/layout.ts",
       "kind": "test:runtime"
     },
     {

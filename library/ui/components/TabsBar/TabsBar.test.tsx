@@ -1,15 +1,15 @@
 import { readFileSync } from 'node:fs'
-import { render, screen } from '@testing-library/react'
+import { act, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { useState } from 'react'
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { Tabs } from '../Tabs/Tabs'
 import { TabsBar } from './TabsBar'
 
-function ButtonTabs() {
+function ButtonTabs({ orientation }: { orientation?: 'horizontal' | 'vertical' }) {
   const [value, setValue] = useState('all')
   return (
-    <TabsBar label="Events" variant="pill">
+    <TabsBar label="Events" variant="pill" orientation={orientation}>
       {['all', 'my', 'past'].map((id) => (
         <Tabs key={id} label={id} variant="pill" selected={value === id} onClick={() => setValue(id)} />
       ))}
@@ -153,6 +153,172 @@ describe('TabsBar', () => {
       const list = screen.getByRole('tablist')
       expect(list.className).toMatch(/hudPill/)
       expect(list).not.toHaveAttribute('aria-label')
+    })
+  })
+
+  describe('when it is vertical', () => {
+    /* Stands in for the browser's media query: true is the desktop column, false the wrapped rows. */
+    function mockColumn(matches: boolean) {
+      const listeners = new Set<(event: MediaQueryListEvent) => void>()
+      const query = {
+        matches,
+        addEventListener: (_: string, listener: (event: MediaQueryListEvent) => void) => listeners.add(listener),
+        removeEventListener: (_: string, listener: (event: MediaQueryListEvent) => void) => listeners.delete(listener)
+      }
+      vi.stubGlobal(
+        'matchMedia',
+        vi.fn((media: string) => {
+          expect(media).toBe('(width >= 1024px)')
+          return query
+        })
+      )
+      return {
+        listeners,
+        change(next: boolean) {
+          query.matches = next
+          for (const listener of listeners) listener({ matches: next } as MediaQueryListEvent)
+        }
+      }
+    }
+
+    afterEach(() => {
+      vi.unstubAllGlobals()
+    })
+
+    it('adds the vertical class after the variant and marks the column vertical', () => {
+      mockColumn(true)
+      render(<ButtonTabs orientation="vertical" />)
+      const list = screen.getByRole('tablist', { name: 'Events' })
+      expect(list.className.split(' ')).toEqual(['root', 'pill', 'vertical'])
+      expect(list).toHaveAttribute('aria-orientation', 'vertical')
+    })
+
+    it('moves and selects with Up and Down, wrapping at the ends, and keeps Home and End', async () => {
+      mockColumn(true)
+      render(<ButtonTabs orientation="vertical" />)
+      await userEvent.tab()
+      await userEvent.keyboard('{ArrowDown}')
+      expect(screen.getByRole('tab', { name: 'my', selected: true })).toHaveFocus()
+      await userEvent.keyboard('{ArrowUp}{ArrowUp}')
+      expect(screen.getByRole('tab', { name: 'past', selected: true })).toHaveFocus()
+      await userEvent.keyboard('{ArrowDown}')
+      expect(screen.getByRole('tab', { name: 'all', selected: true })).toHaveFocus()
+      await userEvent.keyboard('{End}')
+      expect(screen.getByRole('tab', { name: 'past', selected: true })).toHaveFocus()
+      await userEvent.keyboard('{Home}')
+      expect(screen.getByRole('tab', { name: 'all', selected: true })).toHaveFocus()
+    })
+
+    it('keeps only Left and Right for the rows it wraps onto on narrow screens', async () => {
+      mockColumn(false)
+      render(<ButtonTabs orientation="vertical" />)
+      await userEvent.tab()
+      const down = new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true, cancelable: true })
+      screen.getByRole('tab', { name: 'all' }).dispatchEvent(down)
+      expect(down.defaultPrevented).toBe(false)
+      expect(screen.getByRole('tab', { name: 'all', selected: true })).toHaveFocus()
+      await userEvent.keyboard('{ArrowRight}')
+      expect(screen.getByRole('tab', { name: 'my', selected: true })).toHaveFocus()
+      await userEvent.keyboard('{ArrowLeft}{ArrowLeft}')
+      expect(screen.getByRole('tab', { name: 'past', selected: true })).toHaveFocus()
+    })
+
+    it('takes Up and Down back when the viewport widens into the column', async () => {
+      const column = mockColumn(false)
+      render(<ButtonTabs orientation="vertical" />)
+      await userEvent.tab()
+      act(() => column.change(true))
+      await userEvent.keyboard('{ArrowDown}')
+      expect(screen.getByRole('tab', { name: 'my', selected: true })).toHaveFocus()
+    })
+
+    it('drops aria-orientation while the tabs are rows and restores it when the column returns', () => {
+      const column = mockColumn(false)
+      const { unmount } = render(<ButtonTabs orientation="vertical" />)
+      const list = screen.getByRole('tablist')
+      expect(list).not.toHaveAttribute('aria-orientation')
+      act(() => column.change(true))
+      expect(list).toHaveAttribute('aria-orientation', 'vertical')
+      act(() => column.change(false))
+      expect(list).not.toHaveAttribute('aria-orientation')
+      unmount()
+      expect(column.listeners.size).toBe(0)
+    })
+
+    it('treats a browser without matchMedia as the desktop column', () => {
+      vi.stubGlobal('matchMedia', undefined)
+      render(<ButtonTabs orientation="vertical" />)
+      expect(screen.getByRole('tablist')).toHaveAttribute('aria-orientation', 'vertical')
+    })
+
+    it('is ignored by the hud appearance, which keeps its own strip and keys', async () => {
+      const media = mockColumn(true)
+      render(
+        <TabsBar appearance="hud" orientation="vertical" label="Strip">
+          <Tabs appearance="hud" label="One" selected />
+          <Tabs appearance="hud" label="Two" />
+        </TabsBar>
+      )
+      const list = screen.getByRole('tablist')
+      expect(list.className).not.toMatch(/vertical/)
+      expect(list).not.toHaveAttribute('aria-orientation')
+      expect(media.listeners.size).toBe(0)
+      screen.getByRole('tab', { name: 'One' }).focus()
+      await userEvent.keyboard('{ArrowDown}')
+      expect(screen.getByRole('tab', { name: 'One' })).toHaveFocus()
+    })
+  })
+
+  describe('when it is vertical but not a pill tab list', () => {
+    afterEach(() => {
+      vi.unstubAllGlobals()
+    })
+
+    it.each(['underline', 'compact', undefined] as const)(
+      'ignores the orientation for the %s variant: no class, no aria-orientation, no Up/Down',
+      async (variant) => {
+        const matchMedia = vi.fn()
+        vi.stubGlobal('matchMedia', matchMedia)
+        render(
+          <TabsBar label="Sections" variant={variant} orientation="vertical">
+            <Tabs label="One" selected onClick={() => {}} />
+            <Tabs label="Two" onClick={() => {}} />
+          </TabsBar>
+        )
+        const list = screen.getByRole('tablist')
+        expect(list.className).not.toMatch(/vertical/)
+        expect(list).not.toHaveAttribute('aria-orientation')
+        expect(matchMedia).not.toHaveBeenCalled()
+        screen.getByRole('tab', { name: 'One' }).focus()
+        await userEvent.keyboard('{ArrowDown}')
+        expect(screen.getByRole('tab', { name: 'One' })).toHaveFocus()
+      }
+    )
+  })
+
+  describe('when it is horizontal, the default', () => {
+    afterEach(() => {
+      vi.unstubAllGlobals()
+    })
+
+    it('ignores Up and Down, has no aria-orientation and never reads the media query', async () => {
+      const matchMedia = vi.fn()
+      vi.stubGlobal('matchMedia', matchMedia)
+      render(<ButtonTabs />)
+      await userEvent.tab()
+      await userEvent.keyboard('{ArrowDown}{ArrowUp}')
+      expect(screen.getByRole('tab', { name: 'all', selected: true })).toHaveFocus()
+      expect(screen.getByRole('tablist')).not.toHaveAttribute('aria-orientation')
+      expect(matchMedia).not.toHaveBeenCalled()
+    })
+
+    it('keeps an aria-orientation the caller passes', () => {
+      render(
+        <TabsBar label="Events" variant="pill" aria-orientation="vertical">
+          <Tabs label="All" variant="pill" selected />
+        </TabsBar>
+      )
+      expect(screen.getByRole('tablist')).toHaveAttribute('aria-orientation', 'vertical')
     })
   })
 })

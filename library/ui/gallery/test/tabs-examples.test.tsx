@@ -52,4 +52,15 @@ describe('when a Tabs or TabsBar gallery example is used', () => {
     expect(fireEvent.click(collections)).toBe(false)
     expect(collections.getAttribute('aria-current')).toBe('page')
   })
+
+  it('should select with Down and Up in the vertical example', () => {
+    mount('TabsBar', 'vertical')
+    const list = screen.getByRole('tablist', { name: 'Vertical tabs' })
+    const [first, second, third] = within(list).getAllByRole('tab')
+    fireEvent.keyDown(first!, { key: 'ArrowDown' })
+    expect(second?.getAttribute('aria-selected')).toBe('true')
+    fireEvent.keyDown(second!, { key: 'ArrowUp' })
+    fireEvent.keyDown(first!, { key: 'ArrowUp' })
+    expect(third?.getAttribute('aria-selected')).toBe('true')
+  })
 })
