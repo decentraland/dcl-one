@@ -1,4 +1,10 @@
 //! Metrics recorded by service libraries and exposed once by each host process.
+#![deny(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    clippy::cast_possible_wrap,
+    clippy::cast_precision_loss
+)]
 use metrics_exporter_prometheus::Matcher;
 use std::collections::BTreeMap;
 use std::net::SocketAddr;
@@ -23,6 +29,15 @@ pub const CONTENT_TYPE: &str = "text/plain; version=0.0.4; charset=utf-8";
 pub const PROM_CLIENT_DEFAULT_BUCKETS: &[f64] = &[
     0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0,
 ];
+
+/// A count or byte size as a metric value.
+#[allow(
+    clippy::cast_precision_loss,
+    reason = "counts and byte sizes are exact below 2^53 and only rounded above"
+)]
+pub(crate) fn metric_value(n: u64) -> f64 {
+    n as f64
+}
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum Kind {

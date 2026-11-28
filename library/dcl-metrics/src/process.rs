@@ -85,10 +85,13 @@ fn metric(body: &mut String, name: &str, kind: &str, help: &str, value: f64) {
 }
 #[cfg(any(windows, test))]
 fn filetime_seconds(low: u32, high: u32) -> f64 {
-    (((high as u64) << 32) | low as u64) as f64 / 10_000_000.
+    crate::metric_value((u64::from(high) << 32) | u64::from(low)) / 10_000_000.
 }
 #[cfg(windows)]
-#[allow(unsafe_code, reason = "reads process times and memory through kernel32")]
+#[allow(
+    unsafe_code,
+    reason = "reads process times and memory through kernel32"
+)]
 pub fn collect() -> Sample {
     #[repr(C)]
     #[derive(Default)]
@@ -137,12 +140,12 @@ pub fn collect() -> Sample {
             ]);
         }
         let mut memory = Memory {
-            size: std::mem::size_of::<Memory>() as u32,
+            size: u32::try_from(size_of::<Memory>()).expect("Memory is under 100 bytes"),
             faults: 0,
             values: [0; 8],
         };
         if K32GetProcessMemoryInfo(process, &mut memory, memory.size) != 0 {
-            result.resident = Some(memory.values[1] as f64);
+            result.resident = Some(crate::metric_value(memory.values[1] as u64));
         }
     }
     result
@@ -160,7 +163,7 @@ fn proc_cpu(stat: &str, ticks_per_second: f64, boot_seconds: Option<f64>) -> Opt
             .get(index)?
             .parse::<u64>()
             .ok()
-            .map(|n| n as f64 / ticks_per_second)
+            .map(|n| crate::metric_value(n) / ticks_per_second)
     };
     Some(Sample {
         cpu: Some([ticks(11)?, ticks(12)?]),
@@ -178,7 +181,7 @@ fn proc_memory(sample: &mut Sample, status: &str) {
         *output = status.lines().find_map(|line| {
             let mut values = line.strip_prefix(field)?.split_whitespace();
             let kib = values.next()?.parse::<u64>().ok()?;
-            (values.next() == Some("kB")).then_some(kib as f64 * 1024.)
+            (values.next() == Some("kB")).then_some(crate::metric_value(kib) * 1024.)
         });
     }
 }
@@ -189,7 +192,7 @@ fn proc_max_fds(limits: &str) -> Option<f64> {
             .next()?
             .parse::<u64>()
             .ok()
-            .map(|n| n as f64)
+            .map(crate::metric_value)
     })
 }
 pub fn cached_max_fds(
@@ -206,13 +209,15 @@ pub fn collect() -> Sample {
     }
     // Linux's _SC_CLK_TCK. Read the configured kernel tick frequency, never assume HZ.
     // SAFETY: sysconf takes an integer and reads no memory of ours.
-    let ticks = unsafe { sysconf(2) } as f64;
+    let ticks = unsafe { sysconf(2) };
+    // A negative (failed) or out-of-range rate fails proc_cpu's positive check.
+    let ticks = i32::try_from(ticks).map_or(0., f64::from);
     let boot = std::fs::read_to_string("/proc/stat").ok().and_then(|s| {
         s.lines().find_map(|l| {
             l.strip_prefix("btime ")?
                 .parse::<u64>()
                 .ok()
-                .map(|n| n as f64)
+                .map(crate::metric_value)
         })
     });
     let mut result = std::fs::read_to_string("/proc/self/stat")
@@ -227,7 +232,9 @@ pub fn collect() -> Sample {
             .try_fold(0usize, |count, entry| entry.map(|_| count + 1))
             .ok();
         // Exclude the directory descriptor used by read_dir itself.
-        result.open_fds = count.and_then(|n| n.checked_sub(1)).map(|n| n as f64);
+        result.open_fds = count
+            .and_then(|n| n.checked_sub(1))
+            .map(|n| crate::metric_value(n as u64));
     }
     static MAX_FDS: std::sync::OnceLock<Option<f64>> = std::sync::OnceLock::new();
     result.max_fds = cached_max_fds(&MAX_FDS, || {
