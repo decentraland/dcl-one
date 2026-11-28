@@ -104,7 +104,7 @@ pub(crate) fn pulse_handshakes_per_address(ctx: &Ctx) -> PerAddress {
     let limit = ctx.stack().limits.max_concurrent_pre_auth_per_ip;
     (
         "max_concurrent_pre_auth_per_ip",
-        (limit > 0).then_some(limit as usize),
+        usize::try_from(limit).ok().filter(|limit| *limit > 0),
     )
 }
 
@@ -130,8 +130,8 @@ pub(crate) fn fits_one_address(players: usize, limits: &[PerAddress]) -> Result<
 pub fn spot(here: [f32; 3], index: usize) -> [f32; 3] {
     offset(
         here,
-        (index % COLUMNS) as f32 * SPACING,
-        (index / COLUMNS) as f32 * SPACING,
+        crate::casts::f32_from_usize(index % COLUMNS) * SPACING,
+        crate::casts::f32_from_usize(index / COLUMNS) * SPACING,
     )
 }
 
@@ -422,7 +422,7 @@ pub(crate) fn note_sightings(ctx: &Ctx, sightings: &Sightings) -> Result<(), Str
     let times: Vec<Option<u64>> = sightings
         .complete_at
         .iter()
-        .map(|at| at.map(|at| at.as_millis() as u64))
+        .map(|at| at.map(crate::casts::millis))
         .collect();
     ctx.note("saw_everyone_at_ms_by_player", &times);
     if let Some(last) = times.iter().flatten().max() {
@@ -494,7 +494,7 @@ async fn crowd(ctx: Ctx) -> Result<()> {
     let realm = ctx.realm("crowd");
     let here = meeting_place(&ctx);
     let identities: Vec<_> = (0..players)
-        .map(|index| ctx.identity(index as u32))
+        .map(|index| ctx.identity(crate::casts::index_u32(index)))
         .collect();
     let wallets: Vec<String> = identities
         .iter()
@@ -507,7 +507,7 @@ async fn crowd(ctx: Ctx) -> Result<()> {
     // everyone arrives at once, as a crowd does when an event starts
     let started = Instant::now();
     let bots = enter_crowd(&ctx, &identities, &realm, &spots).await?;
-    ctx.note("all_entered_ms", started.elapsed().as_millis() as u64);
+    ctx.note("all_entered_ms", crate::casts::millis(started.elapsed()));
 
     let deadline = Instant::now() + SIGHTING_DEADLINE;
     let watched = watch(&bots, &wallets, &spots, &realm, started, deadline).await;

@@ -36,7 +36,7 @@ pub async fn expect_or<T>(
     loop {
         match probe() {
             Ok(value) => {
-                ctx.record("expect", "met", serde_json::json!({ "what": what, "after_ms": started.elapsed().as_millis() as u64 }));
+                ctx.record("expect", "met", serde_json::json!({ "what": what, "after_ms": crate::casts::millis(started.elapsed()) }));
                 return Ok(value);
             }
             Err(reason) => {
@@ -67,7 +67,7 @@ where
     loop {
         match probe().await {
             Ok(value) => {
-                ctx.record("expect", "met", serde_json::json!({ "what": what, "after_ms": started.elapsed().as_millis() as u64 }));
+                ctx.record("expect", "met", serde_json::json!({ "what": what, "after_ms": crate::casts::millis(started.elapsed()) }));
                 return Ok(value);
             }
             Err(reason) => {
@@ -92,7 +92,7 @@ pub async fn holds_for(
     while started.elapsed() < window {
         if let Err(reason) = probe() {
             let reason = redact_text(&reason);
-            ctx.record("expect", "broken", serde_json::json!({ "what": what, "after_ms": started.elapsed().as_millis() as u64, "reason": reason }));
+            ctx.record("expect", "broken", serde_json::json!({ "what": what, "after_ms": crate::casts::millis(started.elapsed()), "reason": reason }));
             bail!(
                 "expected for {} ms: {what}; broken after {} ms: {reason}",
                 window.as_millis(),
@@ -104,7 +104,7 @@ pub async fn holds_for(
     ctx.record(
         "expect",
         "held",
-        serde_json::json!({ "what": what, "for_ms": window.as_millis() as u64 }),
+        serde_json::json!({ "what": what, "for_ms": crate::casts::millis(window) }),
     );
     Ok(())
 }
@@ -129,7 +129,7 @@ where
             ctx.record(
                 "expect",
                 "broken",
-                serde_json::json!({ "what": what, "after_ms": started.elapsed().as_millis() as u64, "reason": reason }),
+                serde_json::json!({ "what": what, "after_ms": crate::casts::millis(started.elapsed()), "reason": reason }),
             );
             bail!(
                 "expected for {} ms: {what}; broken after {} ms: {reason}",
@@ -142,13 +142,13 @@ where
     ctx.record(
         "expect",
         "held",
-        serde_json::json!({ "what": what, "for_ms": window.as_millis() as u64 }),
+        serde_json::json!({ "what": what, "for_ms": crate::casts::millis(window) }),
     );
     Ok(())
 }
 
 fn not_met(ctx: &Ctx, what: &str, started: Instant, reason: &str) -> anyhow::Error {
-    let waited = started.elapsed().as_millis() as u64;
+    let waited = crate::casts::millis(started.elapsed());
     // every failure text of a wait passes here (or through `holds_for`): no secret leaves it
     let reason = redact_text(reason);
     let reason = reason

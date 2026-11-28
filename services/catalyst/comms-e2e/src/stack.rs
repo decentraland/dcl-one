@@ -168,20 +168,20 @@ impl Grid {
         if world.iter().any(|value| !value.is_finite()) {
             return None;
         }
-        let size = self.parcel_size as f32;
+        let size = crate::casts::f32_from_i32(self.parcel_size);
         let (x, z) = ((world[0] / size).floor(), (world[2] / size).floor());
         if x.abs() > 1e6 || z.abs() > 1e6 {
             return None;
         }
-        let (x, z) = (x as i32, z as i32);
+        let (x, z) = (crate::casts::trunc_i32(x), crate::casts::trunc_i32(z));
         let encoder = self.encoder();
         if !encoder.is_valid_coordinate(x, z) {
             return None;
         }
         let local = [
-            world[0] - x as f32 * size,
+            world[0] - crate::casts::f32_from_i32(x) * size,
             world[1],
-            world[2] - z as f32 * size,
+            world[2] - crate::casts::f32_from_i32(z) * size,
         ];
         Some((encoder.encode(x, z), local))
     }
@@ -189,18 +189,22 @@ impl Grid {
     /// The world position of a parcel index and an offset inside it.
     pub fn world(&self, parcel_index: i32, local: [f32; 3]) -> [f32; 3] {
         let (x, z) = self.encoder().decode(parcel_index);
-        let size = self.parcel_size as f32;
+        let size = crate::casts::f32_from_i32(self.parcel_size);
         [
-            x as f32 * size + local[0],
+            crate::casts::f32_from_i32(x) * size + local[0],
             local[1],
-            z as f32 * size + local[2],
+            crate::casts::f32_from_i32(z) * size + local[2],
         ]
     }
 
     /// The centre of a parcel, at ground level.
     pub fn parcel_centre(&self, x: i32, z: i32) -> [f32; 3] {
-        let size = self.parcel_size as f32;
-        [(x as f32 + 0.5) * size, 0.0, (z as f32 + 0.5) * size]
+        let size = crate::casts::f32_from_i32(self.parcel_size);
+        [
+            (crate::casts::f32_from_i32(x) + 0.5) * size,
+            0.0,
+            (crate::casts::f32_from_i32(z) + 0.5) * size,
+        ]
     }
 }
 
@@ -783,14 +787,14 @@ mod tests {
         assert_eq!(local, [8.0, 1.5, 8.0]);
         assert_eq!(grid.world(index, local), [24.0, 1.5, -8.0]);
         // one parcel past the padded edge, on each axis, and anything not finite
-        let far_x = (grid.max_parcel_x + grid.padding + 1) as f32 * 16.0 + 1.0;
+        let far_x = crate::casts::f32_from_i32(grid.max_parcel_x + grid.padding + 1) * 16.0 + 1.0;
         assert!(grid.locate([far_x, 0.0, 0.0]).is_none());
-        let far_z = (grid.min_parcel_z - grid.padding - 1) as f32 * 16.0 + 1.0;
+        let far_z = crate::casts::f32_from_i32(grid.min_parcel_z - grid.padding - 1) * 16.0 + 1.0;
         assert!(grid.locate([0.0, 0.0, far_z]).is_none());
         assert!(grid.locate([f32::NAN, 0.0, 0.0]).is_none());
         assert!(grid.locate([1e30, 0.0, 0.0]).is_none());
         // the last padded parcel is still inside
-        let edge_x = (grid.max_parcel_x + grid.padding) as f32 * 16.0 + 1.0;
+        let edge_x = crate::casts::f32_from_i32(grid.max_parcel_x + grid.padding) * 16.0 + 1.0;
         assert!(grid.locate([edge_x, 0.0, 0.0]).is_some());
     }
 }

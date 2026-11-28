@@ -389,15 +389,17 @@ pub fn other_versions(
 /// centred on `here` (west of it by the walk's length, so a walk stays centred too).
 pub fn spot(here: [f32; 3], index: usize, players: usize) -> [f32; 3] {
     let rows = players.div_ceil(COLUMNS).max(1);
-    let column = (index % COLUMNS) as f32 - (COLUMNS as f32 - 1.0) / 2.0;
-    let row = (index / COLUMNS) as f32 - (rows as f32 - 1.0) / 2.0;
+    let column = crate::casts::f32_from_usize(index % COLUMNS)
+        - (crate::casts::f32_from_usize(COLUMNS) - 1.0) / 2.0;
+    let row = crate::casts::f32_from_usize(index / COLUMNS)
+        - (crate::casts::f32_from_usize(rows) - 1.0) / 2.0;
     offset(here, column * SPACING - SPEED * LEG / 2.0, row * SPACING)
 }
 
 /// Where player `index`, standing at `spot`, is `seconds` into the walk, the way it heads
 /// (degrees, 90 along +x) and its speed. Each player is a little out of step with the others.
 pub fn walking(spot: [f32; 3], index: usize, seconds: f32) -> ([f32; 3], f32, f32) {
-    let phase = (seconds + index as f32 * 0.37).rem_euclid(PERIOD);
+    let phase = (seconds + crate::casts::f32_from_usize(index) * 0.37).rem_euclid(PERIOD);
     let half = PERIOD / 2.0;
     let length = SPEED * LEG;
     let (along, heading, speed) = if phase < LEG {
@@ -487,7 +489,7 @@ struct Held {
 
 fn sample(bots: &[PulseBot], crowd: &[String], started: Instant) -> Held {
     let mut held = Held {
-        at_ms: started.elapsed().as_millis() as u64,
+        at_ms: crate::casts::millis(started.elapsed()),
         crowd: Vec::with_capacity(bots.len()),
         visitors: Vec::with_capacity(bots.len()),
     };
@@ -578,7 +580,7 @@ async fn visit(ctx: Ctx) -> Result<()> {
     fits_one_address(players, &[pulse_handshakes_per_address(&ctx)])?;
     let here = ctx.stack().grid.parcel_centre(plan.parcel.0, plan.parcel.1);
     let identities: Vec<Identity> = (0..players)
-        .map(|index| Identity::visitor(&plan.label, index as u32))
+        .map(|index| Identity::visitor(&plan.label, crate::casts::index_u32(index)))
         .collect();
     let wallets: Vec<String> = identities
         .iter()
@@ -608,14 +610,14 @@ async fn visit(ctx: Ctx) -> Result<()> {
 
     let started = Instant::now();
     let bots = enter_crowd(&ctx, &identities, &plan.realm, &spots).await?;
-    ctx.note("all_entered_ms", started.elapsed().as_millis() as u64);
+    ctx.note("all_entered_ms", crate::casts::millis(started.elapsed()));
 
     // the stay ends in time for the crowd to leave, whatever the setup took
     let planned = Duration::from_secs(plan.seconds);
     let staying = stay_within(planned, Instant::now(), ctx.ends_at());
     ctx.note(
         "stay_cut_short_by_ms",
-        (planned - staying).as_millis() as u64,
+        crate::casts::millis(planned - staying),
     );
     let stayed = stay(&ctx, &bots, &spots, &wallets, staying).await;
 

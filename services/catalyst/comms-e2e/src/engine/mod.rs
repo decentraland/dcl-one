@@ -500,11 +500,11 @@ pub async fn run_scenarios(
 ) -> Report {
     let run_id = fresh_run_id();
     let first_seed = options.seed.unwrap_or_else(|| {
-        std::time::SystemTime::now()
+        let nanos = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
-            .as_nanos() as u64
-            & 0xffff_ffff
+            .as_nanos();
+        u64::try_from(nanos & 0xffff_ffff).unwrap_or(0)
     });
     let mut report = Report::new(&run_id, first_seed, stack.hosts(), options.report_hosts);
 
@@ -594,7 +594,7 @@ pub async fn run_scenarios(
                 }
             }
         }
-        result.duration_ms = started.elapsed().as_millis() as u64;
+        result.duration_ms = crate::casts::millis(started.elapsed());
         report.results.push(result);
     }
     report

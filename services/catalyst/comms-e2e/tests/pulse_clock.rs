@@ -3,6 +3,10 @@
 //! own now: a server on this clock accepts the probe's handshake signed at this machine's now and
 //! its first rung, at the far edge of that window, and the notes say so. A server on another
 //! clock is scripted from that check, against the verdict alone.
+#![allow(
+    clippy::cast_possible_truncation,
+    reason = "test fixtures use small literal values"
+)]
 
 mod support;
 

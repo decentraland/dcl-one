@@ -49,7 +49,7 @@ const DERIVED_EXPIRATION: &str = "2099-01-01T00:00:00.000Z";
 /// A random device key and the end of its mandate, [`WALLET_KEY_MANDATE`] from now.
 fn random_device() -> anyhow::Result<(Wallet, Mandate)> {
     let device = Wallet::random().map_err(|error| anyhow::anyhow!("no device key: {error}"))?;
-    let until = now_ms() + WALLET_KEY_MANDATE.as_millis() as i64;
+    let until = now_ms() + crate::casts::millis_i64(WALLET_KEY_MANDATE);
     Ok((device, Mandate::Until(until)))
 }
 
@@ -322,8 +322,8 @@ impl Identity {
 pub fn now_ms() -> i64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
+        .map(crate::casts::millis_i64)
         .expect("the clock is past 1970")
-        .as_millis() as i64
 }
 
 #[cfg(test)]
@@ -485,12 +485,12 @@ mod tests {
         let expiry = mandate_expiry(&first);
         assert!(expiry > now, "the mandate has expired already");
         assert!(
-            expiry <= now + WALLET_KEY_MANDATE.as_millis() as i64,
+            expiry <= now + crate::casts::millis_i64(WALLET_KEY_MANDATE),
             "the mandate lasts past {WALLET_KEY_MANDATE:?}: {expiry} at {now}"
         );
         assert!(
             mandate_expiry(&first.second_device())
-                <= now_ms() + WALLET_KEY_MANDATE.as_millis() as i64
+                <= now_ms() + crate::casts::millis_i64(WALLET_KEY_MANDATE)
         );
 
         // the server still accepts the handshake it signs

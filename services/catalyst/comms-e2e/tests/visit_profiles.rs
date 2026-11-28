@@ -1,6 +1,11 @@
 //! A visiting bot's profile against a stand-in content server and lambdas: the form the server
 //! receives, the chain it checks, a profile already served, and a refusal that says when to come
 //! back.
+#![allow(
+    clippy::cast_precision_loss,
+    clippy::cast_possible_truncation,
+    reason = "test fixtures use small literal values"
+)]
 
 mod support;
 

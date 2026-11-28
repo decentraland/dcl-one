@@ -671,7 +671,9 @@ mod tests {
         assert_eq!(parsed.claims.room, "island-7");
         assert_eq!(parsed.claims.identity, "0xabc");
         assert!(parsed.claims.can_publish && parsed.claims.can_subscribe);
-        assert!(parsed.claims.expires_at > crate::identity::now_ms() as u64 / 1000);
+        assert!(
+            parsed.claims.expires_at > u64::try_from(crate::identity::now_ms()).unwrap() / 1000
+        );
         assert!(parsed.claims.not_before.is_some());
     }
 

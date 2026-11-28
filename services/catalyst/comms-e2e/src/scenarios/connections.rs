@@ -195,7 +195,7 @@ async fn second_device_takeover(ctx: Ctx) -> Result<()> {
             )
             .await?;
             let gap = ctx.offset_within(Duration::from_millis(400));
-            ctx.note("gap before the signature, ms", gap.as_millis() as u64);
+            ctx.note("gap before the signature, ms", crate::casts::millis(gap));
             let (pulse, finished) = tokio::join!(
                 pulse_up(&ctx, "new-pulse", &new_identity, &realm, here),
                 async {
@@ -521,7 +521,7 @@ async fn mints_under_churn(ctx: Ctx) -> Result<()> {
         }
         let results = together(MINTS_AT_A_TIME, |index| {
             let gatekeeper = gatekeeper.clone();
-            let identity = ctx.identity(10 + index as u32);
+            let identity = ctx.identity(10 + crate::casts::index_u32(index));
             let scene_realm = scene_realm.clone();
             let scene_id = format!("e2e-scene-{}", index % 2);
             async move {
@@ -624,7 +624,10 @@ async fn ban_checks(
             ban_sweep(ctx) + Duration::from_secs(15),
         )
         .await?;
-    ctx.note("Pulse eviction, ms", started.elapsed().as_millis() as u64);
+    ctx.note(
+        "Pulse eviction, ms",
+        crate::casts::millis(started.elapsed()),
+    );
     expect_or(
         ctx,
         "the archipelago socket is closed after the ban",
@@ -641,7 +644,7 @@ async fn ban_checks(
     .await?;
     ctx.note(
         "archipelago eviction, ms",
-        started.elapsed().as_millis() as u64,
+        crate::casts::millis(started.elapsed()),
     );
 
     // a reconnect is refused on both services

@@ -193,7 +193,7 @@ const AFTER_RELEASE: Duration = Duration::from_secs(8);
 const SAMPLE_PAUSE: Duration = Duration::from_millis(100);
 
 fn ms(duration: Duration) -> u64 {
-    duration.as_millis() as u64
+    crate::casts::millis(duration)
 }
 
 fn seconds(duration: Duration) -> f64 {
@@ -364,7 +364,10 @@ struct Reading {
 
 fn share<F: Fn(&Sample) -> Option<bool>>(samples: &[&Sample], field: F) -> Option<f64> {
     let said: Vec<bool> = samples.iter().filter_map(|sample| field(sample)).collect();
-    (!said.is_empty()).then(|| said.iter().filter(|held| **held).count() as f64 / said.len() as f64)
+    (!said.is_empty()).then(|| {
+        crate::casts::usize_f64(said.iter().filter(|held| **held).count())
+            / crate::casts::usize_f64(said.len())
+    })
 }
 
 /// Reads the uplink and the readouts over the trimmed legs inside `from..to`.
@@ -408,7 +411,9 @@ fn read(
         .collect();
     let probes_per_second = match (probed.first(), probed.last()) {
         (Some(first), Some(last)) if last.0 > first.0 => Some(
-            ((last.1.saturating_sub(first.1)) as f64 / (last.0 - first.0).as_secs_f64() * 100.0)
+            (crate::casts::u64_f64(last.1.saturating_sub(first.1))
+                / (last.0 - first.0).as_secs_f64()
+                * 100.0)
                 .round()
                 / 100.0,
         ),
@@ -419,7 +424,8 @@ fn read(
         data_per_second: if cadence.span.is_zero() {
             0.0
         } else {
-            (cadence.large as f64 / cadence.span.as_secs_f64() * 10.0).round() / 10.0
+            (crate::casts::usize_f64(cadence.large) / cadence.span.as_secs_f64() * 10.0).round()
+                / 10.0
         },
         median_gap_ms: ms(cadence.median_gap),
         longest_gap_ms: ms(cadence.longest_gap),
@@ -638,7 +644,8 @@ async fn uplink_cadence(ctx: Ctx) -> Result<()> {
         .iter()
         .filter(|seen| seen.at >= stood_from && seen.at < stood_to && seen.bytes >= DATA_BYTES)
         .count();
-    let standing_rate = standing_data as f64 / (stood_to - stood_from).as_secs_f64();
+    let standing_rate =
+        crate::casts::usize_f64(standing_data) / (stood_to - stood_from).as_secs_f64();
     let position = subject.explorer.probe("/world_state").await.ok();
     ctx.note("walk legs", legs.len());
     ctx.note("walking", &walking);
@@ -814,16 +821,17 @@ async fn walk_on_a_lossy_link(ctx: Ctx) -> Result<()> {
     let chance = if moments.is_empty() {
         0.0
     } else {
-        moments
-            .iter()
-            .filter(|&&at| {
-                let from = at.saturating_sub(LOSS_LOOKBACK);
-                let (a, b) = lost_between(&up, from, at);
-                let (c, d) = lost_between(&down, from, at);
-                a + b + c + d > 0
-            })
-            .count() as f64
-            / moments.len() as f64
+        crate::casts::usize_f64(
+            moments
+                .iter()
+                .filter(|&&at| {
+                    let from = at.saturating_sub(LOSS_LOOKBACK);
+                    let (a, b) = lost_between(&up, from, at);
+                    let (c, d) = lost_between(&down, from, at);
+                    a + b + c + d > 0
+                })
+                .count(),
+        ) / crate::casts::usize_f64(moments.len())
     };
     let lost = after.dropped.saturating_sub(before.dropped);
     ctx.note(
@@ -1051,6 +1059,11 @@ async fn queued_stall(ctx: Ctx, round_trip: Duration) -> Result<()> {
 }
 
 #[cfg(test)]
+#[allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    reason = "test fixtures use small literal values"
+)]
 mod tests {
     use super::*;
 

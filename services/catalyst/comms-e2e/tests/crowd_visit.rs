@@ -5,6 +5,10 @@
 //! run by name; a refused deployment, or a stay the deadline cannot hold, fails it before anyone
 //! enters; a run that does not name it leaves it out.
 #![allow(clippy::unwrap_used, reason = "test support")]
+#![allow(
+    clippy::cast_possible_truncation,
+    reason = "test fixtures use small literal values"
+)]
 
 mod support;
 

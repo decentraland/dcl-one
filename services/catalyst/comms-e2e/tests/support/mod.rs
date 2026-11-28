@@ -10,7 +10,7 @@ use std::sync::Arc;
 
 use catalyst_comms::pulse::PulseServer;
 use catalyst_comms::pulse::hardening::DisconnectReason;
-use catalyst_comms::pulse::server::ENET_CAPACITY;
+use catalyst_comms::pulse::server::{ENET_CAPACITY, ENET_CAPACITY_U32};
 use catalyst_comms::pulse::transport::webtransport::{WtConfig, WtHost};
 use catalyst_comms::pulse::transport::{Host, HostConfig, Transports};
 use catalyst_comms_e2e::engine::{Ctx, Transport};
@@ -27,7 +27,7 @@ pub async fn serve(server: PulseServer) -> SocketAddr {
     .await
     .expect("a loopback port");
     let address = enet.local_addr().unwrap();
-    let transports = Transports::enet_only(enet, ENET_CAPACITY as u32);
+    let transports = Transports::enet_only(enet, ENET_CAPACITY_U32);
     tokio::spawn(server.serve(transports, 50));
     address
 }
@@ -86,7 +86,7 @@ pub async fn serve_both(server: PulseServer) -> Pulse {
             bind_addr: "127.0.0.1:0".parse().unwrap(),
             cert_pem,
             key_pem,
-            slot_base: ENET_CAPACITY as u32,
+            slot_base: ENET_CAPACITY_U32,
             slot_capacity: 256,
             max_datagram_bytes: 1200,
             max_message_bytes: 4096,
@@ -106,8 +106,7 @@ pub async fn serve_both(server: PulseServer) -> Pulse {
     .await
     .expect("a loopback port");
     let address = enet.local_addr().unwrap();
-    let transports =
-        Transports::with_webtransport(enet, ENET_CAPACITY as u32, webtransport, events);
+    let transports = Transports::with_webtransport(enet, ENET_CAPACITY_U32, webtransport, events);
     tokio::spawn(server.serve(transports, 50));
     Pulse {
         enet: address,

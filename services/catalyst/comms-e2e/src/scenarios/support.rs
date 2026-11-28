@@ -230,7 +230,7 @@ pub async fn stay_connected(
 /// server ends the connection.
 pub async fn walk(bot: &PulseBot, from: [f32; 3], to: [f32; 3], steps: u32) -> Result<()> {
     for step in 1..=steps {
-        let share = step as f32 / steps as f32;
+        let share = crate::casts::f32_from_u32(step) / crate::casts::f32_from_u32(steps);
         bot.expect_alive()?;
         bot.move_to([
             from[0] + (to[0] - from[0]) * share,

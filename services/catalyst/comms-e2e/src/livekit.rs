@@ -650,7 +650,8 @@ fn enum_field(value: &Value, key: &str, names: &[&str], default: &str) -> String
         Some(Value::String(text)) => text.to_ascii_lowercase(),
         Some(Value::Number(number)) => number
             .as_u64()
-            .and_then(|index| names.get(index as usize))
+            .and_then(|index| usize::try_from(index).ok())
+            .and_then(|index| names.get(index))
             .map(|text| text.to_ascii_lowercase())
             .unwrap_or_else(|| default.to_owned()),
         _ => default.to_owned(),
@@ -674,7 +675,12 @@ pub fn parse_rooms(body: &Value) -> Result<Vec<Room>> {
             Ok(Room {
                 name,
                 sid: string_field(room, "sid"),
-                num_participants: number_field(room, "num_participants", "numParticipants") as u32,
+                num_participants: u32::try_from(number_field(
+                    room,
+                    "num_participants",
+                    "numParticipants",
+                ))
+                .unwrap_or(u32::MAX),
             })
         })
         .collect()

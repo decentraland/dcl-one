@@ -1,5 +1,9 @@
 //! The Pulse bot against a real Pulse server in this process.
 #![allow(clippy::unwrap_used, reason = "test support")]
+#![allow(
+    clippy::cast_precision_loss,
+    reason = "test fixtures use small literal values"
+)]
 
 mod support;
 

@@ -1,5 +1,9 @@
 //! The fault link on its own, and a Pulse bot through it.
 #![allow(clippy::unwrap_used, reason = "test support")]
+#![allow(
+    clippy::cast_precision_loss,
+    reason = "test fixtures use small literal values"
+)]
 
 mod support;
 
