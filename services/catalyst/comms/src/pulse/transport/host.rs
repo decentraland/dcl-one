@@ -279,9 +279,20 @@ impl ManualClock {
     }
 
     pub(crate) fn advance(&self, by: Duration) {
-        self.0
-            .fetch_add(by.as_millis() as u64, std::sync::atomic::Ordering::SeqCst);
+        self.0.fetch_add(
+            crate::casts::millis(by),
+            std::sync::atomic::Ordering::SeqCst,
+        );
     }
+}
+
+#[allow(
+    clippy::cast_possible_truncation,
+    reason = "ENet ids index a host of at most ENET_CAPACITY (4095) peers"
+)]
+#[inline]
+fn from_enet_peer(id: enet::PeerID) -> PeerId {
+    id.0 as PeerId
 }
 
 fn to_enet_peer(id: PeerId) -> enet::PeerID {
@@ -370,7 +381,7 @@ impl Host {
             .inner
             .connect(addr, channels as usize, 0)
             .map_err(|e| std::io::Error::other(format!("{e:?}")))?;
-        Ok(peer.id().0 as PeerId)
+        Ok(from_enet_peer(peer.id()))
     }
 
     /// An error is the socket's own: what is left once [`ReadySocket`] has carried on through the
@@ -383,7 +394,7 @@ impl Host {
                 channel_id,
                 kind,
             }) => Ok(Some(Event::ReceiveLimitExceeded {
-                peer: peer.0 as PeerId,
+                peer: from_enet_peer(peer),
                 channel: channel_id,
                 kind,
             })),
@@ -394,17 +405,17 @@ impl Host {
                     ENET_PEER_TIMEOUT_MS,
                     ENET_PEER_TIMEOUT_MS,
                 );
-                self.application_peers.remove(&(peer.0 as PeerId));
+                self.application_peers.remove(&(from_enet_peer(peer)));
                 Ok(Some(Event::Connect {
-                    peer: peer.0 as PeerId,
+                    peer: from_enet_peer(peer),
                     ip: None,
                     webtransport_connection: None,
                 }))
             }
             Some(enet::EventNoRef::Disconnect { peer, .. }) => {
-                self.application_peers.remove(&(peer.0 as PeerId));
+                self.application_peers.remove(&(from_enet_peer(peer)));
                 Ok(Some(Event::Disconnect {
-                    peer: peer.0 as PeerId,
+                    peer: from_enet_peer(peer),
                 }))
             }
             Some(enet::EventNoRef::Receive {
@@ -414,7 +425,7 @@ impl Host {
             }) => {
                 let packet = Packet::from_enet(channel_id, &packet);
                 Ok(Some(Event::Receive {
-                    peer: peer.0 as PeerId,
+                    peer: from_enet_peer(peer),
                     channel: channel_id,
                     packet,
                 }))

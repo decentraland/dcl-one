@@ -86,6 +86,10 @@ impl RealmSpatialGrids {
         self.inverse_cell_size
     }
 
+    #[allow(
+        clippy::cast_possible_truncation,
+        reason = "float-to-int `as` saturates and maps NaN to 0, which keeps far positions in edge cells"
+    )]
     pub fn cell_coord(&self, v: f32) -> i32 {
         (v * self.inverse_cell_size).floor() as i32
     }

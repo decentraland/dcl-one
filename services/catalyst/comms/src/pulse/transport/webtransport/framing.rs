@@ -4,6 +4,10 @@ pub const STREAM_HEADER_SIZE: usize = 4;
 
 pub const DATAGRAM_HEADER_SIZE: usize = 5;
 
+#[allow(
+    clippy::cast_possible_truncation,
+    reason = "the u32 length prefix is the wire format; server packets stay far below 4 GiB"
+)]
 pub fn stream_frame(payload: &[u8]) -> Vec<u8> {
     let mut out = Vec::with_capacity(STREAM_HEADER_SIZE + payload.len());
     out.extend_from_slice(&(payload.len() as u32).to_be_bytes());
@@ -179,7 +183,7 @@ impl DatagramDeduper {
                 true
             }
             Some(last) => {
-                if (seq.wrapping_sub(last) as i32) > 0 {
+                if seq.wrapping_sub(last).cast_signed() > 0 {
                     self.last_seen.insert(channel_id, seq);
                     true
                 } else {

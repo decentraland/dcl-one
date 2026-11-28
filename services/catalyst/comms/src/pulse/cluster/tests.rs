@@ -1,3 +1,8 @@
+#![allow(
+    clippy::cast_precision_loss,
+    clippy::cast_possible_truncation,
+    reason = "test fixtures use small literal values"
+)]
 use std::sync::Arc;
 
 use super::*;
@@ -751,7 +756,7 @@ fn the_heartbeat_count_is_active_peers_not_clustered_peers() {
     );
 }
 
-const FULL_HOUSE: u32 = crate::pulse::server::ENET_CAPACITY as u32;
+const FULL_HOUSE: u32 = crate::pulse::server::ENET_CAPACITY_U32;
 
 /// Every ENet slot active, spread over four realms half a cell apart, with one pass run so the
 /// next one starts from a published board.

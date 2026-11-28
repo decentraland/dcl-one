@@ -144,7 +144,7 @@ pub fn create_delta_message(
     }
 
     if from.animation_flags != to.animation_flags {
-        delta.state_flags = Some(to.animation_flags as u32);
+        delta.state_flags = Some(to.animation_flags.cast_unsigned());
     }
 
     if from.glide_state != to.glide_state {
@@ -219,7 +219,7 @@ fn create_player_state(snapshot: &PeerSnapshot) -> PlayerState {
         rotation_y: snapshot.rotation_y,
         movement_blend: snapshot.movement_blend,
         slide_blend: snapshot.slide_blend,
-        state_flags: snapshot.animation_flags as u32,
+        state_flags: snapshot.animation_flags.cast_unsigned(),
         glide_state: snapshot.glide_state,
         jump_count: snapshot.jump_count,
         head_yaw: snapshot.head_yaw,
@@ -1028,7 +1028,7 @@ impl PeerSimulation {
                     | crate::pulse::server::FEATURE_DELTA_BATCH_DICTIONARY))
                 != 0
         {
-            let subject = BatchSubject::from_delta(&delta, target.animation_flags as u32);
+            let subject = BatchSubject::from_delta(&delta, target.animation_flags.cast_unsigned());
             if subject.is_representable() {
                 self.delta_batch_buffer.push(subject);
                 self.delta_batch_legacy.push(*delta);

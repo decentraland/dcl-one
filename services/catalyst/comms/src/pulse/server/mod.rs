@@ -50,7 +50,8 @@ pub const DEFAULT_SIMULATION_STEPS: [u32; 3] = [50, 100, 200];
 
 pub const DEFAULT_RING_CAPACITY: usize = 20;
 
-pub const ENET_CAPACITY: usize = 4095;
+pub const ENET_CAPACITY_U32: u32 = 4095;
+pub const ENET_CAPACITY: usize = ENET_CAPACITY_U32 as usize;
 pub const WT_CAPACITY: usize = 4096;
 pub(super) const PEER_SLOT_CAPACITY: usize = ENET_CAPACITY + WT_CAPACITY;
 pub(super) const DEFAULT_MAX_PEERS: usize = ENET_CAPACITY;
@@ -794,8 +795,9 @@ impl PulseServer {
             return None;
         }
 
-        let max_budget = self.max_scene_listener_parcels as i64;
-        let world_parcels = self.encoder.max_index_exclusive() as usize;
+        let max_budget = i64::try_from(self.max_scene_listener_parcels).unwrap_or(i64::MAX);
+        let realm_cost = i64::try_from(SCENE_LISTENER_REALM_BUDGET_COST).unwrap_or(i64::MAX);
+        let world_parcels = usize::try_from(self.encoder.max_index_exclusive()).unwrap_or(0);
         let mut budget: i64 = 0;
         let mut parcels_by_realm: HashMap<String, std::collections::HashSet<i32>> =
             HashMap::with_capacity(aoi.len());
@@ -816,7 +818,7 @@ impl PulseServer {
                 return None;
             }
 
-            budget += SCENE_LISTENER_REALM_BUDGET_COST as i64;
+            budget += realm_cost;
             if enforce_budget && budget > max_budget {
                 return None;
             }
@@ -839,8 +841,9 @@ impl PulseServer {
                 }
             }
 
-            let mut parcels =
-                std::collections::HashSet::with_capacity((realm_area as usize).min(world_parcels));
+            let mut parcels = std::collections::HashSet::with_capacity(
+                usize::try_from(realm_area).map_or(world_parcels, |a| a.min(world_parcels)),
+            );
             for r in &realm_aoi.parcel_rects {
                 self.cell_mapper.add_covering_cells(
                     &mut cell_keys,
@@ -1266,7 +1269,7 @@ impl PulseServer {
         })
         .await?;
         tracing::info!(%bind, "catalyrst-pulse listening (enet)");
-        let transports = Transports::enet_only(enet, ENET_CAPACITY as u32);
+        let transports = Transports::enet_only(enet, ENET_CAPACITY_U32);
         self.serve(transports, tick_ms).await
     }
 
@@ -1301,9 +1304,9 @@ impl PulseServer {
                     tokio::task::spawn_blocking(move || WtHost::start(cfg)).await??;
                 tracing::info!(bind = %wt_bind, local = %host.local_addr(),
                     "catalyrst-pulse listening (webtransport)");
-                Transports::with_webtransport(enet, ENET_CAPACITY as u32, host, events)
+                Transports::with_webtransport(enet, ENET_CAPACITY_U32, host, events)
             }
-            None => Transports::enet_only(enet, ENET_CAPACITY as u32),
+            None => Transports::enet_only(enet, ENET_CAPACITY_U32),
         };
         self.run_inspected(transports, tick_ms, None, shutdown)
             .await
@@ -1385,7 +1388,7 @@ impl PulseServer {
                     if let Some(request) = request {
                         let mut snapshot = inspection::snapshot(&self, &request.wallet);
                         if let Some(snapshot) = snapshot.as_mut() {
-                            snapshot.inspected_at_tick = started.elapsed().as_millis() as u32;
+                            snapshot.inspected_at_tick = elapsed_tick(started);
                         }
                         let _ = request.reply.send(snapshot);
                     } else {
@@ -1398,7 +1401,7 @@ impl PulseServer {
                             self.receive_limit(&mut transports, peer as u32, kind).await?;
                         }
                         Some(Event::Connect { peer, ip, webtransport_connection }) => {
-                            let now = started.elapsed().as_millis() as u32;
+                            let now = elapsed_tick(started);
 
                             let ip = ip
                                 .or_else(|| transports.peer_ip(peer as u32))
@@ -1413,11 +1416,11 @@ impl PulseServer {
                         }
                         Some(Event::Receive { peer, channel, packet }) => {
                             let now_ms = chrono::Utc::now().timestamp_millis();
-                            let now = started.elapsed().as_millis() as u32;
+                            let now = elapsed_tick(started);
                             self.receive(&mut transports, peer as u32, channel, &packet.data, now_ms, now).await?;
                         }
                         Some(Event::Corrupt { peer }) => {
-                            let now = started.elapsed().as_millis() as u32;
+                            let now = elapsed_tick(started);
                             if self
                                 .corrupted_limiter
                                 .register_and_check_exhausted(peer as u32, now)
@@ -1464,7 +1467,7 @@ impl PulseServer {
                     let mut expired = self.application_relay.as_mut().map(|relay| relay.maintenance(instant)).unwrap_or_default();
                     expired.extend(self.silent_relay_scopes(&transports, instant));
                     self.deliver_application(&mut transports, expired, vec![]).await?;
-                    let now = started.elapsed().as_millis() as u32;
+                    let now = elapsed_tick(started);
                     self.run_tick(&mut transports, now).await?;
                     crate::pulse::metrics::simulation_tick(
                         tick_started.saturating_duration_since(scheduled),
@@ -1847,3 +1850,12 @@ impl PulseServer {
 
 #[cfg(test)]
 mod tests;
+
+/// Milliseconds since `started` as the u32 server tick.
+#[allow(
+    clippy::cast_possible_truncation,
+    reason = "the u32 millisecond tick keeps the low 32 bits by design; readers use wrapping_sub"
+)]
+fn elapsed_tick(started: std::time::Instant) -> u32 {
+    started.elapsed().as_millis() as u32
+}

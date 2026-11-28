@@ -200,7 +200,7 @@ impl BatchSubject {
             state_flags,
             state_flags_present: delta.state_flags.is_some(),
             fields: [
-                delta.parcel_index.map(|v| v as u32),
+                delta.parcel_index.map(i32::cast_unsigned),
                 delta.position_x,
                 delta.position_y,
                 delta.position_z,
@@ -212,8 +212,8 @@ impl BatchSubject {
                 delta.slide_blend,
                 delta.head_yaw,
                 delta.head_pitch,
-                delta.glide_state.map(|v| v as u32),
-                delta.jump_count.map(|v| v as u32),
+                delta.glide_state.map(i32::cast_unsigned),
+                delta.jump_count.map(i32::cast_unsigned),
                 delta.point_at_x,
                 delta.point_at_y,
                 delta.point_at_z,
@@ -227,7 +227,7 @@ impl BatchSubject {
             baseline_seq: self.baseline_seq,
             new_seq: self.new_seq,
             server_tick,
-            parcel_index: self.fields[0].map(|v| v as i32),
+            parcel_index: self.fields[0].map(u32::cast_signed),
             position_x: self.fields[1],
             position_y: self.fields[2],
             position_z: self.fields[3],
@@ -240,8 +240,8 @@ impl BatchSubject {
             head_yaw: self.fields[10],
             head_pitch: self.fields[11],
             state_flags: self.state_flags_present.then_some(self.state_flags),
-            glide_state: self.fields[12].map(|v| v as i32),
-            jump_count: self.fields[13].map(|v| v as i32),
+            glide_state: self.fields[12].map(u32::cast_signed),
+            jump_count: self.fields[13].map(u32::cast_signed),
             point_at_x: self.fields[14],
             point_at_y: self.fields[15],
             point_at_z: self.fields[16],
@@ -323,8 +323,8 @@ impl BatchSubject {
     }
 
     fn presence_mask(&self) -> u32 {
-        self.fields.iter().enumerate().fold(0, |mask, (i, field)| {
-            mask | (u32::from(field.is_some()) << (PRESENCE_BITS - 1 - i as u32))
+        self.fields.iter().zip(0u32..).fold(0, |mask, (field, i)| {
+            mask | (u32::from(field.is_some()) << (PRESENCE_BITS - 1 - i))
         })
     }
 
@@ -448,8 +448,8 @@ impl BatchSubject {
             0
         };
         let mut fields = [None; FIELD_COUNT];
-        for (i, field) in fields.iter_mut().enumerate() {
-            if mask & (1 << (PRESENCE_BITS - 1 - i as u32)) != 0 {
+        for ((i, field), bit) in fields.iter_mut().enumerate().zip(0u32..) {
+            if mask & (1 << (PRESENCE_BITS - 1 - bit)) != 0 {
                 *field = Some(r.read_bits(FIELD_WIDTHS[i])?);
             }
         }
@@ -512,8 +512,8 @@ pub fn encode_batches_with(
     for s in subjects {
         let age = s.sample_age(server_tick, sample_tick);
         let projected_bits = writer.bit_len() + s.bit_len_with(mode, age);
-        let projected_bytes = projected_bits.div_ceil(8) as usize;
-        if count > 0 && projected_bytes > max_bytes {
+        let projected_bytes = projected_bits.div_ceil(8);
+        if count > 0 && projected_bytes > max_bytes as u64 {
             out.push(EncodedBatch {
                 server_tick,
                 subject_count: count,
@@ -604,8 +604,9 @@ pub fn decode_baseline_batch_with(
         out.push(subject);
     }
     let remaining = reader.bits_remaining();
-    if remaining > 7 || reader.read_bits(remaining as u32)? != 0 {
-        return Err(BatchError::InvalidData);
+    match u32::try_from(remaining) {
+        Ok(padding @ 0..=7) if reader.read_bits(padding)? == 0 => {}
+        _ => return Err(BatchError::InvalidData),
     }
     Ok(out)
 }
@@ -653,6 +654,10 @@ pub fn encode_dictionary_batches_with(
         let mut writer = BitWriter::new();
         writer.write_bits(0, 1);
         writer.write_bits(u32::from(unit_gap), 1);
+        #[allow(
+            clippy::cast_possible_truncation,
+            reason = "masks.len() is in 1..=8 (checked above)"
+        )]
         writer.write_bits((masks.len() - 1) as u32, 3);
         for mask in &masks {
             writer.write_bits(*mask, PRESENCE_BITS);
@@ -668,7 +673,7 @@ pub fn encode_dictionary_batches_with(
         let bits = subject.bit_len_with(SeqEncoding::AbsoluteBaseline, age) - PRESENCE_BITS as u64
             + index_bits as u64
             - if unit_gap { SEQ_DELTA_BITS as u64 } else { 0 };
-        if count > 0 && (writer.bit_len() + bits).div_ceil(8) as usize > max_bytes {
+        if count > 0 && (writer.bit_len() + bits).div_ceil(8) > max_bytes as u64 {
             finish_dictionary_chunk(
                 &mut out,
                 server_tick,
@@ -682,6 +687,10 @@ pub fn encode_dictionary_batches_with(
             count = 0;
             start = index;
         }
+        #[allow(
+            clippy::cast_possible_truncation,
+            reason = "a position in masks, at most 8 entries"
+        )]
         let mask = masks
             .iter()
             .position(|mask| *mask == subject.presence_mask())
@@ -726,7 +735,7 @@ fn finish_dictionary_chunk(
         })
         .sum::<u64>();
     if plain_bits.div_ceil(8) <= writer.bit_len().div_ceil(8)
-        || writer.bit_len().div_ceil(8) as usize > max_bytes
+        || writer.bit_len().div_ceil(8) > max_bytes as u64
     {
         out.extend(encode_batches_with(
             server_tick,

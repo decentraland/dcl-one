@@ -81,7 +81,7 @@ impl PeerSnapshot {
             && self.point_at_x == point.map(|p| p.0)
             && self.point_at_y == point.map(|p| p.1)
             && self.point_at_z == point.map(|p| p.2)
-            && self.animation_flags == state.state_flags as i32
+            && self.animation_flags == state.state_flags.cast_signed()
             && self.glide_state == state.glide_state
     }
 
@@ -323,7 +323,7 @@ impl PeerSnapshotPublisher<'_> {
             point_at_x: point.map(|p| p.0),
             point_at_y: point.map(|p| p.1),
             point_at_z: point.map(|p| p.2),
-            animation_flags: state.state_flags as i32,
+            animation_flags: state.state_flags.cast_signed(),
             glide_state: state.glide_state,
             is_teleport: false,
             emote: emote_state,

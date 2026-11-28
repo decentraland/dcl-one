@@ -212,7 +212,7 @@ impl Client {
 
     /// Current smoothed RTT to the server in microseconds.
     pub fn rtt_us(&self) -> u64 {
-        self.session.rtt().as_micros() as u64
+        crate::casts::micros(self.session.rtt())
     }
 }
 

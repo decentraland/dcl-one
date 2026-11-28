@@ -26,7 +26,7 @@ use super::hardening::{
 use super::interest::{SpatialAreaOfInterest, SpatialAreaOfInterestOptions};
 use super::server::{
     DEFAULT_MAX_PEERS, DEFAULT_RING_CAPACITY, DEFAULT_SIMULATION_STEPS, ENET_CAPACITY,
-    PEER_SLOT_CAPACITY, WT_CAPACITY,
+    ENET_CAPACITY_U32, PEER_SLOT_CAPACITY, WT_CAPACITY,
 };
 use super::transport::webtransport::WtConfig;
 use super::transport::webtransport::config::{
@@ -528,8 +528,7 @@ fn limiter_options_from_lookup(
         raw.trim()
             .parse::<i32>()
             .ok()
-            .filter(|n| *n >= 0)
-            .map(|n| n as usize)
+            .and_then(|n| usize::try_from(n).ok())
             .ok_or_else(|| anyhow::anyhow!("{key} must be an integer from 0 to 2147483647"))
     };
     Ok(super::ip_limiter::IpLimiterOptions {
@@ -650,7 +649,7 @@ fn webtransport_config_from_env() -> anyhow::Result<Option<WtConfig>> {
         bind_addr,
         cert_pem,
         key_pem,
-        slot_base: ENET_CAPACITY as u32,
+        slot_base: ENET_CAPACITY_U32,
         slot_capacity: WT_CAPACITY,
         max_datagram_bytes: env_or("PULSE_WT_MAX_DATAGRAM_BYTES", DEFAULT_MAX_DATAGRAM_BYTES)?,
         max_message_bytes: env_or("PULSE_WT_MAX_MESSAGE_BYTES", DEFAULT_MAX_MESSAGE_BYTES)?,

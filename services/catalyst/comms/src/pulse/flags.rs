@@ -295,9 +295,11 @@ fn project(body: &[u8], fallback: &IpLimiterOptions) -> anyhow::Result<IpLimiter
     for (key, value) in overrides {
         match key.rsplit(':').next().unwrap_or_default() {
             "enabled" => next.enabled = value.trim().eq_ignore_ascii_case("true"),
-            "maxconcurrency" => next.max_concurrency = value.trim().parse::<i32>()? as usize,
+            "maxconcurrency" => {
+                next.max_concurrency = usize::try_from(value.trim().parse::<i32>()?)?
+            }
             "scenelistenermaxconcurrency" => {
-                next.scene_listener_max_concurrency = value.trim().parse::<i32>()? as usize
+                next.scene_listener_max_concurrency = usize::try_from(value.trim().parse::<i32>()?)?
             }
             "whitelist" => {
                 next.whitelist =

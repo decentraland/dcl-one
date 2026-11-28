@@ -1,3 +1,9 @@
+#![allow(
+    clippy::cast_sign_loss,
+    clippy::cast_possible_truncation,
+    clippy::cast_possible_wrap,
+    reason = "test fixtures use small literal values"
+)]
 use super::*;
 use crate::pulse::hardening::WriterStep;
 
@@ -1999,7 +2005,7 @@ async fn handshake_initial_state_rejects_overlong_realm() {
 #[test]
 fn pending_auth_budget_is_shared_by_enet_and_webtransport() {
     let mut server = PulseServer::new();
-    let wt_base = ENET_CAPACITY as u32;
+    let wt_base = ENET_CAPACITY_U32;
     let half = DEFAULT_PRE_AUTH_BUDGET as u32 / 2;
 
     for i in 0..half {
@@ -2023,7 +2029,7 @@ fn pending_auth_budget_is_shared_by_enet_and_webtransport() {
 #[test]
 fn pending_auth_source_budget_is_shared_with_mapped_ipv4_addresses() {
     let mut server = PulseServer::new();
-    let wt_base = ENET_CAPACITY as u32;
+    let wt_base = ENET_CAPACITY_U32;
     let half = DEFAULT_MAX_CONCURRENT_PRE_AUTH_PER_IP as u32 / 2;
 
     for i in 0..half {
@@ -2046,7 +2052,7 @@ fn pending_auth_source_budget_is_shared_with_mapped_ipv4_addresses() {
 #[tokio::test]
 async fn shared_connection_capacity_is_held_until_transport_disconnect() {
     let mut server = PulseServer::new();
-    let wt_base = ENET_CAPACITY as u32;
+    let wt_base = ENET_CAPACITY_U32;
     for peer in (0..wt_base - 1).chain([wt_base]) {
         // Embedded transports can report no IP. The connection still holds a slot.
         server.connect_pending(peer, String::new(), 0).unwrap();
@@ -2087,7 +2093,7 @@ async fn shared_capacity_refusal_names_the_webtransport_connection_that_was_refu
             .expect("WebTransport host closed")
     }
 
-    let wt_base = ENET_CAPACITY as u32;
+    let wt_base = ENET_CAPACITY_U32;
     let cert = rcgen::generate_simple_self_signed(vec!["localhost".into()]).unwrap();
     let client = web_transport_quinn::ClientBuilder::new()
         .with_server_certificate_hashes(vec![Sha256::digest(cert.cert.der()).to_vec()])

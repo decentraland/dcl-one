@@ -1,3 +1,8 @@
+#![allow(
+    clippy::cast_precision_loss,
+    clippy::cast_possible_truncation,
+    reason = "test fixtures use small literal values"
+)]
 use super::*;
 use crate::protocol::pulse::decentraland::common::Vector3;
 use crate::protocol::pulse::decentraland::pulse::TeleportRequest;

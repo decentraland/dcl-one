@@ -69,7 +69,7 @@ impl Transports {
         if self.owns_wt(peer) {
             None
         } else {
-            self.enet.peer_ip(peer as u16)
+            self.enet.peer_ip(enet_peer(peer))
         }
     }
 
@@ -80,7 +80,7 @@ impl Transports {
             }
             Ok(())
         } else {
-            self.enet.send(peer as u16, packet).await
+            self.enet.send(enet_peer(peer), packet).await
         }
     }
 
@@ -105,7 +105,7 @@ impl Transports {
                 .queue_application(peer, packet, control)
         } else if peer < self.enet_capacity {
             self.enet
-                .queue_application(peer as u16, packet, control)
+                .queue_application(enet_peer(peer), packet, control)
                 .await
         } else {
             Err(std::io::Error::new(
@@ -127,7 +127,7 @@ impl Transports {
 
     #[cfg(test)]
     pub(crate) fn enet_timeout(&mut self, peer: u32) -> Option<(u32, u32)> {
-        self.enet.peer_timeout(peer as u16)
+        self.enet.peer_timeout(enet_peer(peer))
     }
 
     /// WebTransport sends dispatch immediately over their mpsc channel; only ENet batches.
@@ -147,7 +147,7 @@ impl Transports {
             }
             Ok(())
         } else {
-            self.enet.disconnect(peer as u16, reason).await
+            self.enet.disconnect(enet_peer(peer), reason).await
         }
     }
 
@@ -165,7 +165,7 @@ impl Transports {
             }
             Ok(())
         } else {
-            self.enet.disconnect_now(peer as u16, reason).await
+            self.enet.disconnect_now(enet_peer(peer), reason).await
         }
     }
 }
@@ -314,4 +314,14 @@ mod tests {
             assert_eq!(exhausted.kind(), ErrorKind::WouldBlock);
         });
     }
+}
+
+/// An ENet peer's id; ENet owns the slots below `enet_capacity`.
+#[allow(
+    clippy::cast_possible_truncation,
+    reason = "ENet slots are below ENET_CAPACITY (4095)"
+)]
+#[inline]
+fn enet_peer(peer: u32) -> u16 {
+    peer as u16
 }

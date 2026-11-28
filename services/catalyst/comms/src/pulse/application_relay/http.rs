@@ -1166,7 +1166,7 @@ mod tests {
         );
         let mut relay = ApplicationRelay::new(authority.clone());
         let now = Instant::now();
-        for peer in 1..=state::MAX_ROOM_PEERS as u32 {
+        for peer in 1..=u32::try_from(state::MAX_ROOM_PEERS).unwrap() {
             let mut scope = admitted();
             scope.admitted.identity = format!("0x{peer:040x}");
             relay

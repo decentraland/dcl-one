@@ -232,7 +232,7 @@ impl Host {
         let peers = self.peers.lock();
         peers
             .get(&peer_id)
-            .map(|handle| handle.session.rtt().as_micros() as u64)
+            .map(|handle| crate::casts::micros(handle.session.rtt()))
     }
 }
 

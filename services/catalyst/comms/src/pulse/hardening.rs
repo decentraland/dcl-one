@@ -1042,7 +1042,7 @@ impl CorruptedPacketLimiter {
     pub fn new(max_per_minute: u32, burst_capacity: u32) -> Self {
         Self {
             peer_buckets: std::collections::HashMap::new(),
-            burst_capacity: burst_capacity.min(u8::MAX as u32) as u8,
+            burst_capacity: u8::try_from(burst_capacity).unwrap_or(u8::MAX),
             refill_interval_ms: 60_000u32.checked_div(max_per_minute).unwrap_or(0),
         }
     }
@@ -1062,7 +1062,8 @@ impl CorruptedPacketLimiter {
                 let mut b = *b;
                 let refills = now_ms.wrapping_sub(b.last_refill_ms) / interval;
                 if refills > 0 {
-                    b.tokens = (b.tokens as u32).saturating_add(refills).min(cap as u32) as u8;
+                    b.tokens = u8::try_from(u32::from(b.tokens).saturating_add(refills))
+                        .map_or(cap, |t| t.min(cap));
                     b.last_refill_ms = b.last_refill_ms.wrapping_add(refills * interval);
                 }
                 b
@@ -1109,7 +1110,7 @@ struct BucketParams {
 impl BucketParams {
     fn new(rate_per_sec: u32, burst: u32) -> Self {
         Self {
-            burst: burst.min(u8::MAX as u32) as u8,
+            burst: u8::try_from(burst).unwrap_or(u8::MAX),
             refill_interval_ms: 1000u32
                 .checked_div(rate_per_sec)
                 .map(|v| v.max(1))
@@ -1179,9 +1180,8 @@ impl GameplayRateLimiter {
         } else {
             let refills = now_ms.wrapping_sub(bucket.last_refill_ms) / interval;
             if refills > 0 {
-                bucket.tokens = (bucket.tokens as u32)
-                    .saturating_add(refills)
-                    .min(cap as u32) as u8;
+                bucket.tokens = u8::try_from(u32::from(bucket.tokens).saturating_add(refills))
+                    .map_or(cap, |t| t.min(cap));
                 bucket.last_refill_ms = bucket.last_refill_ms.wrapping_add(refills * interval);
             }
         }
@@ -1813,8 +1813,9 @@ mod tests {
         let mut p = HandshakeReplayPolicy::new(true, SKEW, capacity);
         // One wallet signs many distinct timestamps inside the freshness window, current and
         // clock-ahead, with no source to count them against.
-        for i in 0..capacity as i64 {
-            let signed = SIGNED + i * (SKEW / capacity as i64);
+        let wide = i64::try_from(capacity).unwrap();
+        for i in 0..wide {
+            let signed = SIGNED + i * (SKEW / wide);
             assert_ne!(
                 p.try_admit(SIGNED, None, "0xFlood", &signed.to_string()),
                 Err(ReplayRejection::Capacity)

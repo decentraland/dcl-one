@@ -1,3 +1,7 @@
+#![allow(
+    clippy::cast_precision_loss,
+    reason = "test fixtures use small literal values"
+)]
 use super::*;
 use crate::pulse::metrics::{RESYNC_OUTCOME_DELTA, RESYNC_OUTCOME_FULL, RESYNC_SEQ_GAP_BUCKETS};
 

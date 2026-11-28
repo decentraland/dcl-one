@@ -1,4 +1,10 @@
 //! Real broker coverage for the shared connection, frame limits and recovery.
+#![allow(
+    clippy::cast_precision_loss,
+    clippy::cast_sign_loss,
+    clippy::cast_possible_wrap,
+    reason = "test fixtures use small literal values"
+)]
 use super::*;
 use crate::protocol::bus::statistics::{
     Assembler, Event, OBSERVATIONS_SUBJECT, Observation, PRODUCER_SUBJECT, ProducerGrant,
