@@ -33,8 +33,14 @@ export function WorldDetailPage() {
       item => item.id === name,
     ),
   );
-  const ens = useSelector(state => state.ens.data[name]);
+  const ens = useSelector(
+    state =>
+      state.ens.managementContributors[name] ??
+      state.ens.managementData[name] ??
+      state.ens.data[name],
+  );
   const status = useSelector(state => state.management.status);
+  const findingContributors = useSelector(state => !!state.ens.managementContributorsRequestId);
   const [unpublishing, setUnpublishing] = useState<string | null>(null);
   const [resolved, setResolved] = useState<ManagedProject | null>(null);
   const [resolutionFailure, setResolutionFailure] = useState<string | null>(null);
@@ -56,7 +62,7 @@ export function WorldDetailPage() {
   useEffect(() => {
     if (project || loading || !ens || !wallet || resolutionFailure === name) return;
     let current = true;
-    void resolveWorldProject(new Worlds(), ens, wallet)
+    void resolveWorldProject(new Worlds('management'), ens, wallet)
       .then(found => {
         if (current) setResolved(found);
       })
@@ -80,7 +86,8 @@ export function WorldDetailPage() {
     project && deployScope !== 'loading' && getWorldPermissions(project, deployScope);
 
   const page = (() => {
-    if (!project && (loading || (ens && resolutionFailure !== name))) return <Loader size={70} />;
+    if (!project && (loading || findingContributors || (ens && resolutionFailure !== name)))
+      return <Loader size={70} />;
     if (project && deployScope === 'loading') return <Loader size={70} />;
     if (!project || !permissions) return <DetailMissing message={t('world_detail.not_found')} />;
 

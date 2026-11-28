@@ -5,21 +5,27 @@ import type { WorldLimits } from './worlds';
 const WORLDS_SERVER = 'https://worlds-content-server.example.org';
 
 const fetchMock = vi.fn();
+const configGet = vi.fn(() => WORLDS_SERVER);
+const identity = { authChain: [] };
 const captureExceptionMock = vi.fn();
 
 vi.mock('/@/config', () => ({
-  config: { get: () => WORLDS_SERVER },
+  config: { get: () => configGet() },
 }));
 
 vi.mock('@sentry/electron/renderer', () => ({
   captureException: (...args: unknown[]) => captureExceptionMock(...args),
 }));
 
+vi.mock('@dcl/single-sign-on-client', () => ({
+  localStorageGetIdentity: () => identity,
+}));
+
 vi.mock('./signedFetch', () => ({
   signedFetch: (...args: unknown[]) => fetchMock(...args),
 }));
 
-const { Worlds } = await import('./worlds');
+const { Worlds, WorldPermissionName, WorldPermissionType } = await import('./worlds');
 
 /** A promise that only settles by rejecting once the signal aborts, like a request to a hung server. */
 function untilAborted(signal: AbortSignal) {
@@ -521,5 +527,96 @@ describe('Worlds.fetchWorldSettings', () => {
 
       await expect(new Worlds().fetchWorldSettings('plaza.dcl.eth')).rejects.toThrow('503');
     });
+  });
+});
+
+describe('Worlds management routing', () => {
+  const dclDev = 'https://dcl.dev/worlds-content-server';
+  const canonical = 'https://worlds-content-server.decentraland.org';
+  const world = 'plaza.dcl.eth';
+  const wallet = '0x1234';
+
+  beforeEach(() => {
+    fetchMock.mockReset();
+    configGet.mockReset();
+    configGet.mockReturnValue(WORLDS_SERVER);
+  });
+
+  it.each([dclDev, dclDev + '/', 'https://DCL.DEV/worlds-content-server'])(
+    'reads settings and thumbnails from the canonical server for %s',
+    async url => {
+      configGet.mockReturnValue(url);
+      fetchMock.mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ thumbnail_hash: 'canonical-thumb' }),
+      });
+
+      expect(await new Worlds('management').fetchWorldSettings(world)).toMatchObject({
+        thumbnail: canonical + '/contents/canonical-thumb',
+      });
+      expect(fetchMock.mock.calls[0][0]).toBe(canonical + '/world/' + world + '/settings');
+    },
+  );
+
+  it('sends the signed settings, permissions, and removal requests directly to the canonical server', async () => {
+    configGet.mockReturnValue(dclDev);
+    fetchMock
+      .mockResolvedValueOnce({ status: 200 })
+      .mockResolvedValueOnce({ status: 204 })
+      .mockResolvedValueOnce({ status: 200 })
+      .mockResolvedValueOnce({ status: 200 });
+
+    const worlds = new Worlds('management');
+    expect(await worlds.putWorldSettings(wallet, world, { title: 'A new title' })).toEqual({
+      success: true,
+    });
+    expect(
+      await worlds.postPermissionType(
+        wallet,
+        world,
+        WorldPermissionName.Access,
+        WorldPermissionType.Unrestricted,
+      ),
+    ).toBe(true);
+    expect(await worlds.unpublishWorldScene(wallet, world, '0,0')).toBe(true);
+    expect(await worlds.unpublishEntireWorld(wallet, world)).toBe(true);
+    const worldBase = canonical + '/world/' + world;
+    expect(fetchMock.mock.calls.map(([url, init]) => [url, init.method, init.identity])).toEqual([
+      [worldBase + '/settings', 'PUT', identity],
+      [worldBase + '/permissions/access', 'POST', identity],
+      [worldBase + '/scenes/0%2C0', 'DELETE', identity],
+      [canonical + '/entities/' + world, 'DELETE', identity],
+    ]);
+  });
+
+  it.each([
+    canonical,
+    WORLDS_SERVER,
+    'https://worlds-content-server.decentraland.zone',
+    'https://dcl.dev/standalone-worlds',
+  ])('keeps the configured server in management mode for %s', async server => {
+    configGet.mockReturnValue(server);
+    fetchMock.mockResolvedValueOnce({ status: 200 });
+
+    expect(await new Worlds('management').unpublishEntireWorld(wallet, world)).toBe(true);
+    expect(fetchMock.mock.calls[0][0]).toBe(server + '/entities/' + world);
+  });
+
+  it('does not submit a dcl.dev-only setting to the canonical server', async () => {
+    configGet.mockReturnValue(dclDev);
+    const settings = { title: 'A new title', realmNameOverride: 'realm-alias' };
+
+    expect(await new Worlds('management').putWorldSettings(wallet, world, settings)).toMatchObject({
+      success: false,
+    });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('keeps content queries on the configured dcl.dev server', async () => {
+    configGet.mockReturnValue(dclDev);
+    fetchMock.mockResolvedValueOnce({ ok: true, json: async () => ({ scenes: [], total: 0 }) });
+
+    await new Worlds().fetchWorldScenes(world);
+    expect(fetchMock.mock.calls[0][0]).toContain(dclDev + '/world/' + world + '/scenes?');
   });
 });

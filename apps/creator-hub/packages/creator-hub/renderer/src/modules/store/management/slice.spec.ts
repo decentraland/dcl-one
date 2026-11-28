@@ -1,12 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AuthServerProvider } from '../../../lib/auth';
+import { WorldPermissionName } from '/@/lib/worlds';
 import type { ManagedProject } from '../../../../../shared/types/manage';
 import { SortBy, FilterBy, ManagedProjectType } from '../../../../../shared/types/manage';
 import { createTestStore } from '../../../../tests/utils/testStore';
 import type { Land, LandDeployment } from '../../../lib/land';
 import { LandType, RoleType } from '../../../lib/land';
 import { clearLandScene } from '../../../lib/landUnpublish';
-import { fetchContributableNames } from '../ens';
+import { fetchContributableNames, fetchENSList } from '../ens';
 import { fetchLandList } from '../land';
 import { accountChanged } from '../account';
 import type * as ManagementUtils from './utils';
@@ -55,6 +56,7 @@ const WorldPermissionType = {
 } as const;
 
 const createMockWorldsAPI = () => ({
+  usesCanonicalManagement: false,
   fetchWorlds: vi.fn(),
   fetchEmptyWorlds: vi.fn(),
   fetchWorldScenes: vi.fn(),
@@ -1035,6 +1037,57 @@ describe('management slice', () => {
   });
 
   describe('unpublishWorldScene', () => {
+    it.each([
+      { scenes: [{ entityId: 'replacement', parcels: ['0,0'] }], total: 1 },
+      { scenes: [], total: 0 },
+      null,
+    ])('refuses to delete an unconfirmed canonical scene (%j) and reloads the list', async page => {
+      mockWorldsAPI.usesCanonicalManagement = true;
+      vi.mocked(AuthServerProvider.getAccount).mockReturnValueOnce(TEST_ADDRESS);
+      mockWorldsAPI.fetchWorldScenes.mockResolvedValueOnce(page).mockResolvedValueOnce({
+        scenes: [],
+        total: 0,
+      });
+
+      await expect(
+        store
+          .dispatch(
+            unpublishWorldScene({
+              worldName: TEST_WORLD_NAME,
+              sceneCoord: '0,0',
+              entityId: 'selected',
+            }),
+          )
+          .unwrap(),
+      ).rejects.toThrow('could not be confirmed');
+      expect(mockWorldsAPI.unpublishWorldScene).not.toHaveBeenCalled();
+      expect(mockWorldsAPI.fetchWorldScenes).toHaveBeenCalledTimes(2);
+    });
+
+    it('deletes the confirmed canonical entity by its listed parcel', async () => {
+      mockWorldsAPI.usesCanonicalManagement = true;
+      vi.mocked(AuthServerProvider.getAccount).mockReturnValueOnce(TEST_ADDRESS);
+      mockWorldsAPI.fetchWorldScenes
+        .mockResolvedValueOnce({ scenes: [{ entityId: 'selected', parcels: ['0,0'] }], total: 1 })
+        .mockResolvedValueOnce({ scenes: [], total: 0 });
+      mockWorldsAPI.unpublishWorldScene.mockResolvedValueOnce(true);
+
+      await store
+        .dispatch(
+          unpublishWorldScene({
+            worldName: TEST_WORLD_NAME,
+            sceneCoord: '0,0',
+            entityId: 'selected',
+          }),
+        )
+        .unwrap();
+      expect(mockWorldsAPI.unpublishWorldScene).toHaveBeenCalledWith(
+        TEST_ADDRESS,
+        TEST_WORLD_NAME,
+        '0,0',
+      );
+    });
+
     it('should call unpublishWorldScene API and refetch scenes when unpublishing succeeds', async () => {
       vi.mocked(AuthServerProvider.getAccount).mockReturnValueOnce(TEST_ADDRESS);
       mockWorldsAPI.unpublishWorldScene.mockResolvedValueOnce(true);
@@ -1470,6 +1523,19 @@ describe('management slice', () => {
       expect(result).toHaveLength(2);
       expect(result.find((w: ManagedProject) => w.id === 'empty-world.dcl.eth')).toBeDefined();
       expect(result.find((w: ManagedProject) => w.id === 'another-empty.dcl.eth')).toBeDefined();
+    });
+
+    it('does not classify an unreadable canonical world as unpublished', async () => {
+      mockWorldsAPI.usesCanonicalManagement = true;
+      mockWorldsAPI.fetchWorldScenes
+        .mockResolvedValueOnce(null)
+        .mockResolvedValue({ scenes: [], total: 0 });
+
+      const result = await store.dispatch(fetchEmptyWorlds({ address: TEST_ADDRESS })).unwrap();
+
+      expect(fetchENSList).toHaveBeenCalledWith(expect.objectContaining({ purpose: 'management' }));
+      expect(result.map(world => world.id)).not.toContain('empty-world.dcl.eth');
+      expect(result).toHaveLength(2);
     });
 
     it('should set owner role for ENS owned by the address', async () => {
@@ -2300,4 +2366,26 @@ describe('management slice', () => {
       expect(state.accountHoldings).toEqual({ ownedLands: 1 });
     });
   });
+});
+
+it('keeps publish and management parcel permissions separate for the same wallet and world', () => {
+  const management = {
+    worldName: TEST_WORLD_NAME,
+    walletAddress: TEST_WALLET_ADDRESS,
+    permissionName: WorldPermissionName.Deployment,
+  };
+  const publish = { ...management, purpose: 'content' as const };
+  const grants = (parcel: string) => ({
+    walletAddress: TEST_WALLET_ADDRESS,
+    parcels: { parcels: [parcel], total: 1 },
+  });
+  const state = [
+    fetchParcelsPermission.pending('manage', management),
+    fetchParcelsPermission.pending('publish', publish),
+    fetchParcelsPermission.fulfilled(grants('0,0'), 'manage', management),
+    fetchParcelsPermission.fulfilled(grants('1,1'), 'publish', publish),
+  ].reduce(reducer, initialState);
+
+  expect(state.worldPermissions.parcels[TEST_WALLET_ADDRESS].parcels).toEqual(['0,0']);
+  expect(state.publishParcels.parcels[TEST_WALLET_ADDRESS].parcels).toEqual(['1,1']);
 });

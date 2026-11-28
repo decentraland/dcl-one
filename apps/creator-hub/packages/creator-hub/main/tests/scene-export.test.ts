@@ -682,27 +682,34 @@ describe('exportScene', () => {
     });
 
     describe('and the scene lives in a World', () => {
-      it("should export from the Worlds content server of the app's environment", async () => {
-        const worlds = 'https://worlds-content-server.decentraland.org/contents/';
-        mocks.fetch.mockImplementation(async (url: string) => {
-          if (url === `${worlds}${ENTITY_ID}`) {
-            return new Response(
-              JSON.stringify({
-                id: ENTITY_ID,
-                pointers: ['0,0'],
-                content: [{ file: 'scene.json', hash: 'hscene' }],
-              }),
-            );
-          }
-          if (url === `${worlds}hscene`) return new Response(sceneJson);
-          return new Response('not found', { status: 404 });
-        });
-        mocks.showSaveDialog.mockResolvedValue(outputPath);
+      it.each([
+        [Env.PROD, 'https://worlds-content-server.decentraland.org/contents/'],
+        [Env.DCL_ONE, 'https://worlds-content-server.decentraland.org/contents/'],
+        [Env.DEV, 'https://worlds-content-server.decentraland.zone/contents/'],
+      ])(
+        'should export the managed Worlds scene from the right server for %s',
+        async (env, worlds) => {
+          mocks.env.value = env;
+          mocks.fetch.mockImplementation(async (url: string) => {
+            if (url === `${worlds}${ENTITY_ID}`) {
+              return new Response(
+                JSON.stringify({
+                  id: ENTITY_ID,
+                  pointers: ['0,0'],
+                  content: [{ file: 'scene.json', hash: 'hscene' }],
+                }),
+              );
+            }
+            if (url === `${worlds}hscene`) return new Response(sceneJson);
+            return new Response('not found', { status: 404 });
+          });
+          mocks.showSaveDialog.mockResolvedValue(outputPath);
 
-        await saveScene(ENTITY_ID, 'x', 'world');
+          await saveScene(ENTITY_ID, 'x', 'world');
 
-        expect(mocks.fetch).toHaveBeenCalledWith(`${worlds}${ENTITY_ID}`, expect.anything());
-      });
+          expect(mocks.fetch).toHaveBeenCalledWith(`${worlds}${ENTITY_ID}`, expect.anything());
+        },
+      );
     });
 
     describe('and the source is not a known one', () => {

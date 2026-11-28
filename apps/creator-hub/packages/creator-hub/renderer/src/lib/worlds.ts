@@ -2,6 +2,7 @@ import { captureException } from '@sentry/electron/renderer';
 import { localStorageGetIdentity } from '@dcl/single-sign-on-client';
 import type { Entity, IPFSv2 } from '@dcl/schemas';
 
+import { worldsManagementUrl } from '/shared/urls';
 import { config } from '/@/config';
 import type { ContributableDomain } from '/@/modules/store/ens/types';
 import { formatQueryParams, fromCamelToSnake, fromSnakeToCamel } from '../modules/api';
@@ -164,6 +165,9 @@ export type WorldSettings = {
   skyboxTime?: number | null;
   singlePlayer?: boolean;
   showInPlaces?: boolean;
+  /** Local Worlds extensions. The canonical public management server does not accept them. */
+  realmNameOverride?: string | null;
+  previewWearableUrns?: string[] | null;
 };
 
 export enum SceneAgeRating {
@@ -280,7 +284,7 @@ export type WorldParcelsResponse = {
   total: number;
 };
 
-const WORLD_CONTENT_SERVER_URL = config.get('WORLDS_CONTENT_SERVER_URL');
+export type WorldsPurpose = 'content' | 'management';
 
 export const WORLD_LIMITS_TIMEOUT_MS = 5000;
 // Reads behind picking a world. A dropped connection can leave a request pending instead of
@@ -309,7 +313,14 @@ class SceneLookupError extends Error {
 }
 
 export class Worlds {
-  private url = WORLD_CONTENT_SERVER_URL;
+  private readonly url: string;
+  public readonly usesCanonicalManagement: boolean;
+
+  constructor(purpose: WorldsPurpose = 'content') {
+    const configured = config.get('WORLDS_CONTENT_SERVER_URL');
+    this.url = purpose === 'management' ? worldsManagementUrl(configured) : configured;
+    this.usesCanonicalManagement = this.url !== configured;
+  }
 
   private withIdentity(address: string): AuthIdentity {
     const identity = localStorageGetIdentity(address);
@@ -399,6 +410,18 @@ export class Worlds {
   ): Promise<{ success: boolean; error?: string }> {
     const formData = new FormData();
     const formattedSettings = fromCamelToSnake(settings);
+    if (
+      this.usesCanonicalManagement &&
+      Object.entries(formattedSettings).some(
+        ([key, value]) =>
+          value !== undefined && (key === 'realm_name_override' || key === 'preview_wearable_urns'),
+      )
+    ) {
+      return {
+        success: false,
+        error: 'Realm aliases and preview wearables are local Worlds settings.',
+      };
+    }
 
     for (const [key, value] of Object.entries(formattedSettings)) {
       if (key === 'thumbnail' && typeof value === 'string' && value.startsWith('data:')) {

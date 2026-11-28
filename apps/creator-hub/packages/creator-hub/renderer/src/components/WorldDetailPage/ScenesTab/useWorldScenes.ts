@@ -99,7 +99,9 @@ export function useWorldScenes(worldName: string, mode: RowMode) {
 
   const unpublishScene = useCallback(
     (scene: LandScene) =>
-      dispatch(unpublishWorldScene({ worldName, sceneCoord: scene.parcels[0] })).unwrap(),
+      dispatch(
+        unpublishWorldScene({ worldName, sceneCoord: scene.parcels[0], entityId: scene.id }),
+      ).unwrap(),
     [dispatch, worldName],
   );
 

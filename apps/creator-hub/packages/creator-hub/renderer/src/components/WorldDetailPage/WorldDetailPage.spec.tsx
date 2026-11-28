@@ -6,9 +6,12 @@ import { flatten } from '/@/modules/store/translation/flatten';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { useAuth } from '/@/hooks/useAuth';
+import { fetchContributableNames } from '/@/modules/store/ens';
+import type { ENS } from '/@/modules/store/ens/types';
 import { WorldRoleType } from '/@/lib/worlds';
 import type * as WorldsModule from '/@/lib/worlds';
 import {
+  actions as managementActions,
   fetchAllManagedProjectsData,
   fetchStreamOnlyWorlds,
   fetchWorlds,
@@ -16,7 +19,7 @@ import {
 import { fetchProfile } from '/@/modules/store/profiles/slice';
 import { en } from '/@/modules/store/translation/locales';
 import { setCurrentLocale } from '/@/modules/store/translation/utils';
-import { ManagedProjectType, type ManagedProject } from '/shared/types/manage';
+import { FilterBy, ManagedProjectType, type ManagedProject } from '/shared/types/manage';
 
 import { TestProviders } from '../../../tests/utils/TestProviders';
 import { createTestStore } from '../../../tests/utils/testStore';
@@ -116,7 +119,7 @@ const streamed = world({
   owner: undefined,
 });
 
-function renderPage(path: string) {
+function renderPage(path: string, prepare?: (store: ReturnType<typeof createTestStore>) => void) {
   vi.mocked(useAuth).mockReturnValue({
     isSignedIn: true,
     wallet: WALLET,
@@ -141,6 +144,7 @@ function renderPage(path: string) {
   });
   store.dispatch(fetchAllManagedProjectsData.pending('r', { address: '' }));
   store.dispatch(fetchAllManagedProjectsData.fulfilled(undefined, 'r', { address: '' }));
+  prepare?.(store);
   render(
     <Provider store={store as never}>
       <MemoryRouter initialEntries={[path]}>
@@ -298,6 +302,28 @@ describe('WorldDetailPage', () => {
       ).toBeTruthy();
       expect(screen.getByRole('button', { name: 'Back to Manage' })).toBeTruthy();
     });
+  });
+
+  it('opens a canonical collaborator link outside the Published list and publish picker', async () => {
+    const name = 'canonical-only.dcl.eth';
+    const store = renderPage(`/manage/world/${name}/scenes`, store => {
+      store.dispatch(managementActions.setPublishFilter(FilterBy.PUBLISHED));
+      const arg = { address: WALLET, purpose: 'management' } as const;
+      store.dispatch(fetchContributableNames.pending('contributor', arg));
+      store.dispatch(
+        fetchContributableNames.fulfilled(
+          { names: [{ subdomain: name, nftOwnerAddress: OTHER } as ENS], streamOnly: [] },
+          'contributor',
+          arg,
+        ),
+      );
+    });
+
+    expect(
+      await screen.findByRole('heading', { level: 1, name: 'Manage - Deep World' }),
+    ).toBeTruthy();
+    expect(selectedTab()).toBe('Scenes');
+    expect(store.getState().ens.data[name]).toBeUndefined();
   });
 
   describe('when the account holds the World but the loaded Manage lists miss it', () => {

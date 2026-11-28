@@ -8,7 +8,7 @@ import { config } from '/@/config';
 import { fetch } from '/shared/fetch';
 import { createLimit } from '/shared/limit';
 import { DCLNames, ENS as ENSApi } from '/@/lib/ens';
-import { Worlds } from '/@/lib/worlds';
+import { Worlds, type WorldsPurpose } from '/@/lib/worlds';
 import { createAsyncThunk } from '/@/modules/store/thunk';
 import { accountChanged, isSignedInAccount } from '/@/modules/store/account';
 import { settleRequest, settleRequestAndOlder } from '/@/modules/store/requests';
@@ -24,9 +24,9 @@ const REQUESTS_BATCH_SIZE = 25;
 const limit = createLimit(REQUESTS_BATCH_SIZE);
 
 // actions
-const fetchContributableDomains = async (address: string) => {
+const fetchContributableDomains = async (address: string, purpose?: WorldsPurpose) => {
   try {
-    return await new Worlds().fetchContributableDomains(address);
+    return await new Worlds(purpose).fetchContributableDomains(address);
   } catch (error) {
     captureException(error, {
       tags: {
@@ -200,7 +200,13 @@ export type ContributableNames = { names: ENS[]; streamOnly: string[] };
 
 export const fetchContributableNames = createAsyncThunk(
   'ens/fetchContributableNames',
-  async ({ address }: { address: string }): Promise<ContributableNames> => {
+  async ({
+    address,
+    purpose,
+  }: {
+    address: string;
+    purpose?: WorldsPurpose;
+  }): Promise<ContributableNames> => {
     const dclNamesApi = new DCLNames();
     const ensApi = new ENSApi();
     const bannedNames = await fetchBannedNames();
@@ -208,7 +214,7 @@ export const fetchContributableNames = createAsyncThunk(
 
     const isAllowed = (name: string) =>
       name.split('.').every(nameSegment => !bannedNamesSet.has(nameSegment));
-    const domains = await fetchContributableDomains(address);
+    const domains = await fetchContributableDomains(address, purpose);
     const names = domains.filter(isDeployable).filter(({ name }) => isAllowed(name));
     const streamOnly = getStreamOnlyWorldNames(domains).filter(isAllowed);
 
@@ -254,13 +260,18 @@ export const fetchContributableNames = createAsyncThunk(
 export const fetchENSList = createAsyncThunk(
   'ens/fetchENSList',
   async (
-    { address, contributable }: { address: string; contributable?: ContributableNames },
+    {
+      address,
+      contributable,
+      purpose,
+    }: { address: string; contributable?: ContributableNames; purpose?: WorldsPurpose },
     thunkApi,
   ) => {
     const dclNames = await thunkApi.dispatch(fetchDCLNames({ address })).unwrap();
     const ensNames = await thunkApi.dispatch(fetchENS({ address })).unwrap();
     const { names: contributableNames } =
-      contributable ?? (await thunkApi.dispatch(fetchContributableNames({ address })).unwrap());
+      contributable ??
+      (await thunkApi.dispatch(fetchContributableNames({ address, purpose })).unwrap());
 
     const owned = [...dclNames, ...ensNames];
     const ownedSubdomains = new Set(owned.map(({ subdomain }) => subdomain));
@@ -277,6 +288,11 @@ export const fetchENSList = createAsyncThunk(
 export type ENSState = {
   chainId: ChainId;
   data: Record<string, ENS>;
+  /** Canonical management names are separate from the configured publish server's picker. */
+  managementData: Record<string, ENS>;
+  managementRequestIds: string[];
+  managementContributors: Record<string, ENS>;
+  managementContributorsRequestId: string | null;
   /** NAME list requests still in flight for the current account, oldest first. */
   requestIds: string[];
 };
@@ -284,6 +300,10 @@ export type ENSState = {
 export const initialState: Async<ENSState> = {
   chainId: DEFAULT_CHAIN_ID,
   data: {},
+  managementData: {},
+  managementRequestIds: [],
+  managementContributors: {},
+  managementContributorsRequestId: null,
   status: 'idle',
   error: null,
   requestIds: [],
@@ -301,11 +321,39 @@ export const slice = createSlice({
   extraReducers: builder => {
     builder
       .addCase(accountChanged, state => ({ ...initialState, chainId: state.chainId }))
+      .addCase(fetchContributableNames.pending, (state, action) => {
+        if (action.meta.arg.purpose === 'management') {
+          state.managementContributorsRequestId = action.meta.requestId;
+        }
+      })
+      .addCase(fetchContributableNames.fulfilled, (state, action) => {
+        if (state.managementContributorsRequestId !== action.meta.requestId) return;
+        state.managementContributorsRequestId = null;
+        state.managementContributors = Object.fromEntries(
+          action.payload.names.map(ens => [ens.subdomain, ens]),
+        );
+      })
+      .addCase(fetchContributableNames.rejected, (state, action) => {
+        if (state.managementContributorsRequestId === action.meta.requestId) {
+          state.managementContributorsRequestId = null;
+        }
+      })
       .addCase(fetchENSList.pending, (state, action) => {
+        if (action.meta.arg?.purpose === 'management') {
+          state.managementRequestIds.push(action.meta.requestId);
+          return;
+        }
         state.status = 'loading';
         state.requestIds.push(action.meta.requestId);
       })
       .addCase(fetchENSList.fulfilled, (state, action) => {
+        if (action.meta.arg?.purpose === 'management') {
+          if (!settleRequestAndOlder(state.managementRequestIds, action.meta.requestId)) return;
+          state.managementData = Object.fromEntries(
+            action.payload.map(ens => [ens.subdomain, ens]),
+          );
+          return;
+        }
         if (!settleRequestAndOlder(state.requestIds, action.meta.requestId)) return;
         state.data = {
           ...state.data,
@@ -320,6 +368,10 @@ export const slice = createSlice({
         state.status = 'succeeded';
       })
       .addCase(fetchENSList.rejected, (state, action) => {
+        if (action.meta.arg?.purpose === 'management') {
+          settleRequest(state.managementRequestIds, action.meta.requestId);
+          return; // The management thunk reports its own failure.
+        }
         if (!settleRequest(state.requestIds, action.meta.requestId)) return;
         state.status = state.requestIds.length
           ? 'loading'

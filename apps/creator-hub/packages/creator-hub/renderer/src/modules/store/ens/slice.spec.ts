@@ -439,3 +439,14 @@ describe('ens reducer', () => {
     });
   });
 });
+
+it('keeps canonical management-only collaborators out of the publish NAME list', () => {
+  const args = { address: '0x1234', purpose: 'management' as const };
+  const collaborator = { subdomain: 'org-only.dcl.eth' } as ENS;
+  const pending = slice.reducer(undefined, fetchENSList.pending('manage', args));
+  const resolved = slice.reducer(pending, fetchENSList.fulfilled([collaborator], 'manage', args));
+
+  expect(resolved.data).not.toHaveProperty(collaborator.subdomain);
+  expect(resolved.managementData[collaborator.subdomain]).toEqual(collaborator);
+  expect(resolved.status).toBe('idle');
+});
