@@ -1,5 +1,5 @@
 // The report form: one form with decentraland.org's fields, copy and order; the submission goes through the node (data/lib/catalyst/landings/report.ts).
-import { useEffect, useEffectEvent, useMemo, useRef, useState, type ChangeEvent, type ReactNode } from "react";
+import { useEffect, useEffectEvent, useMemo, useRef, useState, type ChangeEvent } from "react";
 import { useLocation, useNavigate, useSearchParams } from "react-router";
 
 import {
@@ -9,6 +9,7 @@ import {
   GeneralClose,
   GeneralDecentralandColor,
   InputWebCreatorTools,
+  textClasses,
   WebSelect,
   WebTextarea,
 } from "@dcl/one-ui";
@@ -47,43 +48,27 @@ const SUBMIT_FAILED = "We couldn't submit your report. Please try again.";
 // The failures the visitor can act on show their own message; the others show the general one.
 const SHOWN_STEPS: readonly string[] = ["not_connected", "missing_bytes", "upload"];
 
-type FieldProps = {
-  number: number;
-  label: string;
-  helper: string;
-  optional?: boolean;
-  error?: string;
-  children: ReactNode;
-};
-
-/** The name and the description of a field's control: the field's label, and its helper and error lines. */
-function named(number: number, error?: string) {
-  const id = `report-field-${number}`;
-  return {
-    "aria-labelledby": `${id}-label`,
-    "aria-describedby": error ? `${id}-help ${id}-error` : `${id}-help`,
-  };
-}
-
-function Field({ number, label, helper, optional, error, children }: FieldProps) {
-  const id = `report-field-${number}`;
+/**
+ * A field's numbered label, with its required mark or "(Optional)". The number and the mark are left out of the
+ * field's name, which is the label text alone.
+ */
+function ReportLabel({ number, text, optional }: { number: number; text: string; optional?: boolean }) {
   return (
-    <div className={styles.field}>
-      <p className={styles.label}>
-        <span className={styles.bullet}>{number}</span>
-        <span id={`${id}-label`}>{label}</span>
-        {optional ? <span className={styles.optional}>(Optional)</span> : <span className={styles.required}>*</span>}
-      </p>
-      <p id={`${id}-help`} className={styles.helper}>
-        {helper}
-      </p>
-      {children}
-      {error && (
-        <p id={`${id}-error`} className={styles.error}>
-          {error}
-        </p>
+    <span className={styles.label}>
+      <span className={styles.bullet} aria-hidden="true">
+        {number}
+      </span>
+      <span>{text}</span>
+      {optional ? (
+        <span className={styles.optional} aria-hidden="true">
+          (Optional)
+        </span>
+      ) : (
+        <span className={styles.required} aria-hidden="true">
+          *
+        </span>
       )}
-    </div>
+    </span>
   );
 }
 
@@ -352,22 +337,15 @@ export default function ReportForm({ trackCtx }: { trackCtx: TrackContext }) {
               </div>
             )}
 
-            <Field
-              number={1}
-              label="Your Wallet Address"
-              helper="Reports are tied to your wallet to prevent abuse. Your identity will not be publicly shared."
-            >
-              <InputWebCreatorTools
-                {...named(1)}
-                label="Your Wallet Address"
-                labelHidden
-                error={shown(errors.player)}
-                placeholder="Write or paste your address here..."
-                value={wallet}
-                disabled
-                readOnly
-              />
-            </Field>
+            <InputWebCreatorTools
+              label={<ReportLabel number={1} text="Your Wallet Address" />}
+              description="Reports are tied to your wallet to prevent abuse. Your identity will not be publicly shared."
+              error={shown(errors.player)}
+              placeholder="Write or paste your address here..."
+              value={wallet}
+              disabled
+              readOnly
+            />
 
             {!isConnected && (
               <div className={styles.signIn}>
@@ -395,77 +373,62 @@ export default function ReportForm({ trackCtx }: { trackCtx: TrackContext }) {
               </p>
             )}
 
-            <Field number={2} label="Reported User Wallet" helper="This is the wallet address of the user you are reporting.">
-              <InputWebCreatorTools
-                {...named(2)}
-                label="Reported User Wallet"
-                labelHidden
-                aria-required="true"
-                error={shown(errors.reported)}
-                placeholder="Write or paste an address here..."
-                value={reportedAddress}
-                onChange={(e) => setReportedAddress(e.target.value)}
-                onBlur={() => isEthAddress(reportedAddress) && track("report_target_set", { has_reporter: isEthAddress(wallet) }, trackCtx)}
-                disabled={reportedAddressLocked}
-              />
-            </Field>
+            <InputWebCreatorTools
+              label={<ReportLabel number={2} text="Reported User Wallet" />}
+              description="This is the wallet address of the user you are reporting."
+              aria-required="true"
+              error={shown(errors.reported)}
+              placeholder="Write or paste an address here..."
+              value={reportedAddress}
+              onChange={(e) => setReportedAddress(e.target.value)}
+              onBlur={() => isEthAddress(reportedAddress) && track("report_target_set", { has_reporter: isEthAddress(wallet) }, trackCtx)}
+              disabled={reportedAddressLocked}
+            />
 
-            <Field
-              number={3}
-              label="Reason for Report"
-              helper="Select the option that best describes the issue."
+            <WebSelect
+              label={<ReportLabel number={3} text="Reason for Report" />}
+              description="Select the option that best describes the issue."
               error={shown(errors.reason)}
+              aria-required="true"
+              value={reason}
+              onChange={(e) => {
+                const selected = e.currentTarget.value as ReportReason;
+                setReason(selected);
+                track("report_category_set", { reason: selected }, trackCtx);
+              }}
             >
-              <WebSelect
-                {...named(3, shown(errors.reason))}
-                aria-required="true"
-                aria-invalid={!!shown(errors.reason)}
-                value={reason}
-                onChange={(e) => {
-                  const selected = e.currentTarget.value as ReportReason;
-                  setReason(selected);
-                  track("report_category_set", { reason: selected }, trackCtx);
-                }}
-              >
-                <option value="" disabled>
-                  Choose a reason
+              <option value="" disabled>
+                Choose a reason
+              </option>
+              {REASONS.map(({ value, label }) => (
+                <option key={value} value={value}>
+                  {label}
                 </option>
-                {REASONS.map(({ value, label }) => (
-                  <option key={value} value={value}>
-                    {label}
-                  </option>
-                ))}
-              </WebSelect>
-            </Field>
+              ))}
+            </WebSelect>
 
-            <Field
-              number={4}
-              label="Description"
-              helper="Describe what happened. Include when and where the incident occurred if possible."
-              error={shown(errors.description)}
-            >
-              <div className={styles.inputGroup}>
-                <WebTextarea
-                  {...named(4, shown(errors.description))}
-                  aria-required="true"
-                  aria-invalid={!!shown(errors.description)}
-                  rows={4}
-                  placeholder="Write your description here..."
-                  value={description}
-                  onChange={(e) => setDescription(e.target.value.slice(0, REPORT_LIMITS.descriptionMax))}
-                  onBlur={() => description.trim() && track("report_details_set", { description_len: description.trim().length }, trackCtx)}
-                />
-                <p className={styles.counter}>{`${description.length} / ${REPORT_LIMITS.descriptionMax}`}</p>
-                <p className={styles.hint}>The more detail you provide, the easier it is for moderators to review your report.</p>
-              </div>
-            </Field>
+            <div className={styles.inputGroup}>
+              <WebTextarea
+                label={<ReportLabel number={4} text="Description" />}
+                description="Describe what happened. Include when and where the incident occurred if possible."
+                error={shown(errors.description)}
+                aria-required="true"
+                aria-describedby="report-description-hint"
+                rows={4}
+                placeholder="Write your description here..."
+                value={description}
+                onChange={(e) => setDescription(e.target.value.slice(0, REPORT_LIMITS.descriptionMax))}
+                onBlur={() => description.trim() && track("report_details_set", { description_len: description.trim().length }, trackCtx)}
+              />
+              <p className={styles.counter}>{`${description.length} / ${REPORT_LIMITS.descriptionMax}`}</p>
+              <p id="report-description-hint" className={styles.hint}>The more detail you provide, the easier it is for moderators to review your report.</p>
+            </div>
 
-            <Field
-              number={5}
-              label="Evidence"
-              helper={`Upload up to ${REPORT_LIMITS.maxFiles} screenshots, videos or PDF files to support your report.`}
-              error={shown(errors.evidence)}
-            >
+            <div className={styles.evidence}>
+              <ReportLabel number={5} text="Evidence" />
+              <p id="report-field-5-help" className={`${textClasses.bodySm} ${styles.evidenceHelp}`}>
+                {`Upload up to ${REPORT_LIMITS.maxFiles} screenshots, videos or PDF files to support your report.`}
+              </p>
               <FileUpload
                 files={evidence}
                 invalid={!!shown(errors.evidence)}
@@ -475,26 +438,25 @@ export default function ReportForm({ trackCtx }: { trackCtx: TrackContext }) {
                   setEvidence(files);
                 }}
               />
-              {reattachEvidence && <p className={styles.helper}>Add your evidence files again after signing in.</p>}
-            </Field>
+              {reattachEvidence && <p className={`${textClasses.bodySm} ${styles.evidenceHelp}`}>Add your evidence files again after signing in.</p>}
+              {shown(errors.evidence) && (
+                <p id="report-field-5-error" className={styles.error}>
+                  {shown(errors.evidence)}
+                </p>
+              )}
+            </div>
 
-            <Field
-              number={6}
-              label="Additional Comments"
-              optional
-              helper="Provide any extra information that might help moderators investigate."
-            >
-              <div className={styles.inputGroup}>
-                <WebTextarea
-                  {...named(6)}
-                  rows={3}
-                  placeholder="Write your comments here..."
-                  value={comments}
-                  onChange={(e) => setComments(e.target.value.slice(0, REPORT_LIMITS.commentsMax))}
-                />
-                <p className={styles.counter}>{`${comments.length} / ${REPORT_LIMITS.commentsMax}`}</p>
-              </div>
-            </Field>
+            <div className={styles.inputGroup}>
+              <WebTextarea
+                label={<ReportLabel number={6} text="Additional Comments" optional />}
+                description="Provide any extra information that might help moderators investigate."
+                rows={3}
+                placeholder="Write your comments here..."
+                value={comments}
+                onChange={(e) => setComments(e.target.value.slice(0, REPORT_LIMITS.commentsMax))}
+              />
+              <p className={styles.counter}>{`${comments.length} / ${REPORT_LIMITS.commentsMax}`}</p>
+            </div>
 
             <div className={styles.field}>
               <CheckboxLabel

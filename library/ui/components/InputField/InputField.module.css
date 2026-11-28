@@ -10,6 +10,12 @@
   .label {
     composes: text626f64792f6d642d7374726f6e67 from '../../foundations/typography/text-styles.module.css';
   }
+  /* A flex box, so a label given as elements lays them out in their own type, without this line's height. */
+  .label:not([data-hidden]) {
+    display: flex;
+    align-items: center;
+    min-width: 0;
+  }
   .description,
   .error {
     composes: text626f64792f736d from '../../foundations/typography/text-styles.module.css';

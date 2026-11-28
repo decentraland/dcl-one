@@ -23,5 +23,12 @@ describe('InputField public contracts', () => {
       expectTypeOf<InputWebCreatorToolsProps>().not.toHaveProperty('surface')
       expectTypeOf<InputWebCreatorToolsProps>().toHaveProperty('labelHidden')
     })
+
+    it('should take text or elements as its label, never a missing one', () => {
+      expectTypeOf<'Email'>().toExtend<InputWebCreatorToolsProps['label']>()
+      expectTypeOf<undefined>().not.toExtend<InputWebCreatorToolsProps['label']>()
+      expectTypeOf<null>().not.toExtend<InputWebCreatorToolsProps['label']>()
+      expectTypeOf<false>().not.toExtend<InputWebCreatorToolsProps['label']>()
+    })
   })
 })

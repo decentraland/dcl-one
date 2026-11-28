@@ -406,3 +406,27 @@ describe('when InputWebCreatorTools has a hidden label, a hint and a consumer-ow
     })
   })
 })
+
+describe('when InputWebCreatorTools receives a label given as elements with a required mark', () => {
+  it('should show the mark, leave it out of the name and keep a single label', () => {
+    render(
+      <InputWebCreatorTools
+        label={
+          <span>
+            Community name <span aria-hidden="true">*</span>
+          </span>
+        }
+        required
+      />
+    )
+    const input = screen.getByRole('textbox', { name: 'Community name' })
+    expect(input).toBeRequired()
+    expect((input as HTMLInputElement).labels).toHaveLength(1)
+    expect(screen.getByText('*')).toBeVisible()
+  })
+
+  it('should still render an empty string label, as before', () => {
+    const { container } = render(<InputWebCreatorTools label="" />)
+    expect(container.querySelectorAll('label')).toHaveLength(1)
+  })
+})

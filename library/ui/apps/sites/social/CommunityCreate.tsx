@@ -1,4 +1,4 @@
-import { useId, useState } from 'react'
+import { useState } from 'react'
 
 import { Button } from '../../../components/Button/Button'
 import { Dropdown } from '../../../components/Dropdown/Dropdown'
@@ -55,8 +55,6 @@ export default function CommunityCreate<R>({
   contentPolicyUrl,
   nameClaimUrl
 }: CommunityCreateProps<R>) {
-  const nameId = useId()
-  const descId = useId()
   const [gated, setGated] = useState(false)
   const [name, setName] = useState(initial?.name ?? '')
   const [desc, setDesc] = useState(initial?.description ?? '')
@@ -206,41 +204,29 @@ export default function CommunityCreate<R>({
           </div>
         </div>
 
-        <div className={styles.group}>
-          <label className={styles.label} htmlFor={nameId} id={`${nameId}-label`}>
-            Community name{' '}
-            <span className={styles.required} aria-hidden="true">
-              *
+        <InputWebCreatorTools
+          label={
+            <span className={styles.label}>
+              Community name{' '}
+              <span className={styles.required} aria-hidden="true">
+                *
+              </span>
             </span>
-          </label>
-          <InputWebCreatorTools
-            id={nameId}
-            label="Community name"
-            labelHidden
-            aria-labelledby={`${nameId}-label`}
-            maxLength={30}
-            placeholder="Write here"
-            required
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-          />
-        </div>
+          }
+          maxLength={30}
+          placeholder="Write here"
+          required
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+        />
 
-        <div className={styles.group}>
-          <label className={styles.label} htmlFor={descId} id={`${descId}-label`}>
-            Description
-          </label>
-          <InputWebCreatorTools
-            id={descId}
-            label="Description"
-            labelHidden
-            aria-labelledby={`${descId}-label`}
-            maxLength={240}
-            placeholder="What's your community about?"
-            value={desc}
-            onChange={(e) => setDesc(e.target.value)}
-          />
-        </div>
+        <InputWebCreatorTools
+          label={<span className={styles.label}>Description</span>}
+          maxLength={240}
+          placeholder="What's your community about?"
+          value={desc}
+          onChange={(e) => setDesc(e.target.value)}
+        />
 
         <div className={styles.group}>
           <div className={styles.label} aria-hidden="true">

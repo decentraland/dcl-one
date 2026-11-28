@@ -44,11 +44,14 @@ describe('CommunityCreate', () => {
       expect(name).toHaveProperty('maxLength', 30)
       expect(description).not.toBeRequired()
       expect(description).toHaveProperty('maxLength', 240)
+      expect((name as HTMLInputElement).labels).toHaveLength(1)
+      expect((description as HTMLInputElement).labels).toHaveLength(1)
+      expect(name).not.toHaveAttribute('aria-labelledby')
     })
 
     it('should focus a field when its visible label is clicked', async () => {
       setup()
-      await userEvent.click(screen.getByText('Description', { selector: 'label[id]' }))
+      await userEvent.click(screen.getByText('Description', { selector: 'label > span' }))
       expect(screen.getByRole('textbox', { name: 'Description' })).toHaveFocus()
     })
   })

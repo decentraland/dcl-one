@@ -1,5 +1,5 @@
 import { createRoot } from 'react-dom/client'
-import { WebSelect } from '@dcl/one-ui'
+import { InputWebCreatorTools, WebSelect, WebTextarea } from '@dcl/one-ui'
 import '../../foundations/foundations.css'
 
 function Fixture() {
@@ -38,6 +38,20 @@ function Fixture() {
         <WebSelect aria-label="Reason" data-case="wide" defaultValue="spam">
           <option value="spam">Spam</option>
         </WebSelect>
+      </div>
+      {/* A labelled select and textarea beside the text field whose label they repeat. */}
+      <div style={{ width: 320, display: 'grid', gap: 24 }}>
+        <InputWebCreatorTools label="Name" data-case="labelled-input" />
+        <WebSelect label="Reason" data-case="labelled-select" defaultValue="spam">
+          <option value="spam">Spam</option>
+        </WebSelect>
+        <WebTextarea label="Details" data-case="labelled-textarea" rows={3} />
+        {/* A label given as an element keeps that element's own line height. */}
+        <WebTextarea
+          label={<span style={{ fontSize: 12, lineHeight: 'normal' }}>Small</span>}
+          data-case="node-label"
+          rows={2}
+        />
       </div>
     </main>
   )

@@ -69,9 +69,11 @@
   gap: var(--dcl-space-12);
 }
 
+/* The page's text colour, which the shared field's label would otherwise replace with its own. */
 .label {
   margin: 0;
   display: flex;
+  color: var(--report-text);
   align-items: center;
   gap: var(--dcl-space-8);
   font-size: var(--dcl-font-size-heading-2);
@@ -95,19 +97,24 @@
   flex-shrink: 0;
 }
 
+/* Evidence has no shared field around its file control, so it repeats the shared field's spacing and description
+   type to sit like the fields above it. */
+.evidence {
+  display: flex;
+  flex-direction: column;
+  gap: var(--dcl-space-8);
+}
+
+.evidenceHelp {
+  margin: 0;
+  color: var(--dcl-text-primary);
+}
+
 .required {
   color: var(--dcl-feedback-error);
 }
 
 .optional {
-  color: var(--dcl-text-secondary);
-}
-
-.helper {
-  margin: 0;
-  font-size: var(--dcl-font-size-body-sm);
-  line-height: 1.43;
-  letter-spacing: 0.01071em;
   color: var(--dcl-text-secondary);
 }
 

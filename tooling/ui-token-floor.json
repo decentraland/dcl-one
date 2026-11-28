@@ -435,10 +435,6 @@
     "primitives": 2,
     "tokens": 0
   },
-  "apps/sites/src/features/social/submit-hangout/FormField.module.css": {
-    "primitives": 0,
-    "tokens": 2
-  },
   "apps/sites/src/features/social/submit-hangout/SubmitHangout.module.css": {
     "primitives": 0,
     "tokens": 43

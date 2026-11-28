@@ -260,6 +260,32 @@ describe("when a signed-in visitor submits an incomplete report", () => {
     expect(screen.getByRole("textbox", { name: "Reported User Wallet", description: /Please enter a valid wallet address/ })).toBe(target);
   });
 
+  it("should name each field by its label text alone and describe it with its helper and error", async () => {
+    await user.click(screen.getByRole("button", { name: "Submit Report" }));
+    const reason = screen.getByRole("combobox", {
+      name: "Reason for Report",
+      description: "Select the option that best describes the issue. Please choose a reason",
+    });
+    expect(reason.getAttribute("aria-invalid")).toBe("true");
+    expect(reason.getAttribute("aria-required")).toBe("true");
+    const description = screen.getByRole("textbox", {
+      name: "Description",
+      description: /^The more detail you provide.*Describe what happened\..*Please include a description/,
+    });
+    expect(description.getAttribute("aria-invalid")).toBe("true");
+    const comments = screen.getByRole("textbox", { name: "Additional Comments", description: "Provide any extra information that might help moderators investigate." });
+    expect(comments.hasAttribute("aria-invalid")).toBe(false);
+    expect(screen.getByRole("textbox", { name: "Your Wallet Address", description: /Reports are tied to your wallet/ })).toBeTruthy();
+  });
+
+  it("should clear a field's error once its value is valid", async () => {
+    await user.click(screen.getByRole("button", { name: "Submit Report" }));
+    await user.selectOptions(screen.getByRole("combobox", { name: "Reason for Report" }), "harassment");
+    const reason = screen.getByRole("combobox", { name: "Reason for Report", description: "Select the option that best describes the issue." });
+    expect(reason.hasAttribute("aria-invalid")).toBe(false);
+    expect(screen.queryByText("Please choose a reason")).toBeNull();
+  });
+
   it("should focus Add File and describe the missing evidence after earlier fields are completed", async () => {
     await user.type(screen.getByRole("textbox", { name: "Reported User Wallet" }), "0x2222222222222222222222222222222222222222");
     await user.selectOptions(screen.getByRole("combobox", { name: "Reason for Report" }), "harassment");

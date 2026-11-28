@@ -93,3 +93,52 @@ describe('when a WebSelect shows its selected option beside the native arrow', (
     }
   )
 })
+
+type LabelBox = { label: Frame; frame: Frame; font: string; color: string; inner: Frame | null }
+
+function labelled(name: string) {
+  return b.evaluate<LabelBox>(
+    `(() => {
+      const control = document.querySelector('[data-case="${name}"]')
+      const box = (e) => { const r = e.getBoundingClientRect(); return { x: r.x, y: r.y, width: r.width, height: r.height } }
+      const label = control.labels[0]
+      const style = getComputedStyle(label)
+      return {
+        label: box(label),
+        frame: box(control.parentElement),
+        font: style.fontSize + '/' + style.lineHeight + ' ' + style.fontWeight,
+        color: style.color,
+        inner: label.firstElementChild ? box(label.firstElementChild) : null
+      }
+    })()`
+  )
+}
+
+describe('when a WebSelect or WebTextarea shows a visible label', () => {
+  afterEach(async () => {
+    await b.session.send('Emulation.clearDeviceMetricsOverride')
+  })
+
+  it.each(['labelled-select', 'labelled-textarea'])(
+    'should draw the %s label as InputWebCreatorTools draws its own, 8px above the frame',
+    async (name) => {
+      await ready()
+      const input = await labelled('labelled-input')
+      const field = await labelled(name)
+      expect(field.font).toBe(input.font)
+      expect(field.color).toBe(input.color)
+      expect(field.label.height).toBe(input.label.height)
+      expect(field.label.width).toBe(input.label.width)
+      expect(field.frame.y - (field.label.y + field.label.height)).toBe(8)
+      expect(input.frame.y - (input.label.y + input.label.height)).toBe(8)
+    }
+  )
+
+  it('should size a label given as an element by that element, not by the label line', async () => {
+    await ready()
+    const field = await labelled('node-label')
+    expect(field.inner).not.toBeNull()
+    expect(field.label.height).toBe(field.inner!.height)
+    expect(field.label.height).toBeLessThan(18)
+  })
+})
