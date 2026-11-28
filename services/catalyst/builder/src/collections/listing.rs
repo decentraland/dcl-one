@@ -29,8 +29,10 @@
 //! ```
 //!
 //! Bounds: a response holds at most [`COMMITTEE_CAP`] rows (the committee's
-//! listing and the public search) or [`ADDRESS_CAP`] rows (an address's own
-//! listing), with or without pagination; `q` is at most [`Q_MAX`]
+//! listing, the public search and a page of addresses) or [`ADDRESS_CAP`]
+//! rows (an address's own listing), with or without pagination, except the
+//! addresses without pages, every published standard collection's; `q` is
+//! at most [`Q_MAX`]
 //! characters, matched literally; at most 20 assignees and 5 tags of at most
 //! 64 characters.
 
@@ -171,6 +173,11 @@ impl ListQuery {
                     .with_data(json!({ key: values })))
             }
         }
+    }
+
+    /// The query without any `key` parameter.
+    pub(crate) fn without(&self, key: &str) -> Self {
+        Self(self.0.iter().filter(|(k, _)| k != key).cloned().collect())
     }
 
     /// builder-server's public search: a non-empty `q` and `is_published`
@@ -656,6 +663,12 @@ pub struct PublicSearch {
     listing: Listing,
 }
 
+/// `GET /v1/addresses`: the contract addresses of published standard
+/// collections, by the public search's filters.
+pub struct PublishedAddresses {
+    listing: Listing,
+}
+
 /// An address's own listing: the signer's collections and the collections
 /// of the providers it manages, full rows.
 pub struct OwnListing {
@@ -680,6 +693,23 @@ impl PublicSearch {
         }
         let listing = Listing::everyone(q)?;
         Ok(listing.published_only.then_some(Self { listing }))
+    }
+}
+
+impl PublishedAddresses {
+    /// The listing `q` asks for: its `type` ignored, standard collections
+    /// only, published ones only; without pages, every one of them, as
+    /// builder-server answers.
+    pub fn new(q: &ListQuery) -> Result<Self, ApiError> {
+        let mut listing = Listing::everyone(&q.without("type"))?;
+        listing
+            .filters
+            .push(Filter::Fragment("c.third_party_id IS NULL"));
+        listing.published_only = true;
+        if listing.page.page.is_none() {
+            listing.page.limit = i64::MAX;
+        }
+        Ok(Self { listing })
     }
 }
 
@@ -866,6 +896,19 @@ impl ItemsComponent {
             .map(|r| project(r, Some(PUBLIC_LISTING)))
             .collect::<Result<_, _>>()?;
         Self::envelope(&search.listing, results, total, None)
+    }
+
+    /// `GET /v1/addresses`: the listed collections' contract addresses.
+    pub async fn published_addresses(
+        &self,
+        request: &PublishedAddresses,
+    ) -> Result<Value, ApiError> {
+        let (rows, total, _) = self.list(&request.listing, true).await?;
+        let results: Vec<Option<String>> = rows
+            .into_iter()
+            .map(|r| r.collection.contract_address().map(str::to_string))
+            .collect();
+        Self::envelope(&request.listing, results, total, None)
     }
 
     /// `GET /v1/{address}/collections`: the full rows, and the status counts

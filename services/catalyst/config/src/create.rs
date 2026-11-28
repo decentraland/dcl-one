@@ -10,11 +10,28 @@ pub struct CreateConfig {
     #[arg(long, env = "CREATE_WRITES_ENABLED", default_value_t = false, action = clap::ArgAction::Set)]
     pub create_writes_enabled: bool,
 
-    /// Polygon JSON-RPC (https to a public host) the builder asks whether a
-    /// collection's address holds its contract; unset, a save that moves a
-    /// collection off its stored address answers 503.
+    /// Polygon JSON-RPC (https to a public host) that verifies publication
+    /// receipts, reads the rarities' MANA prices and tells whether a
+    /// collection's stored address holds its contract; unset, publication
+    /// begin/claim/verify, the rarities routes and every write that needs
+    /// to know answer 503.
     #[arg(long, env = "BUILDER_POLYGON_RPC_URL", hide_env_values = true)]
     pub builder_polygon_rpc_url: Option<String>,
+
+    /// The newsletter service's API base (public http(s)) a subscription is
+    /// forwarded to; the forward needs all three newsletter settings, and
+    /// without them a subscription is answered and goes nowhere. The node
+    /// stores none.
+    #[arg(long, env = "NEWSLETTER_SERVICE_URL")]
+    pub newsletter_service_url: Option<String>,
+
+    /// The newsletter publication a subscription joins.
+    #[arg(long, env = "NEWSLETTER_PUBLICATION_ID")]
+    pub newsletter_publication_id: Option<String>,
+
+    /// The newsletter service's bearer key.
+    #[arg(long, env = "NEWSLETTER_SERVICE_API_KEY", hide_env_values = true)]
+    pub newsletter_service_api_key: Option<String>,
 
     /// The origins that may read the builder routes' answers: `;`-separated,
     /// `regex:` entries matched as patterns, `*` any origin, others exactly;
@@ -26,6 +43,22 @@ pub struct CreateConfig {
     /// or `*`, every method the routes answer.
     #[arg(long, env = "CORS_METHOD")]
     pub cors_method: Option<String>,
+
+    /// The bytes every wallet's builder uploads together may hold while no
+    /// published item names them; past it uploads answer 507. Unset, 1 TB.
+    #[arg(long, env = "BUILDER_UNPUBLISHED_MAX_BYTES")]
+    pub builder_unpublished_max_bytes: Option<u64>,
+
+    /// The files every wallet's builder uploads together may hold while no
+    /// published item names them; past it uploads answer 507. Unset, 10
+    /// million.
+    #[arg(long, env = "BUILDER_UNPUBLISHED_MAX_FILES")]
+    pub builder_unpublished_max_files: Option<u64>,
+
+    /// The item videos the builder reads at once, each spooled to disk up to
+    /// 250 MB; 1 to 256. Unset, 32.
+    #[arg(long, env = "BUILDER_VIDEO_UPLOADS_MAX")]
+    pub builder_video_uploads_max: Option<usize>,
 
     /// Bearer of the moderator routes; unset refuses them.
     #[arg(
@@ -83,6 +116,11 @@ mod tests {
         let c = cli;
         assert!(!c.create.create_writes_enabled, "creator writes are opt-in");
         assert!(c.create.builder_polygon_rpc_url.is_none());
+        assert!(
+            c.create.newsletter_service_url.is_none()
+                && c.create.newsletter_publication_id.is_none()
+                && c.create.newsletter_service_api_key.is_none()
+        );
         assert!(
             c.create.catalyrst_camera_reel_admin_token.is_none()
                 && c.create.camera_reel_bucket_url.is_none()

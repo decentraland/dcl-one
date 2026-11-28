@@ -100,6 +100,15 @@ pub fn result_of(mut envelope: Value) -> Result<Value, RpcError> {
         .unwrap_or(Value::Null))
 }
 
+/// [`result_of`] that tells an explicit `"result": null` (`Some(Null)`)
+/// from an envelope carrying neither `result` nor `error` (`None`), for
+/// callers that read a `null` as evidence.
+pub fn explicit_result_of(envelope: Value) -> Result<Option<Value>, RpcError> {
+    let answered = envelope.get("result").is_some();
+    let result = result_of(envelope)?;
+    Ok(answered.then_some(result))
+}
+
 /// A `0x` hex string result (quantities and data).
 pub fn hex_of(result: Value) -> Result<String, RpcError> {
     match result {

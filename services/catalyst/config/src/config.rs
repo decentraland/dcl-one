@@ -282,7 +282,7 @@ impl Config {
         Ok(())
     }
 
-    pub(crate) fn secret_slots(&mut self) -> [(&'static str, &mut Option<String>); 88] {
+    pub(crate) fn secret_slots(&mut self) -> [(&'static str, &mut Option<String>); 89] {
         [
             ("SEGMENT_SIGNING_KEY", &mut self.social.segment_signing_key),
             ("ETH_RPC_URL", &mut self.content.eth_rpc_url),
@@ -384,6 +384,10 @@ impl Config {
             (
                 "EVENTS_FEATURE_FLAGS_USER_ID",
                 &mut self.explore.events_feature_flags_user_id,
+            ),
+            (
+                "NEWSLETTER_SERVICE_API_KEY",
+                &mut self.create.newsletter_service_api_key,
             ),
             (
                 "BUILDER_POLYGON_RPC_URL",
@@ -854,6 +858,7 @@ mod tests {
         "REWARDS_API_KEY_BY_REFERRAL_INVITED_USERS_60",
         "REWARDS_API_KEY_BY_REFERRAL_INVITED_USERS_75",
         "TURNSTILE_SECRET_KEY",
+        "NEWSLETTER_SERVICE_API_KEY",
         "BUILDER_POLYGON_RPC_URL",
         "ENCRYPTION_KEY",
         "SCENE_HOST_AUTHORITATIVE_KEY",
@@ -1333,7 +1338,10 @@ mod tests {
             !help.contains("[env: LIVEKIT_API_SECRET="),
             "secret env values must be hidden"
         );
-        assert!(!help.contains("[env: BUILDER_POLYGON_RPC_URL="));
+        assert!(
+            !help.contains("[env: BUILDER_POLYGON_RPC_URL=")
+                && !help.contains("[env: NEWSLETTER_SERVICE_API_KEY=")
+        );
         assert!(
             !help.contains("[env: ENCRYPTION_KEY=")
                 && !help.contains("[env: SCENE_HOST_AUTHORITATIVE_KEY=")

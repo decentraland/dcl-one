@@ -161,17 +161,17 @@ lists before taking the lock and, under it, only the rows written since; a
 lock still busy after 30 s ends the run, and uploads that wrote no file go
 without it. An upload a newer deployment overtook is released the same way
 within its request, which takes the lock only if it is free and otherwise
-marks the upload expired for the cleanup's next run. Builder's item file and
-project blob uploads also take the shared side (waiting at most 5 s, then
-503) before checking whether a blob is stored and hold it until the `builder.uploaded_contents` row (and, for an
-item file, the `builder.item_contents` row) naming it commits. The other
-writers that commit a row naming a blob do the same through
-`gc::store_for_row` (the shared side, at most 5 s, then the blob stored
-unless present, in the row's transaction): the asset-pack catalogue build
-(which re-checks every walked file and stores a removed one again), the
-camera-reel import, community thumbnails and contents, MLS blobs, cached
-profile images, worlds settings thumbnails, event posters and outfit
-thumbnails. A worlds mirror pass re-checks the blobs its rows name under
+marks the upload expired for the cleanup's next run. Builder's item file
+uploads store their blobs in the item-files tree first, as a content deploy
+does, then take the shared side, at most 5 s and then 503, re-check every
+blob (503 when the collector removed one) and hold it until the
+`builder.uploaded_contents` rows naming them commit. Video uploads take the
+shared side the same way before checking whether the blob is stored and hold
+it until its row commits. The other writers that commit a row naming a blob do
+the same through `gc::store_for_row` (the shared side, at most 5 s, then the
+blob stored unless present, in the row's transaction): the camera-reel
+import, community thumbnails and contents, MLS blobs, cached profile images,
+worlds settings thumbnails, event posters and outfit thumbnails. A worlds mirror pass re-checks the blobs its rows name under
 the shared side and fails when one is gone, for the next pass to fetch
 again. Camera-reel uploads and player report evidence commit their row
 before storing the blob, so an unlink batch's reference read keeps it.
@@ -1525,8 +1525,9 @@ Invariants:
 - One transaction per write. A save, a delete and an upload lock the item's
   collections and the item (`FOR UPDATE`, collections first, as the
   publications do) and decide again inside the transaction. A video upload
-  holds no connection while its body streams to a spool file; its
-  transaction starts once the body has arrived. A third-party
+  holds no connection while its body streams to a spool file; once the
+  body has arrived it stores the file, and its transaction, which only
+  checks that the file is still stored, starts after. A third-party
   save also takes an advisory lock on its URN's item part, so two saves never
   take the same item part in the provider's collections.
 - Upload records follow the names. When a save or a delete leaves a hash no
@@ -1539,6 +1540,14 @@ Invariants:
   collector keeps a blob while `builder.uploaded_contents.hash` names it; a
   name in `builder.item_contents.hash` keeps nothing, so once the last record
   goes the collector may take the bytes.
+- A publication takes only uploaded files. The publication snapshot
+  (`SNAPSHOT_QUERY` in `services/catalyst/builder/src/publication.rs`) marks
+  an item `missing_content` when it names a hash with no upload record by the
+  wallet that wrote that name (`item_contents.named_by`), and both the
+  standard publication and the third-party publish refuse such an item
+  before they write (tests
+  `a_standard_publication_takes_only_files_each_names_writer_uploaded` and
+  `every_refusal_answers_before_anything_is_written`).
 
 Upgrade: step `0084_builder_item_contents_order` adds `item_contents.position`
 and drops the key from `item_contents.hash` to `uploaded_contents`. A step
@@ -1617,6 +1626,267 @@ made upstream after that are not carried over.
 The retype holds an exclusive lock on `builder.items` and
 `builder.uploaded_contents` while it rewrites them, about ten seconds at the
 reference data's size without secondary indexes and longer with them.
+
+## Builder item files workload
+
+The builder serves item files from the blob store's item-files tree
+(`<STORAGE_ROOT_FOLDER>/item-files`) at `GET` and `HEAD
+/v1/storage/contents/{hash}` and answers `GET .../exists`
+(`services/catalyst/builder/src/handlers/storage.rs`). One statement,
+`FILE_READ` in `services/catalyst/builder/src/access.rs`, decides each
+request before any byte is read.
+
+Each `builder.item_contents` row keeps `named_by`, the wallet whose save wrote
+that name (`items/save.rs`: a re-sent file and hash, or a hash the item
+already named under another file name, keeps its writer; a hash the item
+didn't name takes the saving signer; the import writes the item's owner). An
+item's `video` is a name too, with its writer in `builder.items.video_named_by`
+(kept while the video is, else the writer of the item's own entry for that
+hash, else the saving signer; the import writes the owner). A name counts only
+while `builder.uploaded_contents` holds `(hash, named_by)`, or
+`(video, video_named_by)` for a video.
+
+It reads, never writes:
+
+- `builder.uploaded_contents` by `hash`: the wallets that sent the bytes, in
+  upload order for the public answer, and `(hash, signer)` for a signed one.
+- `builder.item_contents` by `(hash, named_by)` and `builder.items` by
+  `(video, video_named_by)` (`items_video_idx`) for each of those wallets,
+  then `builder.items` and `builder.collections` by primary key: whether a
+  name that counts sits in a published item (a third-party item with an item
+  curation, `item_curations_item_created_key`), or, for an entry, in an item the signer owns or whose
+  third-party collection it manages.
+- The chain copy row of each standard collection (`shop.collections` by
+  network and contract, any age) and the node's own publication records, for
+  whether the collection is published.
+
+Workload, at the reference size (51,744 collections, 116,181 items, 417,340
+content rows, 302,093 upload records, 5,575 chain rows; scratch copy, custom
+and generic plans):
+
+| Request | Measured |
+| --- | --- |
+| an unsigned read of a published item's file (the hot path) | 0.25 to 0.3 ms |
+| the same, with a wallet that holds the bytes naming them in 100,000 drafts | 0.22 to 0.26 ms |
+| a signed read of that file, by a stranger or by that wallet | about 0.3 ms |
+| a draft's file named in 100,000 drafts of a wallet without the bytes, unsigned or signed | 0.1 to 0.4 ms |
+| an unsigned read of the hash most items name (2,421) | 2.4 to 2.6 ms |
+| a stranger's signed read of that hash | 2.5 to 13 ms |
+| the largest owner's (12,669 items) signed read of that hash | 9.9 to 13.3 ms |
+| an absent hash | under 0.2 ms |
+| worst case: a hash no published item names, its bytes held by a wallet that names it in 100,000 of its own drafts | about 100 ms |
+
+Every probe is index-served (`uploaded_contents_pkey`,
+`item_contents_hash_named_by_idx`, primary keys,
+`items_minted_collection_idx`). A request's cost grows only with the names
+written by wallets that hold the hash's bytes: names written without the
+bytes are never visited, the public answer stops at the earliest uploader's
+published name, and a signed request runs its own branches only when the
+public answer is no. So a published file's reads, signed or not, stay bounded
+however many drafts name it. The worst case needs a hash no published name
+reaches first, and a wallet that uploaded its bytes itself and names it in
+many drafts: for a private file that wallet already holds the bytes, and the
+cost grows linearly with its own names (about 100 ms at 100,000). Per-signer
+limits on saves bound it.
+
+Invariants:
+
+- The answer depends on the hash and the verified signer only. A hash that
+  isn't a canonical CID never reaches SQL or the store.
+- A stale copy never grants. The copy never deletes a collection row, so a
+  row of any age proves a collection on chain; the decision takes no
+  `DecisionView` and no committee read, and a stale copy only leaves a
+  collection the node holds no record of unpublished a while longer.
+- An upload record is the only proof a wallet holds a file, and a name in an
+  item opens a file only when its writer holds one. On-chain roles never
+  stand in for the writer.
+- A save or a delete that leaves no item naming a hash removes its upload
+  records in the same transaction, so the file is refused at once. A record
+  that no item names (an imported record whose item is gone, a blob of a
+  retired scene project) stays readable by its uploader alone and keeps its
+  blob from the collector.
+
+Upgrade: step `0086_builder_item_video_named_by` adds `video_named_by`
+(nullable, a check that refuses an empty or uppercase writer) and fills each
+video from the writer of the item's own entry for that hash, one holding an
+upload record first; a video no entry of its item names keeps no writer, so it
+opens nothing until a save writes it again. `schema migrate` builds
+`items_video_idx` from `schemas/50_create.sql`.
+
+Upgrade: step `0085_builder_item_contents_named_by` adds `named_by` (`NOT
+NULL DEFAULT ''`, a check that refuses an empty or uppercase writer) and fills
+it in place. Each existing name goes to the first wallet that could have
+written it and holds the bytes, else to the item's owner: in order, the
+item's owner, the stored owner of a third-party collection, a standard
+collection's chain creator (else its stored owner), a chain manager, each
+only when it holds an upload record for the name's hash. The index
+`item_contents_hash_named_by_idx` is created by `schema migrate` from
+`schemas/50_create.sql`.
+
+### Storage held per wallet and per node
+
+A wallet's uploads may hold a bound of bytes and files that no published
+item names, and every wallet's together `BUILDER_UNPUBLISHED_MAX_BYTES` and
+`BUILDER_UNPUBLISHED_MAX_FILES` (`builder::limits::within_storage`; the
+values are in `services/catalyst/docs/builder.md`, "Bounds"). `POST
+/v1/items/{id}/files` and `POST /v1/items/{id}/videos` ask once each, after
+the access decision and the upload's place and before the body is read; the
+body's declared length, else the route's largest body, counts as stored.
+
+Each upload reads two things:
+
+- The wallet's whole total and count, from
+  `uploaded_contents_uploaded_by_idx (uploaded_by) INCLUDE (size)` alone (an
+  index-only scan): 0.1 ms for a wallet of 72 records, 2.7 ms for one of
+  36,000. Most uploads stop here for the wallet.
+- The node's last count of unpublished uploads, kept in process memory for a
+  minute, plus what this process stored since that count ran.
+
+The count runs one at a time per process, in a task of its own once the kept
+count is a minute old. A request waits for a count only when none is kept
+yet (the process's first upload) or when its wallet's whole total passes the
+wallet's bound and no count younger than a minute lists the wallet; no other
+request scans the table. The count has two stages:
+
+1. One aggregate over `builder.uploaded_contents`, grouped by uploader
+   (`GROUPING SETS ((uploaded_by), ())`): the total of every record, and the
+   totals of each wallet whose records come within one largest upload of its
+   bound (a video's body in bytes, an upload's parts in files). A scan of the
+   table.
+2. Only when a wallet is listed or every record together reaches half the
+   node's bound: the records that no published item names, per listed wallet
+   and for the node, as one anti-join of the records against the set of
+   hashes a published item names in a name whose writer holds an upload
+   record (`PUBLIC_HASHES` in `builder/src/access.rs`, the item files rule's
+   public answer as a set, materialized once), under a 50-second statement
+   timeout with JIT off. A count that can't finish in time logs a warning and
+   counts every record, which bounds the unpublished ones from above.
+
+Between counts, a listed wallet's count moves by how much its whole total
+changed since, and the node's by what this process stored, so a publication
+frees a wallet's uploads within a minute.
+
+Measured on PostgreSQL 18 with a release build over a synthetic table: both
+stages at 1,000,000 upload records and 1,000,000 item names took 2.8 to 3.1 s
+with 100 wallets holding each hash and 3.3 s with one holder each. The cost
+is linear in the records and the names and independent of how many wallets
+share a hash; near 10,000,000 records it approaches the statement timeout.
+
+Invariants:
+
+- A published item's files never count, so publishing frees a wallet's
+  bound; deleting an item frees it once no item names the hash (the delete
+  removes the upload records in its transaction).
+- Uploads in flight at once can each pass the check: a wallet's video and
+  four file uploads in flight can overshoot its bound by their sizes, and
+  the node's bound counts another process's uploads only from the next
+  count, at most a minute later.
+- One process runs one count at a time. Once a count is kept, a request
+  whose wallet's whole total is within its bound, or whose wallet a count
+  younger than a minute lists, never waits for one.
+
+`schema migrate` builds the index from `schemas/50_create.sql`.
+
+### Drafts held per wallet
+
+A wallet's drafts are bounded too (`builder::items::save` `within_documents`
+and `builder::collections::save` `within_collections`; the values are in
+`services/catalyst/docs/builder.md`, "Bounds"): the items it holds that no
+publication names, its unpublished collections, and the stored bytes of
+those items' documents. The busiest wallet in the reference data holds
+12,669 items and 1,542 collections.
+
+Every item save, and every save that creates a collection, first takes a
+transaction-scoped advisory lock keyed by its owner (`builder drafts of
+<owner>`), so the saves of one wallet sent at once count one after another.
+Then, in the save's transaction:
+
+- An item save counts every item the owner holds by `eth_address`
+  (`items_owner_updated_idx`), and only when that many items at the largest
+  item body could pass the byte bound, sums their stored documents
+  (`pg_column_size` of `data`, `metrics` and `mappings`).
+- A save that creates a collection counts every collection the owner holds
+  by `eth_address` (`collections_owner_idx`).
+- Only past a bound does it count the unpublished ones: the items of a
+  standard collection that neither the chain copy nor the node's
+  publication records show published, the items with no collection, the
+  third-party items without an item curation, and the collections not
+  published. The save is refused (413) only when those pass the bound.
+
+Invariants:
+
+- A published item or collection never counts, so publishing frees a
+  wallet's bound.
+- Only a new item counts toward the item bound: a wallet at its bound still
+  saves the items it holds, within the byte bound.
+- Two saves of one wallet never both pass a bound by counting before the
+  other writes.
+
+## Builder newsletter workload
+
+`POST /v1/newsletter` forwards each accepted subscription to the
+newsletter service and stores nothing: no statement reads or writes
+`builder.newsletter_subscriptions`, which stays in the schema. Its budgets,
+in process memory, bound the forwards: 10 an hour per source address, 3 a
+day per email, 1,000 an hour per node.
+
+## Builder small reads workload
+
+The builder answers four unsigned reads from its own rows and the chain copy
+(`services/catalyst/builder/src/handlers/small_reads.rs`). The Shop's item
+page (`apps/ui3/src/shop/detail/builder.ts`) calls the item contents read
+for a smart wearable's video on each view. No client in this repository
+calls the addresses read: the Shop reads a campaign's collections from its
+own `GET /shop-api/v1/campaign-collections`, and the addresses read by tag
+serves builder-server's clients. Every builder read spends one token of its
+source address's budget of reads (`limits::SOURCE_READS`, 3,000 a minute);
+an addresses read spends `limits::ADDRESSES_TOKENS` (50) more, since it
+costs 40 to 100 ms of database time at the reference size, and a request
+that varies its query string misses any cache the five-minute
+`Cache-Control` lets in front of it. The rarities and `GET /v1/info` read no
+table.
+
+- `GET /v1/published-collections/{address}/items/{id}/utility` and `GET
+  /v1/items/{address}/{id}/contents`: one item, found by its standard
+  collection's stored contract (`collections_contract_address_key`) and its
+  on-chain id among that collection's minted items
+  (`items_minted_collection_idx`), then read by primary key. A contract that
+  isn't a lowercase address, or an id that isn't decimal digits, reads
+  nothing.
+- The contents read takes the item's entries in order (`item_contents_pkey`)
+  and runs the item files rule's public answer (`access::PUBLIC_FILE`, the
+  predicate `FILE_READ` uses) for each entry in the same statement, and
+  `FILE_READ` for a smart wearable's kept video, so it answers only files an
+  unsigned request may read.
+- `GET /v1/addresses`: the public search's listing over published standard
+  collections only. It resolves the published ids first
+  (`items_minted_collection_idx`), then probes each one's items for the tags
+  (`items_collection_created_idx`). Without pages it answers every
+  published standard collection's contract address; a page holds at most
+  1,000, with the total.
+
+Workload, at the reference size (50,015 collections, 112,955 items, 406,229
+content rows, 293,927 upload records, 52,000 chain rows of which 5,105 are
+published builder collections; `EXPLAIN (ANALYZE, BUFFERS)` of the
+statements the node sends):
+
+| Request | Measured |
+| --- | --- |
+| an item's utility, the contract with the most minted items (70) | under 0.5 ms (1.6 ms cold) |
+| an item's contents, the minted item with the most entries (173) | about 1 ms warm, 10 ms cold |
+| addresses, unfiltered (1,000 rows) | published ids 5 ms, the page 6 to 10 ms |
+| addresses, unfiltered without pages (5,461 published of 50,015) | 53 to 60 ms through the router, 76 ms cold |
+| addresses by the most used tag (187 collections) | 40 to 60 ms |
+| addresses with `q`, five 64-character tags, paginated (the worst the bounds allow) | about 75 ms with its total |
+
+Invariants:
+
+- No statement reachable without a signature reads every collection or every
+  item: the tag probe stays within the published collections' items.
+- An answer names no draft: an item is found only by an on-chain id, which
+  only a published collection's items hold, and the addresses read lists only
+  published collections, never a draft's precomputed contract.
+- Every value from the path or the query reaches SQL as a bound parameter.
 
 ## Notification writer
 
@@ -4276,10 +4546,11 @@ Invariants:
 
 Every builder decision only the committee could grant (`builder::access`:
 the committee's listings, another wallet's collections and items, draft
-reads) reads the current members of the curation committee from the Polygon
-collections subgraph (`MATIC_COLLECTIONS_SUBGRAPH_URL`, else the builder's
-network's on Decentraland's subgraph worker; the accounts it marks
-`isCommitteeMember`), not from a table.
+reads) and `GET /v1/committee` read the current members of the curation
+committee from the Polygon collections subgraph
+(`MATIC_COLLECTIONS_SUBGRAPH_URL`, else the builder's network's on
+Decentraland's subgraph worker; the accounts it marks `isCommitteeMember`),
+not from a table.
 
 Shop's mainnet `committee` index (`MARKETPLACE_COMMITTEE_INDEX_ENABLED`) walks
 the two Committee contracts' `MemberSet` logs from the first one's deployment

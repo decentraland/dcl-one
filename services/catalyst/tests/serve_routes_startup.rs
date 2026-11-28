@@ -70,8 +70,10 @@ async fn serve_joins_every_areas_routes_and_answers() {
         answered.clear();
         for path in [
             "/builder-api/ping",
-            "/builder-api/v1/items",
-            "/v1/items",
+            "/builder-api/v1/info",
+            "/v1/info",
+            "/builder-api/v1/addresses",
+            "/v1/addresses",
             "/shop-api/v1/campaign-collections?tag=x",
         ] {
             if let Ok(response) = client
@@ -82,14 +84,14 @@ async fn serve_joins_every_areas_routes_and_answers() {
                 answered.push((path, response.status().as_u16()));
             }
         }
-        if answered.len() == 4 {
+        if answered.len() == 6 {
             break;
         }
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
     child.kill().await.unwrap();
     let _ = std::fs::remove_dir_all(&root);
-    assert_eq!(answered.len(), 4, "serve never answered: {answered:?}");
+    assert_eq!(answered.len(), 6, "serve never answered: {answered:?}");
     assert!(
         answered.iter().all(|(_, status)| *status != 404),
         "{answered:?}"

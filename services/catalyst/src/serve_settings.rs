@@ -139,7 +139,7 @@ pub(super) fn comms_settings(config: &Config) -> anyhow::Result<comms::gatekeepe
     .context("LIVEKIT_* / COMMS_* configuration")
 }
 
-/// The builder's settings: its own `CREATE_*`, `BUILDER_*` and `CORS_*` settings.
+/// The builder's settings: its own `CREATE_*`, `BUILDER_*`, `NEWSLETTER_*` and `CORS_*` settings.
 pub(super) fn builder_settings(config: &Config) -> anyhow::Result<builder::Settings> {
     builder::Settings::parse(builder::RawSettings {
         eth_network: Some(config.node.eth_network.clone()),
@@ -153,10 +153,16 @@ pub(super) fn builder_settings(config: &Config) -> anyhow::Result<builder::Setti
             .clone(),
         writes_enabled: config.create.create_writes_enabled,
         polygon_rpc_url: config.create.builder_polygon_rpc_url.clone(),
+        newsletter_service_url: config.create.newsletter_service_url.clone(),
+        newsletter_publication_id: config.create.newsletter_publication_id.clone(),
+        newsletter_api_key: config.create.newsletter_service_api_key.clone(),
         cors_origin: config.create.cors_origin.clone(),
         cors_method: config.create.cors_method.clone(),
+        unpublished_max_bytes: config.create.builder_unpublished_max_bytes,
+        unpublished_max_files: config.create.builder_unpublished_max_files,
+        video_uploads_max: config.create.builder_video_uploads_max,
     })
-    .context("BUILDER_* / CORS_* configuration")
+    .context("BUILDER_* / NEWSLETTER_* / CORS_* configuration")
 }
 
 /// The referral settings `social_states` passes on, including the backend

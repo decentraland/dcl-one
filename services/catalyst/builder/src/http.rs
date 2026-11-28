@@ -55,6 +55,9 @@ impl ApiError {
     pub fn unauthorized(error: impl Into<String>) -> Self {
         Self::http(401, error)
     }
+    pub fn forbidden(error: impl Into<String>) -> Self {
+        Self::http(403, error)
+    }
     pub fn not_found(error: impl Into<String>) -> Self {
         Self::http(404, error)
     }
@@ -108,6 +111,14 @@ impl ApiError {
             }
         };
         Self::http(423, error).with_data(json!({ "id": id }))
+    }
+
+    /// `GET /v1/items/:collectionAddress/:itemId/contents` for an item no
+    /// published collection holds: upstream's handler throws without a
+    /// status, so it answers 200 with `ok:false` (its `Item.router.spec.ts`
+    /// asserts it).
+    pub fn item_does_not_exist() -> Self {
+        Self::http(200, "The item doesn't exist.")
     }
 
     pub fn status(&self) -> u16 {
@@ -298,6 +309,17 @@ mod tests {
             (
                 StatusCode::LOCKED,
                 json!({ "ok": false, "data": { "id": "i1" }, "error": "The collection for the item is locked. The item can't be inserted or updated." })
+            )
+        );
+    }
+
+    #[tokio::test]
+    async fn the_missing_item_contents_answer_ok_false_with_200() {
+        assert_eq!(
+            wire(ApiError::item_does_not_exist()).await,
+            (
+                StatusCode::OK,
+                json!({ "ok": false, "data": {}, "error": "The item doesn't exist." })
             )
         );
     }

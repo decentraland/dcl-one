@@ -16,6 +16,13 @@ const WRITES: &[(&str, &str)] = &[
     ("PUT", "/v1/collections/{id}"),
     ("PUT", "/v1/items/{id}"),
     ("DELETE", "/v1/items/{id}"),
+    ("POST", "/v1/items/{id}/files"),
+    ("POST", "/v1/newsletter"),
+    ("POST", "/v1/collections/{id}/publication"),
+    ("PUT", "/v1/collections/{id}/publication"),
+    ("PATCH", "/v1/collections/{id}/publication"),
+    ("DELETE", "/v1/collections/{id}/publication"),
+    ("POST", "/v1/items/{id}/videos"),
 ];
 
 async fn send(app: &Router, method: &str, path: &str) -> (StatusCode, Option<String>, String) {
@@ -72,10 +79,35 @@ async fn with_writes_off_every_write_is_refused_on_both_mounts_and_reads_answer(
 
     let (status, _, body) = send(&app, "GET", "/builder-api/ping").await;
     assert_eq!((status, body.as_str()), (StatusCode::OK, "pong"));
-    let (status, _, _) = send(&app, "GET", "/v1/collections/not-an-id").await;
-    assert_ne!(
-        status,
-        StatusCode::SERVICE_UNAVAILABLE,
-        "a read is not gated"
-    );
+    let (status, _, _) = send(&app, "GET", "/v1/storage/contents/not-a-hash").await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "a read is not gated");
+}
+
+/// The gate answers before routing, so the refusals above would also pass
+/// for a route that is gone: with writes on, each write reaches a handler on
+/// both mounts, neither 404 nor 405.
+#[tokio::test]
+async fn with_writes_on_every_gated_write_is_routed_on_both_mounts() {
+    let state = super::support::state_with_settings(crate::Settings {
+        writes_enabled: true,
+        ..Default::default()
+    })
+    .await;
+    let app = Router::new()
+        .merge(crate::root_router(state.clone()))
+        .nest("/builder-api", crate::router(state));
+    let mut unrouted = Vec::new();
+    for mount in ["", "/builder-api"] {
+        for (method, path) in WRITES {
+            let path = format!("{mount}{}", path.replace("{id}", ID));
+            let (status, _, body) = send(&app, method, &path).await;
+            if matches!(
+                status,
+                StatusCode::NOT_FOUND | StatusCode::METHOD_NOT_ALLOWED
+            ) {
+                unrouted.push(format!("{method} {path}: {status} {body}"));
+            }
+        }
+    }
+    assert!(unrouted.is_empty(), "{}", unrouted.join("\n"));
 }

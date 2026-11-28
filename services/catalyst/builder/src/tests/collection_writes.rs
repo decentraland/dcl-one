@@ -78,7 +78,7 @@ async fn waiting_on_a_lock(pool: &sqlx::PgPool) -> i64 {
     .unwrap()
 }
 
-async fn until_waiting(pool: &sqlx::PgPool, at_least: i64) {
+pub(super) async fn until_waiting(pool: &sqlx::PgPool, at_least: i64) {
     for _ in 0..200 {
         if waiting_on_a_lock(pool).await >= at_least {
             return;

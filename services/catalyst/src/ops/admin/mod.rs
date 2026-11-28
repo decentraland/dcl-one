@@ -16,7 +16,7 @@
 //! `/admin/api/<family>/*` ([`console`]): the old console's proxies into
 //! every other service's admin routes (credits, price, social
 //! moderation, the social RPC, communities, notifications, badges, worlds,
-//! the scene host, the camera reel, builder curation, the EVM relay, the
+//! the scene host, the camera reel, the EVM relay, the
 //! explorer overlays, place/world/event moderation) as calls into the owning
 //! modules in this process, each behind the write switch its domain uses and
 //! audited here; the asset-bundle registry's controls go to the external

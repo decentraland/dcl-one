@@ -88,6 +88,16 @@ impl<'a> Rpc<'a> {
         result_of(self.envelope(method, params).await?)
     }
 
+    /// The `result` of one call, `None` when the envelope carries neither
+    /// `result` nor `error` ([`explicit_result_of`]).
+    pub async fn call_result(
+        &self,
+        method: &str,
+        params: Value,
+    ) -> Result<Option<Value>, RpcError> {
+        explicit_result_of(self.envelope(method, params).await?)
+    }
+
     /// A call whose HTTP status must be successful, even when the body is
     /// a JSON-RPC envelope. Keeps provider status codes such as 401/403.
     pub async fn call_strict_status(&self, method: &str, params: Value) -> Result<Value, RpcError> {
@@ -172,6 +182,23 @@ mod tests {
             "an unknown transaction is a null result, not a failure"
         );
         assert_eq!(result_of(json!({"jsonrpc": "2.0"})).unwrap(), Value::Null);
+        assert_eq!(
+            explicit_result_of(json!({"result": null})).unwrap(),
+            Some(Value::Null)
+        );
+        assert_eq!(
+            explicit_result_of(json!({"result": "0x89"})).unwrap(),
+            Some(json!("0x89"))
+        );
+        assert_eq!(
+            explicit_result_of(json!({"jsonrpc": "2.0"})).unwrap(),
+            None,
+            "an envelope with neither result nor error answers nothing"
+        );
+        assert!(matches!(
+            explicit_result_of(json!({"result": null, "error": {"code": 3}})),
+            Err(RpcError::Response { code: 3, .. })
+        ));
         assert_eq!(hex_of(json!("0x1")).unwrap(), "0x1");
         assert!(matches!(hex_of(json!(7)), Err(RpcError::Malformed(_))));
         assert!(matches!(hex_of(Value::Null), Err(RpcError::Malformed(_))));

@@ -4,8 +4,10 @@
 //! services for it: the marketing CMS (Contentful) for the campaign entry
 //! and its banners, and the Builder for the collections carrying the
 //! campaign's tags (`GET /v1/addresses?tag=`). Neither is a Shop authority
-//! v2 has: the Builder here keeps no collection tags, and a CMS is not
-//! configured on every node. So the Shop owns the campaign as data
+//! v2 has: the Builder here answers `GET /v1/addresses?tag=` from the tags
+//! creators write in their items' `data.tags`, which any creator sets, not
+//! from a selection the operator curates, and a CMS is not configured on
+//! every node. So the Shop owns the campaign as data
 //! (`shop.campaigns`: one row per campaign, its window, its tags and the
 //! banner content; `shop.campaign_collections`: the approved collections a
 //! tag selects), written by the operator behind the market's admin bearer
@@ -15,7 +17,7 @@
 //! | --- | --- |
 //! | `GET /v1/campaigns/active` | the campaign whose window contains now (`data: null` when none: an empty campaign is not a filter) |
 //! | `GET /v1/campaigns/{id}` | one campaign, window or not |
-//! | `GET /v1/campaign-collections?tag=` | the Builder's `{ok, data: [address]}`: the collections of every tag named, deduplicated; also served as the Builder alias `GET /builder-api/v1/addresses` |
+//! | `GET /v1/campaign-collections?tag=` | the Builder's `{ok, data: [address]}`: the collections of every tag named, deduplicated |
 //! | `PUT`/`DELETE /admin/campaigns/{id}` | the operator upserts or removes a campaign |
 //! | `PUT /admin/campaigns/{id}/collections` | the operator sets the collections of the campaign's main tag, each an approved collection of the mirror |
 //!
@@ -394,9 +396,8 @@ pub async fn get_one(State(state): State<SharedState>, Path(id): Path<String>) -
     }
 }
 
-/// `GET /v1/campaign-collections?tag=a&tag=b` and the Builder alias
-/// `GET /builder-api/v1/addresses?tag=`: `{ok, data: [address]}`, an empty
-/// list for a tag nobody set (upstream's Builder answered the same).
+/// `GET /v1/campaign-collections?tag=a&tag=b`: `{ok, data: [address]}`, an
+/// empty list for a tag nobody set (upstream's Builder answered the same).
 pub async fn get_collections_by_tag(
     State(state): State<SharedState>,
     Query(pairs): Query<Vec<(String, String)>>,
@@ -572,15 +573,6 @@ pub fn admin_router() -> Router<SharedState> {
             put(put_campaign).delete(erase(delete_campaign_route)),
         )
         .route("/admin/campaigns/{id}/collections", put(put_collections))
-}
-
-/// `GET /builder-api/v1/addresses?tag=`: the Builder path the upstream
-/// campaign code calls, answered by the Shop's campaign collections
-/// (`main.rs` merges it beside the Builder's nest).
-pub fn builder_alias_router(state: SharedState) -> Router {
-    Router::new()
-        .route("/builder-api/v1/addresses", get(get_collections_by_tag))
-        .with_state(state)
 }
 
 #[cfg(test)]

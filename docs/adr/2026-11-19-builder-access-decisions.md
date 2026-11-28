@@ -29,8 +29,9 @@ source is down.
 - **Grants are values.** A decision returns a value with private fields that
   only `access.rs` builds. The store functions that read or change a
   collection or item take that value, so a route that skips the decision
-  doesn't compile. Only the public search of published collections takes
-  none, by design. A write decides again inside its own transaction, after
+  doesn't compile. Only the public search of published collections, the
+  published collections' contract addresses (`GET /v1/addresses`) and the
+  file reads by hash take none, by design. A write decides again inside its own transaction, after
   it locks its rows.
 - **Deny by default, fail closed.** A decision grants as soon as one role
   answers yes. It refuses only when every source it needs answered no. When
@@ -66,8 +67,9 @@ source is down.
   started up to 5 seconds before it; one read runs at a time and every
   decision waiting when it started shares it. A setting set empty, a
   read that fails, or an answer with an account that is not an address or
-  more than 1,000 members can't tell: that answer lasts 30 seconds, and every
-  decision the committee could change answers 503. The node can't check which chain the subgraph indexes; the
+  more than 1,000 members can't tell: that answer lasts 30 seconds, every
+  decision the committee could change answers 503, and so does
+  `GET /v1/committee`, which answers from the same read. The node can't check which chain the subgraph indexes; the
   deployment points it at the builder's chain.
 - **Third-party managers.** A third-party collection's provider is the
   provider id of its URN. Its managers, in the order
@@ -82,7 +84,8 @@ source is down.
 
   The wallet that created a third-party collection decides nothing; a
   third-party collection has no owner. A provider's managers read and save
-  every collection and item of the provider and delete its items.
+  every collection and item of the provider, delete its items, and read the
+  files those items name in a name whose writer holds the bytes.
 - **Third-party creates.** A save that creates a third-party collection
   under a provider the registry or a virtual third party has is a
   provider manager's. Under a provider neither has, any signer creates it,
