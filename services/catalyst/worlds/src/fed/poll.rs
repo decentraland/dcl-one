@@ -22,6 +22,7 @@
 //! `peerId`, and grant nothing. Claims about **authority** are contained by never
 //! modelling them.
 
+use crate::shared::casts::{index_usize, len_i64, saturating_i64, to_usize};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
@@ -44,7 +45,7 @@ const PAGE_SIZE: i64 = 500;
 /// A peer that ignores `offset` and re-serves page one forever would otherwise spin
 /// until the row cap. Two pages of slack over the cap, then stop.
 fn max_pages(max_worlds: u64) -> usize {
-    (max_worlds as usize).div_ceil(PAGE_SIZE as usize) + 2
+    to_usize(max_worlds).div_ceil(index_usize(PAGE_SIZE)) + 2
 }
 
 /// Why a poll did not happen. Every variant leaves the peer's previously mirrored rows
@@ -237,7 +238,7 @@ impl WorldsMirror {
                     .record_success(
                         peer_id,
                         report.worlds_observed,
-                        report.entries_skipped as i64,
+                        saturating_i64(report.entries_skipped),
                         report.truncated,
                         now,
                     )
@@ -292,7 +293,7 @@ impl WorldsMirror {
         observed_at: NaiveDateTime,
     ) -> Result<PollReport, PollFailure> {
         let peer_id = peer.peer_id();
-        let row_cap = self.cfg.max_worlds_per_peer as usize;
+        let row_cap = to_usize(self.cfg.max_worlds_per_peer);
 
         let mut rows: Vec<RemoteWorld> = Vec::new();
         let mut seen: HashSet<RemoteWorldName> = HashSet::new();
@@ -324,7 +325,7 @@ impl WorldsMirror {
                 }
             }
 
-            if truncated || entries_seen < PAGE_SIZE as usize {
+            if truncated || entries_seen < index_usize(PAGE_SIZE) {
                 break;
             }
             offset += PAGE_SIZE;
@@ -364,7 +365,7 @@ impl WorldsMirror {
         }
 
         Ok(PollReport {
-            worlds_observed: rows.len() as i64,
+            worlds_observed: len_i64(rows.len()),
             entries_skipped: skipped,
             truncated,
             collisions,
@@ -422,7 +423,7 @@ pub(crate) async fn fetch_listing_bytes(
         return Err(PollFailure::NotJson(content_type));
     }
 
-    read_body_capped(resp, max_bytes as usize)
+    read_body_capped(resp, to_usize(max_bytes))
         .await
         .map_err(|e| match e.downcast::<reqwest::Error>() {
             Ok(transport) => PollFailure::Transport(transport.without_url().to_string()),

@@ -8,6 +8,12 @@
 //! fresh world names, wallets and Genesis parcels, so the tests share the
 //! database with the other lib tests.
 
+#![allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_possible_wrap,
+    reason = "test fixtures use small literal values"
+)]
+
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -3052,7 +3058,6 @@ async fn genesis_land_ownership_counts_only_at_the_request_parcel() {
     .await;
     assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body}");
     assert_eq!(body["message"], super::errors::LAND_INDEX_NOT_READY_MSG);
-
 }
 
 /// Nested under `/world-storage`, a signature over the public path verifies

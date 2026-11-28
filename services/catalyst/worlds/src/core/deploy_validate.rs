@@ -22,6 +22,11 @@ pub const MAX_DEPLOY_FILE_BYTES: usize = super::deploy::MAX_UPLOAD_SIZE_BYTES;
 pub(super) const MIN_PARCEL_COORDINATE: i64 = -150;
 pub(super) const MAX_PARCEL_COORDINATE: i64 = 150;
 /// Every in-bounds parcel once; a longer pointer list can never be valid.
+#[allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    reason = "301 * 301 parcels, a small positive constant"
+)]
 pub(super) const MAX_SCENE_POINTERS: usize = ((MAX_PARCEL_COORDINATE - MIN_PARCEL_COORDINATE + 1)
     * (MAX_PARCEL_COORDINATE - MIN_PARCEL_COORDINATE + 1))
     as usize;

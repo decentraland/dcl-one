@@ -24,6 +24,7 @@
 //! storage-serving processes a read may be stale for up to the TTL after
 //! another process's write, as on upstream's replicas.
 
+use crate::shared::casts::len_i64;
 use crate::shared::now_utc;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -64,7 +65,7 @@ pub struct SizeInfo {
 }
 
 pub fn value_size_bytes(serialized: &str) -> i64 {
-    serialized.len() as i64
+    len_i64(serialized.len())
 }
 
 fn prefix_pattern(prefix: Option<&str>) -> Option<String> {

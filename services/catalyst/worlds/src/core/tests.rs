@@ -4,6 +4,11 @@
 //! one another. The name authority is a marketplace subgraph stub on the
 //! loopback (the old tests seeded squid's `ens`/`nft` tables).
 
+#![allow(
+    clippy::cast_possible_wrap,
+    reason = "test fixtures use small literal values"
+)]
+
 use std::sync::Arc;
 
 use axum::Router;

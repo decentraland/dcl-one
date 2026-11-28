@@ -327,7 +327,14 @@ impl Parser<'_> {
         }
         let text: String = self.s[start..self.pos]
             .iter()
-            .map(|&u| char::from(u as u8))
+            .map(|&u| {
+                #[allow(
+                    clippy::cast_possible_truncation,
+                    reason = "the number grammar admits only ASCII"
+                )]
+                let byte = u as u8;
+                char::from(byte)
+            })
             .collect();
         // The JSON number grammar is a subset of Rust's; overflow is infinity.
         Ok(text.parse::<f64>().unwrap_or(f64::NAN))

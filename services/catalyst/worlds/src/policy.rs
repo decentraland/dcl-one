@@ -169,14 +169,15 @@ pub enum PersonalWorldDeny {
 
 impl PersonalWorldsPolicy {
     pub fn new(max_worlds: u64, max_size_bytes: u64, world_size_cap: i64) -> anyhow::Result<Self> {
-        if max_size_bytes == 0 || max_size_bytes > world_size_cap as u64 {
+        if max_size_bytes == 0 || max_size_bytes > world_size_cap.max(0).unsigned_abs() {
             anyhow::bail!(
                 "WORLDS_PERSONAL_WORLD_MAX_SIZE_BYTES must be between 1 and {world_size_cap}, got {max_size_bytes}"
             );
         }
         Ok(Self {
             max_worlds,
-            max_size_bytes: max_size_bytes as i64,
+            // At most the cap, an `i64`.
+            max_size_bytes: crate::shared::casts::saturating_i64(max_size_bytes),
         })
     }
 
@@ -631,7 +632,8 @@ impl Policy {
             size = None;
         }
         Ok(WorldLimits {
-            max_parcels: parcels.map_or(self.max_parcels, |n| n as u32),
+            // A negative stored limit admits no parcel.
+            max_parcels: parcels.map_or(self.max_parcels, |n| u32::try_from(n).unwrap_or(0)),
             max_size_bytes: size.unwrap_or_else(|| self.world_size_cap(world)),
             size_overridden: size.is_some() || world.is_ens_world(),
         })
@@ -1323,7 +1325,7 @@ impl Policy {
             .fetch_one(&mut *conn)
             .await
             .map_err(|e| AuthorityNotEstablished::UndeterminedStoreUnavailable { store: "worlds.world_scenes", reason_for_operators: e.to_string() })?;
-            return match self.personal_worlds.admit(already, hosted.max(0) as u64) {
+            return match self.personal_worlds.admit(already, hosted.max(0).unsigned_abs()) {
                 Ok(()) if owner == *actor => Ok(Deploy::Owner),
                 Ok(()) => Err(AuthorityNotEstablished::RefusedLacksAuthority {
                     detail: format!("The signer {actor} is not authorized to deploy to the world {world}"),

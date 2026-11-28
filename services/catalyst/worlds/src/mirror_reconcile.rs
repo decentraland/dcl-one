@@ -1,5 +1,6 @@
 //! Worlds mirror reconcile.
 use super::*;
+use crate::shared::casts::len_i64;
 
 /// A world with a local publish holds no mirrored scene: the mirror never
 /// refreshes it again, so what it wrote there before is retired and the world
@@ -525,7 +526,7 @@ pub(super) async fn mirror_world(
                 let _permit = permit;
                 let (bytes, fetched) =
                     fetch_blob(&client, &storage, &base, &hash, downloads.as_ref()).await?;
-                Ok::<_, anyhow::Error>((bytes.len() as i64, fetched))
+                Ok::<_, anyhow::Error>((len_i64(bytes.len()), fetched))
             });
         }
         let mut size: i64 = 0;

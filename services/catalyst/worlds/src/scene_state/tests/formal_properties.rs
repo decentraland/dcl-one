@@ -10,6 +10,11 @@
 //! because it was inconvenient; the refutations are now fixed and pinned there,
 //! and this file stays scoped to the fragment the proofs actually cover.
 
+#![allow(
+    clippy::cast_possible_truncation,
+    reason = "test fixtures use small literal values"
+)]
+
 use crate::scene_state::crdt::{ApplyResult, CrdtEngine, CrdtMessage, decode_batch, encode_batch};
 use proptest::prelude::*;
 

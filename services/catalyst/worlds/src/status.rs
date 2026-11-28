@@ -1,3 +1,4 @@
+use crate::shared::casts::{len_i64, saturating_i64};
 use axum::Json;
 use axum::extract::State;
 use chrono::{NaiveDateTime, SecondsFormat, Utc};
@@ -137,7 +138,7 @@ fn comms_status(livekit_client_url: &str, world_counts: &[(String, i64)]) -> Com
     CommsStatus {
         adapter_type: "livekit".to_string(),
         status_url: Some(crate::shared::livekit::status_url(livekit_client_url)),
-        rooms: occupied.len() as i64,
+        rooms: len_i64(occupied.len()),
         users: occupied.iter().sum(),
         timestamp,
     }
@@ -151,7 +152,7 @@ pub async fn get_status(State(state): State<SharedState>) -> AppResult<Json<Stat
     let settings = &state.settings;
     let personal_worlds = (settings.personal_worlds_max > 0).then_some(PersonalWorldsStatus {
         max_worlds: settings.personal_worlds_max,
-        max_size_bytes: settings.personal_world_max_size_bytes as i64,
+        max_size_bytes: saturating_i64(settings.personal_world_max_size_bytes),
     });
     let find = |name: &str| {
         passes

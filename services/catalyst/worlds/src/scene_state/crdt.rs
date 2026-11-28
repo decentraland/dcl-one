@@ -221,6 +221,10 @@ pub fn decode_batch(buf: &[u8]) -> Vec<CrdtMessage> {
     out
 }
 
+#[allow(
+    clippy::cast_possible_truncation,
+    reason = "the wire length is u32; a CRDT message stays far below 4 GiB"
+)]
 pub fn encode_message(msg: &CrdtMessage, out: &mut Vec<u8>) {
     match msg {
         CrdtMessage::Put {
@@ -699,13 +703,19 @@ impl CrdtEngine {
     /// G-Set rule also removes every earlier generation.
     pub fn reclaim_range(&mut self, start: u32, size: u32) -> Vec<CrdtMessage> {
         let end = start.saturating_add(size);
-        let lo = start.min(MAX_ENTITY_NUMBERS as u32);
-        let hi = end.min(MAX_ENTITY_NUMBERS as u32);
+        let numbers = u32::from(u16::MAX) + 1;
+        let lo = start.min(numbers);
+        let hi = end.min(numbers);
         if lo >= hi {
             return Vec::new();
         }
-        let lo_key: CellKey = (lo as u16, 0, 0);
-        let hi_key: CellKey = ((hi - 1) as u16, u16::MAX, u32::MAX);
+        // lo < hi <= 2^16, so both bounds fit.
+        let lo_key: CellKey = (u16::try_from(lo).unwrap_or(u16::MAX), 0, 0);
+        let hi_key: CellKey = (
+            u16::try_from(hi - 1).unwrap_or(u16::MAX),
+            u16::MAX,
+            u32::MAX,
+        );
 
         let mut victims: BTreeMap<u16, u16> = BTreeMap::new();
         for (&(number, generation, _), _) in self.lww.range(lo_key..=hi_key) {
@@ -729,6 +739,10 @@ impl CrdtEngine {
 
 #[allow(clippy::indexing_slicing, clippy::expect_used, reason = "test support")]
 #[cfg(test)]
+#[allow(
+    clippy::cast_possible_truncation,
+    reason = "test fixtures use small literal values"
+)]
 mod tests {
     use super::*;
 

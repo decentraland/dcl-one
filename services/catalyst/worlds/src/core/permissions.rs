@@ -5,6 +5,7 @@
 //! unanswerable authority is a 503, never a silent refusal); the grant
 //! writes are `store::*` over the PK-keyed tables.
 
+use crate::shared::casts::len_i64;
 use std::collections::BTreeMap;
 
 use axum::Json;
@@ -397,14 +398,14 @@ fn access_from_metadata(meta: &Value, caps: AccessCaps) -> Result<AccessSetting,
             let wallets = metadata_strings(meta, "wallets");
             let communities = metadata_strings(meta, "communities");
             // Upstream checks the communities cap first.
-            if communities.len() as i64 > caps.communities {
+            if len_i64(communities.len()) > caps.communities {
                 return Err(ApiError::bad_request(format!(
                     "Too many communities. Maximum allowed is {}, but {} were provided.",
                     caps.communities,
                     communities.len()
                 )));
             }
-            if wallets.len() as i64 > caps.wallets {
+            if len_i64(wallets.len()) > caps.wallets {
                 return Err(ApiError::bad_request(format!(
                     "Too many wallets in allow-list. Maximum allowed is {}, but {} were provided.",
                     caps.wallets,
@@ -755,7 +756,7 @@ fn bounding_box(q: &QueryPairs) -> Result<Option<(i32, i32, i32, i32)>, ApiError
     };
     let coordinate = |raw: &str| {
         js_parse_int(raw)
-            .map(|n| n.clamp(i32::MIN as i64, i32::MAX as i64) as i32)
+            .map(crate::shared::casts::clamp_i32)
             .ok_or_else(|| ApiError::bad_request("Bounding box parameters must be valid integers."))
     };
     Ok(Some((

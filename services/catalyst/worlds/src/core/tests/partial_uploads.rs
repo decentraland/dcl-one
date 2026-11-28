@@ -2,6 +2,11 @@
 //! `docs/partial-deployment-contract.md` (202 `{missing}`, completion, replay, expiry,
 //! staging budgets) and the blob collector keeping a pending upload's files.
 
+#![allow(
+    clippy::cast_possible_wrap,
+    reason = "test fixtures use small literal values"
+)]
+
 use axum::http::HeaderMap;
 use futures::FutureExt;
 use tokio::sync::Notify;

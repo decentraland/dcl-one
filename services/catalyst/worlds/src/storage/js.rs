@@ -4,6 +4,7 @@
 //! `Buffer.from(_, 'base64')`. Local time is read as UTC, as the upstream
 //! service runs.
 
+use crate::shared::casts::ApproxF64;
 use std::borrow::Cow;
 use std::ops::Deref;
 
@@ -507,11 +508,11 @@ impl Fields {
         if !(self.hour < 24 || midnight_24) || self.minute > 59 || self.second > 59 {
             return None;
         }
-        let days = days_from_civil(self.year, self.month, self.day) as f64;
+        let days = days_from_civil(self.year, self.month, self.day).approx_f64();
         let ms = days * MS_PER_DAY
             + (self.hour * 3_600_000 + self.minute * 60_000 + self.second * 1000 + self.millis)
-                as f64
-            - (self.offset_minutes.unwrap_or(0) * 60_000) as f64;
+                .approx_f64()
+            - (self.offset_minutes.unwrap_or(0) * 60_000).approx_f64();
         (ms.abs() <= MAX_TIME_MS).then_some(ms)
     }
 }
@@ -720,7 +721,10 @@ fn parse_legacy(raw: &str) -> Option<Fields> {
                 "ut" | "utc" | "gmt" | "z" => offset = Some(0),
                 "t" => {}
                 _ if word.len() >= 3 && MONTHS.contains(&prefix.as_str()) => {
-                    named_month = Some(MONTHS.iter().position(|m| *m == prefix)? as i64 + 1)
+                    named_month = Some(
+                        crate::shared::casts::len_i64(MONTHS.iter().position(|m| *m == prefix)?)
+                            + 1,
+                    )
                 }
                 _ if word.len() >= 3 && WEEKDAYS.contains(&prefix.as_str()) => {}
                 _ if numbers.is_empty() && time.is_none() => {}

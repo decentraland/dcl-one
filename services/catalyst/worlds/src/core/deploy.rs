@@ -21,6 +21,7 @@
 //! the `world_scenes` relation (stage 4) and share the write path's
 //! ingredients (hashing, chain verification, the blob store), not its rows.
 
+use crate::shared::casts::len_i64;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -920,9 +921,9 @@ pub(super) async fn validate(
         };
         let size = match (known, uploads.by_name.get(hash)) {
             (Some(known), _) => known,
-            (None, Some(blob)) => Some(blob.len() as i64),
+            (None, Some(blob)) => Some(len_i64(blob.len())),
             (None, None) => match state.storage.file_info(hash).await {
-                Ok(info) => info.map(|i| i.size as i64),
+                Ok(info) => info.map(|i| crate::shared::casts::saturating_i64(i.size)),
                 Err(e) => {
                     tracing::warn!(hash, error = %e, "deploy: could not stat an already-stored file");
                     None
@@ -1303,6 +1304,10 @@ pub(super) fn parse_entity(bytes: &[u8]) -> Result<Value, Response> {
 }
 
 #[cfg(test)]
+#[allow(
+    clippy::cast_precision_loss,
+    reason = "test fixtures use small literal values"
+)]
 mod tests {
     use super::super::deploy_validate::MAX_SCENE_POINTERS;
     use super::*;

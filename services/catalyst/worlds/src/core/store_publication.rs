@@ -1,5 +1,6 @@
 //! Worlds publication persistence on the shared pool.
 use super::*;
+use crate::shared::casts::ApproxF64;
 
 /// `$delete` (a `DELETE FROM worlds.world_scenes ...`) moving the rows it
 /// removes into `worlds.retired_world_scenes` (a re-retired id restarts its TTL).
@@ -382,7 +383,7 @@ pub async fn deploy_scene_with_on(
          RETURNING created_at > timezone('UTC', now()) - make_interval(secs => $2::float8 / 1000)",
     )
     .bind(entity_id)
-    .bind(completion.map_or(0.0, |c| c.ttl_ms as f64))
+    .bind(completion.map_or(0.0, |c| c.ttl_ms.approx_f64()))
     .fetch_optional(&mut *tx)
     .await?;
     match completion {
@@ -479,8 +480,8 @@ pub fn entity_timestamp_ms(entity: &Value) -> Option<i64> {
     let value = entity.get("timestamp");
     value.and_then(Value::as_i64).or_else(|| {
         entity_timestamp_number(entity)
-            .filter(|ts| ts.abs() < i64::MAX as f64)
-            .map(|ts| ts.floor() as i64)
+            .filter(|ts| ts.abs() < i64::MAX.approx_f64())
+            .map(|ts| crate::shared::casts::f64_to_i64(ts.floor()))
     })
 }
 

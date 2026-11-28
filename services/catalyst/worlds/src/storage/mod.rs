@@ -252,7 +252,7 @@ impl Settings {
                 enabled: raw.storage_cache_enabled.as_deref() != Some("false"),
                 ttl_seconds: raw.storage_cache_ttl_seconds,
                 max_entries: raw.storage_cache_max,
-                max_value_bytes: raw.storage_cache_max_value_bytes as usize,
+                max_value_bytes: crate::shared::casts::to_usize(raw.storage_cache_max_value_bytes),
             },
             env_limits: NamespaceLimits {
                 max_value_size_bytes: positive(

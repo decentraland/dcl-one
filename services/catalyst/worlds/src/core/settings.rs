@@ -2,6 +2,7 @@
 //! deployer) edits the world's settings through a multipart form under the
 //! shared upload budgets; a thumbnail must be a real raster image.
 
+use crate::shared::casts::ApproxF64;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -322,7 +323,7 @@ async fn read_multipart(request: Request, received: Arc<AtomicU64>) -> Result<Mu
 /// upstream `formatBytes`.
 fn format_bytes(bytes: u64) -> String {
     const KIB: f64 = 1024.0;
-    let b = bytes as f64;
+    let b = bytes.approx_f64();
     if b < KIB {
         format!("{bytes} bytes")
     } else if b < KIB * KIB {
@@ -340,12 +341,12 @@ pub(super) fn describe_upload_timeout(
     received: u64,
     declared: Option<u64>,
 ) -> String {
-    let seconds = timeout_ms as f64 / 1000.0;
+    let seconds = timeout_ms.approx_f64() / 1000.0;
     let got = match declared {
         Some(d) => format!("{} of {}", format_bytes(received), format_bytes(d)),
         None => format_bytes(received),
     };
-    let rate = received as f64 / 1024.0 / seconds;
+    let rate = received.approx_f64() / 1024.0 / seconds;
     format!(
         "The upload did not finish within {seconds} s: received {got} (about {rate:.1} KiB/s). \
          Retry on a faster connection or send smaller batches."

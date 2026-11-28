@@ -321,7 +321,8 @@ impl ExportLimits {
         if let Some(at) = c.last_start.get(scene) {
             let left = cooldown - now.duration_since(*at);
             return Err(Refusal::Cooldown {
-                retry_after_secs: left.as_millis().div_ceil(1000) as u64,
+                retry_after_secs: u64::try_from(left.as_millis().div_ceil(1000))
+                    .unwrap_or(u64::MAX),
             });
         }
         if c.open >= self.settings.max_concurrent_per_pod {
@@ -698,7 +699,7 @@ fn log_outcome(
     outcome: &Result<u64, Abort>,
 ) {
     let (realm, namespace, format) = (ns.realm(), ns.scene_namespace(), format.extension());
-    let duration_ms = elapsed.as_millis() as u64;
+    let duration_ms = crate::shared::casts::millis(elapsed);
     match outcome {
         Ok(raw_bytes) => tracing::info!(
             realm,
@@ -821,7 +822,7 @@ pub async fn create_export(
     )
     .await?;
     let format = parse_format(parts.uri.query())?;
-    let bytes = axum::body::to_bytes(body_in, MAX_BODY_BYTES as usize)
+    let bytes = axum::body::to_bytes(body_in, crate::shared::casts::to_usize(MAX_BODY_BYTES))
         .await
         .map_err(|_| {
             ApiError::PayloadTooLarge(format!(
