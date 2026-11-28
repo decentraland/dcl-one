@@ -1,3 +1,10 @@
+#![deny(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    clippy::cast_possible_wrap,
+    clippy::cast_precision_loss
+)]
+
 use anyhow::Result;
 use dcl_preview_tunnel::{AppState, Config, router};
 use std::net::SocketAddr;

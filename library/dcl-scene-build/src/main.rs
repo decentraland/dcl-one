@@ -2,6 +2,12 @@
 //! at `root` in place and print a JSON report on stdout. Exit status 1 with
 //! `{"ok":false,"error":...}` when the build fails, 2 on bad arguments. This is
 //! the wasm32-wasip1 command the sites worker runs (see the crate docs).
+#![deny(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    clippy::cast_possible_wrap,
+    clippy::cast_precision_loss
+)]
 
 use dcl_scene_build::{Options, build, install_sdk};
 use std::path::PathBuf;

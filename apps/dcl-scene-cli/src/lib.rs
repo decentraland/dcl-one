@@ -1,7 +1,15 @@
+#![deny(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    clippy::cast_possible_wrap,
+    clippy::cast_precision_loss
+)]
+
 pub mod abgen_embed;
 pub mod asset_bundles;
 pub mod build;
 pub mod build_script;
+pub mod casts;
 pub mod check_server;
 pub mod check_stamp;
 pub mod code_to_composite;

@@ -131,7 +131,7 @@ impl Rng {
     }
 
     fn below(&mut self, n: usize) -> usize {
-        (self.next() % n as u64) as usize
+        usize::try_from(self.next() % n as u64).unwrap()
     }
 
     fn chance(&mut self, percent: u64) -> bool {

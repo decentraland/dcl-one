@@ -36,6 +36,12 @@ pub fn cache_key(source_sha: &str, encoder_id: &str, mode: ColorMode, max_size: 
 /// rounds to whole 4x4 blocks (at least one). Mirrors `compress_decoded` in
 /// the explorer's `image_processing`, so a texture keeps the size the
 /// explorer would have given its PNG.
+#[allow(
+    clippy::cast_precision_loss,
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    reason = "image sides are below 2^24, exact in f32, and the rounded side is positive"
+)]
 pub fn target_size(width: u32, height: u32, max: u32) -> (u32, u32) {
     if width <= max && height <= max && width.is_multiple_of(4) && height.is_multiple_of(4) {
         return (width, height);

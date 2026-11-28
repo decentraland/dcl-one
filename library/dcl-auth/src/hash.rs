@@ -256,7 +256,9 @@ mod tests {
 
     #[test]
     fn the_streaming_cid_v0_matches_the_whole_buffer() {
-        let data: Vec<u8> = (0..CHUNK_SIZE * 2 + 7).map(|i| (i % 251) as u8).collect();
+        let data: Vec<u8> = (0..CHUNK_SIZE * 2 + 7)
+            .map(|i| u8::try_from(i % 251).unwrap())
+            .collect();
         for len in [0, 1, CHUNK_SIZE, CHUNK_SIZE + 1, data.len()] {
             for piece in [1000, CHUNK_SIZE] {
                 let mut w = HashV0Writer::new();
@@ -296,7 +298,7 @@ mod tests {
         ];
 
         for size in sizes {
-            let data: Vec<u8> = (0..size).map(|i| (i % 251) as u8).collect();
+            let data: Vec<u8> = (0..size).map(|i| u8::try_from(i % 251).unwrap()).collect();
             let want = hash_bytes_v1(&data);
 
             for piece in [1usize, 7, 4096, CHUNK_SIZE - 1, CHUNK_SIZE, CHUNK_SIZE + 5] {
@@ -336,7 +338,8 @@ mod tests {
 
     #[test]
     fn cidv0_unixfs_matches_ipfs_add_for_chunked_files() {
-        let pattern = |n: usize| -> Vec<u8> { (0..n).map(|i| (i % 251) as u8).collect() };
+        let pattern =
+            |n: usize| -> Vec<u8> { (0..n).map(|i| u8::try_from(i % 251).unwrap()).collect() };
         assert_eq!(
             hash_bytes_v0_unixfs(&pattern(CHUNK_SIZE + 1)),
             "QmUSjGawaz4ptvREcMKSMJneWCa5j8dAz2wSAAvHtW2rnB"
@@ -453,7 +456,7 @@ mod multilevel_tests {
     #[test]
     fn cidv1_multi_level_dag_golden() {
         let n = 175 * CHUNK_SIZE + 7;
-        let data: Vec<u8> = (0..n).map(|i| (i % 251) as u8).collect();
+        let data: Vec<u8> = (0..n).map(|i| u8::try_from(i % 251).unwrap()).collect();
         let hash = hash_bytes_v1(&data);
         assert!(
             hash.starts_with("bafy"),

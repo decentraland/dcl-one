@@ -134,7 +134,9 @@ fn generate_component_schema(include: &Path) -> Result<()> {
                 repeated && packable && f.options.as_ref().and_then(|o| o.packed) != Some(false);
             let oneof = match f.oneof_index {
                 Some(i) if !optional => {
-                    let name = m.oneof_decl[i as usize].name();
+                    let name = m.oneof_decl
+                        [usize::try_from(i).expect("a oneof index is non-negative")]
+                    .name();
                     format!("Some({:?})", camel_case(name))
                 }
                 _ => "None".to_string(),

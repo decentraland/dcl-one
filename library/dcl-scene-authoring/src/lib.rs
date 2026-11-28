@@ -5,6 +5,14 @@
 //! neither `std::fs` nor the network, so the same code serves `dcl-scene-cli`
 //! on the desktop and a browser web worker on `wasm32-unknown-unknown`.
 
+#![deny(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    clippy::cast_possible_wrap,
+    clippy::cast_precision_loss
+)]
+
+pub mod casts;
 pub mod composite_norm;
 pub mod crdt_gen;
 pub mod entity_names;

@@ -12,6 +12,12 @@
 //! `signed_fetch` keeps the steps the surfaces not yet on it assemble.
 //! `scoped_login` is the scoped delegation (ADR-162) and `js_date` the
 //! `Date.parse` its expirations are read with.
+#![deny(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    clippy::cast_possible_wrap,
+    clippy::cast_precision_loss
+)]
 
 pub mod admin_bearer;
 pub mod auth_chain;

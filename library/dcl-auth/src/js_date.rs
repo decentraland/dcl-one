@@ -11,6 +11,24 @@ const MAX_SIGNIFICANT_DIGITS: usize = 9;
 const MAX_TIME_MS: f64 = 8.64e15;
 const MS_PER_DAY: f64 = 86_400_000.0;
 
+/// An integer as a JS number: a double, rounded past 2^53 as JS rounds it.
+#[allow(
+    clippy::cast_precision_loss,
+    reason = "JS numbers are doubles; this is the rounding the JS original does"
+)]
+pub(crate) fn js_number(n: i128) -> f64 {
+    n as f64
+}
+
+/// A JS number truncated to an integer: saturating, NaN as 0.
+#[allow(
+    clippy::cast_possible_truncation,
+    reason = "float-to-int `as` saturates and maps NaN to 0, the behaviour wanted"
+)]
+fn trunc_i64(v: f64) -> i64 {
+    v as i64
+}
+
 /// `Date.parse(text)`: milliseconds since the epoch, `None` for NaN.
 pub fn parse(text: &str) -> Option<i64> {
     let units: Vec<u16> = text.encode_utf16().collect();
@@ -32,12 +50,12 @@ pub fn parse(text: &str) -> Option<i64> {
     if date.abs() > MAX_TIME_MS {
         return None;
     }
-    Some(date as i64)
+    Some(trunc_i64(date))
 }
 
 /// `new Date(ms).toISOString()`; `None` outside the representable range.
 pub fn to_iso_string(ms: i64) -> Option<String> {
-    if (ms as f64).abs() > MAX_TIME_MS {
+    if js_number(ms.into()).abs() > MAX_TIME_MS {
         return None;
     }
     let days = ms.div_euclid(86_400_000);
@@ -94,8 +112,8 @@ fn civil_from_days(z: i64) -> (i64, i64, i64) {
 
 /// ES `MakeDay` for a 0-based month in 0..12 and a day in 1..=31.
 fn make_day(year: f64, month: f64, day: f64) -> Option<f64> {
-    let (y, m, d) = (year as i64, month as i64, day as i64);
-    Some(days_from_civil(y, m + 1, 1) as f64 + (d - 1) as f64)
+    let (y, m, d) = (trunc_i64(year), trunc_i64(month), trunc_i64(day));
+    Some(js_number(days_from_civil(y, m + 1, 1).into()) + js_number((d - 1).into()))
 }
 
 /// JS WhiteSpace and LineTerminator.
@@ -159,7 +177,7 @@ impl Reader<'_> {
         let mut i = 0;
         while self.is_digit() {
             if i < MAX_SIGNIFICANT_DIGITS {
-                n = n * 10 + (self.ch() - 0x30) as i32;
+                n = n * 10 + i32::try_from(self.ch() - 0x30).unwrap_or_default();
             }
             i += 1;
             self.next();
@@ -564,13 +582,15 @@ impl TimeZoneComposer {
         if self.minute == NONE {
             self.minute = 0;
         }
-        let total = (self.hour as u32)
+        // V8 computes the offset in unsigned arithmetic.
+        let total = self
+            .hour
+            .cast_unsigned()
             .wrapping_mul(3600)
-            .wrapping_add((self.minute as u32).wrapping_mul(60));
-        if total > i32::MAX as u32 {
+            .wrapping_add(self.minute.cast_unsigned().wrapping_mul(60));
+        let Ok(total) = i32::try_from(total) else {
             return None;
-        }
-        let total = total as i32;
+        };
         Some(Some(if self.sign < 0 { -total } else { total }))
     }
 }

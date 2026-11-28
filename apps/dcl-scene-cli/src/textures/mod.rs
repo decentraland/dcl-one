@@ -1077,7 +1077,7 @@ fn stage_model(
     let raw = std::fs::read(path).with_context(|| format!("reading {rel}"))?;
     let mut model = gltf::Model::parse(&raw).with_context(|| format!("parsing {rel}"))?;
     let repacked = gltf::apply(&mut model, replacements);
-    let bytes = model.to_bytes();
+    let bytes = model.to_bytes().with_context(|| format!("writing {rel}"))?;
     let staged = staged_model_path(stage, rel, &bytes);
     write_content_addressed(&staged, &bytes)
         .with_context(|| format!("staging {}", staged.display()))?;

@@ -6,6 +6,12 @@
 //! an Outbound with distinct transport settings own separate HTTP pools. The SSRF guard
 //! ([`is_safe_http_url`] on the string, [`resolve_and_pin`] on the socket),
 //! the retry ladder ([`retry_with_backoff`]) and the capped body reader.
+#![deny(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    clippy::cast_possible_wrap,
+    clippy::cast_precision_loss
+)]
 
 use std::collections::HashMap;
 use std::future::Future;
@@ -709,7 +715,7 @@ where
                     attempt,
                     of = if rate_limited { max_attempts } else { attempts },
                     rate_limited,
-                    wait_ms = wait.as_millis() as u64,
+                    wait_ms = u64::try_from(wait.as_millis()).unwrap_or(u64::MAX),
                     "retrying after backoff"
                 );
                 tokio::time::sleep(wait).await;

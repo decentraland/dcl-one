@@ -31,7 +31,7 @@ pub(super) fn coord_range(v: Option<&Value>) -> (f64, f64) {
 
 pub(super) fn trim_num(v: f64) -> String {
     if v.fract() == 0.0 {
-        format!("{}", v as i64)
+        format!("{}", crate::casts::trunc_i64(v))
     } else {
         format!("{v}")
     }
@@ -178,8 +178,8 @@ pub(super) fn layout_grid(parcels: &[(i64, i64)], base: (i64, i64), spawns: &[Va
         let (sx0, sx1) = coord_range(pos.and_then(|p| p.get("x")));
         let (sz0, sz1) = coord_range(pos.and_then(|p| p.get("z")));
         let name = spawn.get("name").and_then(Value::as_str).unwrap_or("spawn");
-        let left = (base.0 - x0) as f64 * 16.0 + sx0;
-        let top = (y1 + 1 - base.1) as f64 * 16.0 - sz1;
+        let left = crate::casts::approx_signed(base.0 - x0) * 16.0 + sx0;
+        let top = crate::casts::approx_signed(y1 + 1 - base.1) * 16.0 - sz1;
         areas.push_str(&format!(
             r#"<div class="lay__area" data-area="{i}" style="left:calc(var(--lay-step)*{l}/16);top:calc(var(--lay-step)*{t}/16);width:max(5px,calc(var(--lay-step)*{w}/16));height:max(5px,calc(var(--lay-step)*{h}/16))"><span class="lay__area-name">{n}</span></div>"#,
             l = trim_num(left),

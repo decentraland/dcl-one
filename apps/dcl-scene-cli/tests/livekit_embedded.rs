@@ -264,7 +264,7 @@ async fn assert_dies_with_preview(
 ) {
     #[cfg(unix)]
     {
-        let pid = guard.0.id() as i32;
+        let pid = i32::try_from(guard.0.id()).unwrap();
         // SAFETY: kill(2) takes plain integers and reads no memory of ours.
         assert_eq!(unsafe { libc::kill(pid, libc::SIGTERM) }, 0);
         common::wait::until(Duration::from_secs(20), async || {

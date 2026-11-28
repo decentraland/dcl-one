@@ -722,7 +722,7 @@ pub(super) fn build_scene_entity(project: &Project, machine: &str) -> Value {
     });
     let ts = SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_millis() as i64)
+        .map(crate::casts::millis_i64)
         .unwrap_or(0);
     json!({
         "version": "v3",

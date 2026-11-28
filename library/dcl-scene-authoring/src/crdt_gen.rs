@@ -19,6 +19,7 @@
 //!   selected, even when empty
 //! - fields encode in field-number order
 
+use crate::casts::{to_f32, trunc_i64, trunc_u64};
 use crate::jsjson::JsValue;
 use crate::schema_crdt::{self, Schema, SchemaError};
 use crate::{SceneFiles, find_composites, read_composite_text};
@@ -175,7 +176,7 @@ pub fn generate(scene: &dyn SceneFiles) -> Result<Option<Generated>, GenError> {
                 }
                 other => other,
             })?;
-            put_component(&mut bytes, *entity, id, &data);
+            put_component(&mut bytes, *entity, id, &data)?;
         }
     }
     Ok(Some(Generated {
@@ -374,19 +375,31 @@ fn component_names(scene: &dyn SceneFiles) -> HashMap<u32, String> {
     out
 }
 
-fn put_component(out: &mut Vec<u8>, entity: u32, component: u32, data: &[u8]) {
+fn put_component(
+    out: &mut Vec<u8>,
+    entity: u32,
+    component: u32,
+    data: &[u8],
+) -> Result<(), GenError> {
+    let len = u32::try_from(data.len())
+        .ok()
+        .filter(|len| len.checked_add(CRDT_HEADER_LEN).is_some())
+        .ok_or_else(|| {
+            GenError::Invalid("a component and its message header exceed 4 GiB".into())
+        })?;
     let words = [
-        CRDT_HEADER_LEN + data.len() as u32,
+        CRDT_HEADER_LEN + len,
         CRDT_PUT_COMPONENT,
         entity,
         component,
         0,
-        data.len() as u32,
+        len,
     ];
     for w in words {
         out.extend_from_slice(&w.to_le_bytes());
     }
     out.extend_from_slice(data);
+    Ok(())
 }
 
 /// core::Transform is not protobuf: @dcl/ecs serializes it as a fixed 44-byte
@@ -396,7 +409,7 @@ fn encode_transform(json: &Value) -> Vec<u8> {
         json.get(obj)
             .and_then(|o| o.get(key))
             .and_then(|v| v.as_f64())
-            .map(|v| v as f32)
+            .map(to_f32)
             .unwrap_or(default)
     };
     let mut out = Vec::with_capacity(44);
@@ -414,7 +427,8 @@ fn encode_transform(json: &Value) -> Vec<u8> {
     ] {
         out.extend_from_slice(&v.to_le_bytes());
     }
-    let parent = json.get("parent").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
+    // Entity numbers are u32 on the wire; the low 32 bits, as setUint32 keeps them.
+    let parent = (json.get("parent").and_then(|v| v.as_u64()).unwrap_or(0) & 0xffff_ffff) as u32;
     out.extend_from_slice(&parent.to_le_bytes());
     out
 }
@@ -446,11 +460,11 @@ fn field_error(msg: &MsgDef, field: &FieldDef, what: &str) -> GenError {
 }
 
 fn json_i64(v: &Value) -> Option<i64> {
-    v.as_i64().or_else(|| v.as_f64().map(|f| f as i64))
+    v.as_i64().or_else(|| v.as_f64().map(trunc_i64))
 }
 
 fn json_u64(v: &Value) -> Option<u64> {
-    v.as_u64().or_else(|| v.as_f64().map(|f| f as u64))
+    v.as_u64().or_else(|| v.as_f64().map(trunc_u64))
 }
 
 fn enum_number(def: &EnumDef, v: &Value) -> Option<i64> {
@@ -471,7 +485,7 @@ fn bytes_value(v: &Value) -> Option<Vec<u8>> {
     }
     v.as_array().map(|arr| {
         arr.iter()
-            .filter_map(|b| b.as_u64().map(|b| b as u8))
+            .filter_map(|b| b.as_u64().map(|b| (b & 0xff) as u8))
             .collect()
     })
 }
@@ -499,16 +513,19 @@ fn write_untagged_scalar(
     let u = || json_u64(v).ok_or_else(|| want("expected a number"));
     match field.kind {
         FieldKind::Double => out.extend_from_slice(&f()?.to_le_bytes()),
-        FieldKind::Float => out.extend_from_slice(&(f()? as f32).to_le_bytes()),
+        FieldKind::Float => out.extend_from_slice(&to_f32(f()?).to_le_bytes()),
         FieldKind::Bool => varint(
             out,
             v.as_bool().ok_or_else(|| want("expected a bool"))? as u64,
         ),
-        FieldKind::Int32 | FieldKind::Int64 => varint(out, i()? as u64),
+        // Protobuf encodes negative ints as their two's complement.
+        FieldKind::Int32 | FieldKind::Int64 => varint(out, i()?.cast_unsigned()),
         FieldKind::Uint32 | FieldKind::Uint64 => varint(out, u()?),
         FieldKind::Enum(e) => varint(
             out,
-            enum_number(&ENUMS[e], v).ok_or_else(|| want("unknown enum value"))? as u64,
+            enum_number(&ENUMS[e], v)
+                .ok_or_else(|| want("unknown enum value"))?
+                .cast_unsigned(),
         ),
         FieldKind::Str | FieldKind::Bytes | FieldKind::Msg(_) => {
             unreachable!("length-delimited kinds are not packed")
@@ -735,7 +752,7 @@ mod tests {
         let mut expected = Vec::new();
         let mut payload = vec![0x0b, 0, 0, 0];
         payload.extend_from_slice(b"Admin Tools");
-        put_component(&mut expected, 513, 3864921337, &payload);
+        put_component(&mut expected, 513, 3864921337, &payload).unwrap();
         assert_eq!(generated.bytes, expected);
     }
 

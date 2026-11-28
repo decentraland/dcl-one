@@ -329,7 +329,7 @@ pub fn rebuild_event(project: &Project, changed: &[PathBuf], took: Duration) {
         event: "rebuild",
         output: project.root.join(main).display().to_string(),
         changed,
-        duration_ms: took.as_millis() as u64,
+        duration_ms: crate::casts::millis_u64(took),
     });
 }
 

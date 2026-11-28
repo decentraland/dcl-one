@@ -135,7 +135,9 @@ impl Drop for Observation {
             .handle_owned(values.clone())
             .record(self.start.elapsed().as_secs_f64());
         if let Some(size) = self.size {
-            DECLARED_SIZE.handle_owned(values).record(size as f64);
+            DECLARED_SIZE
+                .handle_owned(values)
+                .record(crate::metric_value(size));
         }
     }
 }

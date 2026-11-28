@@ -437,7 +437,7 @@ async fn the_signing_server_listens_on_loopback_unless_another_address_is_given(
     let ready = |extra: &[&str], envs: &[(&str, &str)]| {
         let run = spawn(&f, &[&["--port", "0"], extra].concat(), envs);
         let ready = run.line_with(r#""event":"ready""#);
-        let port = ready["port"].as_u64().unwrap() as u16;
+        let port = u16::try_from(ready["port"].as_u64().unwrap()).unwrap();
         let api = ready["api"].as_str().unwrap().to_string();
         let url = ready["url"].as_str().unwrap().to_string();
         (run, port, api, url)
@@ -560,7 +560,7 @@ async fn remote_signing_on_an_address_of_this_machine_answers_its_printed_url() 
         let ready = run.line_with(r#""event":"ready""#);
         let port = ready["port"].as_u64().unwrap();
         let api = ready["api"].as_str().unwrap().to_string();
-        let origin = std::net::SocketAddr::new(addr, port as u16);
+        let origin = std::net::SocketAddr::new(addr, u16::try_from(port).unwrap());
         assert_eq!(api, format!("http://{origin}/api/deploy"));
         assert!(
             ready["url"]

@@ -457,7 +457,11 @@ async fn node_upload(
     let Ok(v) = serde_json::from_str::<Value>(stdout.trim()) else {
         return Some(Ok((0, String::new())));
     };
-    let code = v.get("status").and_then(Value::as_u64).unwrap_or(0) as u16;
+    let code = v
+        .get("status")
+        .and_then(Value::as_u64)
+        .and_then(|c| u16::try_from(c).ok())
+        .unwrap_or(0);
     let body = v
         .get("body")
         .and_then(Value::as_str)
@@ -554,7 +558,10 @@ fn parse_progress_line(line: &str) -> Option<(u64, u64, Option<usize>)> {
     let v: Value = serde_json::from_str(line.trim()).ok()?;
     let sent = v.get("sent")?.as_u64()?;
     let total = v.get("total")?.as_u64()?;
-    let file = v.get("file").and_then(Value::as_u64).map(|f| f as usize);
+    let file = v
+        .get("file")
+        .and_then(Value::as_u64)
+        .map(crate::casts::to_usize);
     Some((sent, total, file))
 }
 
@@ -1059,7 +1066,7 @@ where
         let total = body
             .get("total")
             .and_then(Value::as_u64)
-            .map_or(scenes.len(), |t| t as usize);
+            .map_or(scenes.len(), crate::casts::to_usize);
         if empty || scenes.len() >= total {
             return Ok(json!({ "scenes": scenes, "total": scenes.len() }));
         }

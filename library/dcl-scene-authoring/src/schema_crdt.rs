@@ -26,6 +26,7 @@
 //!   coercion rather than an error: a number on a string leaf writes the empty
 //!   string (`@protobufjs/utf8` walks `.length`), and a string on an array leaf
 //!   serializes as its characters (a string is iterable)
+use crate::casts::{js_number, to_f32, trunc_i64};
 use crate::jsjson::JsValue;
 use serde_json::Value;
 
@@ -127,7 +128,7 @@ pub fn compile(js: &JsValue) -> Result<Schema, SchemaError> {
         "color4" => Schema::Floats(COLOR4),
         "enum-int" => Schema::EnumInt(match js.get("default") {
             None | Some(JsValue::Null) => None,
-            Some(JsValue::Number(n)) if n.fract() == 0.0 && n.is_finite() => Some(*n as i64),
+            Some(JsValue::Number(n)) if n.fract() == 0.0 && n.is_finite() => Some(trunc_i64(*n)),
             Some(_) => {
                 return Err(SchemaError::Unsupported(
                     "enum-int with a non-integer default".into(),
@@ -274,13 +275,13 @@ pub fn encode(
         }
         Schema::Array(items) => match value {
             Some(Value::Array(arr)) => {
-                out.extend_from_slice(&(arr.len() as u32).to_le_bytes());
+                out.extend_from_slice(&wire_len(arr.len())?.to_le_bytes());
                 for item in arr {
                     encode(items, Some(item), out)?;
                 }
             }
             Some(Value::String(s)) => {
-                out.extend_from_slice(&(s.encode_utf16().count() as u32).to_le_bytes());
+                out.extend_from_slice(&wire_len(s.encode_utf16().count())?.to_le_bytes());
                 for ch in s.chars() {
                     encode(items, Some(&Value::String(ch.to_string())), out)?;
                 }
@@ -320,25 +321,26 @@ pub fn encode(
                 .iter()
                 .position(|(k, _)| k == case)
                 .ok_or_else(|| SchemaError::Invalid(format!("one-of has no variant '{case}'")))?;
-            out.push((idx + 1) as u8);
+            // A one-of tag is one byte; the low byte, as setUint8 keeps it.
+            out.push((idx + 1).to_le_bytes()[0]);
             encode(&specs[idx].1, obj.and_then(|o| o.get("value")), out)?;
         }
         Schema::Str | Schema::EnumStr(_) => write_utf8_string(value, out)?,
         Schema::Bool => out.push(truthy(value) as u8),
-        Schema::Int8 => out.push(to_int32(to_number(value)) as u8),
+        Schema::Int8 => out.push(to_int32(to_number(value)).to_le_bytes()[0]),
         Schema::Int16 => {
-            out.extend_from_slice(&(to_int32(to_number(value)) as i16).to_le_bytes());
+            out.extend_from_slice(&to_int32(to_number(value)).to_le_bytes()[..2]);
         }
         Schema::Int32 | Schema::Entity | Schema::EnumInt(_) => {
             out.extend_from_slice(&to_int32(to_number(value)).to_le_bytes());
         }
         Schema::Int64 => out.extend_from_slice(&to_big_int64(value)?.to_le_bytes()),
-        Schema::F32 => out.extend_from_slice(&(to_number(value) as f32).to_le_bytes()),
+        Schema::F32 => out.extend_from_slice(&to_f32(to_number(value)).to_le_bytes()),
         Schema::F64 => out.extend_from_slice(&to_number(value).to_le_bytes()),
         Schema::Floats(keys) => {
             let obj = property_source(value, "vector")?;
             for key in *keys {
-                let component = to_number(obj.and_then(|o| o.get(*key))) as f32;
+                let component = to_f32(to_number(obj.and_then(|o| o.get(*key))));
                 out.extend_from_slice(&component.to_le_bytes());
             }
         }
@@ -372,7 +374,7 @@ fn write_utf8_string(value: Option<&Value>, out: &mut Vec<u8>) -> Result<(), Sch
         }
         Some(_) => "",
     };
-    out.extend_from_slice(&(text.len() as u32).to_le_bytes());
+    out.extend_from_slice(&wire_len(text.len())?.to_le_bytes());
     out.extend_from_slice(text.as_bytes());
     Ok(())
 }
@@ -461,7 +463,7 @@ fn string_to_number(s: &str) -> f64 {
         return 0.0;
     }
     if let Some((radix, digits)) = radix_prefix(t) {
-        return u64::from_str_radix(digits, radix).map_or(f64::NAN, |v| v as f64);
+        return u64::from_str_radix(digits, radix).map_or(f64::NAN, js_number);
     }
     match t {
         "Infinity" | "+Infinity" => f64::INFINITY,
@@ -472,13 +474,23 @@ fn string_to_number(s: &str) -> f64 {
     }
 }
 
+/// A length as the u32 the encoders write before an array or a string.
+fn wire_len(len: usize) -> Result<u32, SchemaError> {
+    u32::try_from(len).map_err(|_| SchemaError::Invalid(format!("a length of {len} exceeds u32")))
+}
+
 /// ECMAScript ToInt32: NaN and the infinities collapse to 0, everything else
 /// truncates toward zero and wraps modulo 2^32 (Rust's `as` would saturate).
+#[allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    reason = "rem_euclid keeps the integral value in 0..2^32"
+)]
 fn to_int32(n: f64) -> i32 {
     if !n.is_finite() {
         return 0;
     }
-    (n.trunc().rem_euclid(4294967296.0) as u32) as i32
+    (n.trunc().rem_euclid(4294967296.0) as u32).cast_signed()
 }
 
 /// `writeInt64` takes `BigInt(value)`, and `BigInt` is not `Number`: it throws
@@ -547,9 +559,9 @@ fn string_to_big_int(s: &str) -> Result<i64, SchemaError> {
             .wrapping_add(u64::from(digit));
     }
     Ok(if negative {
-        (magnitude as i64).wrapping_neg()
+        magnitude.cast_signed().wrapping_neg()
     } else {
-        magnitude as i64
+        magnitude.cast_signed()
     })
 }
 
@@ -560,17 +572,18 @@ fn wrap_to_i64(f: f64) -> i64 {
     const MIN: f64 = -9223372036854775808.0;
     const MAX: f64 = 9223372036854775808.0;
     if (MIN..MAX).contains(&f) {
-        return f as i64;
+        return trunc_i64(f);
     }
     let bits = f.abs().to_bits();
-    let exponent = ((bits >> 52) & 0x7ff) as i64 - 1075;
+    let exponent = ((bits >> 52) & 0x7ff).cast_signed() - 1075;
     let mantissa = (bits & ((1u64 << 52) - 1)) | (1u64 << 52);
     let low = if exponent >= 64 {
         0
     } else {
-        mantissa.wrapping_shl(exponent as u32)
+        // Out of the i64 range, so the exponent is in 11..64 here.
+        mantissa.wrapping_shl(u32::try_from(exponent).unwrap_or_default())
     };
-    let magnitude = low as i64;
+    let magnitude = low.cast_signed();
     if f.is_sign_negative() {
         magnitude.wrapping_neg()
     } else {

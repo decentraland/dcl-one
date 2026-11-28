@@ -192,7 +192,12 @@ mod tests {
     #[ignore]
     fn encodes_byte_identically_run_to_run() {
         let img = image::RgbaImage::from_fn(64, 32, |x, y| {
-            image::Rgba([(x * 4) as u8, (y * 8) as u8, ((x ^ y) * 3) as u8, 255])
+            image::Rgba([
+                u8::try_from(x * 4).unwrap(),
+                u8::try_from(y * 8).unwrap(),
+                u8::try_from((x ^ y) * 3).unwrap(),
+                255,
+            ])
         });
         let mut png = std::io::Cursor::new(Vec::new());
         image::DynamicImage::ImageRgba8(img)

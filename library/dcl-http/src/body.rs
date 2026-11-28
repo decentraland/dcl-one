@@ -16,6 +16,10 @@ pub struct TransferRateGuard {
 }
 
 impl TransferRateGuard {
+    #[allow(
+        clippy::cast_precision_loss,
+        reason = "byte counts round only above 2^53 bytes, which no transfer reaches"
+    )]
     pub fn check(&mut self, chunk_bytes: u64, last_read: Duration) -> Result<()> {
         self.read_time += last_read;
         self.bytes_read = self.bytes_read.saturating_add(chunk_bytes);

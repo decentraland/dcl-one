@@ -955,7 +955,10 @@ pub fn build_entity(p: &Prepared, timestamp: i64) -> Result<(String, Vec<u8>)> {
         ("version".to_string(), s("v3")),
         ("type".to_string(), s("scene")),
         ("pointers".to_string(), pointers),
-        ("timestamp".to_string(), JsValue::Number(timestamp as f64)),
+        (
+            "timestamp".to_string(),
+            JsValue::Number(crate::casts::approx_signed(timestamp)),
+        ),
         ("content".to_string(), content),
         ("metadata".to_string(), p.metadata.clone()),
     ]);
@@ -981,10 +984,11 @@ pub fn build_entity(p: &Prepared, timestamp: i64) -> Result<(String, Vec<u8>)> {
 pub fn human_size(bytes: u64) -> String {
     const MB: f64 = 1_000_000.0;
     const KB: f64 = 1_000.0;
-    if bytes as f64 >= MB {
-        format!("{:.1} MB", bytes as f64 / MB)
-    } else if bytes as f64 >= KB {
-        format!("{:.1} KB", bytes as f64 / KB)
+    let size = crate::casts::approx(bytes);
+    if size >= MB {
+        format!("{:.1} MB", size / MB)
+    } else if size >= KB {
+        format!("{:.1} KB", size / KB)
     } else {
         format!("{bytes} bytes")
     }
@@ -993,7 +997,7 @@ pub fn human_size(bytes: u64) -> String {
 pub fn now_ms() -> i64 {
     SystemTime::now()
         .duration_since(SystemTime::UNIX_EPOCH)
-        .map(|d| d.as_millis() as i64)
+        .map(crate::casts::millis_i64)
         .unwrap_or(0)
 }
 
