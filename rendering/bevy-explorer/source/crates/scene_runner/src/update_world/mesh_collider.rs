@@ -399,7 +399,7 @@ const PENDING_REMOVALS_BEFORE_FLUSH: usize = 1024;
 const COLLIDER_RESCALE_SIZE: f32 = 0.01;
 // disable colliders whose largest scaled extent falls below this (metres)
 const COLLIDER_DISABLE_SIZE: f32 = 0.01;
-const RAYCAST_EPSILON: f64 = 0.0001;
+pub(crate) const RAYCAST_EPSILON: f64 = 0.0001;
 
 pub trait ScaleShapeExt {
     fn scale_ext(&self, req_scale: Vec3) -> SharedShape;
@@ -2233,6 +2233,8 @@ mod ownership_tests;
 mod reveal_tests;
 #[cfg(test)]
 mod scene_cut_tests;
+#[cfg(test)]
+mod trigger_area_tests;
 
 #[cfg(test)]
 mod tests {

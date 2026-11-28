@@ -18,7 +18,7 @@ use crate::{
     update_world::{
         mesh_collider::{
             add_collider_systems, ColliderId, ColliderType, HasCollider, MeshCollider,
-            MeshColliderShape, SceneColliderData,
+            MeshColliderShape, SceneColliderData, RAYCAST_EPSILON,
         },
         AddCrdtInterfaceExt,
     },
@@ -113,10 +113,26 @@ struct OverlapInputs {
     pointer_ray: Option<Ray3d>,
 }
 
+/// Where the overlaps `update_triggers` reports came from.
+#[derive(Clone, Copy)]
+enum OverlapSource {
+    /// the scene's own colliders
+    Scene,
+    /// the avatar colliders
+    Avatar,
+    /// the pointer ray, reported with a placeholder id
+    Pointer,
+}
+
 /// What `update_triggers` reports one overlap kind with, for one trigger area this frame.
 struct TriggerReport<'a, 'w, 's> {
-    triggers: &'a Query<'w, 's, (&'static MeshCollider<CtTrigger>, &'static GlobalTransform)>,
+    transforms: &'a Query<'w, 's, &'static GlobalTransform>,
     container: &'a ContainerEntity,
+    /// the area's collision mask, which the reported layers are limited to
+    collision_mask: u32,
+    /// the world position of the scene's origin, which reported positions are relative to
+    scene_origin: Vec3,
+    /// the area's position, relative to the scene
     translation: Vec3,
     rotation: Quat,
     timestamp: &'a MonotonicTimestamp<PbTriggerAreaResult>,
@@ -124,33 +140,49 @@ struct TriggerReport<'a, 'w, 's> {
 }
 
 impl TriggerReport<'_, '_, '_> {
-    fn trigger(&self, colliders: &SceneColliderData, collider_id: &ColliderId) -> Trigger {
-        colliders
-            .get_collider_entity(collider_id)
-            .and_then(|e| self.triggers.get(e).ok())
-            .map(|(collider, gt)| {
-                let (s, r, t) = gt.to_scale_rotation_translation();
-                Trigger {
-                    entity: collider_id.entity.as_proto_u32().unwrap(),
-                    layers: collider.collision_mask,
-                    position: Some(Vector3::world_vec_from_vec3(&t)),
-                    rotation: Some(r.into()),
-                    scale: Some(Vector3::abs_vec_from_vec3(&s)),
-                }
+    /// The entity that entered, stayed or left: its collider's layers that the area's mask holds,
+    /// and the transform of the entity that holds the collider, its position relative to the
+    /// scene. For a scene collider that entity is the scene entity, which for a glTF collider is
+    /// the container rather than the mesh node; for an avatar collider it is the avatar. The
+    /// pointer reports neither.
+    ///
+    /// By an exit the collider can be gone: its layers are then 0, and an avatar's transform is
+    /// empty, while a scene entity that outlives its collider still reports its transform.
+    fn trigger(
+        &self,
+        scene: &RendererSceneContext,
+        colliders: &SceneColliderData,
+        source: OverlapSource,
+        collider_id: &ColliderId,
+    ) -> Trigger {
+        let layers = || {
+            colliders.get_collider(collider_id).map_or(0, |collider| {
+                collider.collision_groups().memberships.bits() & self.collision_mask
             })
-            .unwrap_or_else(|| Trigger {
-                entity: collider_id.entity.as_proto_u32().unwrap(),
-                layers: 0,
-                position: None,
-                rotation: None,
-                scale: None,
-            })
+        };
+        let (layers, holder) = match source {
+            OverlapSource::Scene => (layers(), scene.bevy_entity(collider_id.entity)),
+            OverlapSource::Avatar => (layers(), colliders.get_collider_entity(collider_id)),
+            OverlapSource::Pointer => (0, None),
+        };
+        let transform = holder
+            .and_then(|entity| self.transforms.get(entity).ok())
+            .map(GlobalTransform::to_scale_rotation_translation);
+        Trigger {
+            entity: collider_id.entity.as_proto_u32().unwrap(),
+            layers,
+            position: transform
+                .map(|(_, _, t)| Vector3::world_vec_from_vec3(&(t - self.scene_origin))),
+            rotation: transform.map(|(_, r, _)| r.into()),
+            scale: transform.map(|(s, _, _)| Vector3::abs_vec_from_vec3(&s)),
+        }
     }
 
     fn send(
         &self,
         scene: &mut Mut<RendererSceneContext>,
         colliders: &SceneColliderData,
+        source: OverlapSource,
         collider_id: &ColliderId,
         ty: TriggerAreaEventType,
     ) {
@@ -160,7 +192,7 @@ impl TriggerReport<'_, '_, '_> {
             triggered_entity_rotation: Some(self.rotation.into()),
             event_type: ty as i32,
             timestamp: self.timestamp.next_timestamp(),
-            trigger: Some(self.trigger(colliders, collider_id)),
+            trigger: Some(self.trigger(scene, colliders, source, collider_id)),
         };
         scene.update_crdt(
             SceneComponentId::TRIGGER_AREA_RESULT,
@@ -171,10 +203,12 @@ impl TriggerReport<'_, '_, '_> {
     }
 
     /// Exits and stays for `previous` (reported at `previous_tick`), then enters, against `current`.
+    /// `colliders` hold the ids `source` reports, see [`Self::trigger`].
     fn events(
         &self,
         scene: &mut Mut<RendererSceneContext>,
         colliders: &SceneColliderData,
+        source: OverlapSource,
         previous: &[ColliderId],
         previous_tick: u32,
         current: &[ColliderId],
@@ -186,6 +220,7 @@ impl TriggerReport<'_, '_, '_> {
                     self.send(
                         scene,
                         colliders,
+                        source,
                         prev_collider,
                         TriggerAreaEventType::TaetStay,
                     );
@@ -194,6 +229,7 @@ impl TriggerReport<'_, '_, '_> {
                 self.send(
                     scene,
                     colliders,
+                    source,
                     prev_collider,
                     TriggerAreaEventType::TaetExit,
                 );
@@ -205,6 +241,7 @@ impl TriggerReport<'_, '_, '_> {
                 self.send(
                     scene,
                     colliders,
+                    source,
                     new_collider,
                     TriggerAreaEventType::TaetEnter,
                 );
@@ -222,7 +259,7 @@ impl TriggerReport<'_, '_, '_> {
 /// collider is on its own mask's layers. So while the stamps for the mask, the mask, the collider
 /// and the ray hold, the queries would return what they returned last time: the overlaps are
 /// reused, and an area whose scene has not ticked since has nothing to report.
-fn update_triggers(
+pub(super) fn update_triggers(
     mut commands: Commands,
     mut trigger_areas: Query<(
         Entity,
@@ -232,9 +269,13 @@ fn update_triggers(
         &GlobalTransform,
         Option<&mut ActiveTriggers>,
     )>,
-    mut scenes: Query<(&mut RendererSceneContext, &mut SceneColliderData)>,
+    mut scenes: Query<(
+        &mut RendererSceneContext,
+        &mut SceneColliderData,
+        &GlobalTransform,
+    )>,
     mut avatar_colliders: ResMut<AvatarColliders>,
-    triggers: Query<(&'static MeshCollider<CtTrigger>, &'static GlobalTransform)>,
+    transforms: Query<&'static GlobalTransform>,
     pointer_ray: Res<PointerRay>,
     timestamp: Res<MonotonicTimestamp<PbTriggerAreaResult>>,
 ) {
@@ -244,7 +285,7 @@ fn update_triggers(
 
     for (entity, container, trigger_def, collider, gt, mut maybe_active) in trigger_areas.iter_mut()
     {
-        let Ok((mut scene, mut colliders)) = scenes.get_mut(container.root) else {
+        let Ok((mut scene, mut colliders, scene_transform)) = scenes.get_mut(container.root) else {
             continue;
         };
 
@@ -277,10 +318,13 @@ fn update_triggers(
         }
 
         let (_, rotation, translation) = gt.to_scale_rotation_translation();
+        let scene_origin = scene_transform.translation();
         let report = TriggerReport {
-            triggers: &triggers,
+            transforms: &transforms,
             container,
-            translation,
+            collision_mask: mask,
+            scene_origin,
+            translation: translation - scene_origin,
             rotation,
             timestamp: &timestamp,
             tick: scene.last_update_frame,
@@ -291,6 +335,7 @@ fn update_triggers(
         report.events(
             &mut scene,
             &colliders,
+            OverlapSource::Scene,
             &previous.scene,
             previous.tick,
             new_colliders.as_deref().unwrap_or(&previous.scene),
@@ -307,6 +352,7 @@ fn update_triggers(
             report.events(
                 &mut scene,
                 &avatar_colliders.collider_data,
+                OverlapSource::Avatar,
                 &previous.avatars,
                 previous.tick,
                 new_avatars.as_deref().unwrap_or(&previous.avatars),
@@ -320,16 +366,33 @@ fn update_triggers(
         let new_pointers = match inputs.pointer_ray {
             Some(ray) => {
                 let new_pointers = (!pointer_known).then(|| {
-                    let pointer_hit = colliders.cast_ray_nearest(
-                        ray.origin,
-                        ray.direction.as_vec3(),
-                        f32::MAX,
-                        POINTER_LAYER,
-                        false,
-                        true,
-                        Some(&collider.0),
-                    );
-                    if pointer_hit.is_some() {
+                    // the pointer is in the area when the ray hits the area no farther than anything
+                    // else on the pointer layer, trigger areas included. As for hover, a collider
+                    // the ray starts inside is skipped, so an area containing the ray's origin is
+                    // not entered and does not hide other areas. An area switched off (too small)
+                    // is not entered.
+                    let direction = ray.direction.as_vec3();
+                    let pointed = colliders
+                        .get_collider(&collider.0)
+                        .is_some_and(|area| area.is_enabled())
+                        .then(|| {
+                            colliders.cast_ray_at(&collider.0, ray.origin, direction, f32::MAX)
+                        })
+                        .flatten()
+                        .is_some_and(|area_toi| {
+                            colliders
+                                .cast_ray_nearest(
+                                    ray.origin,
+                                    direction,
+                                    area_toi + RAYCAST_EPSILON as f32,
+                                    POINTER_LAYER,
+                                    true,
+                                    true,
+                                    Some(&collider.0),
+                                )
+                                .is_none_or(|hit| area_toi <= hit.toi + RAYCAST_EPSILON as f32)
+                        });
+                    if pointed {
                         vec![ColliderId::default()]
                     } else {
                         Vec::new()
@@ -338,6 +401,7 @@ fn update_triggers(
                 report.events(
                     &mut scene,
                     &colliders,
+                    OverlapSource::Pointer,
                     &previous.pointer,
                     previous.tick,
                     new_pointers.as_deref().unwrap_or(&previous.pointer),
