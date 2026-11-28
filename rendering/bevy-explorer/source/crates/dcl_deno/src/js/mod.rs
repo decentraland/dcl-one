@@ -224,11 +224,33 @@ fn scene_ops(super_user: bool) -> (Vec<OpDecl>, HashMap<&'static str, OpDecl>) {
     (ops, op_map)
 }
 
+/// Per-isolate V8 heap cap. Every scene runs in its own isolate on its own thread, so a cap here
+/// bounds ONE scene's memory and stops a single runaway/hostile scene from OOM-killing the shared
+/// sidecar (and every co-tenant scene with it). The near-limit callback in
+/// [`create_runtime_with_heap_cap`] terminates just that isolate instead of aborting the process.
+const MAX_SCENE_HEAP_BYTES: usize = 512 * 1024 * 1024;
+
 pub fn create_runtime(
     inspect: bool,
     super_user: bool,
     storage_root: &str,
     kill_flag: KillFlag,
+) -> (JsRuntime, Option<InspectorServer>) {
+    create_runtime_with_heap_cap(
+        inspect,
+        super_user,
+        storage_root,
+        kill_flag,
+        MAX_SCENE_HEAP_BYTES,
+    )
+}
+
+fn create_runtime_with_heap_cap(
+    inspect: bool,
+    super_user: bool,
+    storage_root: &str,
+    kill_flag: KillFlag,
+    max_heap: usize,
 ) -> (JsRuntime, Option<InspectorServer>) {
     #[cfg(test)]
     crate::test_platform();
@@ -265,20 +287,15 @@ pub fn create_runtime(
         ..Default::default()
     };
 
-    // Per-isolate V8 heap cap. Every scene runs in its own isolate on its own thread, so
-    // a cap here bounds ONE scene's memory and stops a single runaway/hostile scene from
-    // OOM-killing the shared sidecar (and every co-tenant scene with it). The near-limit
-    // callback below terminates just that isolate instead of aborting the process.
-    const MAX_SCENE_HEAP_BYTES: usize = 512 * 1024 * 1024;
+    // granted on each near-limit trip while the scene is being terminated
+    const HEAP_LIMIT_MARGIN: usize = 128 * 1024 * 1024;
 
     // create runtime
     #[allow(unused_mut)]
     let mut runtime = JsRuntime::new(RuntimeOptions {
         extensions: vec![webidl, web, fetch_ext, ext],
         inspector: inspect,
-        create_params: Some(
-            deno_core::v8::CreateParams::default().heap_limits(0, MAX_SCENE_HEAP_BYTES),
-        ),
+        create_params: Some(deno_core::v8::CreateParams::default().heap_limits(0, max_heap)),
         ..Default::default()
     });
 
@@ -292,11 +309,13 @@ pub fn create_runtime(
     // termination itself instead of hard-aborting the whole sidecar process.
     {
         let terminate_handle = runtime.v8_isolate().thread_safe_handle();
-        let granted = std::sync::atomic::AtomicBool::new(false);
+        let logged = std::sync::atomic::AtomicBool::new(false);
         runtime.add_near_heap_limit_callback(move |current, _initial| {
-            let first_trip = !granted.swap(true, std::sync::atomic::Ordering::SeqCst);
+            let first_trip = !logged.swap(true, std::sync::atomic::Ordering::SeqCst);
             if first_trip {
-                bevy::prelude::error!("scene exceeded its {MAX_SCENE_HEAP_BYTES}-byte heap cap; terminating the scene isolate");
+                bevy::prelude::error!(
+                    "scene exceeded its {max_heap}-byte heap cap; terminating the scene isolate"
+                );
             }
             // termination alone only unwinds the current js: the heap stays rooted by the
             // scene globals and the scene loop keeps ticking through uncaught errors, so it
@@ -304,14 +323,13 @@ pub fn create_runtime(
             // drops the runtime and actually releases the heap.
             kill_flag.kill();
             terminate_handle.terminate_execution();
-            if first_trip {
-                // one-time margin so the termination unwind can run rather than hard-aborting
-                current + 8 * 1024 * 1024
-            } else {
-                // kill already latched: stop re-granting, so a scene that keeps allocating
-                // through termination can't ratchet the cap upward on every callback
-                current
-            }
+            // V8 aborts the process if an allocation in flight still does not fit, and the
+            // termination only runs once it does, so every trip grants a margin. The ceiling
+            // bounds what a scene that keeps allocating through termination can reach.
+            current
+                .saturating_add(HEAP_LIMIT_MARGIN)
+                .min(max_heap.saturating_mul(2))
+                .max(current)
         });
     }
 
@@ -862,8 +880,23 @@ mod tests {
 
     /// [`run_scene`], optionally as the super-user scene.
     fn run_scene_as(is_server: bool, super_user: bool, scene_js: &str) -> Result<(), String> {
-        let (mut runtime, _) =
-            create_runtime(false, super_user, "test-scene-realm", Default::default());
+        run_scene_with(is_server, super_user, super::MAX_SCENE_HEAP_BYTES, scene_js)
+    }
+
+    /// [`run_scene_as`] under a heap cap of `max_heap` bytes.
+    fn run_scene_with(
+        is_server: bool,
+        super_user: bool,
+        max_heap: usize,
+        scene_js: &str,
+    ) -> Result<(), String> {
+        let (mut runtime, _) = super::create_runtime_with_heap_cap(
+            false,
+            super_user,
+            "test-scene-realm",
+            Default::default(),
+            max_heap,
+        );
         let (host, _inbox) = tokio::sync::mpsc::unbounded_channel();
         {
             let state = runtime.op_state();
