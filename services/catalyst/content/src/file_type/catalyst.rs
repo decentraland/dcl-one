@@ -1233,11 +1233,11 @@ fn inflate_raw(data: &[u8], limit: u64) -> io::Result<Option<Vec<u8>>> {
     }
 }
 
-#[cfg(test)]
 #[allow(
     clippy::cast_possible_truncation,
     reason = "test fixtures use small literal values"
 )]
+#[cfg(test)]
 mod tests {
     use super::*;
 

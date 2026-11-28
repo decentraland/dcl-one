@@ -645,11 +645,11 @@ impl ContentState {
     }
 }
 
-#[cfg(test)]
 #[allow(
     clippy::cast_possible_wrap,
     reason = "test fixtures use small literal values"
 )]
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::Denylist;

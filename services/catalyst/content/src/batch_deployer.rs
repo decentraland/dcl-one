@@ -537,11 +537,11 @@ fn skipped(entity: &SyncDeployment, skip: Skip, report: Option<&Arc<DeploymentRe
     }
 }
 
-#[cfg(test)]
 #[allow(
     clippy::cast_possible_wrap,
     reason = "test fixtures use small literal values"
 )]
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::auth::hash_bytes_v1;

@@ -129,11 +129,11 @@ impl Drop for DrainOnDrop {
     }
 }
 
-#[cfg(test)]
 #[allow(
     clippy::cast_possible_truncation,
     reason = "test fixtures use small literal values"
 )]
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::writes::{DataWrites, Gate, guard_with};

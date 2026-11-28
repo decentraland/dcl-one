@@ -392,12 +392,12 @@ pub(crate) fn set_content_type(headers: &mut [(&'static str, String)], mime: &st
     }
 }
 
-#[cfg(test)]
 #[allow(
     clippy::cast_possible_truncation,
     clippy::cast_sign_loss,
     reason = "test fixtures use small literal values"
 )]
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::tests::support::{TEST_CID, TestNode};

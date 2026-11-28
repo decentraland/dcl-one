@@ -457,11 +457,11 @@ where
     }
 }
 
-#[cfg(test)]
 #[allow(
     clippy::cast_sign_loss,
     reason = "test fixtures use small literal values"
 )]
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::sync_test_support::{test_pool, unique};

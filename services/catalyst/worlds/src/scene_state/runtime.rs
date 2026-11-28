@@ -881,11 +881,11 @@ pub fn frame_crdt(body: &[u8]) -> Vec<u8> {
     )
 }
 
-#[cfg(test)]
 #[allow(
     clippy::cast_possible_truncation,
     reason = "test fixtures use small literal values"
 )]
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::scene_state::crdt::{CrdtMessage, decode_batch, encode_batch};

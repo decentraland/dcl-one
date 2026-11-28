@@ -738,11 +738,11 @@ impl CrdtEngine {
 }
 
 #[allow(clippy::indexing_slicing, clippy::expect_used, reason = "test support")]
-#[cfg(test)]
 #[allow(
     clippy::cast_possible_truncation,
     reason = "test fixtures use small literal values"
 )]
+#[cfg(test)]
 mod tests {
     use super::*;
 

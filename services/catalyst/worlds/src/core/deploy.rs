@@ -1303,11 +1303,11 @@ pub(super) fn parse_entity(bytes: &[u8]) -> Result<Value, Response> {
     serde_json::from_slice(bytes).map_err(|_| err_one("The entity file is not valid JSON."))
 }
 
-#[cfg(test)]
 #[allow(
     clippy::cast_precision_loss,
     reason = "test fixtures use small literal values"
 )]
+#[cfg(test)]
 mod tests {
     use super::super::deploy_validate::MAX_SCENE_POINTERS;
     use super::*;

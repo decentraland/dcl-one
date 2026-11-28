@@ -292,11 +292,11 @@ impl Eip1654Validator for FreshBudgeted {
     }
 }
 
-#[cfg(test)]
 #[allow(
     clippy::cast_possible_truncation,
     reason = "test fixtures use small literal values"
 )]
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::limits::{PREAUTH_PER_MINUTE, PREAUTH_PER_MINUTE_PER_48};

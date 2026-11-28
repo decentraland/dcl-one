@@ -549,11 +549,11 @@ fn mpeg_audio(b0: u8, b1: u8) -> Option<&'static str> {
     }
 }
 
-#[cfg(test)]
 #[allow(
     clippy::cast_possible_truncation,
     reason = "test fixtures use small literal values"
 )]
+#[cfg(test)]
 mod tests {
     use super::*;
 

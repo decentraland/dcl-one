@@ -519,11 +519,11 @@ pub async fn run_prune_loop(
     }
 }
 
-#[cfg(test)]
 #[allow(
     clippy::cast_possible_wrap,
     reason = "test fixtures use small literal values"
 )]
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::sync::{AuthLink, AuthLinkType};

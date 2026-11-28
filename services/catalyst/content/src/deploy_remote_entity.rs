@@ -1070,11 +1070,11 @@ async fn fetch_body(
     Ok(sink.into_parts())
 }
 
-#[cfg(test)]
 #[allow(
     clippy::cast_precision_loss,
     reason = "test fixtures use small literal values"
 )]
+#[cfg(test)]
 mod tests {
     use super::*;
 
