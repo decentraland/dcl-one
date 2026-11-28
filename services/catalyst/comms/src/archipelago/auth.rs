@@ -164,7 +164,7 @@ impl ChallengeStore {
             .ok_or(AuthError::UnknownChallenge)?;
         let now = Utc::now();
         let age = now.signed_duration_since(issued.issued_at).num_seconds();
-        if age > self.cfg.signature_max_age_secs as i64 {
+        if age > i64::try_from(self.cfg.signature_max_age_secs).unwrap_or(i64::MAX) {
             return Err(AuthError::SignatureTooOld(age));
         }
         if chain.is_empty() {
@@ -200,7 +200,10 @@ impl ChallengeStore {
     }
 
     fn cutoff(&self) -> DateTime<Utc> {
-        Utc::now() - chrono::Duration::seconds(self.cfg.challenge_ttl_secs as i64)
+        Utc::now()
+            - chrono::Duration::seconds(
+                i64::try_from(self.cfg.challenge_ttl_secs).unwrap_or(i64::MAX),
+            )
     }
 
     #[cfg(any(test, feature = "test-support"))]

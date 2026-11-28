@@ -2415,8 +2415,8 @@ mod bounds_tests {
             pending_takeovers: vec![],
         };
         let mut stamp = PulseAdmissionStamp::from_snapshot(&plan, 0).unwrap();
-        stamp.safety_generation = generation as u64;
-        stamp.safety_token_floor = token_floor as u64;
+        stamp.safety_generation = u64::try_from(generation).unwrap();
+        stamp.safety_token_floor = u64::try_from(token_floor).unwrap();
         let bus = Arc::new(InProcessBus::new());
         bus.respond_to_requests(Arc::new(move |_, _| Ok(plan.encode_to_vec())));
         let gatekeeper = Arc::new(

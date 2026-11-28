@@ -343,7 +343,7 @@ mod tests {
         let ids = [format!("allowed-{tag}"), format!("denied-{tag}")];
         // Synthetic binder rows isolate selected-source policy and metadata rendering.
         for (i, id) in ids.iter().enumerate() {
-            let pointer = format!("{},0", coordinate + i as i32);
+            let pointer = format!("{},0", coordinate + i32::try_from(i).unwrap());
             let metadata = format!(
                 r#"{{"v":{{"scene":{{"base":"{pointer}","parcels":["{pointer}"]}},"display":{{"title":{{"z":1,"a":2}}}}}}}}"#
             );

@@ -238,7 +238,7 @@ fn is_repeat(last: Option<&(Vec<u8>, i64)>, assignment: &[u8], now: i64, dedup_m
         Some((seen, at)) => {
             dedup_ms > 0.0
                 && seen.as_slice() == assignment
-                && (now as f64) - (*at as f64) < dedup_ms
+                && crate::casts::i64_f64(now) - crate::casts::i64_f64(*at) < dedup_ms
         }
         None => false,
     }

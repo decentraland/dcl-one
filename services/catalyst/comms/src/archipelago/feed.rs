@@ -79,6 +79,10 @@ pub fn decode_islands_report(data: &[u8]) -> Result<Vec<IslandReport>, BusError>
                 peers: island.peers,
                 max_peers: island.max_peers,
                 center: [center.x, center.y, center.z],
+                #[allow(
+                    clippy::cast_possible_truncation,
+                    reason = "an island radius is metres across the map; f32 is its wire type"
+                )]
                 radius: island.radius as f32,
             })
         })
@@ -910,11 +914,14 @@ mod tests {
         let (state, bus) = linked().await;
         let now = chrono::Utc::now().timestamp_millis();
         bus.inject(ISLANDS_SUBJECT, &islands_message());
-        bus.inject(DISCOVERY_SUBJECT, &status_message(now as u64, 7));
+        bus.inject(
+            DISCOVERY_SUBJECT,
+            &status_message(u64::try_from(now).unwrap(), 7),
+        );
 
         let snapshot = crate::protocol::bus::statistics::Snapshot {
             islands: islands_message(),
-            discovery: status_message(now as u64, 7),
+            discovery: status_message(u64::try_from(now).unwrap(), 7),
             ..Default::default()
         };
         for frame in
