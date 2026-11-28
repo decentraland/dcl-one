@@ -296,17 +296,20 @@ fn store_unavailable(store: &'static str, e: &sqlx::Error) -> AuthorityNotEstabl
 /// it was read under (`None` for a source without publications).
 type MemoizedOwner = (Result<Option<Address>, String>, Option<Observation>);
 
-/// `lookup`, waited on at most `within` in a task of its own (a caller that
-/// stops waiting leaves it to finish): the answer or the fault as the
-/// admission memo keeps it, with the lookup's observation, and whether the
-/// fault is the index not being current for an authorization (a pass
-/// between walking and publishing it), which the memo does not keep.
-async fn timed_owner_lookup(
-    lookup: OwnerLookup,
-    within: std::time::Duration,
-) -> (MemoizedOwner, bool) {
+/// `lookup`, waited on at most [`ADMISSION_OWNER_TIMEOUT`] in a task of its
+/// own (a caller that stops waiting leaves it to finish): the answer or the
+/// fault as the admission memo keeps it, with the lookup's observation, and
+/// whether the fault is the index not being current for an authorization
+/// (a pass between walking and publishing it), which the memo does not keep.
+///
+/// The budget is the source's own, never a caller's time left: a caller
+/// with less time bounds the wait by its own deadline, which cancels it
+/// before it files anything. A timeout the memo keeps is then the source's
+/// over its full budget, and never one caller's short one, which would
+/// refuse the world to every caller for [`ADMISSION_OWNER_MEMO`].
+async fn timed_owner_lookup(lookup: OwnerLookup) -> (MemoizedOwner, bool) {
     let lookup = tokio::spawn(lookup);
-    match tokio::time::timeout(within, lookup).await {
+    match tokio::time::timeout(ADMISSION_OWNER_TIMEOUT, lookup).await {
         Ok(Ok((answer, observed))) => {
             let not_current = matches!(
                 answer,
@@ -965,7 +968,6 @@ impl Policy {
         }
         let key = world.key().to_string();
         let deadline = tokio::time::Instant::now() + ADMISSION_OWNER_TIMEOUT;
-        let left = move || deadline.saturating_duration_since(tokio::time::Instant::now());
         let answer = tokio::time::timeout_at(deadline, async {
             let lookup = self.name_owner_lookup(world);
             // A refusal for an index that is not current is not kept: the
@@ -973,7 +975,7 @@ impl Policy {
             let entry = match self
                 .admission_owners
                 .get_or_fetch(key.clone(), || async move {
-                    match timed_owner_lookup(lookup, left()).await {
+                    match timed_owner_lookup(lookup).await {
                         (entry, false) => Ok(entry),
                         (entry, true) => Err(entry),
                     }
@@ -990,29 +992,31 @@ impl Policy {
             }
             // A re-read joined from another admission is served only as the
             // memo serves one: while the publication it was read under
-            // stands (a newer one may have come while it was in flight).
+            // stands (a newer one may have come while it was in flight). A
+            // joined failure is read again rather than spread, as the shop's
+            // joined reads are: the leader's fault or timeout does not deny a
+            // joiner that has time of its own left. A source that fails fast
+            // is then read once per joiner too, each read bounded and its
+            // fault filed for the callers after; a lookup is never aborted,
+            // so those reads outlive callers that gave up on them. The
+            // re-read runs under its leader's deadline, which cancels it
+            // before it files anything when the leader runs out of time.
             self.admission_refreshes
                 .run_accepting(
                     (key.clone(), observed),
-                    // The shared re-read has its own budget, not its
-                    // leader's remaining one: each caller's deadline bounds
-                    // its own wait, and a leader that gives up drops the
-                    // re-read for its joiners to read again.
                     || async {
-                        let (fresh, not_current) = timed_owner_lookup(
-                            self.name_owner_lookup(world),
-                            ADMISSION_OWNER_TIMEOUT,
-                        )
-                        .await;
+                        let (fresh, not_current) =
+                            timed_owner_lookup(self.name_owner_lookup(world)).await;
                         if !not_current {
                             self.admission_owners.insert(key.clone(), fresh.clone());
                         }
                         fresh
                     },
-                    |(_, read_under)| async move {
-                        match read_under {
-                            Some(read_under) => self.publication_stands(read_under).await,
-                            None => true,
+                    |(answer, read_under)| async move {
+                        match (answer, read_under) {
+                            (Err(_), _) => false,
+                            (Ok(_), Some(read_under)) => self.publication_stands(read_under).await,
+                            (Ok(_), None) => true,
                         }
                     },
                 )
@@ -2902,6 +2906,12 @@ mod tests {
         /// (`check_entered` tells the test it got there).
         check_pause: std::sync::Mutex<Option<Arc<tokio::sync::Notify>>>,
         check_entered: tokio::sync::Notify,
+        /// While set, an owner read fails once past its pause (a source
+        /// going down mid-read).
+        fail_after_pause: std::sync::atomic::AtomicBool,
+        /// How long an owner read and a validation take, in milliseconds.
+        read_ms: std::sync::atomic::AtomicU64,
+        check_ms: std::sync::atomic::AtomicU64,
     }
 
     impl Indexed {
@@ -2988,10 +2998,18 @@ mod tests {
                 value: self.holder(label)?,
                 observation: Some(observation),
             };
+            let took = self.read_ms.load(std::sync::atomic::Ordering::SeqCst);
+            tokio::time::sleep(std::time::Duration::from_millis(took)).await;
             let pause = self.pause.lock().unwrap().clone();
             if let Some(pause) = pause {
                 self.entered.notify_one();
                 pause.notified().await;
+            }
+            if self
+                .fail_after_pause
+                .swap(false, std::sync::atomic::Ordering::SeqCst)
+            {
+                return Err(NamesError::Failed("the test source went down".into()));
             }
             Ok(answer)
         }
@@ -3020,6 +3038,8 @@ mod tests {
             if self.stall.load(SeqCst) {
                 std::future::pending::<()>().await;
             }
+            let took = self.check_ms.load(SeqCst);
+            tokio::time::sleep(std::time::Duration::from_millis(took)).await;
             let pause = self.check_pause.lock().unwrap().clone();
             if let Some(pause) = pause {
                 self.check_entered.notify_one();
@@ -3159,6 +3179,40 @@ mod tests {
         assert_eq!(leader.await.unwrap().unwrap(), Some(b));
     }
 
+    /// A failed re-read is not spread to the admissions that joined it: the
+    /// source goes down during the re-read, its own caller gets the fault,
+    /// and a joiner reads again and is answered the new holder.
+    #[tokio::test]
+    async fn a_joined_refresh_failure_is_read_again() {
+        use crate::comms::interfaces::AccessPolicy;
+        let (p, indexed) = indexed_policy();
+        let p = Arc::new(p);
+        let (world, a, b) = (world_name(), wallet(), wallet());
+        let label = world.owner_label().unwrap().to_string();
+        indexed.publish(&label, Some(&a));
+        assert_eq!(p.world_owner(&world).await.unwrap(), Some(a));
+        indexed.publish(&label, Some(&b));
+        let pause = Arc::new(tokio::sync::Notify::new());
+        *indexed.pause.lock().unwrap() = Some(pause.clone());
+        indexed
+            .fail_after_pause
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+        let leader = tokio::spawn({
+            let (p, world) = (p.clone(), world.clone());
+            async move { p.world_owner(&world).await }
+        });
+        indexed.entered.notified().await;
+        let follower = tokio::spawn({
+            let (p, world) = (p.clone(), world.clone());
+            async move { p.world_owner(&world).await }
+        });
+        p.admission_refreshes.until(|c| c.joins() >= 1).await;
+        *indexed.pause.lock().unwrap() = None;
+        pause.notify_waiters();
+        assert!(leader.await.unwrap().is_err(), "the re-read's own caller");
+        assert_eq!(follower.await.unwrap().unwrap(), Some(b));
+    }
+
     /// After a publication, the admissions that hold the world's obsolete
     /// entry share one re-read (#2219): with the re-read held in flight,
     /// eight concurrent admissions ask the source once, and every one of
@@ -3184,13 +3238,13 @@ mod tests {
             })
             .collect();
         indexed.entered.notified().await;
-        // The others reach the re-read in flight before it answers.
-        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        p.admission_refreshes.until(|c| c.joins() >= 7).await;
         *indexed.pause.lock().unwrap() = None;
         pause.notify_waiters();
         for admission in admissions {
             assert_eq!(admission.await.unwrap().unwrap(), Some(b.clone()));
         }
+        assert_eq!(p.admission_refreshes.joins(), 7);
         assert_eq!(asked() - before, 1, "one re-read for every admission");
         assert_eq!(p.world_owner(&world).await.unwrap(), Some(b));
         assert_eq!(asked() - before, 1, "the memo serves the re-read");
@@ -3223,8 +3277,7 @@ mod tests {
             let (p, world) = (p.clone(), world.clone());
             async move { p.world_owner(&world).await }
         });
-        // The follower joins the re-read in flight before it answers.
-        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        p.admission_refreshes.until(|c| c.joins() >= 1).await;
         *indexed.pause.lock().unwrap() = None;
         pause.notify_waiters();
         assert_eq!(leader.await.unwrap().unwrap(), Some(b));
@@ -3253,12 +3306,13 @@ mod tests {
             })
             .collect();
         indexed.check_entered.notified().await;
-        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        p.admission_checks.until(|c| c.joins() >= 7).await;
         *indexed.check_pause.lock().unwrap() = None;
         pause.notify_waiters();
         for hit in hits {
             assert_eq!(hit.await.unwrap().unwrap(), Some(a.clone()));
         }
+        assert_eq!(p.admission_checks.joins(), 7);
         assert_eq!(indexed.checks.load(SeqCst) - checks, 1);
         assert_eq!(p.world_owner(&world).await.unwrap(), Some(a));
         assert_eq!(
@@ -3284,6 +3338,73 @@ mod tests {
         let started = tokio::time::Instant::now();
         assert!(p.world_owner(&world).await.is_err());
         assert!(started.elapsed() <= ADMISSION_OWNER_TIMEOUT);
+    }
+
+    /// A caller that takes over a cold fill files no timeout of its own
+    /// either: the first caller is cancelled while it holds the world's
+    /// empty slot, the caller waiting on it takes the fill over with 100 ms
+    /// of its deadline left, and the source answers in 200 ms. That caller is
+    /// refused, and the next admission reads the holder at once.
+    #[tokio::test(start_paused = true)]
+    async fn a_caller_taking_over_a_fill_does_not_file_its_timeout() {
+        use crate::comms::interfaces::AccessPolicy;
+        use std::sync::atomic::Ordering::SeqCst;
+        let (p, indexed) = indexed_policy();
+        let (world, a) = (world_name(), wallet());
+        indexed.publish(world.owner_label().unwrap(), Some(&a));
+        let pause = Arc::new(tokio::sync::Notify::new());
+        *indexed.pause.lock().unwrap() = Some(pause.clone());
+        let waiting = tokio::sync::Notify::new();
+        let cancel_the_first = async {
+            indexed.entered.notified().await;
+            waiting.notify_one();
+            tokio::time::sleep(ADMISSION_OWNER_TIMEOUT - std::time::Duration::from_millis(100))
+                .await;
+            indexed.read_ms.store(200, SeqCst);
+            *indexed.pause.lock().unwrap() = None;
+        };
+        let first = async {
+            tokio::select! {
+                answer = p.world_owner(&world) => panic!("the first caller answered: {answer:?}"),
+                () = cancel_the_first => {}
+            }
+        };
+        let taking_over = async {
+            waiting.notified().await;
+            p.world_owner(&world).await
+        };
+        let ((), taking_over) = tokio::join!(first, taking_over);
+        // The first caller's lookup, left to finish on its own.
+        pause.notify_waiters();
+        assert!(taking_over.is_err(), "out of time");
+        indexed.read_ms.store(0, SeqCst);
+        assert_eq!(p.world_owner(&world).await.unwrap(), Some(a));
+    }
+
+    /// A re-read whose caller runs out of time files nothing: the validation
+    /// takes all but 100 ms of the admission deadline, the source answers
+    /// the re-read in 200 ms, and that caller is refused. Its timeout is not
+    /// filed over the world's entry, so the next admission reads again and
+    /// is answered the new holder at once rather than refused for
+    /// [`ADMISSION_OWNER_MEMO`].
+    #[tokio::test(start_paused = true)]
+    async fn a_short_caller_does_not_file_its_timeout() {
+        use crate::comms::interfaces::AccessPolicy;
+        use std::sync::atomic::Ordering::SeqCst;
+        let (p, indexed) = indexed_policy();
+        let (world, a, b) = (world_name(), wallet(), wallet());
+        let label = world.owner_label().unwrap().to_string();
+        indexed.publish(&label, Some(&a));
+        assert_eq!(p.world_owner(&world).await.unwrap(), Some(a));
+        indexed.publish(&label, Some(&b));
+        let validation = ADMISSION_OWNER_TIMEOUT - std::time::Duration::from_millis(100);
+        let validation = u64::try_from(validation.as_millis()).unwrap();
+        indexed.check_ms.store(validation, SeqCst);
+        indexed.read_ms.store(200, SeqCst);
+        assert!(p.world_owner(&world).await.is_err(), "out of time");
+        indexed.check_ms.store(0, SeqCst);
+        indexed.read_ms.store(0, SeqCst);
+        assert_eq!(p.world_owner(&world).await.unwrap(), Some(b));
     }
 
     /// The reconcile revokes on a confirmed absence only: a label with two
