@@ -837,7 +837,7 @@
   },
   "library/ui/components/Tag/Tag.module.css": {
     "primitives": 0,
-    "tokens": 71
+    "tokens": 73
   },
   "library/ui/components/TitleBar/TitleBar.module.css": {
     "primitives": 0,
