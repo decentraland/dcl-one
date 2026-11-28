@@ -884,46 +884,6 @@ pub async fn list_items(
     Ok((rows.iter().map(row_to_item).collect(), total))
 }
 
-/// The item a first-wear notice names, when it can be bought now: the
-/// catalogue row `/v1/items?urn=` reads, buyable when it mints (`isOnSale`:
-/// store-minted with stock, or a v3 mint) or else while `/v1/orders` reads
-/// an open listing of it (a legacy order or a v3 resale). `Ok(None)`: a URN
-/// outside the two networks' collections, an unknown item, or nothing to
-/// buy. Each read answers under its route's readiness, so a catalogue or
-/// book that cannot answer now is that route's envelope.
-pub async fn buyable_item(state: &MarketplaceState, urn: &str) -> Result<Option<Item>, Response> {
-    let Some(network) = super::graph::Network::of_urn(urn).map(Network::from) else {
-        return Ok(None);
-    };
-    let filters = ItemFilters {
-        urns: vec![urn.to_string()],
-        network: Some(network),
-        first: Some(1),
-        ..ItemFilters::default()
-    };
-    let mut read = priced_read(state, Some(network)).await?;
-    let (items, _) = list_items(state, &mut read, &filters)
-        .await
-        .map_err(readers::index_api_error)?;
-    drop(read);
-    let Some(item) = items.into_iter().next() else {
-        return Ok(None);
-    };
-    if item.is_on_sale {
-        return Ok(Some(item));
-    }
-    let open = super::orders::OrderFilters {
-        contract_address: Some(item.contract_address.clone()),
-        item_id: Some(item.item_id.clone()),
-        status: Some("open".to_string()),
-        network: Some(network),
-        first: Some(1),
-        ..Default::default()
-    };
-    let (_, listed) = super::orders::list_orders(state, &open).await?;
-    Ok((listed > 0).then_some(item))
-}
-
 /// The rate as the exact decimal text a `NUMERIC` bind takes: never through
 /// a float, whose 0.1 is 0.100000000000000006 and moves a CEIL across a credit.
 pub fn rate_to_numeric_string(rate: ManaUsdRate) -> String {

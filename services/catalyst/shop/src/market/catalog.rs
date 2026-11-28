@@ -2008,6 +2008,76 @@ async fn read_book_copy(
     .await
 }
 
+/// The item a first-wear notice names, when it can be bought now: the row
+/// `/v2/catalog?urn=<urn>&network=<its network>&isOnSale=true` answers.
+/// "On sale" is the catalogue's own rule: the item mints (store-minted with
+/// stock, or a v3 mint), or an open legacy order or v3 resale of one of its
+/// tokens stands, each attributed to its item as the catalogue attributes
+/// it (an Ethereum v1 token by its wearable id). Only collection items
+/// (`collections-v1`, `collections-v2`) on the two networks are looked up.
+/// `Ok(None)` covers four cases: anything else, an unknown or unnamed item,
+/// nothing to buy, and a node that does not walk the nft index (it cannot
+/// read the listings). A catalogue, book or trades copy that cannot answer
+/// now is the route's envelope.
+pub async fn on_sale_item(
+    state: &MarketplaceState,
+    urn: &str,
+) -> Result<Option<CatalogItem>, Response> {
+    let segments: Vec<&str> = urn.split(':').collect();
+    let (Some(&network), Some(&kind)) = (segments.get(2), segments.get(3)) else {
+        return Ok(None);
+    };
+    if !matches!(kind, "collections-v1" | "collections-v2") {
+        return Ok(None);
+    }
+    let network = match network {
+        "ethereum" | "mainnet" => Network::Ethereum,
+        "matic" | "polygon" => Network::Matic,
+        _ => return Ok(None),
+    };
+    if !super::owned_items::walks_here(state) {
+        return Ok(None);
+    }
+    // The catalogue spells a Polygon item's network `matic`.
+    let mut canonical = segments.clone();
+    if network == Network::Matic {
+        canonical[2] = "matic";
+    }
+    let pairs = [
+        ("urn", canonical.join(":")),
+        ("network", network.wire().to_string()),
+        ("isOnSale", "true".to_string()),
+        ("first", "1".to_string()),
+    ]
+    .map(|(key, value)| (key.to_string(), value));
+    let filters = parse_catalog_filters(&pairs).map_err(IntoResponse::into_response)?;
+    let mut read = catalogue::preflight(
+        state,
+        Purpose::Priced,
+        &[Mirror::Items],
+        Some(network.graph()),
+    )
+    .await?;
+    let scope = catalog_scope(state, &mut read, &filters, true).await?;
+    let networks: Vec<_> = scope
+        .nets
+        .iter()
+        .copied()
+        .filter(|net| scope.v3_mints.contains(net) || scope.v3_resales.contains(net))
+        .collect();
+    if !networks.is_empty() {
+        let now = read.now;
+        super::trades::ready_checked_for_networks_on(state, &mut read.tx, &networks, now)
+            .await
+            .map_err(|error| error.into_response(super::readers::index_read_error))?;
+    }
+    let (items, _) = fetch_page(state, &mut read, &filters, true, Some(&scope)).await?;
+    Ok(items
+        .into_iter()
+        .next()
+        .filter(|item| !item.name.is_empty()))
+}
+
 async fn catalog_inner(
     state: SharedState,
     headers: HeaderMap,

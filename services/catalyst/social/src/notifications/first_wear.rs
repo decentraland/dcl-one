@@ -718,12 +718,18 @@ async fn seed_history(
 }
 
 /// The item behind a normalized URN, if its catalogue knows it and it can
-/// be bought. Third-party and off-chain URNs are in no catalogue.
+/// be bought. Only collection items (`collections-v1`, `collections-v2`) on
+/// the two networks are in a catalogue: a third-party or off-chain URN is
+/// never looked up, so it spends no retries and pauses no network.
 async fn buyable_item(
     items: &dyn ItemSource,
     urn: &str,
 ) -> Result<Option<BuyableItem>, ItemLookupError> {
-    if Network::of_urn(urn).is_none() {
+    let collection_item = matches!(
+        urn.split(':').nth(3),
+        Some("collections-v1" | "collections-v2")
+    );
+    if Network::of_urn(urn).is_none() || !collection_item {
         return Ok(None);
     }
     items.buyable_item(urn).await
@@ -1159,8 +1165,8 @@ mod pg_tests {
     }
 
     /// A buyable first wear notifies the wearer's active friends with the
-    /// item the source names; a third-party URN is in no catalogue and is
-    /// never looked up.
+    /// item the source names; a third-party URN, on Polygon or a testnet, is
+    /// in no catalogue and is never looked up.
     #[tokio::test]
     async fn a_buyable_first_wear_notifies_the_active_friends() {
         let Some(pool) = private_pool("ffw_notify").await else {
@@ -1179,7 +1185,7 @@ mod pg_tests {
         .await
         .unwrap();
         let items = Stub(|urn| {
-            assert!(urn.contains(":matic:"), "{urn}");
+            assert!(urn.contains(":matic:collections-v2:"), "{urn}");
             Ok(Some(BuyableItem {
                 item_id: "0xeee-1".into(),
                 name: "Hat".into(),
@@ -1188,6 +1194,7 @@ mod pg_tests {
             }))
         });
         queued_wear(&pool, "urn:decentraland:amoy:collections-thirdparty:tp:1").await;
+        queued_wear(&pool, "urn:decentraland:matic:collections-thirdparty:tp:1").await;
         let emitted = run_once(&pool, Some(&items), &FirstWearSettings::default())
             .await
             .unwrap();

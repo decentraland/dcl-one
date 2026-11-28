@@ -483,10 +483,9 @@ mod credits_room_event_tests {
 }
 
 /// Shop's catalogue as the first-wear producer's item source
-/// ([`shop::market::items::buyable_item`]): the item as `/v1/items` reads it,
-/// buyable when it mints or while `/v1/orders` reads an open listing of it.
-/// A refused request (4xx) is final; anything else, an index or mirror not
-/// ready included, is retried.
+/// ([`shop::market::catalog::on_sale_item`]): the item as
+/// `/v2/catalog?urn=&isOnSale=true` reads it. A refused request (4xx) is
+/// final; anything else, an index not ready included, is retried.
 pub(super) struct ShopBuyableItems(pub(super) Arc<shop::market::MarketplaceState>);
 
 #[async_trait::async_trait]
@@ -499,7 +498,7 @@ impl social::notifications::first_wear::ItemSource for ShopBuyableItems {
         social::notifications::first_wear::ItemLookupError,
     > {
         use social::notifications::first_wear::{BuyableItem, ItemLookupError};
-        match shop::market::items::buyable_item(&self.0, urn).await {
+        match shop::market::catalog::on_sale_item(&self.0, urn).await {
             Ok(item) => Ok(item.map(|item| BuyableItem {
                 item_id: item.id,
                 name: item.name,
@@ -530,27 +529,32 @@ mod shop_buyable_items_tests {
     use super::*;
     use social::notifications::first_wear::{ItemLookupError, ItemSource};
 
-    /// A catalogue that cannot answer yet (nothing published) is a
-    /// transient failure the producer retries, carrying the route's status;
-    /// never "nothing to buy".
+    /// On a node that walks the nft index, a catalogue that cannot answer
+    /// yet (nothing published) is a transient failure the producer retries,
+    /// carrying the route's status, never "nothing to buy". A node that does
+    /// not walk it cannot read the listings: nothing to buy, at once.
     #[tokio::test]
     async fn an_unready_catalogue_is_retried_not_dropped() {
         use crate::db::scratch::{OwnedDatabase, Schema};
         let Some(db) = OwnedDatabase::new("first_wear_items", Schema::Full, 2).await else {
             return;
         };
-        let items = ShopBuyableItems(Arc::new(shop::market::MarketplaceState::new(
-            db.pool.clone(),
-            crate::http::Outbound::for_tests(),
-            shop::market::Settings::for_tests(),
-        )));
-        let answer = items
-            .buyable_item("urn:decentraland:matic:collections-v2:0xeee:1")
-            .await;
+        let items = |nft_walk: bool| {
+            let mut settings = shop::market::Settings::for_tests();
+            settings.market.indexes.nft_enabled = nft_walk;
+            ShopBuyableItems(Arc::new(shop::market::MarketplaceState::new(
+                db.pool.clone(),
+                crate::http::Outbound::for_tests(),
+                settings,
+            )))
+        };
+        let urn = "urn:decentraland:matic:collections-v2:0xeee:1";
+        let answer = items(true).buyable_item(urn).await;
         assert!(
             matches!(&answer, Err(ItemLookupError::Transient(why)) if why.contains("503")),
             "{answer:?}"
         );
+        assert_eq!(items(false).buyable_item(urn).await, Ok(None));
         db.drop().await;
     }
 }

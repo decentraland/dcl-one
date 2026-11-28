@@ -2739,12 +2739,12 @@ async fn favorites_lists_and_picks_keep_the_old_authorization_and_counting_rules
     cleanup_mirror(&pool, &[contract_of(&t, 1)]).await;
 }
 
-/// The first-wear lookup ([`super::items::buyable_item`]) reads the item as
-/// `/v1/items` does and its open listings as `/v1/orders` does: a
-/// store-minted item with stock is buyable; one that does not mint is
-/// buyable only while an open order of a token its seller holds stands; an
-/// unknown item or a URN outside the collections is `None`; a catalogue or
-/// book that cannot answer is its envelope, never `None`.
+/// The first-wear lookup ([`super::catalog::on_sale_item`]) reads the item
+/// as `/v2/catalog?urn=&isOnSale=true` does: a store-minted item with stock
+/// is buyable; one that does not mint is buyable only while an open order
+/// of a token its seller holds stands; an unknown item, a third-party URN or
+/// another network's is `None`; a catalogue or book that cannot answer is
+/// its envelope, never `None`.
 #[tokio::test]
 async fn a_first_wear_item_is_buyable_as_the_routes_read_it() {
     let up = FakeGraph::new();
@@ -2758,7 +2758,8 @@ async fn a_first_wear_item_is_buyable_as_the_routes_read_it() {
     seed_item_row(&pool, &c, "1", CREATOR).await;
     seed_item_row(&pool, &c, "2", CREATOR).await;
     sqlx::query(
-        "UPDATE shop.items SET search_is_store_minter = (item_id = 1) WHERE contract_address = $1",
+        "UPDATE shop.items SET search_is_store_minter = (item_id = 1), search_is_collection_approved = true \
+         WHERE contract_address = $1",
     )
     .bind(&c)
     .execute(&pool)
@@ -2767,7 +2768,7 @@ async fn a_first_wear_item_is_buyable_as_the_routes_read_it() {
     let urn = |item: u8| format!("urn:decentraland:matic:collections-v2:{c}:{item}");
     let lookup = |urn: String| {
         let state = state.clone();
-        async move { super::items::buyable_item(&state, &urn).await }
+        async move { super::catalog::on_sale_item(&state, &urn).await }
     };
 
     // Nothing published: the envelope, not "nothing to buy".
@@ -2780,6 +2781,13 @@ async fn a_first_wear_item_is_buyable_as_the_routes_read_it() {
         Duration::ZERO,
     )
     .await;
+    sqlx::query(
+        "INSERT INTO shop.mirror_state (mirror, network, source_url, last_complete_pass_at) \
+         SELECT 'collections', n, 'test', timezone('UTC', now()) FROM unnest(ARRAY['ethereum', 'matic']) n",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
 
     let minting = lookup(urn(1))
         .await
@@ -2789,13 +2797,17 @@ async fn a_first_wear_item_is_buyable_as_the_routes_read_it() {
     assert_eq!(minting.creator, CREATOR.to_lowercase());
     assert!(lookup(urn(2)).await.unwrap().is_none(), "no mint, no order");
     assert!(lookup(urn(9)).await.unwrap().is_none(), "unknown item");
-    assert!(
-        lookup("urn:decentraland:amoy:collections-thirdparty:tp:1".into())
-            .await
-            .unwrap()
-            .is_none(),
-        "outside the collections"
-    );
+    for outside in [
+        "urn:decentraland:matic:collections-thirdparty:tp:1",
+        "urn:decentraland:amoy:collections-v2:0xeee:1",
+    ] {
+        assert!(lookup(outside.into()).await.unwrap().is_none(), "{outside}");
+    }
+    // The `polygon` spelling of the network names the same item.
+    let aliased = lookup(urn(1).replace(":matic:", ":polygon:"))
+        .await
+        .unwrap();
+    assert_eq!(aliased.map(|item| item.id), Some(format!("{c}-1")));
 
     // An open order of a token of item 2, its seller still holding it.
     let token = (alloy_primitives::U256::from(2u64) << 216u32 | alloy_primitives::U256::from(1u64))
@@ -2830,6 +2842,14 @@ async fn a_first_wear_item_is_buyable_as_the_routes_read_it() {
     republish_nft(&pool).await;
     let listed = lookup(urn(2)).await.unwrap().expect("an open order stands");
     assert_eq!(listed.id, format!("{c}-2"));
+
+    // An item without a name names nothing worth a notice.
+    sqlx::query("UPDATE shop.items SET name = '' WHERE contract_address = $1 AND item_id = 1")
+        .bind(&c)
+        .execute(&pool)
+        .await
+        .unwrap();
+    assert!(lookup(urn(1)).await.unwrap().is_none(), "an unnamed item");
 
     // A book behind the published fold cannot answer: its envelope.
     sqlx::query("UPDATE shop.legacy_order_cursor SET folded_through = 50 WHERE network = 'matic'")
@@ -13179,6 +13199,35 @@ async fn catalog_ethereum_resales_resolve_v1_issues_on_the_served_chain() {
         assert_eq!(data["data"][0]["itemId"], "42");
         assert_eq!(data["data"][0]["listings"], version);
     }
+    // The first-wear lookup attributes the v1 tokens alike: the hat (item
+    // 42, tokens 7 and 8) is buyable, the shoes (item 0) are not, also once
+    // only the v3 resale of token 8 is left open.
+    let on_sale = |wearable: &'static str| {
+        let state = state.clone();
+        async move {
+            super::catalog::on_sale_item(
+                &state,
+                &format!("urn:decentraland:ethereum:collections-v1:test:{wearable}"),
+            )
+            .await
+            .unwrap()
+            .map(|item| item.item_id)
+        }
+    };
+    assert_eq!(
+        (on_sale("hat").await, on_sale("shoes").await),
+        (Some("42".to_string()), None)
+    );
+    sqlx::query("DELETE FROM shop.legacy_order WHERE order_id = 'legacy'")
+        .execute(pool)
+        .await
+        .unwrap();
+    republish_nft(pool).await;
+    assert_eq!(
+        (on_sale("hat").await, on_sale("shoes").await),
+        (Some("42".to_string()), None),
+        "the v3 resale of token 8 alone"
+    );
     for relation in ["shop.items", "shop.collections"] {
         sqlx::query(sqlx::AssertSqlSafe(format!(
             "UPDATE {relation} SET chain_id=11155111 WHERE contract_address=$1"
