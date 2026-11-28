@@ -54,6 +54,8 @@
 
 # protocol
 /library/protocol/ @decentraland/client @decentraland/apis
+/.github/workflows/protocol.yml @decentraland/client @decentraland/apis
+/.github/workflows/protocol-release.yml @decentraland/client @decentraland/apis
 
 # sdk
 # UNASSIGNED /library/js-sdk-toolchain/

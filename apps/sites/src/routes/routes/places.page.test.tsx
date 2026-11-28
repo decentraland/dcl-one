@@ -114,6 +114,13 @@ const pageOf = (prefix: string) => Array.from({ length: 48 }, (_, i) => destinat
 const owner = (n: number) => `0x${n.toString(16).padStart(40, "0")}`;
 const LOAD_ERROR = "Something went wrong loading places.";
 
+
+/** Opens the category Dropdown and presses the named option. */
+async function pickCategory(user: ReturnType<typeof userEvent.setup>, select: HTMLElement, name: string) {
+  await user.click(select);
+  await user.click(await screen.findByRole("option", { name }));
+}
+
 describe("Places page", () => {
   let user: ReturnType<typeof userEvent.setup>;
   let client: QueryClient;
@@ -249,7 +256,7 @@ describe("Places page", () => {
         ({ user } = renderPage("/places", DESKTOP, true));
         await screen.findByRole("alert");
         [select] = screen.getAllByRole("combobox", { name: "Category" });
-        await user.selectOptions(select!, "music");
+        await pickCategory(user, select!, "Music");
       });
 
       it("should read normally", async () => {
@@ -260,7 +267,7 @@ describe("Places page", () => {
       describe("and the view changes back to all", () => {
         beforeEach(async () => {
           await screen.findByRole("link", { name: "Music place" });
-          await user.selectOptions(select!, "all");
+          await pickCategory(user, select!, "Any Category");
         });
 
         it("should still read normally", async () => {
@@ -406,7 +413,7 @@ describe("Places page", () => {
         serve({ browse: [destination()] });
         ({ user } = renderPage());
         const [select] = await screen.findAllByRole("combobox", { name: "Category" });
-        await user.selectOptions(select!, "music");
+        await pickCategory(user, select!, "Music");
       });
 
       it("should put the category in ?category", () => {
