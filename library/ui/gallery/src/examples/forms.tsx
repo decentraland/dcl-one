@@ -390,6 +390,37 @@ export const formEntries: GalleryEntry[] = [
             </WebSelect>
           </div>
         )
+      },
+      {
+        id: 'labelled',
+        title: 'Label, description and error',
+        render: () => (
+          <div className={layout.stack}>
+            <WebSelect
+              label="Network"
+              description="Where the item is minted."
+              defaultValue="polygon"
+            >
+              <option value="ethereum">Ethereum</option>
+              <option value="polygon">Polygon</option>
+            </WebSelect>
+            <WebSelect
+              label={
+                <span>
+                  Reason <span aria-hidden="true">*</span>
+                </span>
+              }
+              error="Choose a reason"
+              defaultValue=""
+              required
+            >
+              <option value="" disabled>
+                Choose a reason
+              </option>
+              <option value="spam">Spam</option>
+            </WebSelect>
+          </div>
+        )
       }
     ]
   },
@@ -411,6 +442,16 @@ export const formEntries: GalleryEntry[] = [
               rows={3}
             />
             <WebTextarea aria-label="Description (disabled)" disabled rows={2} />
+          </div>
+        )
+      },
+      {
+        id: 'labelled',
+        title: 'Label, hint and error',
+        render: () => (
+          <div className={layout.stack}>
+            <WebTextarea label="Description" hint="Up to 500 characters." rows={3} />
+            <WebTextarea label="Details" error="Add a few words" rows={3} />
           </div>
         )
       }

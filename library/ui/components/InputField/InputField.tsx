@@ -16,7 +16,8 @@ export type InputFieldProps = Omit<
   InputHTMLAttributes<HTMLInputElement>,
   'size' | 'children' | 'dangerouslySetInnerHTML'
 > & {
-  label: string
+  /** The visible name above the field. A node lets a form put its own content in it, such as a required mark. */
+  label: ReactNode
   ref?: Ref<HTMLInputElement>
   labelHidden?: boolean
   hint?: string
@@ -96,28 +97,29 @@ export function InputField({
   const sanitized = nativeInput as InputHTMLAttributes<HTMLInputElement>
   delete sanitized.children
   delete sanitized.dangerouslySetInnerHTML
-  const descriptionId = description?.trim() ? `${inputId}-description` : undefined
-  const errorId = error?.trim() ? `${inputId}-error` : undefined
-  const counterId = counter?.trim() ? `${inputId}-counter` : undefined
+  const { descriptionId, errorId, counterId, hintId } = fieldMessageIds(inputId, {
+    description,
+    error,
+    counter,
+    hint
+  })
   const suffixId = suffix?.trim() ? `${inputId}-suffix` : undefined
-  const hintId = hint?.trim() ? `${inputId}-hint` : undefined
   const ids =
     [describedBy, descriptionId, errorId, suffixId, counterId, hintId].filter(Boolean).join(' ') ||
     undefined
   return (
-    <div className={[styles.root, className].filter(Boolean).join(' ')} data-surface={surface}>
-      <label
-        className={styles.label}
-        htmlFor={inputId}
-        data-hidden={surface === 'explorer' || labelHidden || undefined}
-      >
-        {label}
-      </label>
-      {descriptionId ? (
-        <div id={descriptionId} className={styles.description}>
-          {description}
-        </div>
-      ) : null}
+    <FieldChrome
+      surface={surface}
+      inputId={inputId}
+      label={label}
+      labelHidden={surface === 'explorer' || labelHidden}
+      description={description}
+      error={error}
+      counter={counter}
+      hint={hint}
+      hintIcon={hintIcon}
+      className={className}
+    >
       <div className={styles.fieldRow}>
         <div
           className={surface === 'web' ? `${styles.field} ${styles.webField}` : styles.field}
@@ -163,6 +165,68 @@ export function InputField({
         </div>
         {hasRenderableContent(action) ? <div className={styles.action}>{action}</div> : null}
       </div>
+    </FieldChrome>
+  )
+}
+
+type FieldMessages = { description?: string; error?: string; counter?: string; hint?: string }
+
+/** The ids of a field's description and status lines, set only for the lines that have text. */
+export function fieldMessageIds(inputId: string, messages: FieldMessages) {
+  const id = (part: keyof FieldMessages) =>
+    messages[part]?.trim() ? `${inputId}-${part}` : undefined
+  return {
+    descriptionId: id('description'),
+    errorId: id('error'),
+    counterId: id('counter'),
+    hintId: id('hint')
+  }
+}
+
+/**
+ * The frame every web and Explorer field shares: its label, description and status lines around the
+ * control the caller passes as children.
+ */
+export function FieldChrome({
+  surface,
+  inputId,
+  label,
+  labelHidden,
+  description,
+  error,
+  counter,
+  hint,
+  hintIcon,
+  className,
+  children
+}: FieldMessages & {
+  surface: 'explorer' | 'web'
+  inputId: string
+  label?: ReactNode
+  labelHidden?: boolean
+  hintIcon?: ReactNode
+  className?: string
+  children: ReactNode
+}) {
+  const { descriptionId, errorId, counterId, hintId } = fieldMessageIds(inputId, {
+    description,
+    error,
+    counter,
+    hint
+  })
+  return (
+    <div className={[styles.root, className].filter(Boolean).join(' ')} data-surface={surface}>
+      {label != null && typeof label !== 'boolean' ? (
+        <label className={styles.label} htmlFor={inputId} data-hidden={labelHidden || undefined}>
+          {label}
+        </label>
+      ) : null}
+      {descriptionId ? (
+        <div id={descriptionId} className={styles.description}>
+          {description}
+        </div>
+      ) : null}
+      {children}
       {errorId || counterId || hintId ? (
         <div className={styles.status}>
           {counterId ? <span id={counterId}>{counter}</span> : null}

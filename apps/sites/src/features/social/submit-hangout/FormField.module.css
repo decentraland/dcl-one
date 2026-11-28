@@ -1,7 +1,0 @@
-/* The label above its control, spaced as InputWebCreatorTools spaces its own. */
-.root {
-  display: grid;
-  gap: var(--dcl-space-8);
-  min-width: 0;
-  color: var(--dcl-text-primary);
-}
