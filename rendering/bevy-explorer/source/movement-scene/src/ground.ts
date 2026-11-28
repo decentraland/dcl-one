@@ -14,8 +14,14 @@ export var grounded = false;
 export var prevGrounded = false;
 // what the ground casts report this tick, before the models change `grounded`
 export var castGrounded = false;
+// Angle from the vertical (degrees) of a face too steep to stand on that the capsule rests on this tick: the capsule
+// cast's hit within grounded reach, when it faces up but is not walkable. 0: none (an overhang does not count). On a
+// ledge's edge it is the angle of the capsule's surface where it rests on the corner.
+export var steepContactAngle = 0;
 
 export const GROUNDED_ANGLE_Y_LEN = Math.cos(GROUNDED_ANGLE / 180 * Math.PI)
+const angleFromVertical = (n: { x: number, y: number, z: number }) =>
+    Math.acos(Math.max(-1, Math.min(1, n.y / (Math.hypot(n.x, n.y, n.z) || 1)))) * 180 / Math.PI
 
 // a walkable hit within grounded reach of the capsule's bottom
 const groundedHit = (hit: RaycastHit) =>
@@ -25,6 +31,8 @@ var groundCaster: Entity;
 var groundRayCaster: Entity;
 var groundHitTick = 0;
 var groundRayHitTick = 0;
+var steepHitAngle = 0;
+var steepHitTick = 0;
 
 export function initGroundRaycast() {
     engine.addSystem(recordGroundState, 100000 - 2);
@@ -55,6 +63,9 @@ export function initGroundRaycast() {
             })) {
                 groundHitTick = tick;
             }
+            const near = hit.hits.find((h) => h.length < PLAYER_COLLIDER_RADIUS + GROUNDED_HEIGHT);
+            steepHitAngle = near?.normalHit !== undefined && near.normalHit.y > 0 && !groundedHit(near) ? angleFromVertical(near.normalHit) : 0;
+            steepHitTick = tick;
         }
     )
 
@@ -97,6 +108,7 @@ function recordGroundState() {
     prevGrounded = grounded;
     grounded = ((groundHitTick == tick) || (groundRayHitTick == tick) || (playerPosition.y < 0.01));
     castGrounded = grounded;
+    steepContactAngle = steepHitTick == tick ? steepHitAngle : 0;
     if (playerPosition.y < 0.01) {
         Vector3.copyFrom(VEC3_UP, groundNormal);
     }

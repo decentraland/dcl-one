@@ -32,7 +32,7 @@ uses. The SDK's runtime entry (`@dcl/sdk`) and the engine's `~system/*` modules 
 the engine, so the bundle replaces them with empty modules. A test reaches the scene's logic
 through its exported functions: the vertical model's state and step (`src/vertical.ts`), the
 animator and its state machine (`src/animator.ts`, `src/character-animator.ts`), and the jump,
-glide and emote rules of `src/index.ts`. The tests and `test/run.mjs` are not part of the deployed
+glide, slope slide and emote rules of `src/index.ts`. The tests and `test/run.mjs` are not part of the deployed
 scene (`.dclignore`) or of its type check (`tsconfig.json` covers `src/`). The Explorer CI job
 *Movement scene* runs both commands when the scene's directory or that workflow changes.
 
