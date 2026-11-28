@@ -319,7 +319,7 @@ impl PgAssignmentAuthority {
     }
 
     async fn set_renewal(&self, owner: &V4Owner, renewed_at: &'static str) -> Result<(), V4Error> {
-        checked_epoch(owner.epoch)?;
+        let epoch = checked_epoch(owner.epoch)?;
         let (changed, still_owned): (bool, bool) = sqlx::query_as(sqlx::AssertSqlSafe(format!(
             "WITH held AS MATERIALIZED (
                 SELECT lane_key, updated_at FROM social.archipelago_v4_assignments
@@ -341,7 +341,7 @@ impl PgAssignmentAuthority {
         .bind(&self.namespace)
         .bind(&owner.address)
         .bind(&owner.session)
-        .bind(owner.epoch as i64)
+        .bind(epoch)
         .fetch_one(&self.pool)
         .await
         .map_err(|_| V4Error::AuthorityUnavailable)?;
@@ -359,7 +359,7 @@ impl PgAssignmentAuthority {
             sqlx::query_scalar("SELECT nextval('social.archipelago_v4_connection_epoch')")
                 .fetch_one(&self.pool)
                 .await?;
-        Ok(value.max(1) as u64)
+        Ok(crate::casts::non_negative(value).max(1))
     }
 
     async fn claim_lanes(
@@ -404,6 +404,7 @@ impl PgAssignmentAuthority {
         owner: &V4Owner,
         lane: &LaneKey,
     ) -> Result<AssignmentState, V4Error> {
+        let epoch = checked_epoch(owner.epoch)?;
         let row = sqlx::query(
             "INSERT INTO social.archipelago_v4_assignments (
                 deployment_audience, owner_address, lane_key, authority_incarnation, assignment_revision,
@@ -453,7 +454,7 @@ impl PgAssignmentAuthority {
         .bind(lane.as_str())
         .bind(&self.incarnation)
         .bind(&owner.session)
-        .bind(owner.epoch as i64)
+        .bind(epoch)
         .fetch_optional(&mut **tx)
         .await
         .map_err(|_| V4Error::AuthorityUnavailable)?;
@@ -467,7 +468,7 @@ impl PgAssignmentAuthority {
         lane: &LaneKey,
         assignment: AssignmentPayload,
     ) -> Result<AssignmentState, V4Error> {
-        checked_epoch(owner.epoch)?;
+        let epoch = checked_epoch(owner.epoch)?;
         let stamp = assignment.pulse_admission.clone();
         let mut assignment = serde_json::to_value(assignment).map_err(|_| V4Error::InvalidFrame)?;
         if let Some(stamp) = stamp.as_ref() {
@@ -524,7 +525,7 @@ impl PgAssignmentAuthority {
         .bind(&owner.address)
         .bind(lane.as_str())
         .bind(&owner.session)
-        .bind(owner.epoch as i64)
+        .bind(epoch)
         .bind(assignment);
         let row = if let Some(lease) = safety.as_mut() {
             query.fetch_optional(&mut *lease.tx).await
@@ -543,7 +544,7 @@ impl PgAssignmentAuthority {
     }
 
     async fn snapshot(&self, owner: &V4Owner, lane: &LaneKey) -> Result<AssignmentState, V4Error> {
-        checked_epoch(owner.epoch)?;
+        let epoch = checked_epoch(owner.epoch)?;
         let row = sqlx::query(
             "SELECT lane_key, authority_incarnation, assignment_revision, owner_session,
                     owner_epoch, fencing_token, assignment_json,
@@ -559,7 +560,7 @@ impl PgAssignmentAuthority {
         .bind(&owner.address)
         .bind(lane.as_str())
         .bind(&owner.session)
-        .bind(owner.epoch as i64)
+        .bind(epoch)
         .fetch_optional(&self.pool)
         .await
         .map_err(|_| V4Error::AuthorityUnavailable)?;
@@ -579,7 +580,7 @@ impl PgAssignmentAuthority {
         lane: &LaneKey,
         revision: u64,
     ) -> Result<AssignmentState, V4Error> {
-        checked_epoch(owner.epoch)?;
+        let epoch = checked_epoch(owner.epoch)?;
         let revision = checked_i64(revision)?;
         let row = sqlx::query(
             "WITH held AS MATERIALIZED (
@@ -604,7 +605,7 @@ impl PgAssignmentAuthority {
         .bind(&owner.address)
         .bind(lane.as_str())
         .bind(&owner.session)
-        .bind(owner.epoch as i64)
+        .bind(epoch)
         .bind(revision)
         .fetch_optional(&self.pool)
         .await
@@ -626,11 +627,11 @@ fn state_from_row(row: sqlx::postgres::PgRow) -> Result<AssignmentState, V4Error
     Ok(AssignmentState {
         lane: row.try_get("lane_key").map_err(failure)?,
         authority_incarnation: row.try_get("authority_incarnation").map_err(failure)?,
-        assignment_revision: revision as u64,
-        realm_revision: revision as u64,
+        assignment_revision: crate::casts::non_negative(revision),
+        realm_revision: crate::casts::non_negative(revision),
         owner_session: row.try_get("owner_session").map_err(failure)?,
-        owner_epoch: owner_epoch as u64,
-        fencing_token: fencing_token as u64,
+        owner_epoch: crate::casts::non_negative(owner_epoch),
+        fencing_token: crate::casts::non_negative(fencing_token),
         assignment: assignment
             .map(serde_json::from_value)
             .transpose()

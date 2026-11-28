@@ -262,7 +262,11 @@ fn decode_path(id: &str) -> String {
             if i + 2 >= raw.len() {
                 return id.into();
             }
-            let hex = |b: u8| (b as char).to_digit(16).map(|v| v as u8);
+            let hex = |b: u8| {
+                char::from(b)
+                    .to_digit(16)
+                    .and_then(|v| u8::try_from(v).ok())
+            };
             let (Some(a), Some(b)) = (hex(raw[i + 1]), hex(raw[i + 2])) else {
                 return id.into();
             };

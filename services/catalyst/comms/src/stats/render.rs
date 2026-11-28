@@ -8,6 +8,12 @@ use serde::Serialize;
 use std::collections::{HashMap, HashSet};
 
 /// Number-to-string also supplies Map keys, where nonfinite values are strings.
+#[allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_possible_wrap,
+    clippy::cast_sign_loss,
+    reason = "a shortest-roundtrip f64 has at most 17 digits and a 3-digit exponent; point is sign-checked before each usize cast"
+)]
 pub fn number(value: f64) -> String {
     if value.is_nan() {
         return "NaN".into();
@@ -298,9 +304,9 @@ pub fn core(snapshot: &Snapshot, now: i64) -> Core {
         .ok()
         .and_then(|d| d.status);
     Core {
-        healthy: status
-            .as_ref()
-            .is_some_and(|s| (now as f64 - s.current_time as f64).abs() < 90000.),
+        healthy: status.as_ref().is_some_and(|s| {
+            (crate::casts::i64_f64(now) - crate::casts::u64_f64(s.current_time)).abs() < 90000.
+        }),
         user_count: status.map_or(0, |s| s.user_count),
     }
 }

@@ -190,7 +190,7 @@ pub fn judge_stop(seen: &[StopSeen], command_took: Duration) -> Result<(), Strin
         return Err("no peer was watched through the stop".to_owned());
     }
     let graceful = DisconnectReason::Graceful.code();
-    let command_ms = command_took.as_millis() as u64;
+    let command_ms = crate::casts::millis(command_took);
     // A Pulse that stopped leaves no signed-in peer connected: told or not, each one's
     // connection ends within its own timeout, which the watch outlasts.
     let mut signed_in = seen.iter().filter(|peer| peer.signed_in).peekable();
@@ -262,8 +262,8 @@ async fn watch_disconnects(
             {
                 *slot = Some((
                     code,
-                    started.elapsed().as_millis() as u64,
-                    connected.elapsed().as_millis() as u64,
+                    crate::casts::millis(started.elapsed()),
+                    crate::casts::millis(connected.elapsed()),
                 ));
             }
         }
@@ -353,7 +353,7 @@ async fn graceful_stop(ctx: Ctx) -> Result<()> {
             &ctx.identity(index),
             target,
             &realm,
-            offset(here, index as f32, 1.0),
+            offset(here, crate::casts::f32_from_u32(index), 1.0),
         )
         .await?;
         peers.push((bot, true, Instant::now()));
@@ -406,7 +406,7 @@ async fn graceful_stop(ctx: Ctx) -> Result<()> {
     });
     let (status, command_took) = status;
     ctx.note("stop", &seen);
-    ctx.note("restart_command_ms", command_took.as_millis() as u64);
+    ctx.note("restart_command_ms", crate::casts::millis(command_took));
     for (bot, _, _) in peers {
         bot.close();
     }
@@ -447,7 +447,10 @@ async fn pulse_answers_again(ctx: &Ctx, identity: &Identity) -> Result<()> {
         .await;
         match entered {
             Ok(bot) => {
-                ctx.note("pulse_back_after_ms", started.elapsed().as_millis() as u64);
+                ctx.note(
+                    "pulse_back_after_ms",
+                    crate::casts::millis(started.elapsed()),
+                );
                 return leave(ctx, bot).await;
             }
             Err(error) if started.elapsed() < BACK_WITHIN => {
@@ -494,7 +497,7 @@ pub fn judge_silence(seen: &[SilenceSeen], within: Duration) -> Result<(), Strin
             recycled.peer, recycled.subject, first.subject, first.peer
         ));
     }
-    let within_ms = within.as_millis() as u64;
+    let within_ms = crate::casts::millis(within);
     for peer in seen {
         match peer.dropped_after_ms {
             Some(after) if after <= within_ms => {}
@@ -537,7 +540,7 @@ async fn silent_peer(ctx: Ctx, round_trip: Duration) -> Result<()> {
     let realm = ctx.realm("silence");
     let here = meeting_place(&ctx);
     let pulse = ctx.stack().pulse_enet;
-    ctx.note("round_trip_ms", round_trip.as_millis() as u64);
+    ctx.note("round_trip_ms", crate::casts::millis(round_trip));
     let observer = enter_on_enet(
         &ctx,
         "observer",
@@ -590,7 +593,7 @@ async fn silent_peer(ctx: Ctx, round_trip: Duration) -> Result<()> {
         link.set(Direction::Both, Fault::Stall);
         let silent = Instant::now();
         let gone = until_gone(&observer, &wallet, SILENCE_WATCH).await?;
-        let dropped_after_ms = gone.map(|at| at.duration_since(silent).as_millis() as u64);
+        let dropped_after_ms = gone.map(|at| crate::casts::millis(at.duration_since(silent)));
         ctx.note(&format!("{label}_subject"), subject.subject_id);
         ctx.note(&format!("{label}_dropped_after_ms"), dropped_after_ms);
         seen.push(SilenceSeen {

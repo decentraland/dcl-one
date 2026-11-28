@@ -688,7 +688,7 @@ async fn auth_timeout(ctx: Ctx) -> Result<()> {
             PENDING_AUTH_TIMEOUT + Duration::from_secs(15),
         )
         .await?;
-    ctx.note("auth_timeout_ms", started.elapsed().as_millis() as u64);
+    ctx.note("auth_timeout_ms", crate::casts::millis(started.elapsed()));
     bystander.expect_alive()
 }
 
@@ -716,7 +716,7 @@ impl Budget {
     /// One event of this budget: a movement input, or in turn a teleport, an emote start and an
     /// emote stop. `number` tells events apart so none repeats the last.
     fn send(self, bot: &PulseBot, realm: &str, here: [f32; 3], number: u32) -> Result<()> {
-        let spot = offset(here, (number % 2) as f32, 0.0);
+        let spot = offset(here, crate::casts::f32_from_u32(number % 2), 0.0);
         match self {
             Budget::Input => bot.move_to(spot),
             Budget::Discrete => match number % 3 {
@@ -906,7 +906,7 @@ async fn same_wallet_race(ctx: Ctx) -> Result<()> {
     let first = ctx.first_of_two();
     let second = 1 - first;
     let gap = ctx.offset_within(Duration::from_millis(100));
-    ctx.note("handshake_gap_us", gap.as_micros() as u64);
+    ctx.note("handshake_gap_us", crate::casts::micros(gap));
     let signed_at = now_ms();
     let options = |which: usize, timestamp_ms: i64| HandshakeOptions {
         initial_state: messages::initial_state(&grid, &realm, spots[which]),
@@ -1073,7 +1073,7 @@ async fn swarm(ctx: &Ctx, first_index: u32, count: usize, addresses: &[IpAddr]) 
         }
     }
     let outcomes = join_all(pending.iter().map(|(position, bot)| {
-        let identity = ctx.identity(first_index + *position as u32);
+        let identity = ctx.identity(first_index + crate::casts::index_u32(*position));
         async move {
             bot.handshake(
                 ctx,
@@ -1125,7 +1125,11 @@ async fn walk_and_watch(
     loop {
         walker.expect_alive()?;
         observer.expect_alive()?;
-        let spot = offset(here, 1.0 + (step % 40) as f32 * 0.15, 1.0);
+        let spot = offset(
+            here,
+            1.0 + crate::casts::f32_from_u32(step % 40) * 0.15,
+            1.0,
+        );
         *last_sent.lock() = spot;
         walker.move_to(spot)?;
         step += 1;
@@ -1150,7 +1154,7 @@ async fn handshake_swarm(ctx: Ctx) -> Result<()> {
     if cap <= 0 {
         bail!("the stack file has no per-address pre-auth budget, so there is none to test");
     }
-    let cap = cap as usize;
+    let cap = usize::try_from(cap)?;
     let realm = ctx.realm("arena");
     let here = meeting_place(&ctx);
     let (observer_id, walker_id) = (ctx.identity(0), ctx.identity(1));
@@ -1302,7 +1306,11 @@ async fn churner(
     let mut cycle = 0_u32;
     loop {
         let identity = ctx.identity(10 + slot * 1000 + cycle);
-        let spot = offset(here, 1.0 + (slot % 3) as f32, 1.0 + (slot / 3) as f32);
+        let spot = offset(
+            here,
+            1.0 + crate::casts::f32_from_u32(slot % 3),
+            1.0 + crate::casts::f32_from_u32(slot / 3),
+        );
         let bot = enter_at(
             ctx,
             &format!("churn-{slot}-{cycle}"),
@@ -1380,7 +1388,10 @@ async fn churn(ctx: Ctx) -> Result<()> {
     };
 
     let staying: Vec<(PulseBot, String)> = finished.into_iter().flatten().collect();
-    ctx.note("bots_still_connected", staying.len() as u32);
+    ctx.note(
+        "bots_still_connected",
+        crate::casts::index_u32(staying.len()),
+    );
     for (position, observer) in observers.iter().enumerate() {
         let mut roster = vec![observer_ids[1 - position].address()];
         roster.extend(staying.iter().map(|(_, wallet)| wallet.clone()));
@@ -1561,7 +1572,7 @@ async fn walk_forever(walker: &PulseBot, here: [f32; 3], current: &Mutex<[f32; 3
     let mut step = 0_u32;
     loop {
         walker.expect_alive()?;
-        let spot = offset(here, 1.0 + (step % 40) as f32 * 0.1, 1.0);
+        let spot = offset(here, 1.0 + crate::casts::f32_from_u32(step % 40) * 0.1, 1.0);
         *current.lock() = spot;
         walker.move_to(spot)?;
         step += 1;
@@ -1803,10 +1814,12 @@ async fn resync_requests(ctx: Ctx) -> Result<()> {
             // of the stack: other players only add to it. The requests this run made for a
             // subject the asker can see (every one but the unknown subject) each are answered
             // once the subject next moves, so at least that many must have been added.
-            let answered = requests
-                .iter()
-                .filter(|(label, _, _)| *label != "unknown-subject")
-                .count() as f64;
+            let answered = crate::casts::usize_f64(
+                requests
+                    .iter()
+                    .filter(|(label, _, _)| *label != "unknown-subject")
+                    .count(),
+            );
             if after - before < answered {
                 bail!(
                     "the server's resync count grew from {before} to {after}, by less than the {answered} requests this run made for a subject the asker sees"
@@ -1913,8 +1926,15 @@ async fn stall_and_resume(ctx: Ctx) -> Result<()> {
         .enumerate()
     {
         let spot = offset(here, 1.0, 1.0);
-        let (walker, identity) =
-            walker_behind(&ctx, &link, &observer, &realm, 1 + number as u32, spot).await?;
+        let (walker, identity) = walker_behind(
+            &ctx,
+            &link,
+            &observer,
+            &realm,
+            1 + crate::casts::index_u32(number),
+            spot,
+        )
+        .await?;
         link.set(direction, Fault::Stall);
         stay_connected(
             &ctx,
@@ -1976,7 +1996,7 @@ async fn stall_and_resume(ctx: Ctx) -> Result<()> {
     // the link is passing again whatever happened, so the connection can end its own way
     ctx.note(
         "transport_timeout_ms",
-        stalled_at.elapsed().as_millis() as u64,
+        crate::casts::millis(stalled_at.elapsed()),
     );
     let code = code?;
     if code != 0 {

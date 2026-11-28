@@ -490,7 +490,7 @@ impl Presenter {
         self.renders
             .threads
             .clone()
-            .acquire_many_owned(RENDER_THREADS as u32)
+            .acquire_many_owned(u32::try_from(RENDER_THREADS).unwrap())
             .await
             .expect("never closed")
     }
@@ -1138,7 +1138,9 @@ impl Session {
         let target = match navigate {
             Navigate::Next => (current + 1).min(last),
             Navigate::Prev => current.saturating_sub(1),
-            Navigate::Goto(Some(index)) if index < self.slide_count as f64 => index as usize,
+            Navigate::Goto(Some(index)) if index < crate::casts::usize_f64(self.slide_count) => {
+                slide_index(index)
+            }
             Navigate::Goto(index) => {
                 return Err(RenderError::Failed(format!(
                     "Invalid slide index: {}",
@@ -1184,4 +1186,15 @@ impl Session {
             }
         }
     }
+}
+
+/// A requested slide below the count as its index: a fraction truncates and a
+/// negative one is slide 0, as float-to-int `as` does.
+#[allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    reason = "the caller bounds the index below the slide count; `as` saturates negatives to 0"
+)]
+fn slide_index(index: f64) -> usize {
+    index as usize
 }

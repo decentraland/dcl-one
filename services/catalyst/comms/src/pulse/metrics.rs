@@ -73,7 +73,7 @@ pub fn enet_socket_error(operation: &'static str, kind: std::io::ErrorKind) {
 /// Admission refusals count wallet/pass attempts; safety state is never evicted
 /// to make this gauge fall. There are no wallet labels.
 pub fn recovery_capacity(retained: usize, refused: u64) {
-    gauge!("pulse_recovery_wallets").set(retained as f64);
+    gauge!("pulse_recovery_wallets").set(crate::casts::usize_f64(retained));
     if refused > 0 {
         counter!("pulse_recovery_refused_total").increment(refused);
     }
@@ -83,8 +83,8 @@ pub fn recovery_capacity(retained: usize, refused: u64) {
 pub(crate) fn simulation_tick(delay: Duration, duration: Duration, admitted: usize, pending: i64) {
     histogram!(SIMULATION_TICK_DELAY).record(delay.as_secs_f64());
     histogram!(SIMULATION_TICK_DURATION).record(duration.as_secs_f64());
-    gauge!("pulse_admitted_connections").set(admitted as f64);
-    gauge!("pulse_pending_auth_connections").set(pending as f64);
+    gauge!("pulse_admitted_connections").set(crate::casts::usize_f64(admitted));
+    gauge!("pulse_pending_auth_connections").set(crate::casts::i64_f64(pending));
 }
 
 pub fn cluster_lookup_requested() {
@@ -109,7 +109,8 @@ pub fn register_statistics_capacity_series() {
 /// Retained outgoing connector generations, independent of the peer population.
 /// Initialized at Pulse startup so the capacity gauge is visible before handovers.
 pub fn statistics_retained_connector_generations(retained: usize) {
-    gauge!("pulse_statistics_retained_connector_generations").set(retained as f64);
+    gauge!("pulse_statistics_retained_connector_generations")
+        .set(crate::casts::usize_f64(retained));
 }
 
 /// Counts capacity refusals without producer or generation labels.
@@ -134,7 +135,7 @@ pub const CLUSTER_SIZE_BUCKETS: [f64; 13] = [
 
 /// One sample per cluster per pass, so quantiles are computed at query time.
 pub fn cluster_size(size: usize) {
-    histogram!(CLUSTER_SIZE).record(size as f64);
+    histogram!(CLUSTER_SIZE).record(crate::casts::usize_f64(size));
 }
 
 /// The per-pass totals. `pass_duration_us` is a sum paired with `passes` rather than a
@@ -153,9 +154,9 @@ pub fn cluster_pass(
     if reassignments > 0 {
         counter!(CLUSTER_REASSIGNMENTS).increment(reassignments);
     }
-    gauge!(CLUSTER_COUNT).set(count as f64);
-    gauge!(CLUSTER_PEERS).set(peers as f64);
-    gauge!(CLUSTER_SIZE_MAX).set(size_max as f64);
+    gauge!(CLUSTER_COUNT).set(crate::casts::usize_f64(count));
+    gauge!(CLUSTER_PEERS).set(crate::casts::usize_f64(peers));
+    gauge!(CLUSTER_SIZE_MAX).set(crate::casts::usize_f64(size_max));
 }
 
 /// One per publish whose session differs from the one the wallet's retained assignment was
@@ -212,11 +213,11 @@ pub fn scene_listener_forbidden_dropped() {
 }
 
 pub fn scene_listener_visible_subjects(n: usize) {
-    histogram!(VISIBLE_SUBJECTS).record(n as f64);
+    histogram!(VISIBLE_SUBJECTS).record(crate::casts::usize_f64(n));
 }
 
 pub fn scene_listener_parcels(n: usize) {
-    histogram!(PARCELS).record(n as f64);
+    histogram!(PARCELS).record(crate::casts::usize_f64(n));
 }
 
 /// Tracks upstream Pulse `PulseMetrics.Simulation.RESYNC_SEQ_GAP_BUCKETS`; move it only in

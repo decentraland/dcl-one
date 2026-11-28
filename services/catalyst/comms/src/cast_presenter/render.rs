@@ -70,6 +70,11 @@ fn js_round(n: f64) -> f64 {
 
 /// `fitRenderSize`: the scale and the even render size, at least 2 px a
 /// side, that fit the page inside 1920x1080, or 1080x1920 when portrait.
+#[allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    reason = "the fitted side is at most 1920 px; float-to-int `as` saturates as before"
+)]
 pub fn fit_render_size(page_width: f64, page_height: f64) -> Result<(f64, u32, u32), String> {
     let valid = |side: f64| side.is_finite() && side > 0.0;
     if !valid(page_width) || !valid(page_height) {
@@ -137,6 +142,10 @@ fn media_links(page: &Dict<'_>) -> Vec<(String, Rect)> {
 }
 
 /// `pdfRectToCanvas`: the link's box on the rendered page, in pixels.
+#[allow(
+    clippy::cast_possible_truncation,
+    reason = "float-to-int `as` saturates (NaN to 0), bounding a document's link box"
+)]
 fn rect_to_canvas(rect: &Rect, scale: f64, viewport_height: f64) -> Geometry {
     Geometry {
         x: js_round(rect.x0 * scale) as i64,
@@ -147,6 +156,10 @@ fn rect_to_canvas(rect: &Rect, scale: f64, viewport_height: f64) -> Geometry {
 }
 
 /// A black box with a white ring and triangle over each video link.
+#[allow(
+    clippy::cast_precision_loss,
+    reason = "pixel geometry; f32 rounding of an off-page box only shifts where it is drawn"
+)]
 fn paint_video_placeholders(rgba: &mut [u8], width: u32, height: u32, boxes: &[Geometry]) {
     use tiny_skia::{Color, FillRule, Paint, PathBuilder, PixmapMut, Stroke, Transform};
     let Some(mut canvas) = PixmapMut::from_bytes(rgba, width, height) else {
@@ -208,6 +221,10 @@ impl PdfDocument {
     }
 
     /// The slide at `index`, with its video links drawn, and those links.
+    #[allow(
+        clippy::cast_possible_truncation,
+        reason = "fit_render_size caps each side at 1920 px"
+    )]
     pub fn render(&self, index: usize) -> Result<(Frame, Vec<SlideVideo>), String> {
         let page = self
             .pdf

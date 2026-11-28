@@ -49,8 +49,9 @@ fn encode_comms_payload(topic: &str, json: &str) -> Vec<u8> {
     let mut out = Vec::with_capacity(3 + topic.len() + json.len());
     out.push(MSG_TYPE_COMMS_DATA);
     // As upstream: the low 16 bits of the length.
-    out.push((topic.len() & 0xff) as u8);
-    out.push(((topic.len() >> 8) & 0xff) as u8);
+    let [low, high, ..] = topic.len().to_le_bytes();
+    out.push(low);
+    out.push(high);
     out.extend_from_slice(topic);
     out.extend_from_slice(json.as_bytes());
     out

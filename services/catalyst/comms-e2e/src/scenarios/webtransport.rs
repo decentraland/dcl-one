@@ -63,13 +63,17 @@ pub async fn bursts_for(ctx: &Ctx, duration: Duration, limit: u32) -> Result<u32
 
     let mut walkers = Vec::new();
     for index in 0..WALKERS {
-        let walker =
-            PulseBot::enter(ctx, &format!("walker-{index}"), &ctx.identity(index as u32)).await?;
+        let walker = PulseBot::enter(
+            ctx,
+            &format!("walker-{index}"),
+            &ctx.identity(crate::casts::index_u32(index)),
+        )
+        .await?;
         walker.teleport(&realm, HOME)?;
         walkers.push(walker);
     }
     for (index, walker) in walkers.iter().enumerate() {
-        let wallet = ctx.identity(index as u32).address();
+        let wallet = ctx.identity(crate::casts::index_u32(index)).address();
         expect_or(
             ctx,
             &format!("the observer sees walker-{index}"),
@@ -102,8 +106,9 @@ pub async fn bursts_for(ctx: &Ctx, duration: Duration, limit: u32) -> Result<u32
         };
         for (index, walker) in walkers.iter().enumerate() {
             for step in 0..inputs {
-                let phase =
-                    (second * TICKS_PER_SECOND + within + step) as f32 * 0.05 + index as f32;
+                let phase = crate::casts::f32_from_u32(second * TICKS_PER_SECOND + within + step)
+                    * 0.05
+                    + crate::casts::f32_from_usize(index);
                 walker.move_to([
                     HOME[0] + 4.0 * phase.cos(),
                     0.0,
@@ -122,7 +127,7 @@ pub async fn bursts_for(ctx: &Ctx, duration: Duration, limit: u32) -> Result<u32
     ctx.note("observer sequence gaps", view.sequence_gaps);
     ctx.note("observer deltas", view.deltas);
     for (index, _) in walkers.iter().enumerate() {
-        let wallet = ctx.identity(index as u32).address();
+        let wallet = ctx.identity(crate::casts::index_u32(index)).address();
         if observer.view().of(&wallet).is_none() {
             bail!("the observer lost walker-{index} during the run");
         }

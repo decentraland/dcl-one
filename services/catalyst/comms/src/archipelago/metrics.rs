@@ -122,9 +122,15 @@ pub const FAMILIES: &[Descriptor] = &[
 
 pub(super) fn record_diagnostics(state: &AppState) {
     let snapshot = health(state);
-    UPTIME_SECONDS.handle([]).set(snapshot.uptime_secs as f64);
-    PEERS.handle([]).set(snapshot.peers_total as f64);
-    ISLANDS.handle([]).set(snapshot.islands_total as f64);
+    UPTIME_SECONDS
+        .handle([])
+        .set(crate::casts::i64_f64(snapshot.uptime_secs));
+    PEERS
+        .handle([])
+        .set(crate::casts::usize_f64(snapshot.peers_total));
+    ISLANDS
+        .handle([])
+        .set(crate::casts::usize_f64(snapshot.islands_total));
     FEED_CONNECTED
         .handle([])
         .set(u8::from(snapshot.feed_connected) as f64);
@@ -201,7 +207,7 @@ struct HealthResp {
 
 fn health(s: &AppState) -> HealthResp {
     let snapshot = s.statistics.snapshot();
-    let uptime = s.started_at.elapsed().as_secs() as i64;
+    let uptime = i64::try_from(s.started_at.elapsed().as_secs()).unwrap_or(i64::MAX);
     HealthResp {
         healthy: true,
         uptime_secs: uptime,

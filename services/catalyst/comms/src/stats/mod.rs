@@ -150,7 +150,12 @@ impl crate::content::about_comms::CommsCore for Reader {
                 && y >= i32::MIN as f64
                 && y <= i32::MAX as f64
             {
-                *counts.entry((x as i32, y as i32)).or_insert(0) += 1;
+                #[allow(
+                    clippy::cast_possible_truncation,
+                    reason = "x and y are finite and range-checked against i32 above"
+                )]
+                let parcel = (x as i32, y as i32);
+                *counts.entry(parcel).or_insert(0) += 1;
             }
         }
         (core.user_count as u64, counts.into_iter().collect())

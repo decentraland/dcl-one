@@ -131,11 +131,8 @@ async fn refresh_bounded(
         assignment_revision: before.assignment_revision,
         fencing_token: before.fencing_token,
     };
-    let not_before = island_token_not_before(
-        stamp.token_not_before,
-        chrono::Utc::now().timestamp_millis().max(0) as u64,
-    )
-    .max(stamp.safety_token_floor);
+    let not_before = island_token_not_before(stamp.token_not_before, crate::casts::unix_millis())
+        .max(stamp.safety_token_floor);
     let mut candidate =
         super::cluster::fence::PulseAdmissionStamp::from_snapshot(&plan, not_before)
             .ok_or(IslandRefreshError(StatusCode::SERVICE_UNAVAILABLE))?;
@@ -170,7 +167,7 @@ async fn refresh_bounded(
     }
     let response = IslandRefreshResponse {
         adapter,
-        expires_in_seconds: ISLAND_REFRESH_TTL_SECONDS as u32,
+        expires_in_seconds: u32::try_from(ISLAND_REFRESH_TTL_SECONDS).unwrap_or(u32::MAX),
     };
     Ok(Response::builder()
         .status(StatusCode::OK)
@@ -275,6 +272,11 @@ fn require_protobuf_headers(headers: &HeaderMap) -> Result<(), IslandRefreshErro
 }
 
 #[cfg(test)]
+#[allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_possible_wrap,
+    reason = "test fixtures use small literal values"
+)]
 mod tests {
     use std::sync::Arc;
 

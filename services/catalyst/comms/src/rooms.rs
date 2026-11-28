@@ -54,9 +54,13 @@ fn encode_scene_v1(scene: &SceneId) -> String {
     for ch in scene.as_str().chars() {
         if ch == '\u{212a}' {
             encoded.push('/');
-        } else if let Some(index) = SCENE_CONTRACTIONS_V1.iter().position(|&entry| entry == ch) {
+        } else if let Some((_, letter)) = SCENE_CONTRACTIONS_V1
+            .iter()
+            .zip('A'..)
+            .find(|&(&entry, _)| entry == ch)
+        {
             encoded.push(' ');
-            encoded.push((b'A' + index as u8) as char);
+            encoded.push(letter);
         } else {
             encoded.push(ch);
         }

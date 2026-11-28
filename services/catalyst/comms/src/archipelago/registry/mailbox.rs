@@ -247,6 +247,10 @@ impl Drop for SocketEvents {
 }
 
 #[cfg(test)]
+#[allow(
+    clippy::cast_possible_truncation,
+    reason = "test fixtures use small literal values"
+)]
 mod tests {
     use super::*;
 

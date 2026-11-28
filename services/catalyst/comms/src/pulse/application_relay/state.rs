@@ -7,8 +7,10 @@ use crate::protocol::pulse::decentraland::pulse::{
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::time::{Duration, Instant};
 
-pub const MAX_RELIABLE_PAYLOAD: usize = 3072;
-pub const MAX_UNRELIABLE_PAYLOAD: usize = 1024;
+const MAX_RELIABLE_PAYLOAD_U32: u32 = 3072;
+const MAX_UNRELIABLE_PAYLOAD_U32: u32 = 1024;
+pub const MAX_RELIABLE_PAYLOAD: usize = MAX_RELIABLE_PAYLOAD_U32 as usize;
+pub const MAX_UNRELIABLE_PAYLOAD: usize = MAX_UNRELIABLE_PAYLOAD_U32 as usize;
 pub const MAX_ROOM_PEERS: usize = 64;
 pub const MAX_PEER_ROOMS: usize = 16;
 pub const MAX_ROOMS: usize = 1024;
@@ -271,10 +273,10 @@ impl RelayState {
                         request_id,
                         room_id: membership.room_id,
                         self_id: membership.actor_id,
-                        max_payload_bytes: MAX_RELIABLE_PAYLOAD as u32,
+                        max_payload_bytes: MAX_RELIABLE_PAYLOAD_U32,
                         peers,
                         error: ApplicationErrorCode::ApplicationOk as i32,
-                        max_unreliable_payload_bytes: MAX_UNRELIABLE_PAYLOAD as u32,
+                        max_unreliable_payload_bytes: MAX_UNRELIABLE_PAYLOAD_U32,
                         roster_version: self.roster_version(&membership.scope.admitted.room),
                     },
                 )),

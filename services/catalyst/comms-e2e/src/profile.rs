@@ -388,7 +388,7 @@ pub async fn served_version(
             body.pointer("/avatars/0/version").and_then(|version| {
                 version
                     .as_i64()
-                    .or_else(|| version.as_f64().map(|v| v as i64))
+                    .or_else(|| version.as_f64().map(crate::casts::trunc_i64))
             })
         }))
 }

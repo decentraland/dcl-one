@@ -151,7 +151,7 @@ async fn claim_rechecks(
     only_world: Option<&str>,
 ) -> Result<Vec<ClaimedRecheck>, sqlx::Error> {
     sqlx::query_as("WITH due AS (SELECT world_name FROM social.world_access_rechecks WHERE next_attempt_at<=timezone('UTC',now()) AND ($1::text IS NULL OR world_name=$1) ORDER BY next_attempt_at,world_name LIMIT $2 FOR UPDATE SKIP LOCKED) UPDATE social.world_access_rechecks q SET next_attempt_at=timezone('UTC',now())+interval '1 minute' FROM due WHERE q.world_name=due.world_name RETURNING q.world_name,q.revision,q.changed_at,q.next_attempt_at")
-        .bind(only_world).bind(WORLD_BATCH as i64).fetch_all(pool).await
+        .bind(only_world).bind(crate::casts::len_i64(WORLD_BATCH)).fetch_all(pool).await
 }
 
 async fn complete_recheck(

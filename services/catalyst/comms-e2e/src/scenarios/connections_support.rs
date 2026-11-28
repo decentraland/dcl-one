@@ -32,6 +32,12 @@ pub fn api(ctx: &Ctx) -> Result<&Url> {
 /// calls with different `slot`s are far apart (further than an island reaches), and the spots of
 /// one repeat differ from the spots of other runs, so bots of other users of the stack seldom
 /// stand next to them.
+#[allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_possible_wrap,
+    clippy::cast_sign_loss,
+    reason = "grid spans are positive and a few hundred parcels, so every term fits i32"
+)]
 pub fn spot(ctx: &Ctx, slot: u32) -> [f32; 3] {
     let grid = &ctx.stack().grid;
     let span_x = (grid.max_parcel_x - grid.min_parcel_x).max(8) as u64;
@@ -151,7 +157,7 @@ pub fn check_credentials(assignment: &Assignment, identity: &Identity) -> Result
             identity.address()
         );
     }
-    let now = crate::identity::now_ms() as u64 / 1000;
+    let now = u64::try_from(crate::identity::now_ms()).unwrap_or(0) / 1000;
     if connection.claims.expires_at <= now {
         bail!(
             "the token of island {} expired {} s ago",

@@ -87,10 +87,11 @@ pub fn windows(
     if width.is_zero() || to <= from {
         return Vec::new();
     }
-    let count = (to - from).as_nanos().div_ceil(width.as_nanos()) as usize;
+    let count =
+        usize::try_from((to - from).as_nanos().div_ceil(width.as_nanos())).unwrap_or(usize::MAX);
     let mut out: Vec<Window> = (0..count)
         .map(|index| Window {
-            start: from + width * index as u32,
+            start: from + width * crate::casts::index_u32(index),
             packets: 0,
             bytes: 0,
             large: 0,

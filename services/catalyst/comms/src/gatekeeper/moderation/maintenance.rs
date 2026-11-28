@@ -170,6 +170,8 @@ async fn cleanup(
     }
     let key = format!("place-removed-{}", event.event_id);
     for (index, recipient) in event.recipients.iter().enumerate().skip(cursor) {
+        let index = i32::try_from(index)
+            .map_err(|_| ApiError::internal("place notification cursor out of range"))?;
         let notice = notification(
             &context,
             recipient.clone(),
@@ -184,7 +186,7 @@ async fn cleanup(
         .await
         .map_err(|_| ApiError::http(503, "place notification delivery timed out"))??;
         let changed=sqlx::query("UPDATE explore.place_removal_pending SET recipient_cursor=$3 WHERE event_id=$1 AND recipient_cursor=$2 AND recipients_resolved")
-            .bind(event.event_id).bind(index as i32).bind(index as i32+1).execute(&state.pool).await?;
+            .bind(event.event_id).bind(index).bind(index+1).execute(&state.pool).await?;
         if changed.rows_affected() == 0 {
             return Err(ApiError::internal("place notification checkpoint changed"));
         }
@@ -1695,7 +1697,7 @@ mod tests {
             .bind(name).bind(ids[2]).execute(&pool).await.unwrap();
         for (index, id) in ids.iter().enumerate() {
             sqlx::query("INSERT INTO social.scene_admins(place_id,admin_address,added_by) VALUES ($1,$2,$3)")
-                .bind(id.to_string()).bind(wallet(if index==2 {9} else {index as u8+2})).bind(wallet(1)).execute(&pool).await.unwrap();
+                .bind(id.to_string()).bind(wallet(if index==2 {9} else {u8::try_from(index).unwrap()+2})).bind(wallet(1)).execute(&pool).await.unwrap();
         }
         for local in [false, true] {
             let id = "retired-place";

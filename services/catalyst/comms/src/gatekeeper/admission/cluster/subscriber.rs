@@ -228,18 +228,18 @@ fn accept_assignment_session(wallet: &str, session: &str) -> bool {
 /// Self-hosted LiveKit ignores the cutoff; this value does not protect against old-token reuse there.
 #[cfg(test)]
 fn next_whole_second_unix() -> u64 {
-    now_unix_ms().div_euclid(1000) as u64 + 1
+    crate::casts::non_negative(now_unix_ms().div_euclid(1000)) + 1
 }
 
 fn now_unix_ms() -> i64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_millis() as i64)
+        .map(crate::casts::millis_i64)
         .unwrap_or_default()
 }
 
 fn now_unix_seconds() -> u64 {
-    now_unix_ms().div_euclid(1000).max(0) as u64
+    crate::casts::non_negative(now_unix_ms().div_euclid(1000))
 }
 
 pub(crate) fn island_token_not_before(floor: u64, now_ms: u64) -> u64 {
@@ -271,9 +271,9 @@ impl ClusterSubscriber {
     pub(crate) fn admission_now_ms(&self) -> u64 {
         #[cfg(test)]
         if let Some((base, elapsed)) = *self.test_clock.lock() {
-            return base.saturating_add(elapsed.elapsed().as_millis().min(u64::MAX as u128) as u64);
+            return base.saturating_add(crate::casts::millis(elapsed.elapsed()));
         }
-        now_unix_ms().max(0) as u64
+        crate::casts::non_negative(now_unix_ms())
     }
 
     pub fn new(
@@ -1165,7 +1165,13 @@ impl ClusterSubscriber {
                 // The durable-for-this-process dispatch receipt already exists before polling RPC.
                 let outcome = self
                     .gateway
-                    .remove_participant(&room, wallet, Some(receipt.cutoff as i64))
+                    .remove_participant(
+                        &room,
+                        wallet,
+                        Some(crate::protocol::bus::cluster::cutoff_seconds(
+                            receipt.cutoff,
+                        )),
+                    )
                     .await;
                 match outcome {
                     Ok(_) => {
@@ -1256,7 +1262,13 @@ impl ClusterSubscriber {
                 );
                 match self
                     .gateway
-                    .remove_participant(&room, wallet, Some(receipt.cutoff as i64))
+                    .remove_participant(
+                        &room,
+                        wallet,
+                        Some(crate::protocol::bus::cluster::cutoff_seconds(
+                            receipt.cutoff,
+                        )),
+                    )
                     .await
                 {
                     Ok(_) => self.receipts.set(
@@ -1707,7 +1719,13 @@ impl ClusterSubscriber {
                     // SFU RPC. Cancellation or unknown leaves every replica closed.
                     let outcome = self
                         .gateway
-                        .remove_participant(&room, &expected.wallet, Some(dispatch.cutoff as i64))
+                        .remove_participant(
+                            &room,
+                            &expected.wallet,
+                            Some(crate::protocol::bus::cluster::cutoff_seconds(
+                                dispatch.cutoff,
+                            )),
+                        )
                         .await;
                     use super::safety::{QuarantinePolicy, RemovalOutcome, classify_removal};
                     let classified = match outcome {

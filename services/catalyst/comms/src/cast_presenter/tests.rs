@@ -409,7 +409,10 @@ fn the_packet_is_an_rfc4_scene_message_on_the_presentation_topic() {
     expected.extend_from_slice(b"presentation{\"type\":\"presentation:get-state\"}");
     assert_eq!(scene.data, expected);
     // Byte for byte: field 6 (scene) then field 11 (protocol_version = 100).
-    assert_eq!(&packet[..2], &[0x32, (2 + 7 + 2 + expected.len()) as u8]);
+    assert_eq!(
+        &packet[..2],
+        &[0x32, u8::try_from(2 + 7 + 2 + expected.len()).unwrap()]
+    );
     assert_eq!(&packet[packet.len() - 2..], &[0x58, 100]);
 }
 

@@ -58,7 +58,7 @@ impl Default for MintState {
 }
 
 fn window_start_cutoff(now: NaiveDateTime) -> NaiveDateTime {
-    now - chrono::TimeDelta::seconds(RATE_LIMIT_WINDOW_SECONDS as i64)
+    now - chrono::TimeDelta::seconds(i64::try_from(RATE_LIMIT_WINDOW_SECONDS).unwrap_or(i64::MAX))
 }
 
 /// One shared caller budget across world mint, adapter and scene-host entry points.
@@ -90,7 +90,7 @@ impl SecretThrottle<'_> {
              window_start = CASE WHEN a.window_start <= $4 THEN $3 ELSE a.window_start END \
              WHERE a.window_start <= $4 OR a.attempts < $5 RETURNING window_start")
             .bind(self.world).bind(self.subject_key()).bind(now).bind(window_start_cutoff(now))
-            .bind(self.max_attempts.clamp(1, i32::MAX as u32) as i32).fetch_optional(self.pool).await?;
+            .bind(i32::try_from(self.max_attempts.max(1)).unwrap_or(i32::MAX)).fetch_optional(self.pool).await?;
         Ok(window.map(|window| SecretReservation { window }))
     }
 
@@ -127,7 +127,7 @@ impl SecretThrottle<'_> {
             )
             .bind(self.world)
             .bind(self.subject_key())
-            .bind(self.max_attempts.clamp(1, i32::MAX as u32) as i32)
+            .bind(i32::try_from(self.max_attempts.max(1)).unwrap_or(i32::MAX))
             .bind(window_start_cutoff(now))
             .fetch_optional(self.pool),
         )

@@ -119,7 +119,12 @@ impl Default for WebhookCoordinator {
 fn stripe(key: &str) -> usize {
     let mut hash = std::collections::hash_map::DefaultHasher::new();
     key.hash(&mut hash);
-    hash.finish() as usize % LOCK_STRIPES
+    #[allow(
+        clippy::cast_possible_truncation,
+        reason = "keeps the low bits of the hash by design"
+    )]
+    let hash = hash.finish() as usize;
+    hash % LOCK_STRIPES
 }
 
 #[derive(Debug)]
@@ -400,7 +405,7 @@ pub async fn livekit_webhook(
     } else {
         None
     };
-    let now = chrono::Utc::now().timestamp().max(0) as u64;
+    let now = crate::casts::unix_secs();
     if now > deadline {
         return Err(unauthorized("expired livekit webhook signature"));
     }
@@ -540,7 +545,7 @@ async fn room_event(
                 .to_owned(),
             identity: participant.identity.clone(),
             participant_sid: participant.sid.clone(),
-            event_time_ms: event.at as u64,
+            event_time_ms: crate::casts::non_negative(event.at),
             event_id: event.id.clone(),
         },
         canonical,
@@ -760,7 +765,7 @@ pub mod test_support {
     /// bounded by `exp`/`nbf`. Sign with the wrong `secret` to mint the
     /// token a 401 needs.
     pub fn webhook_jwt(body: &[u8], key: &str, secret: &str) -> String {
-        let now = chrono::Utc::now().timestamp() as u64;
+        let now = crate::casts::unix_secs();
         let header = URL_SAFE_NO_PAD.encode(br#"{"alg":"HS256","typ":"JWT"}"#);
         let claims = serde_json::json!({ "iss": key, "nbf": now, "exp": now + 300, "sha256": B64_STANDARD.encode(Sha256::digest(body)) });
         let payload = URL_SAFE_NO_PAD.encode(serde_json::to_vec(&claims).unwrap());

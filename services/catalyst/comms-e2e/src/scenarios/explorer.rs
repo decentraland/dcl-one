@@ -208,6 +208,10 @@ fn wallet_seed(ctx: &Ctx, index: u32) -> u64 {
     u64::from_be_bytes(digest[..8].try_into().expect("eight bytes")) | 1
 }
 
+#[allow(
+    clippy::cast_possible_truncation,
+    reason = "positions are metres across the map; f32 is the protocol type"
+)]
 fn vector(value: &Value) -> Option<[f32; 3]> {
     let list = value.as_array()?;
     Some([
@@ -539,7 +543,9 @@ async fn out_of_grid(ctx: Ctx) -> Result<()> {
     let outside = [
         home[0],
         0.0,
-        (grid.max_parcel_z + grid.padding + 2) as f32 * grid.parcel_size as f32 + 8.0,
+        crate::casts::f32_from_i32(grid.max_parcel_z + grid.padding + 2)
+            * crate::casts::f32_from_i32(grid.parcel_size)
+            + 8.0,
     ];
     if grid.locate(outside).is_some() {
         bail!(
@@ -598,14 +604,18 @@ async fn past_the_east_edge(ctx: Ctx) -> Result<()> {
     let subject = start(&ctx, true).await?;
     let bot = observer(&ctx, &subject).await?;
     let grid = ctx.stack().grid;
-    let size = grid.parcel_size as f32;
+    let size = crate::casts::f32_from_i32(grid.parcel_size);
     let home = subject.position;
 
     // Two parcels past the padded east edge. A client that computes the parcel index there without
     // a bound gets a valid index: the first parcels of the next row, on the west side of the map.
     let parcel_x = grid.max_parcel_x + grid.padding + 2;
-    let parcel_z = (home[2] / size).floor() as i32;
-    let outside = [parcel_x as f32 * size + 8.0, 0.0, home[2]];
+    let parcel_z = crate::casts::trunc_i32((home[2] / size).floor());
+    let outside = [
+        crate::casts::f32_from_i32(parcel_x) * size + 8.0,
+        0.0,
+        home[2],
+    ];
     if grid.locate(outside).is_some() {
         bail!(
             "{outside:?} is inside the grid of this stack; the scenario needs a position outside"
@@ -614,9 +624,9 @@ async fn past_the_east_edge(ctx: Ctx) -> Result<()> {
     let encoder = grid.encoder();
     let (wrapped_x, wrapped_z) = encoder.decode(encoder.encode(parcel_x, parcel_z));
     let far_side = [
-        wrapped_x as f32 * size + 8.0,
+        crate::casts::f32_from_i32(wrapped_x) * size + 8.0,
         0.0,
-        wrapped_z as f32 * size + 8.0,
+        crate::casts::f32_from_i32(wrapped_z) * size + 8.0,
     ];
     ctx.note(
         "where an unbounded index would place the explorer",
@@ -740,7 +750,7 @@ async fn stale_socket(ctx: Ctx) -> Result<()> {
     .await?;
     ctx.note(
         "realm room left connected after, ms",
-        lost_after.as_millis() as u64,
+        crate::casts::millis(lost_after),
     );
 
     let conflict = expect_async(
@@ -767,7 +777,7 @@ async fn stale_socket(ctx: Ctx) -> Result<()> {
     .await?;
     ctx.note(
         "reconnected after, ms",
-        orphaned.elapsed().as_millis() as u64,
+        crate::casts::millis(orphaned.elapsed()),
     );
     ctx.note("connectivity after", &conflict);
     let mut archipelago_log = subject.explorer.log_lines("comms::archipelago");
@@ -1066,7 +1076,7 @@ async fn resync(ctx: Ctx) -> Result<()> {
     while started.elapsed() < walk {
         steps += 1;
         // out and back along x, so the walker stays beside the explorer
-        let phase = (steps % 40) as f32;
+        let phase = crate::casts::f32_from_u32(steps % 40);
         at = [
             from[0] + if phase < 20.0 { phase } else { 40.0 - phase } * 0.3,
             0.0,
@@ -1514,7 +1524,7 @@ async fn long_uplink_stall(ctx: Ctx) -> Result<()> {
     let last = if moves % 2 == 1 { away } else { home };
     subject.fronts.pulse.restore();
     let dropped = subject.fronts.pulse.counters().dropped - dropped_before;
-    ctx.note("stall, ms", LONG_OUTAGE.as_millis() as u64);
+    ctx.note("stall, ms", crate::casts::millis(LONG_OUTAGE));
     ctx.note("moves asked during the stall", moves);
     ctx.note("packets dropped by the stall", dropped);
     if dropped == 0 {
@@ -1619,7 +1629,9 @@ async fn reconnect_outside_grid(ctx: Ctx) -> Result<()> {
     let outside = [
         home[0],
         0.0,
-        (grid.max_parcel_z + grid.padding + 2) as f32 * grid.parcel_size as f32 + 8.0,
+        crate::casts::f32_from_i32(grid.max_parcel_z + grid.padding + 2)
+            * crate::casts::f32_from_i32(grid.parcel_size)
+            + 8.0,
     ];
     if grid.locate(outside).is_some() {
         bail!(
@@ -1652,7 +1664,7 @@ async fn reconnect_outside_grid(ctx: Ctx) -> Result<()> {
         tokio::time::sleep(CONSOLE_TICK).await;
     }
     subject.fronts.pulse.restore();
-    ctx.note("outage, ms", LONG_OUTAGE.as_millis() as u64);
+    ctx.note("outage, ms", crate::casts::millis(LONG_OUTAGE));
 
     let back = [home[0] + 16.0, 0.0, home[2]];
     let verdict = async {

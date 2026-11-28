@@ -74,6 +74,24 @@ pub struct WtHost {
     max_datagram_bytes: usize,
 }
 
+/// A slot as its PeerId.
+#[allow(
+    clippy::cast_possible_truncation,
+    reason = "WtHost::start bounds every slot below 65536"
+)]
+#[inline]
+fn to_peer_id(slot: u32) -> PeerId {
+    slot as PeerId
+}
+
+#[allow(
+    clippy::cast_possible_truncation,
+    reason = "WtHost::start bounds slot_base + slot_capacity by 65536"
+)]
+fn slot_capacity(capacity: usize) -> u32 {
+    capacity as u32
+}
+
 impl WtHost {
     pub fn start(config: WtConfig) -> anyhow::Result<(WtHost, UnboundedReceiver<Event>)> {
         let ceiling = config.slot_base as u64 + config.slot_capacity as u64;
@@ -221,7 +239,7 @@ fn run_loop(
     let mut sessions = Sessions {
         by_quic: HashMap::new(),
         quic_by_peer: HashMap::new(),
-        free_slots: (config.slot_base..config.slot_base + config.slot_capacity as u32)
+        free_slots: (config.slot_base..config.slot_base + slot_capacity(config.slot_capacity))
             .rev()
             .collect(),
         application,
@@ -398,7 +416,7 @@ fn handle_connect(
     send_event(
         events_tx,
         Event::Connect {
-            peer: slot as PeerId,
+            peer: to_peer_id(slot),
             ip: Some(parse_ip(&remote_addr)),
             webtransport_connection: Some(peer_id),
         },
@@ -422,7 +440,7 @@ fn handle_stream(
                 send_event(
                     events_tx,
                     Event::Receive {
-                        peer: peer as PeerId,
+                        peer: to_peer_id(peer),
                         channel: CHANNEL_RELIABLE,
                         packet: Packet::reliable(CHANNEL_RELIABLE, msg),
                     },
@@ -433,7 +451,7 @@ fn handle_stream(
                 return send_event(
                     events_tx,
                     Event::Oversized {
-                        peer: peer as PeerId,
+                        peer: to_peer_id(peer),
                     },
                 );
             }
@@ -441,7 +459,7 @@ fn handle_stream(
             Err(_overrun) => send_event(
                 events_tx,
                 Event::Corrupt {
-                    peer: peer as PeerId,
+                    peer: to_peer_id(peer),
                 },
             )?,
         }
@@ -463,7 +481,7 @@ fn handle_datagram(
         return send_event(
             events_tx,
             Event::Corrupt {
-                peer: peer as PeerId,
+                peer: to_peer_id(peer),
             },
         );
     };
@@ -481,7 +499,7 @@ fn handle_datagram(
     send_event(
         events_tx,
         Event::Receive {
-            peer: peer as PeerId,
+            peer: to_peer_id(peer),
             channel: channel_id,
             packet,
         },
@@ -509,7 +527,7 @@ fn handle_disconnect(
     send_event(
         events_tx,
         Event::Disconnect {
-            peer: session.our_peer as PeerId,
+            peer: to_peer_id(session.our_peer),
         },
     )
 }

@@ -535,7 +535,7 @@ fn publisher_identity(kind: &str, scope: &str, access_id: Uuid) -> String {
 /// time in unix milliseconds, so a presenter id tells how old its token is.
 fn timestamped_uuid() -> Uuid {
     let mut bytes = *Uuid::new_v4().as_bytes();
-    let ms = (chrono::Utc::now().timestamp_millis().max(0) as u64).to_be_bytes();
+    let ms = crate::casts::unix_millis().to_be_bytes();
     bytes[..6].copy_from_slice(&ms[2..]);
     bytes[6] = (bytes[6] & 0x0f) | 0x70;
     Uuid::from_bytes(bytes)
@@ -551,7 +551,7 @@ fn minted_at_ms(identity: &str) -> Option<i64> {
     }
     let mut ms = [0u8; 8];
     ms[2..].copy_from_slice(&bytes[..6]);
-    Some(u64::from_be_bytes(ms) as i64)
+    Some(i64::from_be_bytes(ms))
 }
 
 /// What a participant identity says about the credential that admitted it.

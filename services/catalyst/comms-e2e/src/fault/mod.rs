@@ -204,7 +204,8 @@ impl Shared {
 
     /// How the flows of `generation` were ended, or `None` while that generation is current.
     pub fn fate(&self, generation: u64) -> Option<u8> {
-        self.endings.lock().get(generation as usize).copied()
+        let index = usize::try_from(generation).ok()?;
+        self.endings.lock().get(index).copied()
     }
 
     /// Sleeps for `by`, or until the link is dropped. `false`: the link was dropped. Registers for
@@ -275,6 +276,10 @@ impl Shared {
     }
 
     /// A value in `0.0..1.0` from the generator of `direction` on this link.
+    #[allow(
+        clippy::cast_precision_loss,
+        reason = "a draw below 1_000_000 is exact in f32"
+    )]
     pub fn chance(&self, direction: Direction) -> f32 {
         (self.seeded(direction).lock().below(1_000_000) as f32) / 1_000_000.0
     }

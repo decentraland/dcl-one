@@ -458,7 +458,11 @@ impl Moderation {
         match idx {
             Ok(None) => PermissionDecision::Allowed,
             Ok(Some(i)) => {
-                tracing::warn!(address = %addresses[i as usize], "rejected voice credentials for a platform-banned user");
+                let address = usize::try_from(i).ok().and_then(|i| addresses.get(i));
+                tracing::warn!(
+                    address = address.map_or("", Address::as_str),
+                    "rejected voice credentials for a platform-banned user"
+                );
                 PermissionDecision::refused(PLATFORM_BANNED_MSG)
             }
             Err(e) => PermissionDecision::undetermined("social.user_bans", &e),

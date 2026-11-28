@@ -1,3 +1,7 @@
+#![allow(
+    clippy::cast_possible_truncation,
+    reason = "test fixtures use small literal values"
+)]
 use super::*;
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use hmac::{Hmac, KeyInit, Mac};
@@ -851,7 +855,7 @@ async fn composed_http_outage_and_old_connection_completion_cannot_install_membe
         )
     };
     authenticate(&mut relay, [3; 32]);
-    let material = join_with_claims(claims(chrono::Utc::now().timestamp() as u64 + 60));
+    let material = join_with_claims(claims(crate::casts::unix_secs() + 60));
     let join = ApplicationJoin {
         request_id: 1,
         jwt_header_payload: material.header_payload,

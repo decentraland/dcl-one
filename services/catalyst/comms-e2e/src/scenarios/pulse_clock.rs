@@ -135,7 +135,9 @@ pub fn reading(at_now: &Attempt, ladder: &[Attempt]) -> Reading {
     }
     if reads_ahead(at_now, ladder) {
         return Reading {
-            ahead_more_than_ms: Some(window - at_now.round_trip_ms as i64),
+            ahead_more_than_ms: Some(
+                window - i64::try_from(at_now.round_trip_ms).unwrap_or(i64::MAX),
+            ),
             ahead_at_most_ms: Some(2 * window),
             ..Reading::default()
         };
@@ -148,16 +150,18 @@ pub fn reading(at_now: &Attempt, ladder: &[Attempt]) -> Reading {
     match ladder.iter().find(|attempt| attempt.accepted()) {
         Some(first) => Reading {
             behind_more_than_ms: refused_behind,
-            behind_at_most_ms: Some(first.behind_edge_ms as u64 + first.round_trip_ms),
+            behind_at_most_ms: Some(
+                u64::try_from(first.behind_edge_ms).unwrap_or(0) + first.round_trip_ms,
+            ),
             ..Reading::default()
         },
         None => Reading {
             behind_or_ahead_more_than_ms: Some((
                 ladder.last().map_or(0, |attempt| attempt.behind_edge_ms),
                 2 * window
-                    - ladder
-                        .first()
-                        .map_or(0, |attempt| attempt.round_trip_ms as i64),
+                    - ladder.first().map_or(0, |attempt| {
+                        i64::try_from(attempt.round_trip_ms).unwrap_or(i64::MAX)
+                    }),
             )),
             ..Reading::default()
         },
@@ -270,7 +274,7 @@ async fn attempt(ctx: &Ctx, index: u32, name: &str, behind: i64) -> Result<(Atte
         },
     );
     let outcome = bot.handshake_outcome(ctx, None).await;
-    let round_trip_ms = sent.elapsed().as_millis() as u64;
+    let round_trip_ms = crate::casts::millis(sent.elapsed());
     let outcome = match outcome {
         Ok(outcome) => outcome,
         Err(error) => {
@@ -311,7 +315,7 @@ async fn probe(ctx: Ctx) -> Result<()> {
     // a client whose clock is this machine's, on a wallet no rung uses
     let (at_now, answer) = attempt(
         &ctx,
-        BEHIND_MS.len() as u32,
+        crate::casts::index_u32(BEHIND_MS.len()),
         "probe-now",
         MAX_TIMESTAMP_SKEW_MS,
     )
@@ -322,8 +326,13 @@ async fn probe(ctx: Ctx) -> Result<()> {
     // a handshake at now answered for another reason than the clock leaves nothing to measure
     if !matches!(at_now.answer, Answer::Other(_)) {
         for (index, behind) in BEHIND_MS.iter().enumerate() {
-            let (rung, answer) =
-                attempt(&ctx, index as u32, &format!("probe-{behind}ms"), *behind).await?;
+            let (rung, answer) = attempt(
+                &ctx,
+                crate::casts::index_u32(index),
+                &format!("probe-{behind}ms"),
+                *behind,
+            )
+            .await?;
             attempts.push(described(&rung, &answer));
             // the ladder ends at the first answer that is not a skew-window refusal
             let skew_refused = rung.answer == Answer::SkewRefused;

@@ -3,6 +3,10 @@ fn steps(bits: u32) -> u32 {
     (1u32 << bits) - 1
 }
 
+#[allow(
+    clippy::cast_possible_truncation,
+    reason = "a tie has a fractional part, so |floor| < 2^23 there"
+)]
 #[inline]
 fn round_half_even(x: f32) -> f32 {
     let floor = x.floor();
@@ -18,12 +22,22 @@ fn round_half_even(x: f32) -> f32 {
     }
 }
 
+#[allow(
+    clippy::cast_precision_loss,
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    reason = "quantization: t is clamped to [0, 1], so the rounded step is in 0..=steps"
+)]
 pub fn encode(value: f32, min: f32, max: f32, bits: u32) -> u32 {
     let steps = steps(bits);
     let t = ((value - min) / (max - min)).clamp(0.0, 1.0);
     round_half_even(t * steps as f32) as u32
 }
 
+#[allow(
+    clippy::cast_precision_loss,
+    reason = "dequantization: the f32 rounding of the step is the wire format"
+)]
 pub fn decode(encoded: u32, min: f32, max: f32, bits: u32) -> f32 {
     let steps = steps(bits);
     encoded as f32 / steps as f32 * (max - min) + min
@@ -32,6 +46,12 @@ pub fn decode(encoded: u32, min: f32, max: f32, bits: u32) -> f32 {
 /// Power-law sign+magnitude encoding: `(magnitude << 1) | sign` where the
 /// (bits-1)-bit magnitude is `round((|v|/max)^(1/pow) * magSteps)`. Zero
 /// canonicalizes to code 0 (a zero magnitude never sets the sign bit).
+#[allow(
+    clippy::cast_precision_loss,
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    reason = "quantization: u is in [0, 1], so the rounded magnitude is in 0..=magnitude_steps"
+)]
 pub fn encode_power(value: f32, max: f32, pow: f32, bits: u32) -> u32 {
     let magnitude_steps = (1u32 << (bits - 1)) - 1;
     let t = (value.abs() / max).clamp(0.0, 1.0);
@@ -41,6 +61,10 @@ pub fn encode_power(value: f32, max: f32, pow: f32, bits: u32) -> u32 {
     (magnitude << 1) | sign
 }
 
+#[allow(
+    clippy::cast_precision_loss,
+    reason = "dequantization: the f32 rounding of the step is the wire format"
+)]
 pub fn decode_power(encoded: u32, max: f32, pow: f32, bits: u32) -> f32 {
     let magnitude_steps = (1u32 << (bits - 1)) - 1;
     let u = (encoded >> 1) as f32 / magnitude_steps as f32;

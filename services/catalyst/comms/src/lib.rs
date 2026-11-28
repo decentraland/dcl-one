@@ -11,6 +11,13 @@
 
 // Production routes go through `shared::routing` (comms/clippy.toml); test routers may use axum's.
 #![cfg_attr(not(test), deny(clippy::disallowed_methods))]
+// Wire, clock and database values: a silently truncated, wrapped or rounded cast is a bug.
+#![deny(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    clippy::cast_possible_wrap,
+    clippy::cast_precision_loss
+)]
 #![cfg_attr(
     test,
     allow(
@@ -31,6 +38,7 @@ pub(crate) use dcl_http as http;
 pub mod access;
 pub mod archipelago;
 pub mod cast_presenter;
+pub mod casts;
 pub mod deny_list;
 pub mod gatekeeper;
 pub mod interfaces;

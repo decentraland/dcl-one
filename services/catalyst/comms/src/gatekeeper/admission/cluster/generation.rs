@@ -18,7 +18,7 @@ fn binding(
     }
     let value = PulseGenerationBinding {
         audience: audience.into(),
-        epoch: epoch as u64,
+        epoch: crate::casts::non_negative(epoch),
         source_incarnation: source,
     };
     value

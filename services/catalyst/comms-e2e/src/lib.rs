@@ -5,7 +5,15 @@
 //! disturbs traffic (`fault`), and the headless explorer as a child process (`explorer`). The
 //! `engine` runs scenarios, repeats races with seeds, and reports.
 
+#![deny(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    clippy::cast_possible_wrap,
+    clippy::cast_precision_loss
+)]
+
 pub mod archipelago;
+pub mod casts;
 pub mod doctor;
 pub mod engine;
 pub mod explorer;

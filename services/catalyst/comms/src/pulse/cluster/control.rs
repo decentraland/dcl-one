@@ -69,13 +69,13 @@ impl Default for ControlPositions {
 
 impl ControlPositions {
     pub(crate) fn new(capacity: usize, live_ttl: Duration, tombstone_ttl: Duration) -> Self {
-        let capacity = capacity.min(u32::MAX as usize);
+        let capacity = u32::try_from(capacity).unwrap_or(u32::MAX);
         Self {
             audience: None,
             live_ttl,
             tombstone_ttl,
             entries: HashMap::new(),
-            free_slots: (0..capacity as u32).rev().collect(),
+            free_slots: (0..capacity).rev().collect(),
             last_sweep: Instant::now(),
         }
     }
@@ -178,7 +178,8 @@ impl ControlPositions {
 
     // No production common allocator attestation exists yet. Both heads are
     // retained, but neither can supply mixed authority by audience text alone.
-    fn winner(entry: &Entry) -> Option<(usize, &Head)> {
+    /// The single live head and its version (0 or 1).
+    fn winner(entry: &Entry) -> Option<(i32, &Head)> {
         match (&entry.heads[0], &entry.heads[1]) {
             (Some(head), None) => Some((0, head)),
             (None, Some(head)) => Some((1, head)),
@@ -197,7 +198,7 @@ impl ControlPositions {
         let Some((version, head)) = self.entries.get(wallet).and_then(Self::winner) else {
             return false;
         };
-        origin == version as i32 + 2
+        origin == version + 2
             && head.epoch == epoch
             && head.realm == realm
             && head.session == session
@@ -238,7 +239,7 @@ impl ControlPositions {
                     wallet: wallet.clone(),
                     session: head.session.clone(),
                     epoch: head.epoch,
-                    origin: version as i32 + 2,
+                    origin: version + 2,
                     realm: head.realm.clone(),
                     position,
                 });
@@ -309,7 +310,7 @@ mod tests {
                         let current = Arc::new(CurrentAssignments::default());
                         let mut identity = IdentityBoard::new(1);
                         identity.attach_assignments(current.clone());
-                        let version = (origin - 2) as usize;
+                        let version = usize::try_from(origin - 2).unwrap();
                         let mut input = update(1, 8, 1, Some([0.0; 3]));
                         let assignment = |input: &ControlPosition| CurrentAssignment {
                             wallet: input.wallet.clone(),

@@ -483,7 +483,7 @@ async fn wait_for_room_meetings(
                 .map(|(_, wallet)| wallet.as_str())
                 .collect();
             if missing_from(&arrivals, &others).is_empty() {
-                met_at[index] = Some(started.elapsed().as_millis() as u64);
+                met_at[index] = Some(crate::casts::millis(started.elapsed()));
             }
         }
         let ended = clients.iter().any(|client| client.alive().is_err());
@@ -548,7 +548,7 @@ async fn crowd_discovery(ctx: Ctx) -> Result<()> {
     let realm = ctx.realm("crowd");
     let here = corner(&ctx);
     let identities: Vec<_> = (0..players)
-        .map(|index| ctx.identity(index as u32))
+        .map(|index| ctx.identity(crate::casts::index_u32(index)))
         .collect();
     let wallets: Vec<String> = identities
         .iter()
@@ -563,7 +563,7 @@ async fn crowd_discovery(ctx: Ctx) -> Result<()> {
     // 1. the adapter, from the realm description
     let started = Instant::now();
     let adapter = discover(&ctx, players).await?;
-    ctx.note("discovery_ms", started.elapsed().as_millis() as u64);
+    ctx.note("discovery_ms", crate::casts::millis(started.elapsed()));
 
     // 2. Pulse: everyone at once; then Pulse is watched, its deadline counting from here, while
     // the archipelago sockets open
@@ -576,7 +576,7 @@ async fn crowd_discovery(ctx: Ctx) -> Result<()> {
         let left = leave_all(&ctx, bots).await;
         return settle(&ctx, Err(error), left);
     }
-    ctx.note("pulse_entered_ms", started.elapsed().as_millis() as u64);
+    ctx.note("pulse_entered_ms", crate::casts::millis(started.elapsed()));
     let watched = watch_alongside(
         &bots,
         &wallets,
@@ -586,7 +586,10 @@ async fn crowd_discovery(ctx: Ctx) -> Result<()> {
         SIGHTING_DEADLINE,
         async {
             let opened = open_sockets(&ctx, &adapter, &identities, &spots).await;
-            ctx.note("archipelago_open_ms", started.elapsed().as_millis() as u64);
+            ctx.note(
+                "archipelago_open_ms",
+                crate::casts::millis(started.elapsed()),
+            );
             opened
         },
     )

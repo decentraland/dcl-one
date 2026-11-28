@@ -15,7 +15,7 @@ impl PulseServer {
         let mut retire = vec![];
         let out = match message {
             client_message::Message::ApplicationJoin(join) => {
-                relay.join(peer, join, chrono::Utc::now().timestamp().max(0) as u64)
+                relay.join(peer, join, crate::casts::unix_secs())
             }
             client_message::Message::ApplicationLeave(leave) => relay.leave(peer, leave.room_id),
             client_message::Message::ApplicationSend(send) => {
@@ -137,6 +137,10 @@ impl PulseServer {
 }
 
 #[cfg(test)]
+#[allow(
+    clippy::cast_possible_truncation,
+    reason = "test fixtures use small literal values"
+)]
 mod tests {
     use super::*;
     use crate::protocol::pulse::decentraland::pulse::{

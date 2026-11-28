@@ -114,7 +114,7 @@ impl Default for CurrentAssignments {
 }
 
 fn unix_seconds() -> u64 {
-    chrono::Utc::now().timestamp().max(0) as u64
+    crate::casts::unix_secs()
 }
 
 impl CurrentAssignments {

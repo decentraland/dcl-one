@@ -167,14 +167,18 @@ pub(super) async fn community_status(
 ) -> Result<(bool, i64, i64), ApiError> {
     let users = state.voice_db.community_users_in_room(community_id).await?;
     let now = now_ms();
-    let active_participants = users
-        .iter()
-        .filter(|u| state.voice_db.is_active_community_user(u, now))
-        .count() as i64;
-    let active_moderators = users
-        .iter()
-        .filter(|u| u.is_moderator && state.voice_db.is_active_community_user(u, now))
-        .count() as i64;
+    let active_participants = crate::casts::len_i64(
+        users
+            .iter()
+            .filter(|u| state.voice_db.is_active_community_user(u, now))
+            .count(),
+    );
+    let active_moderators = crate::casts::len_i64(
+        users
+            .iter()
+            .filter(|u| u.is_moderator && state.voice_db.is_active_community_user(u, now))
+            .count(),
+    );
     Ok((
         active_moderators > 0,
         active_participants,

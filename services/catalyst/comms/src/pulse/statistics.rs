@@ -258,6 +258,10 @@ fn change_bytes(change: &Change) -> usize {
     }
 }
 #[cfg(test)]
+#[allow(
+    clippy::cast_possible_wrap,
+    reason = "test fixtures use small literal values"
+)]
 mod tests {
     use super::*;
     use crate::protocol::bus::statistics::Event;

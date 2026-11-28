@@ -2,6 +2,10 @@
 //! the form's chain as the deployment route reads it, the entity file as the deployer parses and
 //! names it, and the whole content validation a local deployment gets. Only the chain lookups are
 //! stood in for, and the profile must need none: it wears base avatars and claims no name.
+#![allow(
+    clippy::cast_possible_truncation,
+    reason = "test fixtures use small literal values"
+)]
 
 use std::collections::{BTreeMap, HashMap};
 

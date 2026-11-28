@@ -353,8 +353,10 @@ impl ClusterTracker {
 
         self.remember_computed_assignments();
         self.board.publish(pass);
-        self.publisher
-            .publish_topology(self.board.current(), board.active_peers().len() as u32);
+        self.publisher.publish_topology(
+            self.board.current(),
+            u32::try_from(board.active_peers().len()).unwrap_or(u32::MAX),
+        );
 
         let reassignments = self.publish_assignment_changes();
         self.forget_vanished_peers();
@@ -381,7 +383,7 @@ impl ClusterTracker {
     /// and only from the second overrun in a row: one descheduled tick is not a signal.
     fn warn_on_overrun(&mut self, started: std::time::Instant) {
         let budget_us = (self.options.pass_interval_ms * 1_000) / OVERRUN_BUDGET_DIVISOR;
-        let elapsed_us = started.elapsed().as_micros() as u64;
+        let elapsed_us = crate::casts::micros(started.elapsed());
         if self.note_overrun(budget_us > 0 && elapsed_us > budget_us) {
             tracing::warn!(
                 elapsed_us,
@@ -414,7 +416,7 @@ impl ClusterTracker {
             largest = largest.max(component.member_count);
         }
         crate::pulse::metrics::cluster_pass(
-            started.elapsed().as_micros() as u64,
+            crate::casts::micros(started.elapsed()),
             reassignments,
             self.components.len(),
             peers,
@@ -577,8 +579,13 @@ impl ClusterTracker {
         if let Some(seen) = self.assignment_by_wallet.get_mut(&member.wallet) {
             seen.last_seen_pass = self.pass_number;
         }
+        #[allow(
+            clippy::cast_possible_truncation,
+            reason = "peer < peer_states.len(): max_peers plus the control capacity, a few thousand slots"
+        )]
+        let peer = peer as u32;
         self.members.push(PassMember {
-            peer: peer as u32,
+            peer,
             wallet: member.wallet.clone(),
             session: member.session.clone(),
             owner_epoch: member.epoch,
@@ -811,6 +818,10 @@ impl ClusterTracker {
                 sum.y += position.y;
                 sum.z += position.z;
             }
+            #[allow(
+                clippy::cast_precision_loss,
+                reason = "a cluster's member count, far below 2^24"
+            )]
             let centroid = Vector3 {
                 x: sum.x / count as f32,
                 y: sum.y / count as f32,
@@ -967,7 +978,7 @@ impl ClusterTracker {
                     owner_epoch: member.owner_epoch,
                     selected_origin: member.selected_origin,
                     owner_peer: member.peer,
-                    registration: (member.peer < self.actual_peer_capacity as u32)
+                    registration: ((member.peer as usize) < self.actual_peer_capacity)
                         .then(|| identity.registration_guard(member.peer)),
                 })
             })

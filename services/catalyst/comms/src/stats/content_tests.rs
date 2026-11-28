@@ -184,7 +184,7 @@ async fn database_projection_matches_active_entities_order_and_sees_immediate_ch
         let deployment:i64=sqlx::query_scalar("INSERT INTO content.deployments (deployer_address,version,entity_type,entity_id,entity_metadata,entity_timestamp,entity_pointers,local_timestamp,auth_chain) VALUES ('0x0000000000000000000000000000000000000001','v3','scene',$1,$2,timezone('UTC',now()),$3,timezone('UTC',now()),'[]'::json) RETURNING id::bigint")
             .bind(&ids[i]).bind(metadata).bind(vec![pointers[i].clone()]).fetch_one(&pool).await.unwrap();
         sqlx::query("INSERT INTO content.active_pointers (pointer,entity_id,entity_type) VALUES ($1,$2,'scene')").bind(&pointers[i]).bind(&ids[i]).execute(&pool).await.unwrap();
-        sqlx::query("INSERT INTO content.content_files (deployment,key,content_hash) VALUES ($1,'thumb.png','hash')").bind(deployment as i32).execute(&pool).await.unwrap();
+        sqlx::query("INSERT INTO content.content_files (deployment,key,content_hash) VALUES ($1,'thumb.png','hash')").bind(i32::try_from(deployment).unwrap()).execute(&pool).await.unwrap();
     }
     let source = content::Content {
         pool: pool.clone(),

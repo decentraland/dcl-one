@@ -67,7 +67,7 @@ impl ParcelEncoder {
     }
 
     pub fn is_valid_index(&self, index: i32) -> bool {
-        (index as u32) < (self.max_index_exclusive as u32)
+        index.cast_unsigned() < self.max_index_exclusive.cast_unsigned()
     }
 
     pub fn max_index_exclusive(&self) -> i32 {
@@ -91,6 +91,10 @@ impl ParcelEncoder {
         (x, z)
     }
 
+    #[allow(
+        clippy::cast_precision_loss,
+        reason = "parcel coordinates in metres stay far below 2^24, where f32 is exact"
+    )]
     pub fn decode_to_global_position(&self, index: i32, local_position: Vector3) -> Vector3 {
         let (x, z) = self.decode(index);
         Vector3 {
@@ -154,6 +158,10 @@ impl SceneListenerCellMapper {
 
     /// Adds every grid cell key covering the inclusive parcel rect to `keys`. Coordinates must
     /// already be bounds-checked; this does no validation of its own.
+    #[allow(
+        clippy::cast_precision_loss,
+        reason = "parcel coordinates in metres stay far below 2^24, where f32 is exact"
+    )]
     pub fn add_covering_cells(
         &self,
         keys: &mut std::collections::HashSet<i64>,
@@ -342,7 +350,7 @@ impl SpatialGrid {
     }
 
     pub fn pack_key(x: i32, z: i32) -> i64 {
-        ((x as i64) << 32) | (z as u32 as i64)
+        (i64::from(x) << 32) | i64::from(z.cast_unsigned())
     }
 
     pub fn key(&self, position: Vector3) -> i64 {
@@ -366,8 +374,13 @@ impl SpatialGrid {
         self.cells.iter().map(|(k, v)| (*k, v.as_slice()))
     }
 
+    #[allow(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        reason = "splits the packed key into its two 32-bit halves by design"
+    )]
     pub fn unpack_key(key: i64) -> (i32, i32) {
-        ((key >> 32) as i32, key as u32 as i32)
+        ((key >> 32) as i32, (key as u32).cast_signed())
     }
 
     pub fn set(&mut self, peer: u32, position: Vector3) {
@@ -396,6 +409,10 @@ impl SpatialGrid {
     /// Cells to scan on each side of the observer's cell to cover `radius`: upstream's
     /// `ScanCellRadius`, derived per query rather than configured so it can never sit below the
     /// `ceil(MaxRadius / CellSize)` floor upstream's options validator has to enforce by hand.
+    #[allow(
+        clippy::cast_possible_truncation,
+        reason = "float-to-int `as` saturates and maps NaN to 0, which bounds a peer-sent radius"
+    )]
     pub fn scan_cell_radius(&self, radius: f32) -> i32 {
         (radius * self.inverse_cell_size).ceil() as i32
     }
@@ -418,6 +435,10 @@ impl SpatialGrid {
     }
 }
 
+#[allow(
+    clippy::cast_possible_truncation,
+    reason = "float-to-int `as` saturates and maps NaN to 0, which keeps far positions in edge cells"
+)]
 fn cell_coord(v: f32, inverse_cell_size: f32) -> i32 {
     (v * inverse_cell_size).floor() as i32
 }
@@ -605,6 +626,10 @@ thread_local! {
 }
 
 #[cfg(test)]
+#[allow(
+    clippy::cast_precision_loss,
+    reason = "test fixtures use small literal values"
+)]
 mod tests {
     use super::*;
     use crate::pulse::realm_grids::RealmSpatialGrids;

@@ -39,7 +39,7 @@ impl Timeline {
     pub fn record(&self, actor: &str, kind: &str, detail: impl Serialize) {
         let detail = serde_json::to_value(detail).unwrap_or(serde_json::Value::Null);
         self.entries.lock().push(Entry {
-            at_ms: self.started.elapsed().as_millis() as u64,
+            at_ms: crate::casts::millis(self.started.elapsed()),
             actor: actor.to_owned(),
             kind: kind.to_owned(),
             detail: redact(detail),
@@ -47,7 +47,7 @@ impl Timeline {
     }
 
     pub fn elapsed_ms(&self) -> u64 {
-        self.started.elapsed().as_millis() as u64
+        crate::casts::millis(self.started.elapsed())
     }
 
     pub fn snapshot(&self) -> Vec<Entry> {

@@ -892,7 +892,7 @@ async fn drain<S: FeedSink + Sync>(shared: &Arc<Shared>, options: &NatsFeedOptio
                 let payload = encode_discovery(
                     &options.server_name,
                     &options.commit_hash,
-                    chrono::Utc::now().timestamp_millis().max(0) as u64,
+                    crate::casts::unix_millis(),
                     shared.user_count.load(Ordering::Relaxed),
                 );
                 shared.statistics.lock().discovery(payload.clone());

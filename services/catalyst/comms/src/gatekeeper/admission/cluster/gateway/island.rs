@@ -238,7 +238,7 @@ mod tests {
 
     #[test]
     fn ordinary_and_fenced_jwt_nbf_is_current_minus_allowance_or_the_greater_floor() {
-        let now = chrono::Utc::now().timestamp().max(0) as u64;
+        let now = crate::casts::unix_secs();
         let fence = TokenFence {
             audience: "deployment".into(),
             lane: "realm".into(),
@@ -249,11 +249,11 @@ mod tests {
         };
         for floor in [0, now - 600, now + 20] {
             for fenced in [false, true] {
-                let before = chrono::Utc::now().timestamp().max(0) as u64;
+                let before = crate::casts::unix_secs();
                 let chosen =
                     crate::gatekeeper::admission::cluster::subscriber::island_token_not_before(
                         floor,
-                        chrono::Utc::now().timestamp_millis().max(0) as u64,
+                        crate::casts::unix_millis(),
                     );
                 let adapter = if fenced {
                     mint_fenced_island_connection_string(
@@ -289,7 +289,7 @@ mod tests {
                         .unwrap(),
                 )
                 .unwrap();
-                let after = chrono::Utc::now().timestamp().max(0) as u64;
+                let after = crate::casts::unix_secs();
                 let nbf = claims["nbf"].as_u64().unwrap();
                 assert!(nbf >= floor.max(before - 1) && nbf <= floor.max(after - 1));
                 if floor > after {

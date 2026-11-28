@@ -338,7 +338,7 @@ fn verify_boundary_proof(
         &nonce,
         &wallet,
         &wallet,
-        chrono::Utc::now().timestamp() as u64,
+        crate::casts::unix_secs(),
     )
 }
 

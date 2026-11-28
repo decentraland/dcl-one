@@ -53,9 +53,9 @@ impl LegacyFence {
                 audience: audience.clone(),
                 lane: "realm".into(),
                 owner_session: session.into(),
-                owner_epoch: owner_epoch as u64,
-                assignment_revision: revision as u64,
-                fencing_token: token as u64,
+                owner_epoch: crate::casts::non_negative(owner_epoch),
+                assignment_revision: crate::casts::non_negative(revision),
+                fencing_token: crate::casts::non_negative(token),
             };
             Some((assignment, fence))
         });
@@ -136,6 +136,10 @@ pub(super) async fn owns_realm(state: &AppState, owner: &V4Owner) -> Result<bool
     }
 }
 
+#[allow(
+    clippy::cast_possible_truncation,
+    reason = "positions are metres across the map; f32 is the protocol type"
+)]
 pub(super) fn position_from_value(
     value: serde_json::Value,
 ) -> Option<crate::protocol::archipelago::Position> {

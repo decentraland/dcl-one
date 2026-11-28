@@ -1684,9 +1684,9 @@ impl PgAssignmentFence {
             lane,
             authority_incarnation,
             owner_session,
-            owner_epoch: owner_epoch as u64,
-            assignment_revision: assignment_revision as u64,
-            fencing_token: fencing_token as u64,
+            owner_epoch: crate::casts::non_negative(owner_epoch),
+            assignment_revision: crate::casts::non_negative(assignment_revision),
+            fencing_token: crate::casts::non_negative(fencing_token),
             island_id,
         })
     }
@@ -1705,9 +1705,9 @@ impl RealmAssignmentLease for PgRealmLease {
             audience: self.audience.clone(),
             lane: REALM_LANE.to_string(),
             owner_session: self.session.clone(),
-            owner_epoch: self.owner_epoch as u64,
-            assignment_revision: (self.assignment_revision + 1) as u64,
-            fencing_token: self.fencing_token as u64,
+            owner_epoch: crate::casts::non_negative(self.owner_epoch),
+            assignment_revision: crate::casts::non_negative(self.assignment_revision + 1),
+            fencing_token: crate::casts::non_negative(self.fencing_token),
         }
     }
 
