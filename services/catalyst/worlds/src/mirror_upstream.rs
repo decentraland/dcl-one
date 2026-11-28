@@ -317,6 +317,8 @@ pub(super) struct WorldSettingsCopy {
     pub(super) present: bool,
     pub(super) title: Option<String>,
     pub(super) description: Option<String>,
+    /// The validated spawn from the source's settings answer.
+    pub(super) spawn_coordinates: Option<String>,
     /// One of the ratings the column accepts, else none.
     pub(super) content_rating: Option<String>,
     /// The first [`MAX_CATEGORIES`] strings.
@@ -335,6 +337,12 @@ pub(super) struct WorldSettingsCopy {
     pub(super) settings_version: Option<i64>,
 }
 
+/// Canonical form of a spawn within the Worlds parcel range.
+pub(super) fn valid_spawn(value: &Value) -> Option<String> {
+    let (x, y) = crate::core::settings::parse_coordinate(value.as_str()?)?;
+    Some(format!("{x},{y}"))
+}
+
 impl WorldSettingsCopy {
     pub(super) fn parse(body: &Value) -> Option<Self> {
         let body = body.as_object()?;
@@ -348,6 +356,7 @@ impl WorldSettingsCopy {
             present: true,
             title: text("title"),
             description: text("description"),
+            spawn_coordinates: body.get("spawn_coordinates").and_then(valid_spawn),
             content_rating: text("content_rating").filter(|r| VALID_RATINGS.contains(&r.as_str())),
             categories: body.get("categories").and_then(Value::as_array).map(|c| {
                 c.iter()

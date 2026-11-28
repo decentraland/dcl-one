@@ -74,6 +74,7 @@ struct Upstream {
     about_calls: BTreeMap<String, usize>,
     /// Scene base URL override per world (the loop-guard check).
     base_override: HashMap<String, String>,
+    about_spawn: HashMap<String, Value>,
     /// While set, /about for this world cancels `hold_token` and then waits on `hold`.
     hold_world: Option<String>,
     hold_token: Option<CancellationToken>,
@@ -216,7 +217,7 @@ async fn fake_about(
     Path(name): Path<String>,
     hold: axum::Extension<Arc<Notify>>,
 ) -> axum::response::Response {
-    let (urns, held) = {
+    let (urns, held, spawn) = {
         let mut st = s.lock();
         *st.about_calls.entry(name.clone()).or_default() += 1;
         let Some(scenes) = st.worlds.get(&name).filter(|s| !s.is_empty()) else {
@@ -238,13 +239,14 @@ async fn fake_about(
         if held && let Some(token) = st.hold_token.take() {
             token.cancel();
         }
-        (urns, held)
+        let spawn = st.about_spawn.get(&name).cloned().unwrap_or(json!("0,0"));
+        (urns, held, spawn)
     };
     if held {
         hold.0.notified().await;
     }
     Json(json!({
-        "healthy": true, "acceptingUsers": true, "spawnCoordinates": "0,0",
+        "healthy": true, "acceptingUsers": true, "spawnCoordinates": spawn,
         "configurations": {"scenesUrn": urns, "skybox": {"fixedHour": 43200}},
         "comms": {"adapter": "fixed-adapter:signed-login:https://x/comms"}
     }))
@@ -702,7 +704,13 @@ async fn mirror_passes_are_complete_resumable_and_never_touch_local_publishes() 
             "a.dcl.eth",
             &[("A v2", "0,0", &[("new.js", b"a2()")])],
         );
+        st.settings
+            .insert("a.dcl.eth".into(), json!({"spawn_coordinates": "0,0"}));
     }
+    sqlx::query("UPDATE worlds.worlds SET spawn_coordinates = '9,9' WHERE name = 'a.dcl.eth'")
+        .execute(&node.pool)
+        .await
+        .unwrap();
     let summary = node.pass(&ctx).await;
     assert_eq!((summary.scenes.refused, summary.scenes.unchanged), (1, 2));
     let rows = node.scene_rows("a.dcl.eth").await;
@@ -717,6 +725,16 @@ async fn mirror_passes_are_complete_resumable_and_never_touch_local_publishes() 
             .await
             .unwrap();
     assert_eq!(mirror_source, None, "the world row says local");
+    assert_eq!(
+        sqlx::query_scalar::<_, Option<String>>(
+            "SELECT spawn_coordinates FROM worlds.worlds WHERE name = 'a.dcl.eth'"
+        )
+        .fetch_one(&node.pool)
+        .await
+        .unwrap()
+        .as_deref(),
+        Some("9,9")
+    );
     let (status, about) = node.get("/world/a.dcl.eth/about").await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(
@@ -962,10 +980,16 @@ async fn a_mirror_pass_keeps_an_operator_disable() {
         .execute(&node.pool)
         .await
         .unwrap();
+    fake.state
+        .lock()
+        .settings
+        .insert(world.into(), json!({"spawn_coordinates": "1,0"}));
+    assert_eq!(node.pass(&ctx).await.scenes.unchanged, 1);
+
     let v2 = set_scenes(
         &mut fake.state.lock(),
         world,
-        &[("D v2", "0,0", &[("d.js", b"d2()")])],
+        &[("D v2", "1,0", &[("d.js", b"d2()")])],
     );
     assert_eq!(node.pass(&ctx).await.scenes.synced, 1);
 
@@ -975,13 +999,15 @@ async fn a_mirror_pass_keeps_an_operator_disable() {
         v2,
         "the pass refreshed the scenes"
     );
-    let blocked: Option<chrono::NaiveDateTime> =
-        sqlx::query_scalar("SELECT blocked_since FROM worlds.worlds WHERE name = $1")
-            .bind(world)
-            .fetch_one(&node.pool)
-            .await
-            .unwrap();
+    let (blocked, spawn): (Option<chrono::NaiveDateTime>, Option<String>) = sqlx::query_as(
+        "SELECT blocked_since, spawn_coordinates FROM worlds.worlds WHERE name = $1",
+    )
+    .bind(world)
+    .fetch_one(&node.pool)
+    .await
+    .unwrap();
     assert!(blocked.is_some(), "the operator disable stands");
+    assert_eq!(spawn.as_deref(), Some("0,0"));
     let (status, _) = node.get(&format!("/world/{world}/about")).await;
     assert_eq!(status, StatusCode::UNAUTHORIZED);
 
@@ -1896,6 +1922,7 @@ async fn an_owner_edit_here_is_kept_while_that_owner_holds_the_name() {
     {
         let mut st = fake.state.lock();
         add_scene(&mut st, world, "K", "0,0", &[("k.txt", b"kept")]);
+        add_scene(&mut st, world, "N", "4,4", &[("n.txt", b"near")]);
         st.settings.insert(
             world.to_string(),
             json!({"title": "Source", "settings_version": 1}),
@@ -1937,7 +1964,7 @@ async fn an_owner_edit_here_is_kept_while_that_owner_holds_the_name() {
         let mut st = fake.state.lock();
         st.settings.insert(
             world.to_string(),
-            json!({"title": "Source", "thumbnail_hash": sha256, "settings_version": 1}),
+            json!({"title": "Source", "thumbnail_hash": sha256, "spawn_coordinates": "2,2", "settings_version": 1}),
         );
         st.blobs.insert(sha256.clone(), thumbnail);
     }
@@ -1956,6 +1983,7 @@ async fn an_owner_edit_here_is_kept_while_that_owner_holds_the_name() {
     );
     let (_, settings) = node.get(&format!("/world/{world}/settings")).await;
     assert!(settings.get("thumbnail_hash").is_none(), "{settings}");
+    assert_eq!(settings["spawn_coordinates"], "2,2");
     let alias: Option<(String, bool)> = sqlx::query_as(
         "SELECT blob_cid, mirror_expires_at > now() FROM worlds.thumbnail_aliases WHERE legacy_sha256 = $1",
     )
@@ -2105,6 +2133,122 @@ async fn an_owner_edit_here_is_kept_while_that_owner_holds_the_name() {
     .await
     .expect("mirror pass");
     assert_eq!(access_type(&node, world).await, "allow-list");
+
+    node.jobs.shutdown(std::time::Duration::from_secs(1)).await;
+    drop(node);
+    scratch.teardown().await;
+}
+
+/// Fresh rows can fall back to the signed scene metadata when settings and about have no spawn.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_scene_base_fallback_uses_canonical_spawn_coordinates() {
+    let Some(scratch) = db::scratch_database().await else {
+        eprintln!("skipping: CATALYST_TEST_DATABASE_URL not set");
+        return;
+    };
+    let fake = start_fake().await;
+    let node = Node::new(scratch.pool.clone(), &fake.base, "scene-base-spawn").await;
+    let world = "padded-spawn.dcl.eth";
+    {
+        let mut st = fake.state.lock();
+        let mut entity = scene_entity(&mut st, world, "Padded", "2,-2", &[("p.txt", b"padded")]);
+        entity["metadata"]["scene"]["base"] = json!(" 02 , -002 ");
+        push_scene(&mut st, world, entity);
+        st.about_spawn.insert(world.into(), Value::Null);
+    }
+    let ctx = node.ctx().await;
+    assert_eq!(node.pass(&ctx).await.scenes.synced, 1);
+    let (_, about) = node.get(&format!("/world/{world}/about")).await;
+    assert_eq!(about["spawnCoordinates"], "2,-2");
+
+    node.jobs.shutdown(std::time::Duration::from_secs(1)).await;
+    drop(node);
+    scratch.teardown().await;
+}
+
+/// A valid settings spawn refreshes unchanged scenes without claiming owner authority or a version.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn spawn_only_settings_changes_reach_an_unchanged_mirrored_world() {
+    let Some(scratch) = db::scratch_database().await else {
+        eprintln!("skipping: CATALYST_TEST_DATABASE_URL not set");
+        return;
+    };
+    let fake = start_fake().await;
+    let node = Node::new(scratch.pool.clone(), &fake.base, "spawn-settings").await;
+    let world = "spawn-settings.dcl.eth";
+    {
+        let mut st = fake.state.lock();
+        add_scene(&mut st, world, "A", "0,0", &[("a.txt", b"a")]);
+        add_scene(&mut st, world, "B", "4,4", &[("b.txt", b"b")]);
+        st.settings
+            .insert(world.into(), json!({"settings_version": 7}));
+    }
+    let path = format!("/world/{world}/about");
+    let ctx = node.ctx().await;
+    assert_eq!(node.pass(&ctx).await.scenes.synced, 1);
+    assert_eq!(node.get(&path).await.1["spawnCoordinates"], "0,0");
+    let scene_rows = node.scene_rows(world).await;
+
+    fake.state.lock().settings.insert(
+        world.into(),
+        json!({"spawn_coordinates": " 02 , 002 ", "settings_version": 7}),
+    );
+    assert_eq!(node.pass(&ctx).await.scenes.unchanged, 1);
+    assert_eq!(node.get(&path).await.1["spawnCoordinates"], "2,2");
+    assert_eq!(node.scene_rows(world).await, scene_rows);
+    assert_eq!(about_calls(&fake, world), 1);
+    assert_eq!(world_row(&node.pool, world).await.2, 7);
+
+    for answer in [
+        Some(json!({"settings_version": 7})),
+        Some(json!({"spawn_coordinates": null, "settings_version": 7})),
+        Some(json!({"spawn_coordinates": "bad", "settings_version": 7})),
+        Some(json!({"spawn_coordinates": "151,2", "settings_version": 7})),
+        Some(json!({"spawn_coordinates": 7, "settings_version": 7})),
+        None,
+    ] {
+        match answer {
+            Some(answer) => fake.state.lock().settings.insert(world.into(), answer),
+            None => fake.state.lock().settings.remove(world),
+        };
+        assert_eq!(node.pass(&ctx).await.scenes.unchanged, 1);
+        assert_eq!(node.get(&path).await.1["spawnCoordinates"], "2,2");
+        assert_eq!(world_row(&node.pool, world).await.2, 7);
+    }
+
+    use catalyst::comms::world_identity::WorldName;
+    use catalyst::shared::identity::Address;
+    use catalyst::worlds::core::store::{WorldSettingsUpdate, update_world_settings};
+
+    let owner = Address::parse("0x00000000000000000000000000000000000000a1").unwrap();
+    update_world_settings(
+        &node.pool,
+        &WorldName::parse(world).unwrap(),
+        &owner,
+        Some(&owner),
+        &WorldSettingsUpdate {
+            spawn_coordinates: Some("1,1".into()),
+            ..WorldSettingsUpdate::default()
+        },
+        None,
+    )
+    .await
+    .unwrap();
+    assert_eq!(node.get(&path).await.1["spawnCoordinates"], "1,1");
+    assert_eq!(
+        set_here(&node.pool, world).await,
+        (false, None, false, None)
+    );
+    fake.state.lock().settings.insert(
+        world.into(),
+        json!({"spawn_coordinates": "3,3", "title": "Upstream", "settings_version": 8}),
+    );
+    assert_eq!(node.pass(&ctx).await.scenes.unchanged, 1);
+    assert_eq!(node.get(&path).await.1["spawnCoordinates"], "3,3");
+    assert_eq!(
+        world_row(&node.pool, world).await.0.as_deref(),
+        Some("Upstream")
+    );
 
     node.jobs.shutdown(std::time::Duration::from_secs(1)).await;
     drop(node);

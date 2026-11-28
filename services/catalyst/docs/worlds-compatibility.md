@@ -576,6 +576,14 @@ A difference not listed here is a gap, not a decision.
   the same check each time it answers: an override whose world was deployed
   here after it was saved is not advertised, and `realmName` falls back to
   the world's own name.
+- **Mirrored spawn.** A scheduled mirror refresh reads valid `spawn_coordinates`
+  from the source's world settings even when the scene set is unchanged.
+  It stores a valid spawn as `x,y` with each axis from -150 to 150.
+  A missing or invalid setting leaves the spawn in place when the scene set
+  is unchanged. A full sync falls back to `/about` and can use the scene base
+  when a world has no stored spawn. A valid source spawn replaces a spawn set
+  here on the next refresh, independently of owner overrides for other
+  mirrored settings. A spawn-only refresh leaves `settings_version` unchanged.
 - **Settings uploads.** `spawn_coordinates` must be two integers (spaces
   around them allowed); upstream's `parseInt` also takes `5abc,3` or
   `5.9,3` and stores them as sent. The form must be `multipart/form-data`
