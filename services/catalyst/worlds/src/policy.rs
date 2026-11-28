@@ -368,6 +368,13 @@ fn owner_answer(
 fn names_unavailable(e: &NamesError) -> AuthorityNotEstablished {
     match e {
         NamesError::NotEstablished(_) => reader_unavailable(NAMES_NOT_CURRENT, &e.to_string()),
+        // A transient database fault is answered as the index not being
+        // current: refused, and retryable. The client gets a fixed reason;
+        // the fault itself is for the log.
+        NamesError::Transient(fault) => {
+            tracing::warn!(error = %fault, "DCL NAME read hit a transient fault; refused as retryable");
+            reader_unavailable(NAMES_NOT_CURRENT, NAMES_READ_INTERRUPTED)
+        }
         // Not transient: refused like any undetermined owner, not retried.
         NamesError::Ambiguous(_) => reader_unavailable(NAMES_AMBIGUOUS, &e.to_string()),
         NamesError::Failed(_) => reader_unavailable("DCL NAME source", &e.to_string()),
@@ -375,9 +382,12 @@ fn names_unavailable(e: &NamesError) -> AuthorityNotEstablished {
 }
 
 /// The store a refusal names when the NAME source cannot establish an owner
-/// now (the index not current for an authorization): undetermined, and
-/// short-lived.
+/// now (the index not current for an authorization, or a transient database
+/// fault reading it): undetermined, and short-lived.
 const NAMES_NOT_CURRENT: &str = "DCL NAME source (not established)";
+
+/// The reason a refusal gives for a transient fault reading the names index.
+const NAMES_READ_INTERRUPTED: &str = "the ethereum nft index could not be read just now: NAME ownership cannot be established; retry shortly";
 
 /// The store a refusal names when two holders claim the NAME's label once
 /// lowercased: undetermined until a transfer resolves it, not by waiting.

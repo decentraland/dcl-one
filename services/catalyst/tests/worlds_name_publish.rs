@@ -191,6 +191,20 @@ async fn publish_names(pool: &sqlx::PgPool, age_minutes: i64) {
     .unwrap();
 }
 
+/// `label`'s DCLRegistrar token, held by `owner`, in the names index.
+async fn mint_name(pool: &sqlx::PgPool, label: &str, owner: &str) {
+    sqlx::query(
+        "INSERT INTO shop.nft (network, contract_address, token_id, owner, ens_subdomain, minted_block, minted_at, transferred_block, transferred_log, transferred_at) \
+         VALUES ('ethereum', $1, 4242, $2, $3, 10, 1700000000, 10, 0, 1700000000)",
+    )
+    .bind(catalyst::shop::market::nft_index::DCL_REGISTRAR)
+    .bind(owner)
+    .bind(label)
+    .execute(pool)
+    .await
+    .unwrap();
+}
+
 #[tokio::test]
 async fn a_name_holder_publishes_a_world_with_every_subgraph_url_unset() {
     let Some(db) = OwnedDatabase::new("names_world", Schema::Full, 2).await else {
@@ -201,16 +215,7 @@ async fn a_name_holder_publishes_a_world_with_every_subgraph_url_unset() {
     let label = format!("e2e{}", &uuid::Uuid::new_v4().simple().to_string()[..12]);
     let world = format!("{label}.dcl.eth");
     let holder = address(HOLDER_KEY);
-    sqlx::query(
-        "INSERT INTO shop.nft (network, contract_address, token_id, owner, ens_subdomain, minted_block, minted_at, transferred_block, transferred_log, transferred_at) \
-         VALUES ('ethereum', $1, 4242, $2, $3, 10, 1700000000, 10, 0, 1700000000)",
-    )
-    .bind(catalyst::shop::market::nft_index::DCL_REGISTRAR)
-    .bind(&holder)
-    .bind(&label)
-    .execute(&db.pool)
-    .await
-    .unwrap();
+    mint_name(&db.pool, &label, &holder).await;
     publish_names(&db.pool, 0).await;
     // A size override: the cap is fixed, so the publish asks no RPC for the
     // owner's storage allowance (the node's default RPCs are public).
@@ -332,4 +337,119 @@ async fn a_name_holder_publishes_a_world_with_every_subgraph_url_unset() {
     child.kill().await.unwrap();
     db.drop().await;
     std::fs::remove_dir_all(root).unwrap();
+}
+
+/// The write-time NAME check every publish runs in its write's transaction
+/// (`Policy::confirm_name_holder_on`) on the production names source, shop's
+/// `IndexNames`, over the real tables. It holds the names publication until
+/// that transaction ends. A fold withdrawn since is the names index not
+/// current (the route's retryable 503), and a refold that moved the NAME
+/// refuses the former holder and admits the new one. A fold holding the
+/// publication past `HOLD_WAIT` is the names index not current too.
+#[tokio::test]
+async fn the_write_time_name_check_holds_the_real_names_index() {
+    use std::sync::Arc;
+
+    use catalyst::chain_index::names::HOLD_WAIT;
+    use catalyst::comms::world_identity::WorldName;
+    use catalyst::shared::identity::{Address, AuthorityNotEstablished};
+    use catalyst::shop::market::names::IndexNames;
+    use catalyst::worlds::policy::{PersonalWorldsPolicy, Policy, names_not_current};
+
+    let Some(db) = OwnedDatabase::new("names_fence", Schema::Full, 4).await else {
+        return;
+    };
+    let label = format!("e2e{}", &uuid::Uuid::new_v4().simple().to_string()[..12]);
+    let world = WorldName::parse(&format!("{label}.dcl.eth")).unwrap();
+    let (holder, next) = (address(HOLDER_KEY), address(STRANGER_KEY));
+    mint_name(&db.pool, &label, &holder).await;
+    publish_names(&db.pool, 0).await;
+    let (holder, next) = (
+        Address::parse(&holder).unwrap(),
+        Address::parse(&next).unwrap(),
+    );
+    let policy = Policy::new(db.pool.clone(), PersonalWorldsPolicy::disabled(), None)
+        .with_name_authority(Some(Arc::new(IndexNames::new(db.pool.clone()))));
+    const WITHDRAW: &str = "UPDATE shop.chain_cursor SET folded_block = NULL, folded_at = NULL \
+                            WHERE indexer = 'nft' AND network = 'ethereum'";
+
+    // Confirmed, and held until the write ends: a withdrawal waits for it.
+    let mut write = db.pool.begin().await.unwrap();
+    policy
+        .confirm_name_holder_on(&mut write, &world, &holder)
+        .await
+        .unwrap();
+    let pool = db.pool.clone();
+    let withdrawal = tokio::spawn(async move {
+        sqlx::query(WITHDRAW).execute(&pool).await.unwrap();
+    });
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert!(
+        !withdrawal.is_finished(),
+        "a withdrawal waits for the write"
+    );
+    write.commit().await.unwrap();
+    tokio::time::timeout(Duration::from_secs(10), withdrawal)
+        .await
+        .expect("the withdrawal goes through once the write ends")
+        .unwrap();
+
+    // Withdrawn: the names index is not current.
+    let mut write = db.pool.begin().await.unwrap();
+    let refused = policy
+        .confirm_name_holder_on(&mut write, &world, &holder)
+        .await
+        .unwrap_err();
+    assert!(names_not_current(&refused).is_some(), "{refused:?}");
+    drop(write);
+
+    // Refolded with the NAME moved: the former holder is refused, the new
+    // one confirmed.
+    sqlx::query("UPDATE shop.nft SET owner = $1 WHERE network = 'ethereum' AND ens_subdomain = $2")
+        .bind(next.as_str())
+        .bind(&label)
+        .execute(&db.pool)
+        .await
+        .unwrap();
+    publish_names(&db.pool, 0).await;
+    let mut write = db.pool.begin().await.unwrap();
+    let refused = policy
+        .confirm_name_holder_on(&mut write, &world, &holder)
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(
+            refused,
+            AuthorityNotEstablished::RefusedLacksAuthority { .. }
+        ),
+        "{refused:?}"
+    );
+    drop(write);
+    let mut write = db.pool.begin().await.unwrap();
+    policy
+        .confirm_name_holder_on(&mut write, &world, &next)
+        .await
+        .unwrap();
+    drop(write);
+
+    // A fold holding the publication past the bounded wait: not current.
+    let mut fold = db.pool.begin().await.unwrap();
+    sqlx::query(
+        "SELECT 1 FROM shop.chain_cursor WHERE indexer = 'nft' AND network = 'ethereum' FOR UPDATE",
+    )
+    .execute(&mut *fold)
+    .await
+    .unwrap();
+    let mut write = db.pool.begin().await.unwrap();
+    let refused = tokio::time::timeout(
+        HOLD_WAIT * 3,
+        policy.confirm_name_holder_on(&mut write, &world, &next),
+    )
+    .await
+    .expect("the check gives up after its bounded wait")
+    .unwrap_err();
+    assert!(names_not_current(&refused).is_some(), "{refused:?}");
+    drop(write);
+    fold.rollback().await.unwrap();
+    db.drop().await;
 }

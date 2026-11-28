@@ -132,12 +132,17 @@ projection write to its commit, and the sales fold locks it `FOR UPDATE` at its
 publication step. Every publication or withdrawal updates it. None of those
 transactions takes a world lock, so the order (world locks, then the cursor)
 cannot deadlock. The share is taken only in that short write transaction, after
-upload, hashing and validation. A fold's publication waits for at most one scene
-write. A publish that arrives during a fold waits for that fold's commit, up to
-`HOLD_WAIT` (5 s, as `lock_timeout`), and then reads its publication. Past that
-wait it answers the names index's retryable 503, so it never holds the world and
-store locks behind a long refold. Personal and ENS worlds, and a node reading NAMEs
-from the subgraph, hold nothing.
+upload, hashing and validation. A fold's publication waits only for the scene
+writes already in progress when it asks for the row. A publish that arrives
+during a fold waits for that fold's commit, and then reads its publication. The
+whole wait is bounded by `HOLD_WAIT` (5 s, as the share statement's
+`statement_timeout`, restored after it), including a wait queued behind another
+fold. Past it the publish answers the names index's retryable 503, so it never
+holds the world and store locks behind a long refold. A transient database fault
+reading the names index (a lost connection, a deadlock or serialization failure,
+a cancelled statement) is the same retryable 503, with a fixed message; any other
+failed read is the fail-closed 403. Personal and ENS worlds, and a node reading
+NAMEs from the subgraph, hold nothing.
 
 Partial batches for one entity hold a session advisory lock from their first
 pending-upload/replay read through the staging or committed-publication decision.
@@ -3700,14 +3705,17 @@ published block (`folded_block`) set it, so rows a pass adds before its
 publish wait for it. Published membership stays readable while a pass
 runs. When Polygon is in scope, Shop accounts require a fresh committee
 fold covering the published sales block and include every indexed member
-through that block, including former members. An index that is off, not yet published or
-published more than 30 minutes ago (`READY_WINDOW`) admits only the
-configured addresses, and a failed read answers 503. The curation console
-lists a current publication whichever process maintains it. Without one, a
+through that block, including former members. A current publication
+authorizes its members whichever process maintains it, so a node with the
+switch off still admits them when another process walks the index. With no
+publication, or one published more than 30 minutes ago (`READY_WINDOW`), only
+the configured addresses are admitted, and a failed read answers 503. The
+curation console lists a current publication the same way. Without one, a
 deployment that walks the index (`MARKETPLACE_COMMITTEE_INDEX_ENABLED` on a node
-serving mainnet Polygon) answers 503, never an empty committee, because the
-publication is its own lag. A deployment that does not walk it (the switch off,
-or a testnet, which schedules no committee walk) lists no indexed members. Changing a column builder reads updates this section
+serving mainnet Polygon with a Polygon RPC endpoint, the rule that schedules the
+job) answers 503, never an empty committee, because the publication is its own
+lag. A deployment that does not walk it (the switch off, no Polygon endpoint, or
+a testnet, which schedules no committee walk) lists no indexed members. Changing a column builder reads updates this section
 and the AGENTS.md "Ownership" entry in the same change.
 
 ## Third-party registry

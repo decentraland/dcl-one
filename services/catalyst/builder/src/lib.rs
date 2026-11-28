@@ -158,7 +158,8 @@ pub struct RawSettings {
     pub foundation_url: Option<String>,
     /// Whether this deployment walks the Polygon committee index
     /// (`MARKETPLACE_COMMITTEE_INDEX_ENABLED` on a node serving mainnet
-    /// Polygon). Walked, an unpublished or stale committee publication is
+    /// Polygon, with a Polygon mainnet RPC to walk it with: the rule that
+    /// schedules its job). Walked, an unpublished or stale committee publication is
     /// this deployment's own lag, which the curation console answers with
     /// 503. Not walked, no current publication lists no indexed members. A
     /// current publication is read and authorized either way, whichever

@@ -56,6 +56,7 @@ impl NameAuthority for Unanswered {
 async fn a_publish_the_names_index_cannot_answer_now_is_a_retryable_503() {
     for (error, status) in [
         (NamesError::NotEstablished as fn(String) -> NamesError, 503),
+        (NamesError::Transient as fn(String) -> NamesError, 503),
         (NamesError::Ambiguous as fn(String) -> NamesError, 403),
         (NamesError::Failed as fn(String) -> NamesError, 403),
     ] {
@@ -80,10 +81,13 @@ async fn a_publish_the_names_index_cannot_answer_now_is_a_retryable_503() {
             if status == 503 {
                 assert_eq!(body["source"], "nft-index", "{body}");
                 assert_eq!(body["configure"], "MARKETPLACE_NFT_INDEX_ENABLED", "{body}");
-                assert_eq!(
-                    body["message"], "the names index cannot answer now",
-                    "{body}"
-                );
+                // A transient fault's own text stays in the log.
+                let expected = if error("x".into()) == NamesError::Transient("x".into()) {
+                    "the ethereum nft index could not be read just now: NAME ownership cannot be established; retry shortly"
+                } else {
+                    "the names index cannot answer now"
+                };
+                assert_eq!(body["message"], expected, "{body}");
             } else {
                 assert_eq!(
                     body["message"],
@@ -168,6 +172,7 @@ impl NameAuthority for Turning {
 async fn a_grantee_whose_owner_lookup_changes_is_refused_as_the_check_is() {
     for (error, status) in [
         (NamesError::NotEstablished as fn(String) -> NamesError, 503),
+        (NamesError::Transient as fn(String) -> NamesError, 503),
         (NamesError::Ambiguous as fn(String) -> NamesError, 403),
         (NamesError::Failed as fn(String) -> NamesError, 403),
     ] {

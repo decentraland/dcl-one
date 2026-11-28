@@ -1072,6 +1072,17 @@ impl MarketplaceState {
 
     /// The `TRADE_RPC_URLS` 137 entry, with `RPC_ENDPOINT_POLYGON` as a
     /// fallback when `ETH_NETWORK` is mainnet. Callers verify the chain ID.
+    /// Whether this deployment walks the Polygon curation committee index:
+    /// the switch on a node serving mainnet Polygon
+    /// ([`chain_walk::IndexSettings::walks_committee`]) with a Polygon mainnet
+    /// RPC to walk it with ([`Self::polygon_mainnet_rpc_url`]). The committee
+    /// job is scheduled exactly then, and the Builder's curation console
+    /// answers a missing publication as this deployment's own lag exactly
+    /// then.
+    pub fn walks_committee(&self) -> bool {
+        self.settings.market.indexes.walks_committee() && self.polygon_mainnet_rpc_url().is_some()
+    }
+
     pub fn polygon_mainnet_rpc_url(&self) -> Option<String> {
         self.chain_rpc_url(chain_walk::ChainNet::Matic).or_else(|| {
             (self.land_network() == Some(crate::land_authz::LAND_MAINNET))

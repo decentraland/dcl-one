@@ -1529,7 +1529,7 @@ fn visit_projections(
             market_cfg(),
         );
     }
-    if settings.walks_committee() && net == ChainNet::Matic {
+    if state.walks_committee() && net == ChainNet::Matic {
         add(
             "committee-index",
             state.polygon_mainnet_rpc_url(),

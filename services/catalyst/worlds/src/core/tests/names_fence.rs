@@ -395,7 +395,6 @@ async fn a_fold_waits_only_for_the_write_transaction() {
         .execute(&pool)
         .await
         .unwrap();
-        Instant::now()
     };
     let now = chrono::Utc::now().timestamp_millis();
     let first = deployment_at(
@@ -411,15 +410,11 @@ async fn a_fold_waits_only_for_the_write_transaction() {
     .await;
     let pool = f.pool.clone();
     paused(&BEFORE_PERSIST, &f.app, &first, 200, async {
-        let started = Instant::now();
-        let done = tokio::time::timeout(Duration::from_secs(2), publish_fold(pool))
+        // The publish stays paused until this ends: a hold taken before the
+        // write would leave the fold waiting until the timeout.
+        tokio::time::timeout(Duration::from_secs(10), publish_fold(pool))
             .await
             .expect("a fold publishes while a publish has not begun its write");
-        assert!(
-            done - started < Duration::from_secs(2),
-            "{:?}",
-            done - started
-        );
     })
     .await;
 
@@ -440,32 +435,22 @@ async fn a_fold_waits_only_for_the_write_transaction() {
         post_entity(&f.app, &second, 200),
     );
     let pool = f.pool.clone();
-    let (answered, folded) = tokio::join!(
-        async {
-            publish.await;
-            Instant::now()
-        },
-        async {
-            reached.notified().await;
-            let fold = tokio::spawn(publish_fold(pool));
-            tokio::time::sleep(Duration::from_millis(300)).await;
-            assert!(
-                !fold.is_finished(),
-                "the fold waits while the write holds its publication"
-            );
-            resume.notify_one();
-            fold.await.unwrap()
-        }
-    );
-    // The fold commits right after the write: within a generous bound of the
-    // publish's answer, either side of it.
-    let gap = folded
-        .saturating_duration_since(answered)
-        .max(answered.saturating_duration_since(folded));
-    assert!(
-        gap < Duration::from_secs(2),
-        "the fold commits right after the write: {gap:?}"
-    );
+    tokio::join!(publish, async {
+        reached.notified().await;
+        let fold = tokio::spawn(publish_fold(pool));
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        assert!(
+            !fold.is_finished(),
+            "the fold waits while the write holds its publication"
+        );
+        resume.notify_one();
+        // Nothing but the write's end releases it: a hold kept past that
+        // transaction would leave the fold waiting until the timeout.
+        tokio::time::timeout(Duration::from_secs(10), fold)
+            .await
+            .expect("the fold commits once the write ends")
+            .unwrap();
+    });
     assert_eq!(
         deployed_entity_ids(&f.pool, &world).await,
         std::slice::from_ref(&second.entity_id)
@@ -519,7 +504,9 @@ async fn a_publish_behind_a_long_fold_answers_the_names_index_503() {
     let waited = started.elapsed();
     assert_eq!(body["source"], "nft-index", "{body}");
     let wait = crate::chain_index::names::HOLD_WAIT;
-    assert!(waited < wait + Duration::from_secs(3), "{waited:?}");
+    // Bounded by the hold's wait, not the pool's statement bound (60 s); a
+    // generous margin, so a loaded runner does not fail it.
+    assert!(waited >= wait && waited < wait * 3, "{waited:?}");
     fold.rollback().await.unwrap();
     assert_eq!(world_state(&f, &world).await, before);
 }

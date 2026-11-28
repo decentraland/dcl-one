@@ -459,7 +459,7 @@ async fn read_name_owner(
             Err(NameOwnerError::Unavailable(source, message))
         }
         // A failed read, of either source, is lamb2's 502 for the name.
-        Err(NamesError::Failed(e)) => {
+        Err(NamesError::Failed(e) | NamesError::Transient(e)) => {
             tracing::warn!(name = %dcl_name, error = %e, "DCL NAME source failed");
             Err(NameOwnerError::Fetcher(dcl_name.to_string()))
         }
