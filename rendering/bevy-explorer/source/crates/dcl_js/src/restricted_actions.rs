@@ -349,10 +349,16 @@ mod tests {
             // the avatar faces the camera target when it has no target of its own
             (Some(camera), None, Some(camera_bevy), Some(Vec3::NEG_Z)),
             (None, Some(avatar), Some(avatar_bevy), None),
-            (Some(camera), Some(avatar), Some(avatar_bevy), Some(Vec3::NEG_Z)),
+            (
+                Some(camera),
+                Some(avatar),
+                Some(avatar_bevy),
+                Some(Vec3::NEG_Z),
+            ),
         ] {
             let case = format!("{camera_target:?} {avatar_target:?}");
-            let (pushed_to, pushed_looking_at, rotation) = parts(pushed(camera_target, avatar_target));
+            let (pushed_to, pushed_looking_at, rotation) =
+                parts(pushed(camera_target, avatar_target));
             assert_eq!((pushed_to, pushed_looking_at), (to, looking_at), "{case}");
             let looks = rotation.map(|rotation: Quat| rotation * Vec3::NEG_Z);
             match (looks, camera_looks) {

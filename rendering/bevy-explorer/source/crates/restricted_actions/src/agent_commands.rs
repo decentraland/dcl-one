@@ -623,7 +623,10 @@ mod tests {
         answer_move(&mut app, true);
         let mut entity = app.world_mut().entity_mut(player);
         entity.get_mut::<Transform>().unwrap().translation = Vec3::new(100.0, 10.0, -100.0);
-        entity.get_mut::<AvatarDynamicState>().unwrap().ground_height = 10.0;
+        entity
+            .get_mut::<AvatarDynamicState>()
+            .unwrap()
+            .ground_height = 10.0;
         for _ in 0..30 {
             frame(&mut app);
             assert!(reply(&answer).is_none(), "held in the air");
@@ -631,10 +634,16 @@ mod tests {
         // it falls and lands; the wait then counts from the landing
         let mut entity = app.world_mut().entity_mut(player);
         entity.get_mut::<Transform>().unwrap().translation.y = 0.0;
-        entity.get_mut::<AvatarDynamicState>().unwrap().ground_height = 0.0;
+        entity
+            .get_mut::<AvatarDynamicState>()
+            .unwrap()
+            .ground_height = 0.0;
         for _ in 0..STILL_FRAMES {
             frame(&mut app);
-            assert!(reply(&answer).is_none(), "landed but not still for long enough");
+            assert!(
+                reply(&answer).is_none(),
+                "landed but not still for long enough"
+            );
         }
         frame(&mut app);
         frame(&mut app);

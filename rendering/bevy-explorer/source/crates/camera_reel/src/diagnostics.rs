@@ -139,9 +139,8 @@ fn pose_of(
         };
     }
     // a pose always waits for its landing
-    let timeout =
-        settle::wait_timeout(true, args.timeout_seconds, DEFAULT_LANDING_SECONDS)?
-            .unwrap_or(DEFAULT_LANDING_SECONDS);
+    let timeout = settle::wait_timeout(true, args.timeout_seconds, DEFAULT_LANDING_SECONDS)?
+        .unwrap_or(DEFAULT_LANDING_SECONDS);
     let point = |v: &Option<Vec<f32>>| v.as_deref().map(|v| [v[0], v[1], v[2]]);
     let (position, look_at) = (point(&args.position), point(&args.look_at));
     if !position

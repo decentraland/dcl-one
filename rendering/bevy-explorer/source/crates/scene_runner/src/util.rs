@@ -229,10 +229,11 @@ fn reload_command(
         timeout_seconds,
     })) = input.take()
     {
-        let timeout = match settle::wait_timeout(wait, timeout_seconds, settle::DEFAULT_TIMEOUT_SECONDS) {
-            Ok(timeout) => timeout,
-            Err(e) => return input.reply_failed(e),
-        };
+        let timeout =
+            match settle::wait_timeout(wait, timeout_seconds, settle::DEFAULT_TIMEOUT_SECONDS) {
+                Ok(timeout) => timeout,
+                Err(e) => return input.reply_failed(e),
+            };
         if current {
             let Some(current) = targets.running_hash(&live_scenes) else {
                 input.reply_failed("No running parcel scene under the player");

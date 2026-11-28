@@ -64,7 +64,10 @@ pub(crate) enum PhotoModeBlock {
 
 /// Why photo mode cannot open, and closes if it is open: the one rule for it. A request to
 /// enable it is dropped while this holds, so a command that opens it asks here first.
-pub(crate) fn photo_mode_block(camera: &PrimaryCamera, out_of_world: bool) -> Option<PhotoModeBlock> {
+pub(crate) fn photo_mode_block(
+    camera: &PrimaryCamera,
+    out_of_world: bool,
+) -> Option<PhotoModeBlock> {
     if camera.scene_override.is_some() {
         Some(PhotoModeBlock::SceneCamera)
     } else if out_of_world {

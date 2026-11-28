@@ -495,7 +495,10 @@ mod tests {
         // a command's default may run past the cap the flag has
         assert_eq!(wait_timeout(true, None, 305.0), Ok(Some(305.0)));
         for refused in [0.0, -1.0, 301.0, f32::NAN, f32::INFINITY] {
-            assert!(wait_timeout(true, Some(refused), 60.0).is_err(), "{refused}");
+            assert!(
+                wait_timeout(true, Some(refused), 60.0).is_err(),
+                "{refused}"
+            );
         }
     }
 
