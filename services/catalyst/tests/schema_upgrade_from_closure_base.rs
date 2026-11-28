@@ -91,6 +91,7 @@ fn expected_pending_steps() -> Vec<&'static str> {
             "0073_land_authz_transfer_parties",
             "0078_shop_nft_last_sale",
             "0079_credits_seasonal_visit_goals",
+            "0080_builder_scenes_retired",
             "0094_shop_historical_holdings",
         ])
         .collect()
@@ -2047,5 +2048,188 @@ async fn the_logs_permissions_release_waits_for_the_decoded_function_then_drops_
     release_statements(pool, &release)
         .await
         .expect("a second run notes the function is gone");
+    old.drop().await;
+}
+
+const BUILDER_SCENES_RETIRED: &str = include_str!(concat!(
+    env!("DCL_ONE_ROOT"),
+    "/schemas/releases/builder-scenes-retired.sql"
+));
+
+const BUILDER_SCENE_TABLES: [&str; 7] = [
+    "builder.projects",
+    "builder.project_manifests",
+    "builder.project_files",
+    "builder.asset_packs",
+    "builder.assets",
+    "builder.asset_contents",
+    "builder.asset_catalog",
+];
+
+#[tokio::test]
+async fn a_fresh_database_has_no_builder_scene_tables() {
+    let Some(fresh) = with_schema(catalyst::db::SCHEMA_SQL).await else {
+        return;
+    };
+    for table in BUILDER_SCENE_TABLES {
+        assert!(!has_relation(&fresh.pool, table).await, "{table}");
+    }
+    assert!(has_relation(&fresh.pool, "builder.uploaded_contents").await);
+    fresh.drop().await;
+}
+
+async fn uploads(pool: &PgPool) -> Vec<String> {
+    sqlx::query_scalar("SELECT hash FROM builder.uploaded_contents ORDER BY hash")
+        .fetch_all(pool)
+        .await
+        .unwrap()
+}
+
+const BUILDER_SCENES_STEP: &str = "0080_builder_scenes_retired";
+
+async fn assert_release_refused(pool: &PgPool, release: &str, why: &str) {
+    assert!(release_result(pool, release).await.is_err(), "{why}");
+    for table in BUILDER_SCENE_TABLES {
+        assert!(has_relation(pool, table).await, "{why}: {table} is kept");
+    }
+    assert_eq!(
+        uploads(pool).await.len(),
+        12,
+        "{why}: no upload is forgotten"
+    );
+}
+
+async fn age_scene_writes(pool: &PgPool) {
+    sqlx::raw_sql(
+        "UPDATE builder.projects SET updated_at = timezone('UTC', now()) - interval '1 hour'; \
+         UPDATE builder.asset_packs SET updated_at = timezone('UTC', now()) - interval '1 hour';",
+    )
+    .execute(pool)
+    .await
+    .unwrap();
+}
+
+#[tokio::test]
+async fn the_builder_scenes_release_waits_for_the_new_binary_and_a_quiet_editor_then_drops_the_scene_tables_and_their_uploads()
+ {
+    let Some(old) = prepared_v2(None).await else {
+        return;
+    };
+    let pool = &old.pool;
+    release_result(pool, &release_v3()).await.unwrap();
+    schema_migrate::migrate(pool, catalyst::db::SCHEMA_SQL, catalyst::db::MIGRATIONS_SQL)
+        .await
+        .unwrap();
+    catalyst::db::bootstrap(pool)
+        .await
+        .expect("the binary without scenes serves beside the old tables");
+    let stop_on_error = "\\set ON_ERROR_STOP on\n";
+    assert_eq!(BUILDER_SCENES_RETIRED.matches(stop_on_error).count(), 1);
+    let release = BUILDER_SCENES_RETIRED.replace(stop_on_error, "");
+    sqlx::raw_sql(
+        "INSERT INTO builder.uploaded_contents (hash, size, uploaded_by) \
+           SELECT h, 1, '0x' || repeat('a', 40) FROM unnest(ARRAY['bafkreiitemfile', 'bafkreiitemthumbnail', \
+             'bafkreiitemvideo', 'bafkreiitemlocal', 'bafkreiitemcontent', 'bafkreiitemcatalyst', \
+             'bafkreiunnamed', 'bafkreiprojectfile', 'bafkreiprojectthumbnail', 'bafkreipackthumbnail', \
+             'bafkreiassetthumbnail', 'bafkreiassetfile']) h; \
+         INSERT INTO builder.items (id, eth_address, name, type, thumbnail, video, local_content_hash, \
+                                    content_hash, catalyst_content_hash) \
+           VALUES ('22222222-2222-4222-8222-222222222222', '0x' || repeat('a', 40), 'Hat', 'wearable', \
+                   'bafkreiitemthumbnail', 'bafkreiitemvideo', 'bafkreiitemlocal', 'bafkreiitemcontent', \
+                   'bafkreiitemcatalyst'); \
+         INSERT INTO builder.item_contents (item_id, file, hash) \
+           VALUES ('22222222-2222-4222-8222-222222222222', 'model.glb', 'bafkreiitemfile'); \
+         INSERT INTO builder.projects (id, eth_address, title, scene_id, cols, rows, thumbnail) \
+           VALUES ('33333333-3333-4333-8333-333333333333', '0x' || repeat('a', 40), 'Scene', \
+                   '44444444-4444-4444-8444-444444444444', 1, 1, 'bafkreiprojectthumbnail'); \
+         INSERT INTO builder.project_manifests (project_id, manifest) \
+           VALUES ('33333333-3333-4333-8333-333333333333', '{}'); \
+         INSERT INTO builder.project_files (project_id, path, hash, size) \
+           SELECT '33333333-3333-4333-8333-333333333333', 'files/' || h, h, 1 \
+           FROM unnest(ARRAY['bafkreiprojectfile', 'bafkreiitemfile', 'bafkreiitemthumbnail', \
+             'bafkreiitemvideo', 'bafkreiitemlocal', 'bafkreiitemcontent', 'bafkreiitemcatalyst']) h; \
+         INSERT INTO builder.asset_packs (id, project_id, title, thumbnail) \
+           VALUES ('55555555-5555-4555-8555-555555555555', '33333333-3333-4333-8333-333333333333', 'Pack', \
+                   'bafkreipackthumbnail'); \
+         INSERT INTO builder.assets (id, asset_pack_id, ordinal, name, model, category, thumbnail) \
+           VALUES ('66666666-6666-4666-8666-666666666666', '55555555-5555-4555-8555-555555555555', 0, 'Asset', \
+                   'a.glb', 'decorations', 'bafkreiassetthumbnail'); \
+         INSERT INTO builder.asset_contents (asset_id, file, hash) \
+           VALUES ('66666666-6666-4666-8666-666666666666', 'a.glb', 'bafkreiassetfile'); \
+         INSERT INTO builder.asset_catalog (id, packs, source, built_at) \
+           VALUES (1, '[]', 'test', timezone('UTC', now()));",
+    )
+    .execute(pool)
+    .await
+    .unwrap();
+    age_scene_writes(pool).await;
+    sqlx::query("DELETE FROM meta.schema_steps WHERE step = $1")
+        .bind(BUILDER_SCENES_STEP)
+        .execute(pool)
+        .await
+        .unwrap();
+    assert_release_refused(
+        pool,
+        &release,
+        "the new binary's schema migrate has not recorded its step",
+    )
+    .await;
+    schema_migrate::migrate(pool, catalyst::db::SCHEMA_SQL, catalyst::db::MIGRATIONS_SQL)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE builder.projects SET updated_at = timezone('UTC', now())")
+        .execute(pool)
+        .await
+        .unwrap();
+    assert_release_refused(
+        pool,
+        &release,
+        "a project written minutes ago means an old serve still edits scenes",
+    )
+    .await;
+    age_scene_writes(pool).await;
+    sqlx::query("UPDATE builder.asset_packs SET updated_at = timezone('UTC', now())")
+        .execute(pool)
+        .await
+        .unwrap();
+    assert_release_refused(
+        pool,
+        &release,
+        "an asset pack written minutes ago means an old serve still edits scenes",
+    )
+    .await;
+    age_scene_writes(pool).await;
+    release_result(pool, &release).await.unwrap();
+    for table in BUILDER_SCENE_TABLES {
+        assert!(!has_relation(pool, table).await, "{table} is dropped");
+    }
+    assert_eq!(
+        uploads(pool).await,
+        [
+            "bafkreiitemcatalyst",
+            "bafkreiitemcontent",
+            "bafkreiitemfile",
+            "bafkreiitemlocal",
+            "bafkreiitemthumbnail",
+            "bafkreiitemvideo",
+            "bafkreiunnamed",
+        ],
+        "an upload only a scene named is forgotten; one an item names or none names is kept"
+    );
+    let item_files: i64 = sqlx::query_scalar("SELECT count(*) FROM builder.item_contents")
+        .fetch_one(pool)
+        .await
+        .unwrap();
+    assert_eq!(item_files, 1);
+    catalyst::db::bootstrap(pool).await.unwrap();
+    schema_migrate::migrate(pool, catalyst::db::SCHEMA_SQL, catalyst::db::MIGRATIONS_SQL)
+        .await
+        .unwrap();
+    for table in BUILDER_SCENE_TABLES {
+        assert!(!has_relation(pool, table).await, "{table} stays dropped");
+    }
+    release_result(pool, &release)
+        .await
+        .expect("a second run notes the tables are gone");
     old.drop().await;
 }

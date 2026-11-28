@@ -28,10 +28,6 @@ export function validateAlias() {
       replacement: here("./src/generated/bridge-schemas.stub.ts"),
     });
     alias.push({
-      find: /^(.*)\/generated\/editor-bus-schemas$/,
-      replacement: here("./src/generated/editor-bus-schemas.stub.ts"),
-    });
-    alias.push({
       find: /^(?:\.{1,2}\/)+(?:.*\/)?persisted-schemas$/,
       replacement: here("./src/data/persisted-schemas.stub.ts"),
     });

@@ -9,8 +9,6 @@ from tooling.tests import migration_harness as harness
 
 COLLECTION = '11111111-1111-4111-8111-111111111111'
 ITEM = '22222222-2222-4222-8222-222222222222'
-PROJECT = '33333333-3333-4333-8333-333333333333'
-SCENE = '44444444-4444-4444-8444-444444444444'
 PHOTO = '55555555-5555-4555-8555-555555555555'
 OWNER = '0x' + 'a' * 40
 
@@ -40,25 +38,27 @@ class ContentMigrationCases:
                       f"'2026-01-01Z', '{updated}'")
         item = (f"'{ITEM}', '{COLLECTION}', '{OWNER}', '{name}', 'd', NULL, NULL, 'wearable', 'Common', '', '', "
                 f"'{{}}', NULL, NULL, NULL, NULL, NULL, false, 'pending', 0, NULL, NULL, '2026-01-01Z', '{updated}'")
-        project = (f"'{PROJECT}', '{OWNER}', '{name}', '', '{SCENE}', 1, 1, 0, 0, 0, 0, 0, 0, NULL, false, false, "
-                   f"NULL, NULL, false, '2026-01-01Z', '{updated}'")
-        return collection, item, project
+        return collection, item
 
     def import_builder(self, db, name, updated):
-        collection, item, project = self.builder_rows(name, updated)
+        collection, item = self.builder_rows(name, updated)
         self.content_load(db, 'builder-server', 'collection', [collection])
         self.content_load(db, 'builder-server', 'item', [item])
-        self.content_load(db, 'builder-server', 'project', [project])
 
     def builder_names(self, db):
         return self.sql(db, f"""SELECT (SELECT name FROM builder.collections WHERE id = '{COLLECTION}'),
-                                       (SELECT name FROM builder.items WHERE id = '{ITEM}'),
-                                       (SELECT title FROM builder.projects WHERE id = '{PROJECT}');\n""").strip()
+                                       (SELECT name FROM builder.items WHERE id = '{ITEM}');\n""").strip()
+
+    def test_when_planning_the_builder_import_it_should_carry_no_scene_step(self):
+        source = harness.migrate.load_source(harness.migrate.SOURCES / 'builder-server')
+        self.assertEqual([s.name for s in source.steps], ['collection', 'item', 'item_content'])
+        self.assertFalse(any(t.startswith('builder.project') or t.startswith('builder.asset')
+                             for s in source.steps for t in s.targets))
 
     def test_when_importing_builder_rows_it_should_land_them_with_normalized_values(self):
         db = self.content_db('content_builder_import')
         self.import_builder(db, 'Upstream', '2026-02-01Z')
-        self.assertEqual(self.builder_names(db), 'Upstream\tUpstream\tUpstream')
+        self.assertEqual(self.builder_names(db), 'Upstream\tUpstream')
         self.assertEqual(self.sql(db, f"SELECT rarity, price IS NULL, beneficiary IS NULL, is_approved "
                                       f"FROM builder.items WHERE id = '{ITEM}';\n").strip(), 'common\tt\tt\tf')
 
@@ -66,12 +66,11 @@ class ContentMigrationCases:
         db = self.content_db('content_builder_node_wins')
         self.import_builder(db, 'Upstream', '2026-02-01Z')
         self.sql(db, f"""UPDATE builder.collections SET name = 'Node', updated_at = '2026-03-01' WHERE id = '{COLLECTION}';
-                         UPDATE builder.items SET name = 'Node', updated_at = '2026-03-01' WHERE id = '{ITEM}';
-                         UPDATE builder.projects SET title = 'Node', updated_at = '2026-03-01' WHERE id = '{PROJECT}';\n""")
+                         UPDATE builder.items SET name = 'Node', updated_at = '2026-03-01' WHERE id = '{ITEM}';\n""")
         self.import_builder(db, 'Upstream again', '2026-02-15Z')
-        self.assertEqual(self.builder_names(db), 'Node\tNode\tNode')
+        self.assertEqual(self.builder_names(db), 'Node\tNode')
         self.import_builder(db, 'Upstream later', '2026-04-01Z')
-        self.assertEqual(self.builder_names(db), 'Upstream later\tUpstream later\tUpstream later')
+        self.assertEqual(self.builder_names(db), 'Upstream later\tUpstream later')
 
     def camera_rows(self, is_public):
         return [f"'{PHOTO}', '{OWNER}', 'https://camera.example.test/api/images/{PHOTO}-photo.png', "

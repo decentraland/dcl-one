@@ -4,17 +4,13 @@
 //! curation, standard collection publication (Polygon factory parameters
 //! prepared here, signed and submitted by the client, the receipt verified
 //! here) and linked (third-party) publication (frozen snapshot, stable
-//! nonce, the owner-signed provider-slot cheque, the Foundation review),
-//! plus the asset-packs catalogue, scene projects (upstream's Project,
-//! Manifest and per-project AssetPack routes, and the content-addressed
-//! file set `dcl-scene-cli sync` mirrors: [`projects`], [`project_packs`])
-//! and the newsletter opt-in. Schema `builder` (`schemas/50_create.sql`).
+//! nonce, the owner-signed provider-slot cheque, the Foundation review)
+//! and the newsletter opt-in. It keeps no scenes: no projects, manifests,
+//! asset packs or scene files. Schema `builder` (`schemas/50_create.sql`).
 //!
 //! What it reuses: the ONE pool; the ONE `http::Outbound` client for the
-//! content bucket pull-through and HEAD probes, the Polygon RPC and the
-//! newsletter forward; the ONE blob store (`storage`) for uploaded item
-//! files and asset-pack files (both hash-addressed: the old
-//! `uploaded_contents.bytes` column and the LRU pull cache are gone); signed
+//! content bucket HEAD probes, the Polygon RPC and the newsletter forward;
+//! the ONE blob store (`storage`) for uploaded item files, by hash; signed
 //! fetch through `src/auth` and the shared verifier the explore and social
 //! routes use (`shared::signed_fetch`, [`auth`]); the marketplace subgraph
 //! readers (`marketplace::graph`) where the old code read the squid
@@ -41,8 +37,8 @@
 //! subgraph readers replace the squid side pool (503 on the address routes
 //! and empty curation listings without a collections subgraph, as the old
 //! node answered without its pool); `BUILDER_CONTENT_BUCKET_URL` is
-//! optional (unset: an unknown storage hash answers 404 instead of the 301,
-//! and `/contents/{hash}` serves the store only); `BUILDER_POLYGON_RPC_URL`
+//! optional (unset: an unknown storage hash answers 404 instead of the 301);
+//! `BUILDER_POLYGON_RPC_URL`
 //! must be https to a public host (a plaintext verifier could be fed a fake
 //! receipt); `is_approved` is the declared projection of `curation_status`
 //! (`linked_publication_review::finish_linked_publication`); the item
@@ -57,13 +53,9 @@
 //! `/builder-api` prefix; the content server owns the root).
 //!
 //! Mount: `serve` merges [`root_router`] at the root (the old
-//! `builder-api.` vhost paths, minus `/contents/{hash}`, which the content
-//! server owns there) and nests [`router`] under `/builder-api` (the old
-//! gateway prefix, stripped by nginx before it reached the bundle). The
-//! operator commands are [`catalog::build`] (`catalyst builder catalog
-//! <packs-dir>`) and [`catalog::seed`].
+//! `builder-api.` vhost paths) and nests [`router`] under `/builder-api`
+//! (the old gateway prefix, stripped by nginx before it reached the bundle).
 
-// The crates this one builds on, under their module names (AGENTS.md).
 pub(crate) use catalyst_chain_index as chain_index;
 pub(crate) use catalyst_content as content;
 #[cfg(test)]
@@ -72,7 +64,6 @@ pub(crate) use catalyst_shared as shared;
 pub(crate) use catalyst_storage as storage;
 
 pub mod auth;
-pub mod catalog;
 pub mod committee;
 pub mod drafts;
 pub mod handlers;
@@ -82,8 +73,6 @@ pub mod linked_publication;
 pub mod linked_publication_review;
 pub mod linked_publication_store;
 pub mod onchain;
-pub mod project_packs;
-pub mod projects;
 pub mod publication;
 pub mod publication_chain;
 pub mod publication_store;
@@ -95,10 +84,9 @@ pub(crate) mod tests;
 use std::sync::Arc;
 use std::time::Duration;
 
-use anyhow::{Context, bail};
+use anyhow::bail;
 use axum::Router;
 use axum::extract::DefaultBodyLimit;
-use axum::handler::Handler;
 use axum::routing::{get, patch, post};
 use sqlx::PgPool;
 
@@ -108,7 +96,6 @@ use crate::storage::Storage;
 use dcl_auth::eip1654::Eip1654Validator;
 use dcl_http::Outbound;
 
-use catalog::{CatalogStore, PullSource};
 use items::{ItemsComponent, NewsletterComponent};
 
 pub const ADMIN_TOKEN_ENV: &str = "CATALYRST_BUILDER_ADMIN_TOKEN";
@@ -118,8 +105,7 @@ const EXISTS_CACHE_MAX: usize = 8192;
 /// failure) is reused, so reads of one collection share one `eth_call`.
 pub(crate) const CREATOR_MEMO_TTL: Duration = Duration::from_secs(30);
 const CREATOR_MEMO_MAX: usize = 8192;
-/// One 20 MiB upload with its framing; also the cap of a project manifest
-/// (the editor's composite) and of a file set (5000 paths).
+/// One 20 MiB upload with its framing.
 const UPLOAD_BODY_LIMIT: usize = 21 * 1024 * 1024;
 
 /// The newsletter SaaS forward (`NEWSLETTER_SERVICE_URL`,
@@ -138,11 +124,8 @@ pub struct RawSettings {
     /// `CREATE_WRITES_ENABLED` (false).
     pub writes_enabled: bool,
     /// `BUILDER_CONTENT_BUCKET_URL`: the item content bucket the storage
-    /// route redirects to and `/contents/{hash}` pulls through from.
+    /// route redirects to and its `exists` probe asks.
     pub content_bucket_url: Option<String>,
-    /// `BUILDER_ASSET_PACKS_BUCKET_URL`: the asset-packs bucket
-    /// `/contents/{hash}` pulls from when the item bucket misses.
-    pub asset_packs_bucket_url: Option<String>,
     /// `BUILDER_POLYGON_RPC_URL`: the Polygon JSON-RPC that verifies
     /// publication receipts; unset refuses begin/claim/verify with 503.
     pub polygon_rpc_url: Option<String>,
@@ -162,7 +145,6 @@ pub struct RawSettings {
 pub struct Settings {
     pub writes_enabled: bool,
     pub content_bucket_url: Option<String>,
-    pub asset_packs_bucket_url: Option<String>,
     pub polygon_rpc_url: Option<String>,
     pub admin_addresses: Vec<String>,
     pub admin_token: Option<String>,
@@ -196,13 +178,6 @@ impl Settings {
             && !dcl_http::is_safe_http_url(url)
         {
             bail!("BUILDER_CONTENT_BUCKET_URL must be a public http(s) URL");
-        }
-        let asset_packs_bucket_url =
-            non_empty(&raw.asset_packs_bucket_url).map(|u| u.trim_end_matches('/').to_string());
-        if let Some(url) = &asset_packs_bucket_url
-            && !dcl_http::is_safe_http_url(url)
-        {
-            bail!("BUILDER_ASSET_PACKS_BUCKET_URL must be a public http(s) URL");
         }
         let polygon_rpc_url = non_empty(&raw.polygon_rpc_url);
         if let Some(url) = &polygon_rpc_url {
@@ -243,7 +218,6 @@ impl Settings {
         Ok(Self {
             writes_enabled: raw.writes_enabled,
             content_bucket_url,
-            asset_packs_bucket_url,
             polygon_rpc_url,
             admin_addresses: Self::admin_addresses_from(&raw.admin_addresses),
             admin_token: non_empty(&raw.admin_token),
@@ -256,7 +230,6 @@ impl Settings {
 pub struct State {
     pub items: ItemsComponent,
     pub newsletter: NewsletterComponent,
-    pub catalog: CatalogStore,
     /// The marketplace readers the on-chain routes read; `None` (or one
     /// without a collections subgraph) answers 503 there.
     pub market: Option<Arc<ChainIndex>>,
@@ -266,7 +239,7 @@ pub struct State {
     pub foundation: Outbound,
     pub eip1654: Option<Arc<dyn Eip1654Validator>>,
     /// The content state's denylist (the same `Arc`): a hash the camera reel
-    /// withheld (rejected or deleted photo) is a 404 on `/contents/{hash}`
+    /// withheld (rejected or deleted photo) is a 404 on the storage routes
     /// here too, not only on the content server's routes.
     pub denylist: Arc<crate::content::Denylist>,
     pub(crate) exists_memo: TtlMap<String, bool>,
@@ -289,24 +262,9 @@ impl State {
         eip1654: Option<Arc<dyn Eip1654Validator>>,
         settings: Settings,
     ) -> anyhow::Result<Self> {
-        let buckets: Vec<String> = [
-            &settings.content_bucket_url,
-            &settings.asset_packs_bucket_url,
-        ]
-        .into_iter()
-        .flatten()
-        .cloned()
-        .collect();
-        let pull = (!buckets.is_empty()).then(|| PullSource {
-            buckets,
-            http: http.clone(),
-        });
-        let catalog =
-            CatalogStore::new(pool.clone(), blobs.clone(), pull).context("builder catalogue")?;
         Ok(Self {
             items: ItemsComponent::new(pool.clone(), blobs),
             newsletter: NewsletterComponent::new(pool),
-            catalog,
             market,
             settings,
             http,
@@ -322,9 +280,8 @@ impl State {
     /// What `serve` logs at startup.
     pub fn sources_label(&self) -> String {
         format!(
-            "bucket={} asset_packs_bucket={} polygon_rpc={} collections_reader={} admins={} newsletter={}",
+            "bucket={} polygon_rpc={} collections_reader={} admins={} newsletter={}",
             self.settings.content_bucket_url.is_some(),
-            self.settings.asset_packs_bucket_url.is_some(),
             self.settings.polygon_rpc_url.is_some(),
             onchain::configured(self.market.as_deref()),
             self.settings.admin_addresses.len(),
@@ -420,63 +377,6 @@ fn api_routes() -> Router<SharedState> {
             "/v1/storage/contents/{hash}/exists",
             get(handlers::storage::head_storage_content_exists),
         )
-        .route("/v1/assetPacks", get(handlers::catalog::get_asset_packs))
-        .route(
-            "/v1/projects",
-            get(handlers::projects::list)
-                .layer(axum::middleware::map_response(http::private_response)),
-        )
-        .route(
-            "/v1/projects/{id}",
-            get(handlers::projects::get)
-                .put(handlers::projects::put)
-                .delete(handlers::projects::delete)
-                .layer(axum::middleware::map_response(http::private_response)),
-        )
-        .route(
-            "/v1/projects/{id}/public",
-            get(handlers::projects::get_public),
-        )
-        .route(
-            "/v1/projects/{id}/coords",
-            axum::routing::delete(handlers::projects::delete_coords),
-        )
-        .route(
-            "/v1/projects/{id}/manifest",
-            get(handlers::projects::get_manifest)
-                .put(
-                    handlers::projects::put_manifest
-                        .layer(DefaultBodyLimit::max(UPLOAD_BODY_LIMIT)),
-                )
-                .delete(handlers::projects::delete_manifest)
-                .layer(axum::middleware::map_response(http::private_response)),
-        )
-        .route(
-            "/v1/manifests",
-            get(handlers::projects::get_manifests)
-                .layer(axum::middleware::map_response(http::private_response)),
-        )
-        .route(
-            "/v1/projects/{id}/files",
-            get(handlers::projects::get_files)
-                .put(handlers::projects::put_files.layer(DefaultBodyLimit::max(UPLOAD_BODY_LIMIT)))
-                .layer(axum::middleware::map_response(http::private_response)),
-        )
-        .route(
-            "/v1/projects/{id}/blobs/{hash}",
-            axum::routing::put(handlers::projects::put_blob)
-                .layer(DefaultBodyLimit::max(UPLOAD_BODY_LIMIT)),
-        )
-        .route(
-            "/v1/projects/{id}/assetPacks",
-            get(handlers::projects::get_asset_packs)
-                .layer(axum::middleware::map_response(http::private_response)),
-        )
-        .route(
-            "/v1/projects/{id}/assetPacks/{pack}",
-            axum::routing::put(handlers::projects::put_asset_pack)
-                .delete(handlers::projects::delete_asset_pack),
-        )
         .route(
             "/v1/newsletter",
             post(handlers::newsletter::post_newsletter),
@@ -499,63 +399,16 @@ fn finish(routes: Router<SharedState>, state: SharedState) -> Router {
     writes::guard(router, writes_enabled)
 }
 
-/// The whole builder surface, for the `/builder-api` nest: the API routes,
-/// `/ping` and `/contents/{hash}` (the asset-pack files).
+/// The whole builder surface, for the `/builder-api` nest: the API routes
+/// and `/ping`.
 pub fn router(state: SharedState) -> Router {
-    finish(
-        api_routes()
-            .route("/ping", get(handlers::ping))
-            .route("/contents/{hash}", get(handlers::catalog::get_content)),
-        state,
-    )
+    finish(api_routes().route("/ping", get(handlers::ping)), state)
 }
 
 /// The routes safe to merge at the root beside the content server (which
-/// owns `/contents/{hashId}` and the root liveness route there).
+/// owns the root liveness route there).
 pub fn root_router(state: SharedState) -> Router {
     finish(api_routes(), state)
-}
-
-#[cfg(test)]
-impl State {
-    /// A copy of this state pulling `/contents/{hash}` misses from `bucket`
-    /// (a loopback stub) through the test client.
-    pub(crate) async fn with_bucket(&self, bucket: String) -> SharedState {
-        self.with_buckets(vec![bucket]).await
-    }
-
-    /// As [`State::with_bucket`], trying `buckets` in order.
-    pub(crate) async fn with_buckets(&self, buckets: Vec<String>) -> SharedState {
-        let http = Outbound::for_tests();
-        let settings = Settings {
-            content_bucket_url: buckets.first().cloned(),
-            asset_packs_bucket_url: buckets.get(1).cloned(),
-            ..self.settings.clone()
-        };
-        let catalog = CatalogStore::new(
-            self.items.pool().clone(),
-            self.items.blobs.clone(),
-            Some(PullSource {
-                buckets,
-                http: http.clone(),
-            }),
-        )
-        .unwrap();
-        Arc::new(State {
-            items: ItemsComponent::new(self.items.pool().clone(), self.items.blobs.clone()),
-            newsletter: NewsletterComponent::new(self.items.pool().clone()),
-            catalog,
-            market: self.market.clone(),
-            settings,
-            http,
-            foundation: self.foundation.clone(),
-            eip1654: None,
-            denylist: self.denylist.clone(),
-            exists_memo: TtlMap::bounded(EXISTS_TTL, EXISTS_CACHE_MAX),
-            creator_memo: TtlMap::bounded(CREATOR_MEMO_TTL, CREATOR_MEMO_MAX),
-            polygon_checked: tokio::sync::OnceCell::new(),
-        })
-    }
 }
 
 #[cfg(test)]
@@ -568,7 +421,6 @@ mod router_tests {
             admin_addresses: " 0xABC, ,0xdef ".into(),
             admin_token: Some("  ".into()),
             content_bucket_url: Some("https://builder-items.decentraland.org/".into()),
-            asset_packs_bucket_url: Some("https://builder-api.decentraland.org/v1/storage/".into()),
             polygon_rpc_url: Some("https://polygon-rpc.com".into()),
             newsletter_service_url: Some("https://api.beehiiv.com/v2".into()),
             newsletter_publication_id: Some("pub_1".into()),
@@ -581,10 +433,6 @@ mod router_tests {
         assert_eq!(
             s.content_bucket_url.as_deref(),
             Some("https://builder-items.decentraland.org")
-        );
-        assert_eq!(
-            s.asset_packs_bucket_url.as_deref(),
-            Some("https://builder-api.decentraland.org/v1/storage")
         );
         assert!(
             s.newsletter.is_none(),
@@ -604,13 +452,6 @@ mod router_tests {
         assert!(
             Settings::parse(RawSettings {
                 content_bucket_url: Some("http://127.0.0.1:9/".into()),
-                ..RawSettings::default()
-            })
-            .is_err()
-        );
-        assert!(
-            Settings::parse(RawSettings {
-                asset_packs_bucket_url: Some("http://127.0.0.1:9/".into()),
                 ..RawSettings::default()
             })
             .is_err()

@@ -11140,7 +11140,7 @@
     },
     {
       "path": "library/explorer-core/hostContract.ts",
-      "sha256": "3933a1dc05b51d0e0351fa2795960899eb808a50f3758a57bf069582367e50ca"
+      "sha256": "1e1de5e14478ec202146a2befbee0be4b0497407ea0d49c7ff22f7272f66fc18"
     },
     {
       "path": "library/explorer-core/lib/analytics.ts",
@@ -13456,7 +13456,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/engine/EngineHost.tsx",
-      "sha256": "f2b0bd34cc3d47940d8487fb7b7792c9bbd24679bac5547ccc8cba4b90fdda2b"
+      "sha256": "a3fd0f57effb5086c8ce68582d0b6f70dfda26ae715222fce5415cd07b24fb96"
     },
     {
       "path": "library/ui/apps/hud/features/engine/EngineViewport.module.css",

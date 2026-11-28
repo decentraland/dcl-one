@@ -1,8 +1,3 @@
-// Which entry-url params stop the boot on the UntrustedLaunchGate — THIS front-end's policy.
-// The engine's web param table (lib/webParams.ts) says what a param does; whether a link may set
-// it is decided here, because trust is a property of the host: the editor app trusts its editor
-// scene, this app trusts its bundled bridge scene and Decentraland's own deployments.
-
 import { SERVICES, type ServiceDef } from '@explorer-core/engine/generated'
 import { BASE_DOMAIN, derivedServiceUrl, entryServiceUrl, hostBaseDomain, isTrustedBaseDomain } from './baseDomain'
 import { bootMode } from './bootMode'

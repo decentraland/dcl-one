@@ -354,8 +354,6 @@ export default defineConfig({
   },
   optimizeDeps: {
     include: ["@xstate/react", "xstate", "zod", "viem/accounts"],
-    // The shared dev sandbox is also a public browsing surface. Compact vendor
-    // code while keeping development React, named stacks and application HMR.
     rolldownOptions: { output: { minify: true, keepNames: true } },
   },
 });
