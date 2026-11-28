@@ -534,12 +534,12 @@ fn capitalize(s: &str) -> String {
 
 fn parcels_of(v: Option<&Value>, contract: &str, token_id: &str) -> Vec<EstateParcel> {
     let all = v.and_then(Value::as_array).map_or(&[][..], Vec::as_slice);
-    // A parcel outside the `integer` range is not a parcel.
+    // A parcel with a missing, unparseable or out-of-range coordinate is not a parcel.
     let parcels: Vec<EstateParcel> = all
         .iter()
         .filter_map(|p| {
-            let x = i32::try_from(readers::int_of(p, "x")).ok()?;
-            let y = i32::try_from(readers::int_of(p, "y")).ok()?;
+            let x = i32::try_from(readers::opt_int_of(p, "x")?).ok()?;
+            let y = i32::try_from(readers::opt_int_of(p, "y")?).ok()?;
             Some(EstateParcel { x, y })
         })
         .collect();
@@ -549,7 +549,7 @@ fn parcels_of(v: Option<&Value>, contract: &str, token_id: &str) -> Vec<EstatePa
             contract,
             token_id,
             dropped,
-            "/v1/nfts: dropped out-of-range estate parcels"
+            "/v1/nfts: dropped estate parcels without valid coordinates"
         );
     }
     parcels
@@ -1113,11 +1113,13 @@ mod tests {
     use super::*;
 
     #[test]
-    fn estate_parcels_outside_the_integer_range_are_dropped() {
+    fn estate_parcels_without_valid_coordinates_are_dropped() {
         let parcels = json!([
             {"x": "-150", "y": 150},
             {"x": 2_147_483_648_i64, "y": 0},
             {"x": 0, "y": "-2147483649"},
+            {"x": "abc", "y": 1},
+            {"y": 2},
             {"x": 3, "y": "4"}
         ]);
         let kept: Vec<(i32, i32)> = parcels_of(Some(&parcels), "0xestate", "7")
