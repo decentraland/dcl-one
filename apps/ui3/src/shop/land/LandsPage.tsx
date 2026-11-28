@@ -213,6 +213,15 @@ export default function LandsPage({ client, loadTiles }: LandsPageProps) {
   const [filtersOpen, setFiltersOpen] = useState(false);
   const wide = useWide();
 
+  useEffect(() => {
+    setSearchDraft(filters.search);
+  }, [filters.search]);
+
+  const clearFilters = () => {
+    setSearchDraft("");
+    setParams(new URLSearchParams(), { replace: false });
+  };
+
   const update = (patch: Partial<LandFilters>, extra: Record<string, string | null> = {}) => {
     const next: LandFilters = { ...filters, ...patch, page: 1 };
     if (patch.status && !landSortsFor(next.status).includes(next.sort)) next.sort = landSortsFor(next.status)[0]!;
@@ -464,7 +473,7 @@ export default function LandsPage({ client, loadTiles }: LandsPageProps) {
               titleAs="h2"
               title="No LAND matches these filters"
               subtitle={filters.status === "rent" ? "Nothing is listed for rent with these filters." : "Try other filters or look at all land."}
-              actions={<Button size="md" onClick={() => setParams(new URLSearchParams(), { replace: false })}>Clear filters</Button>}
+              actions={<Button size="md" onClick={clearFilters}>Clear filters</Button>}
             />
           ) : listing.data ? (
             <>
