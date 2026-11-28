@@ -208,22 +208,24 @@ async function reportSceneErrors(): Promise<void> {
   } catch {
     return; // no pinned scene yet / command failed — nothing to report
   }
-  // Each entry is `[<ts>] <Level>: <message>`. SceneError = a scene-side throw the
+  // Each entry is `<seq> [<ts>] <Level>: <message>` after a header line; an engine
+  // without the log cursor leaves the seq out. SceneError = a scene-side throw the
   // SDK caught and console.error'd (prefixed "ERROR "); SystemError = an engine-level
   // failure. Report either — both mean the scene is broken.
   for (const line of reply.split('\n')) {
-    const match = line.match(/^\[[\d.]+\]\s+(SceneError|SystemError):\s*(.*)$/);
+    const match = line.match(/^(?:\d+\s+)?(\[[\d.]+\]\s+(SceneError|SystemError):\s*(.*))$/);
     if (!match) continue;
-    if (reportedErrors.has(line)) continue;
-    reportedErrors.add(line);
+    // keyed without the seq, so an entry reads the same from either engine
+    if (reportedErrors.has(match[1])) continue;
+    reportedErrors.add(match[1]);
     // Skip benign DEV WARNINGS: React (and react-ecs) log warnings via console.error,
     // so they arrive as SceneError entries (e.g. "ERROR Warning: Each child in a list
     // should have a unique key prop"). These aren't fatal — the scene keeps running —
     // so they must NOT trigger the "runtime error, can't run" toast + stop the scene.
     // A real error never carries the framework's "Warning:" tag.
-    const stripped = match[2].replace(/^ERROR\s+/, '').trim();
+    const stripped = match[3].replace(/^ERROR\s+/, '').trim();
     if (/^Warning:/i.test(stripped)) continue;
-    bus.postToPage({ kind: 'scene-error', message: cleanErrorMessage(match[2]) });
+    bus.postToPage({ kind: 'scene-error', message: cleanErrorMessage(match[3]) });
   }
 }
 

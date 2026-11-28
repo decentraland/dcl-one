@@ -1,6 +1,6 @@
 use bevy::{
     asset::WasmLoaderHandle,
-    log::{BoxedLayer, Level, LogPlugin},
+    log::{tracing_subscriber::Layer, BoxedLayer, Level, LogPlugin},
     prelude::*,
     render::{render_resource::PipelineCompilationHandler, renderer::RenderDevice},
     tasks::BoxedFuture,
@@ -18,6 +18,7 @@ use common::{
     },
     util::JsThread,
 };
+use console::log_ring::LogRingLayer;
 use dcl_wasm::init_runtime;
 use futures_lite::io::{AsyncReadExt, AsyncWriteExt};
 use input_manager::InputPriorities;
@@ -602,27 +603,22 @@ pub fn engine_run(options: JsValue) -> Result<(), JsValue> {
             console_hook(info);
         }));
     }
-    let decentraland_app = DecentralandApp::new(LogPlugin {
-        level: Level::INFO,
-        filter,
-        custom_layer: |_| {
-            // the benchmark log when the page streams it
-            let benchmark_log = perf_output::stream::log_sink().map(PerfLogLayer::new);
-            // and in a `performance-profiler` build the scope profiler's layer
-            #[cfg(feature = "performance-profiler")]
-            {
-                use bevy::log::tracing_subscriber::{Layer, Registry};
-                Some(
-                    Box::new(<Option<PerfLogLayer> as Layer<Registry>>::and_then(
-                        benchmark_log,
-                        crate::perf::profiled_scopes::profiled_scopes_layer(),
-                    )) as BoxedLayer,
-                )
-            }
-            #[cfg(not(feature = "performance-profiler"))]
-            benchmark_log.map(|layer| Box::new(layer) as BoxedLayer)
-        },
-    });
+    let decentraland_app =
+        DecentralandApp::new(LogPlugin {
+            level: Level::INFO,
+            filter,
+            custom_layer: |_| {
+                // the benchmark log when the page streams it, then the client lines `/scene_logs` reads
+                let benchmark_log = perf_output::stream::log_sink().map(PerfLogLayer::new);
+                let layer = <Option<PerfLogLayer> as Layer<
+                    bevy::log::tracing_subscriber::Registry,
+                >>::and_then(benchmark_log, LogRingLayer);
+                // and in a `performance-profiler` build the scope profiler's layer
+                #[cfg(feature = "performance-profiler")]
+                let layer = layer.and_then(crate::perf::profiled_scopes::profiled_scopes_layer());
+                Some(Box::new(layer) as BoxedLayer)
+            },
+        });
 
     let decentraland_app_config = DecentralandAppConfig::new(
         decentraland_serialized_app_config(),

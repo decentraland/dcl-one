@@ -4,11 +4,14 @@ use bevy::render::view::screenshot::Screenshot;
 use bevy::tasks::IoTaskPool;
 use bevy_console::ConsoleCommand;
 use common::frame::{self, Encoding, Scale};
-use console::{DoAddConsoleCommand, PendingConsoleResponses};
+use console::{
+    log_ring::{self, LogLine, LogQuery, SceneLines, Severity, Source},
+    DoAddConsoleCommand, PendingConsoleResponses,
+};
 use dcl_component::{
     component_name_registry::InspectFn, ComponentNameRegistry, SceneComponentId, SceneEntityId,
 };
-use dcl_types::interface::CrdtStore;
+use dcl_types::{interface::CrdtStore, SceneLogLevel, SceneLogMessage};
 use ipfs::IpfsResource;
 use scene_runner::{
     initialize_scene::SuperUserScene, renderer_context::RendererSceneContext,
@@ -158,16 +161,27 @@ fn scene_target_cmd(
 
 // --- /scene_logs ---
 
-/// Print recent log entries from the active scene
+/// Print the active scene's recent log lines from the log ring, oldest first, after a header
+/// `latestSeq=N dropped=N source=scene|scene+client`: pass a read's latestSeq as --since to get
+/// only newer lines. Without --since, --severity or --client each line reads `<seq> [<time>]
+/// <Level>: <text>`; with any of them `<seq> [scene]|[client:<target>] <severity> <text>`
 #[derive(clap::Parser, ConsoleCommand)]
 #[command(name = "/scene_logs")]
 struct SceneLogsCommand {
     /// Read logs from the world debug panel's parcel.
     #[arg(long)]
     panel: bool,
-    /// Number of entries to show (default 20)
-    #[arg(default_value = "20")]
-    count: usize,
+    /// Lines to show, the newest (20 by default; every new line with --since)
+    count: Option<usize>,
+    /// Only lines after this seq (a read's latestSeq)
+    #[arg(long)]
+    since: Option<u64>,
+    /// The least severity shown: trace, debug, info, warn or error
+    #[arg(long)]
+    severity: Option<String>,
+    /// The client's warnings and errors too, as [client:<target>]
+    #[arg(long)]
+    client: bool,
 }
 
 fn scene_logs_cmd(
@@ -186,28 +200,56 @@ fn scene_logs_cmd(
         } else {
             resolver.resolve()
         };
+        let min = match cmd.severity.as_deref().map(Severity::parse) {
+            None => Severity::Trace,
+            Some(Some(min)) => min,
+            Some(None) => {
+                input.reply_failed("--severity takes trace, debug, info, warn or error");
+                return;
+            }
+        };
         match target {
             Err(e) => input.reply_failed(e),
             Ok((_, ctx)) => {
-                let (missed, entries, _) = ctx.logs.read();
-                let entries: Vec<_> = entries.into_iter().rev().take(cmd.count).rev().collect();
-                if entries.is_empty() {
-                    input.reply_ok("(no logs)");
-                    return;
-                }
-                let mut out = String::new();
-                if missed > 0 {
-                    out.push_str(&format!("(+{missed} older entries not retained)\n"));
-                }
-                for entry in &entries {
-                    out.push_str(&format!(
-                        "[{:.2}] {:?}: {}\n",
-                        entry.timestamp, entry.level, entry.message
-                    ));
-                }
-                input.reply_ok(out.trim_end());
+                let plain = cmd.since.is_none() && cmd.severity.is_none() && !cmd.client;
+                let (evicted, lines) = ctx.log_lines();
+                let scene = SceneLines {
+                    evicted: evicted as u64,
+                    lines: lines.into_iter().map(scene_log_line).collect(),
+                };
+                let page = log_ring::read(
+                    scene,
+                    &LogQuery {
+                        client: cmd.client,
+                        since: cmd.since,
+                        min,
+                        count: cmd.count.or(cmd.since.is_none().then_some(20)),
+                    },
+                );
+                input.reply_ok(page.render(plain));
             }
         }
+    }
+}
+
+/// A scene's line as `/scene_logs` shows it. A `SceneError` (what the scene wrote with
+/// `console.error`, or threw) is an error like a `SystemError`: a reader that asks for
+/// `--severity error` asks whether the scene failed, and the plain form's label tells the two
+/// apart. The stdout echo logs it at `warn` because there it is the client's own log, where a
+/// scene's mistake is not the client's error.
+fn scene_log_line((seq, log): (u64, SceneLogMessage)) -> LogLine {
+    let (severity, label) = match log.level {
+        SceneLogLevel::Log => (Severity::Info, "Log"),
+        SceneLogLevel::SceneError => (Severity::Error, "SceneError"),
+        SceneLogLevel::SystemError => (Severity::Error, "SystemError"),
+    };
+    LogLine {
+        seq,
+        severity,
+        source: Source::Scene,
+        time: Some(log.timestamp),
+        label,
+        text: log.message,
     }
 }
 

@@ -115,9 +115,10 @@ pub fn panic_block(unix_ms: u64, message: &str) -> String {
 }
 
 /// An event's fields: the message, the other fields as ` name=value` after it (as the console
-/// layer prints them), and the `log` bridge's own.
+/// layer prints them), and the `log` bridge's own. A visitor for any layer that reads an event's
+/// text: this one and the client log ring's (`console::log_ring`).
 #[derive(Default)]
-struct Fields {
+pub struct Fields {
     message: String,
     others: String,
     log_target: Option<String>,
@@ -126,7 +127,13 @@ struct Fields {
 }
 
 impl Fields {
-    fn message(&self) -> String {
+    /// The target an event from the `log` crate carries; the event's own is the bridge's.
+    pub fn log_target(&self) -> Option<&str> {
+        self.log_target.as_deref()
+    }
+
+    /// The message, then the other fields as ` name=value`.
+    pub fn message(&self) -> String {
         if self.message.is_empty() {
             self.others.trim_start().to_owned()
         } else {
