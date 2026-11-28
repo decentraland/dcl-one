@@ -773,7 +773,7 @@
   },
   "library/ui/components/PaginationDots/PaginationDots.module.css": {
     "primitives": 0,
-    "tokens": 8
+    "tokens": 12
   },
   "library/ui/components/Panel/Panel.module.css": {
     "primitives": 0,
