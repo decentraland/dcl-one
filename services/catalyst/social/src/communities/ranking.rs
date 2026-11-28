@@ -67,9 +67,7 @@ pub fn score(metrics: &Metrics) -> f64 {
 fn contribution(value: Option<f64>, maximum: i64) -> i64 {
     value
         .filter(|value| value.is_finite() && *value >= 0.0)
-        .map(|value| {
-            crate::casts::f64_to_i64(value.trunc().min(crate::casts::approx_f64(maximum)))
-        })
+        .map(|value| crate::casts::f64_to_i64(value.trunc().min(crate::casts::approx_f64(maximum))))
         .unwrap_or(0)
 }
 
