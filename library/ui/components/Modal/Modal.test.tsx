@@ -1,6 +1,7 @@
 import { useRef, useState } from 'react'
-import { cleanup, fireEvent, render, screen, within } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { hydrateRoot } from 'react-dom/client'
 import { renderToString } from 'react-dom/server'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { Modal } from './Modal'
@@ -403,5 +404,190 @@ describe('when the browser lacks showModal', () => {
     fireEvent.keyDown(first, { key: 'Tab', shiftKey: true })
 
     expect(screen.getByRole('button', { name: 'Last' })).toHaveFocus()
+  })
+})
+
+describe('when the modal shows an event or place detail', () => {
+  it.each(['detail', 'scene'] as const)(
+    'should draw the %s layout with a filled close button and the hidden title read before the cover',
+    (layout) => {
+      render(
+        <Modal
+          layout={layout}
+          title="Genesis Plaza"
+          image={<img src="cover.png" alt="" data-testid="cover" />}
+          onClose={vi.fn()}
+        >
+          <p>What to expect</p>
+        </Modal>
+      )
+      const dialog = screen.getByRole('dialog', { name: 'Genesis Plaza' })
+      const heading = within(dialog).getByRole('heading', { level: 2, name: 'Genesis Plaza' })
+      expect(dialog).toHaveAttribute('data-layout', layout)
+      expect(dialog).not.toHaveAttribute('data-page')
+      expect(heading).toHaveAttribute('data-hidden')
+      expect(within(dialog).getByRole('button', { name: 'Close' })).toHaveAttribute(
+        'data-variant',
+        'filled'
+      )
+      const cover = within(dialog).getByTestId('cover')
+      expect(heading.compareDocumentPosition(cover) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+      expect(within(dialog).getByText('What to expect')).toBeVisible()
+    }
+  )
+
+  it('should keep a description the dialog is described by', () => {
+    render(
+      <Modal
+        layout="detail"
+        title="Genesis Plaza"
+        description="By the Foundation"
+        onClose={vi.fn()}
+      />
+    )
+    expect(screen.getByRole('dialog')).toHaveAccessibleDescription('By the Foundation')
+  })
+
+  it('should leave the message layout untouched: no layout attribute and the plain close button', () => {
+    render(<Modal title="Saved" onClose={vi.fn()} />)
+    const dialog = screen.getByRole('dialog', { name: 'Saved' })
+    expect(dialog).not.toHaveAttribute('data-layout')
+    expect(within(dialog).getByRole('button', { name: 'Close' })).toHaveAttribute(
+      'data-variant',
+      'plain'
+    )
+    expect(within(dialog).getByRole('heading', { name: 'Saved' })).not.toHaveAttribute(
+      'data-hidden'
+    )
+  })
+})
+
+describe("when the modal is a page's own content", () => {
+  const show = vi.fn(function (this: HTMLDialogElement) {
+    this.open = true
+  })
+  const nativeShow = HTMLDialogElement.prototype.show
+  const nativeMatchMedia = window.matchMedia
+  let listeners: Array<() => void>
+  let phone: boolean
+
+  beforeEach(() => {
+    show.mockClear()
+    HTMLDialogElement.prototype.show = show
+    listeners = []
+    phone = false
+    window.matchMedia = vi.fn((query: string) => ({
+      get matches() {
+        return phone
+      },
+      media: query,
+      addEventListener: (_: string, listener: () => void) => listeners.push(listener),
+      removeEventListener: (_: string, listener: () => void) => {
+        listeners = listeners.filter((l) => l !== listener)
+      }
+    })) as unknown as typeof window.matchMedia
+  })
+
+  afterEach(() => {
+    HTMLDialogElement.prototype.show = nativeShow
+    window.matchMedia = nativeMatchMedia
+    document.documentElement.style.overflow = ''
+  })
+
+  const page = () => <Modal layout="scene" pageContent title="Genesis Plaza" onClose={vi.fn()} />
+
+  it('should render on the server shown, its title the page heading', () => {
+    const html = renderToString(page())
+    expect(html).toMatch(/<dialog[^>]* open=""/)
+    expect(html).toMatch(/<h1[^>]*>Genesis Plaza<\/h1>/)
+  })
+
+  it('should reopen it as a modal dialog above a phone, locking the page scroll', () => {
+    render(page())
+    expect(close).toHaveBeenCalledTimes(1)
+    expect(showModal).toHaveBeenCalledTimes(1)
+    expect(show).not.toHaveBeenCalled()
+    expect(document.documentElement.style.overflow).toBe('hidden')
+    expect(screen.getByRole('heading', { level: 1, name: 'Genesis Plaza' })).toBeInTheDocument()
+  })
+
+  it('should keep it in the page on a phone, without a modal or a scroll lock', () => {
+    phone = true
+    render(page())
+    expect(showModal).not.toHaveBeenCalled()
+    expect(close).not.toHaveBeenCalled()
+    expect(document.documentElement.style.overflow).toBe('')
+    expect(screen.getByRole('dialog', { name: 'Genesis Plaza' })).toHaveAttribute('open')
+  })
+
+  it('should move between the page and the top layer when the width crosses a phone', () => {
+    render(page())
+    phone = true
+    act(() => listeners.forEach((listener) => listener()))
+    expect(close).toHaveBeenCalledTimes(2)
+    expect(show).toHaveBeenCalledTimes(1)
+    expect(document.documentElement.style.overflow).toBe('')
+    phone = false
+    act(() => listeners.forEach((listener) => listener()))
+    expect(showModal).toHaveBeenCalledTimes(2)
+    expect(document.documentElement.style.overflow).toBe('hidden')
+  })
+
+  it('should ignore the late close event of its own reopening, so the page does not close', async () => {
+    const onClose = vi.fn()
+    render(<Modal layout="scene" pageContent title="Genesis Plaza" onClose={onClose} />)
+    const dialog = screen.getByRole('dialog', { name: 'Genesis Plaza' })
+    // A browser queues `close` after close(); by then the effect has shown the dialog again.
+    await act(async () => {
+      dialog.dispatchEvent(new Event('close'))
+    })
+    expect(dialog).toHaveAttribute('open')
+    expect(onClose).not.toHaveBeenCalled()
+  })
+
+  it('should hydrate over its server-rendered open dialog and reopen it modal', async () => {
+    const onClose = vi.fn()
+    const container = document.createElement('div')
+    container.innerHTML = renderToString(
+      <Modal layout="scene" pageContent title="Genesis Plaza" onClose={onClose} />
+    )
+    document.body.append(container)
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const root = await act(async () =>
+      hydrateRoot(
+        container,
+        <Modal layout="scene" pageContent title="Genesis Plaza" onClose={onClose} />
+      )
+    )
+    expect(errors).not.toHaveBeenCalled()
+    expect(close).toHaveBeenCalledTimes(1)
+    expect(showModal).toHaveBeenCalledTimes(1)
+    expect(container.querySelector('dialog')).toHaveAttribute('open')
+    expect(onClose).not.toHaveBeenCalled()
+    act(() => root.unmount())
+    container.remove()
+    errors.mockRestore()
+  })
+
+  it('should stop listening to the width once it is removed', () => {
+    const { unmount } = render(page())
+    expect(listeners).toHaveLength(1)
+    unmount()
+    expect(listeners).toHaveLength(0)
+  })
+
+  it('should open as a modal dialog where the browser cannot match media', () => {
+    // @ts-expect-error an old browser has no matchMedia
+    window.matchMedia = undefined
+    render(page())
+    expect(showModal).toHaveBeenCalledTimes(1)
+  })
+
+  it('should ignore pageContent outside the scene layout', () => {
+    const html = renderToString(
+      <Modal layout="detail" pageContent title="Genesis Plaza" onClose={vi.fn()} />
+    )
+    expect(html).not.toMatch(/<dialog[^>]* open/)
+    expect(html).toMatch(/<h2[^>]*>Genesis Plaza<\/h2>/)
   })
 })

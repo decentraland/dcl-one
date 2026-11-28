@@ -1,4 +1,4 @@
-import { useEffect, useId, useState, type ReactNode } from 'react'
+import { useEffect, useState, type ReactNode } from 'react'
 import {
   GeneralAddToCalendar,
   GeneralBell,
@@ -10,11 +10,10 @@ import {
   GeneralPublic
 } from '../../../foundations/icons'
 import { Button } from '../../../components/Button/Button'
-import { CloseButton } from '../../../components/CloseButton/CloseButton'
 import { EventCardHost } from '../../../components/EventCard/EventCard'
+import { Modal } from '../../../components/Modal/Modal'
 import { hostOf } from './cards'
 import type { EventCardCreator, EventCardTime, JumpIn, RemindControl } from './types'
-import { Dialog } from './Dialog'
 import { useEventsCopy } from './locale'
 import styles from './DetailModal.module.css'
 
@@ -153,38 +152,28 @@ function JumpInButton({ jumpIn }: { jumpIn: JumpIn }) {
   )
 }
 
+/** The cover with its title and actions over its bottom. The dialog's own hidden title names it. */
 function Hero({
-  titleId,
   title,
   image,
-  onClose,
   kicker,
   children
 }: {
-  titleId: string
   title: string
   image: string | null
-  onClose: () => void
   /** The line above the title: the live badge or the start. */
   kicker?: ReactNode
   children: ReactNode
 }) {
-  const { text } = useEventsCopy()
   return (
     <div className={styles.hero}>
       {image ? <img className={styles.heroImage} src={image} alt="" /> : null}
       <div className={styles.heroShade} aria-hidden="true" />
-      <CloseButton
-        variant="filled"
-        className={styles.close}
-        aria-label={text('Close')}
-        onClick={onClose}
-      />
       <div className={styles.heroContent}>
         {kicker ? <div className={styles.kicker}>{kicker}</div> : null}
-        <h2 id={titleId} className={styles.title}>
+        <p className={styles.title} aria-hidden="true">
           {title}
-        </h2>
+        </p>
         {children}
       </div>
     </div>
@@ -194,7 +183,6 @@ function Hero({
 /** An event's detail: hero with its actions, then what to expect and the schedule. */
 function EventDetailModal(props: EventDetailModalProps) {
   const { text } = useEventsCopy()
-  const titleId = useId()
   const {
     live,
     when,
@@ -209,50 +197,55 @@ function EventDetailModal(props: EventDetailModalProps) {
   } = props
   const reminder = live ? undefined : remind
   return (
-    <Dialog labelledBy={titleId} onClose={props.onClose}>
-      <Hero
-        titleId={titleId}
-        title={props.title}
-        image={props.image}
-        onClose={props.onClose}
-        kicker={
-          live ? (
-            <span className={styles.liveBadge}>
-              <GeneralLive size={16} aria-hidden="true" />
-              {text('LIVE')}
-            </span>
-          ) : when ? (
-            <time className={styles.when} dateTime={when.dateTime}>
-              {when.label}
-            </time>
-          ) : null
-        }
-      >
-        <div className={styles.meta}>
-          {creator ? <EventCardHost creator={hostOf(creator)} byLabel={text('By')} /> : null}
-          <LocationChip location={location} />
-        </div>
-        <div className={styles.actions}>
-          {live && jumpIn ? <JumpInButton jumpIn={jumpIn} /> : null}
-          {reminder ? (
-            <Button
-              {...reminderActionSize}
-              variant={reminder.active ? 'primary' : 'secondaryLight'}
-              startIcon={<GeneralBell aria-hidden="true" />}
-              aria-pressed={reminder.active}
-              aria-disabled={reminder.pending}
-              onClick={reminder.onToggle}
-            >
-              {text('Remind me')}
-            </Button>
-          ) : null}
-          {calendarHref ? (
-            <CalendarLink href={calendarHref} responsive={Boolean(reminder)} />
-          ) : null}
-          {shareUrl ? <CopyLink url={shareUrl} responsive={Boolean(reminder)} /> : null}
-          {props.actions}
-        </div>
-      </Hero>
+    <Modal
+      layout="detail"
+      title={props.title}
+      closeLabel={text('Close')}
+      onClose={props.onClose}
+      image={
+        <Hero
+          title={props.title}
+          image={props.image}
+          kicker={
+            live ? (
+              <span className={styles.liveBadge}>
+                <GeneralLive size={16} aria-hidden="true" />
+                {text('LIVE')}
+              </span>
+            ) : when ? (
+              <time className={styles.when} dateTime={when.dateTime}>
+                {when.label}
+              </time>
+            ) : null
+          }
+        >
+          <div className={styles.meta}>
+            {creator ? <EventCardHost creator={hostOf(creator)} byLabel={text('By')} /> : null}
+            <LocationChip location={location} />
+          </div>
+          <div className={styles.actions}>
+            {live && jumpIn ? <JumpInButton jumpIn={jumpIn} /> : null}
+            {reminder ? (
+              <Button
+                {...reminderActionSize}
+                variant={reminder.active ? 'primary' : 'secondaryLight'}
+                startIcon={<GeneralBell aria-hidden="true" />}
+                aria-pressed={reminder.active}
+                aria-disabled={reminder.pending}
+                onClick={reminder.onToggle}
+              >
+                {text('Remind me')}
+              </Button>
+            ) : null}
+            {calendarHref ? (
+              <CalendarLink href={calendarHref} responsive={Boolean(reminder)} />
+            ) : null}
+            {shareUrl ? <CopyLink url={shareUrl} responsive={Boolean(reminder)} /> : null}
+            {props.actions}
+          </div>
+        </Hero>
+      }
+    >
       <div className={styles.body}>
         {props.feedback}
         {description ? (
@@ -279,28 +272,34 @@ function EventDetailModal(props: EventDetailModalProps) {
           </div>
         ) : null}
       </div>
-    </Dialog>
+    </Modal>
   )
 }
 
 /** A place's detail: hero with Jump In, then about, location and who is there now. */
 function PlaceDetailModal(props: PlaceDetailModalProps) {
   const { text } = useEventsCopy()
-  const titleId = useId()
   const { creator, location, description, users, jumpIn, shareUrl } = props
   return (
-    <Dialog labelledBy={titleId} onClose={props.onClose}>
-      <Hero titleId={titleId} title={props.title} image={props.image} onClose={props.onClose}>
-        {creator ? (
-          <div className={styles.meta}>
-            <EventCardHost creator={hostOf(creator)} byLabel={text('By')} />
+    <Modal
+      layout="detail"
+      title={props.title}
+      closeLabel={text('Close')}
+      onClose={props.onClose}
+      image={
+        <Hero title={props.title} image={props.image}>
+          {creator ? (
+            <div className={styles.meta}>
+              <EventCardHost creator={hostOf(creator)} byLabel={text('By')} />
+            </div>
+          ) : null}
+          <div className={styles.actions}>
+            {jumpIn ? <JumpInButton jumpIn={jumpIn} /> : null}
+            <CopyLink url={shareUrl} />
           </div>
-        ) : null}
-        <div className={styles.actions}>
-          {jumpIn ? <JumpInButton jumpIn={jumpIn} /> : null}
-          <CopyLink url={shareUrl} />
-        </div>
-      </Hero>
+        </Hero>
+      }
+    >
       <div className={styles.body}>
         {description ? (
           <>
@@ -330,7 +329,7 @@ function PlaceDetailModal(props: PlaceDetailModalProps) {
           </>
         ) : null}
       </div>
-    </Dialog>
+    </Modal>
   )
 }
 

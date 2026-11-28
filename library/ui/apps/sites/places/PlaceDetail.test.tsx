@@ -302,6 +302,18 @@ describe('PlaceDetail', () => {
     })
   })
 
+  describe('when the jump-in card has no close handler', () => {
+    beforeEach(() => {
+      mount({ livePlayers: 0 })
+    })
+
+    it('should still draw the close button, and pressing it should do nothing', () => {
+      const close = screen.getByRole('button', { name: 'Close' })
+      expect(() => fireEvent.click(close)).not.toThrow()
+      expect(screen.getByRole('dialog', { name: 'Meta GamiMall' })).toBeInTheDocument()
+    })
+  })
+
   describe('when the scene is empty', () => {
     let dialog: HTMLElement
 
@@ -310,18 +322,11 @@ describe('PlaceDetail', () => {
       dialog = screen.getByRole('dialog', { name: 'Meta GamiMall' })
     })
 
-    it('should give the focus to the jump-in dialog', () => {
-      expect(document.activeElement).toBe(within(dialog).getByRole('button', { name: 'Close' }))
-    })
-
-    it('should keep Tab inside the jump-in dialog', () => {
-      const close = within(dialog).getByRole('button', { name: 'Close' })
-      const controls = dialog.querySelectorAll<HTMLElement>('a[href], button:not([disabled])')
-      const last = controls[controls.length - 1]!
-      fireEvent.keyDown(close, { key: 'Tab', shiftKey: true })
-      expect(document.activeElement).toBe(last)
-      fireEvent.keyDown(last, { key: 'Tab' })
-      expect(document.activeElement).toBe(close)
+    it("should draw the jump-in card as the page's own shared dialog, its title the page heading", () => {
+      expect(dialog.tagName).toBe('DIALOG')
+      expect(dialog).toHaveAttribute('data-layout', 'scene')
+      expect(dialog).toHaveAttribute('data-page')
+      expect(screen.getByRole('heading', { level: 1, name: 'Meta GamiMall' })).toBeInTheDocument()
     })
 
     it('should show the jump-in card actions', () => {

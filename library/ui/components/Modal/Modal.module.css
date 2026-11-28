@@ -6,7 +6,8 @@
  * width is 560px on a desktop and the screen less 16px a side on a phone. The Explorer modals
  * (`ModalSingleCTA`, `ModalPlusCheckbox`, `Modal&Img`) hold the same parts; their 24px radius,
  * 70 by 60px padding and glow artwork are not drawn. The backdrop and the close button's place are
- * not in the design. */
+ * not in the design. The `detail` and `scene` layouts are not in Figma: they come from
+ * decentraland.org's event detail and place card (SceneJumpInModal). */
 @layer dcl.components {
   .root {
     position: fixed;
@@ -70,6 +71,101 @@
       height: min(820px, 92vh);
       border-radius: var(--dcl-radius-lg);
       box-shadow: 0 4px 25px var(--dcl-transparencies-white-20);
+    }
+  }
+
+  /* An event or place detail: an 880px card, the cover edge to edge on top and the content below
+   * without padding. The cover and the content draw their own text. */
+  .root:is([data-layout='detail'], [data-layout='scene']) {
+    width: min(880px, calc(100% - 2 * var(--dcl-space-24)));
+    max-height: 90dvh;
+    padding: 0;
+    text-align: start;
+  }
+
+  .root:is([data-layout='detail'], [data-layout='scene'])[open] {
+    align-items: stretch;
+    gap: 0;
+  }
+
+  /* 90px from the top, and as clear below a tall one, as decentraland.org's event detail. */
+  .root[data-layout='detail'] {
+    max-height: calc(100dvh - 180px);
+    margin-top: 90px;
+    background: var(--dcl-bg-surface);
+  }
+
+  .root[data-layout='detail']::backdrop {
+    background: var(--dcl-transparencies-shadow-75);
+  }
+
+  /* decentraland.org's place card: 680px up to 880px with the viewport, on the scene gradient. Its
+   * centre stop (#6e31a7 there) is the nearest brand token, brand purple. */
+  .root[data-layout='scene'] {
+    width: min(clamp(680px, 45.833vw, 880px), calc(100% - 2 * var(--dcl-space-24)));
+    border-radius: var(--dcl-radius-xl);
+    background: radial-gradient(
+      47.39% 84.22% at 42.4% 26.48%,
+      var(--dcl-brand-purple) 0%,
+      var(--dcl-background-web-dark) 100%
+    );
+    box-shadow: 0 4px 25px color-mix(in srgb, var(--dcl-neutrals-white) 25%, transparent);
+  }
+
+  .root[data-layout='scene']::backdrop {
+    background: color-mix(in srgb, var(--dcl-neutrals-black) 80%, transparent);
+  }
+
+  /* Before the page hydrates a page's own card is shown but not modal: no top layer and no
+   * backdrop. Above a phone it is lifted over the site header and draws the backdrop as a shadow
+   * until the effect reopens it modal. The width is `PAGE_ON_PHONE` in Modal.tsx. */
+  @media (min-width: 600px) {
+    .root[data-layout='scene'][data-page]:not(:modal) {
+      z-index: 1300;
+      box-shadow:
+        0 4px 25px color-mix(in srgb, var(--dcl-neutrals-white) 25%, transparent),
+        0 0 0 100vmax color-mix(in srgb, var(--dcl-neutrals-black) 80%, transparent);
+    }
+  }
+
+  .root:is([data-layout='detail'], [data-layout='scene']) > .close {
+    top: var(--dcl-space-16);
+    right: var(--dcl-space-16);
+    z-index: 2;
+  }
+
+  .root:is([data-layout='detail'], [data-layout='scene']) > .image {
+    display: block;
+    position: relative;
+  }
+
+  .root:is([data-layout='detail'], [data-layout='scene']) > .body {
+    display: block;
+  }
+
+  /* A phone keeps the site header in view above a full-height sheet. */
+  @media (max-width: 767px) {
+    .root[data-layout='detail'] {
+      width: 100%;
+      height: calc(100dvh - var(--dcl-space-64));
+      max-height: none;
+      margin: var(--dcl-space-64) 0 0;
+      border-radius: 0;
+    }
+  }
+
+  /* A page's own card on a phone is part of the page: in the flow, full width, square. The width
+   * is `PAGE_ON_PHONE` in Modal.tsx; change them together. */
+  @media (max-width: 599.95px) {
+    .root[data-layout='scene'][data-page] {
+      position: relative;
+      width: 100%;
+      max-height: none;
+      min-height: 60vh;
+      margin: 0;
+      overflow-y: visible;
+      border-radius: 0;
+      box-shadow: none;
     }
   }
 

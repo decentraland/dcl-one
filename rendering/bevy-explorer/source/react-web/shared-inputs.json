@@ -7063,14 +7063,6 @@
           "kind": "regular"
         },
         {
-          "name": "Dialog.module.css",
-          "kind": "regular"
-        },
-        {
-          "name": "Dialog.tsx",
-          "kind": "regular"
-        },
-        {
           "name": "EventsPage.module.css",
           "kind": "regular"
         },
@@ -16264,19 +16256,11 @@
     },
     {
       "path": "library/ui/apps/sites/events/DetailModal.module.css",
-      "sha256": "f43cbbc6b224f92895f59c9430991d9307e4765216421cd8161af194bcaa9926"
+      "sha256": "86625d64314585999ba039c225c47b154d17e4110f3b2fe6b67d86788dcf6f58"
     },
     {
       "path": "library/ui/apps/sites/events/DetailModal.tsx",
-      "sha256": "aa398d25534f89e906151a1660496bab11c7269d1eaa955a0e2ad6d85b9b1b99"
-    },
-    {
-      "path": "library/ui/apps/sites/events/Dialog.module.css",
-      "sha256": "07d9495c19d143f590ab24b14cb3913041276b6b1f6352eb2fe9f82db80bcb09"
-    },
-    {
-      "path": "library/ui/apps/sites/events/Dialog.tsx",
-      "sha256": "7c9db1f9b61381500a9c4a9eb19f3aef5e1249ae355e49c0572357d3ce168337"
+      "sha256": "ba33f75fe43b8f3839ab47e99580ae7c36b25d2e479186a8a1c64780ef843267"
     },
     {
       "path": "library/ui/apps/sites/events/EventsPage.module.css",
@@ -16492,7 +16476,7 @@
     },
     {
       "path": "library/ui/apps/sites/index.ts",
-      "sha256": "96af375104a21fe3c6b6901fb7d5dd4523e0ccfa478189c9e876167334bad730"
+      "sha256": "b0fc855fdb818442e31102e889aa5efaa45722ee74cef241781d0952eaedc341"
     },
     {
       "path": "library/ui/apps/sites/invite/InviteLanding.module.css",
@@ -16568,11 +16552,11 @@
     },
     {
       "path": "library/ui/apps/sites/places/JumpInModal.module.css",
-      "sha256": "0df13ed1839c75d38277eb5e1d5459cc3bd4fae2ec0dc588c7ff2d9c565ba9a3"
+      "sha256": "379da1937a9abeb933bf1646f8c6b674dd8fdea183257f438edf3df4e1e74a48"
     },
     {
       "path": "library/ui/apps/sites/places/JumpInModal.tsx",
-      "sha256": "792281322c253b083e6331c516d2940e66427cde79cd479ad0084dcff58109c7"
+      "sha256": "9a0c17ee9a5663c7d434ae7fe3a02e3f85cbb275edeef1def384e6791b61f384"
     },
     {
       "path": "library/ui/apps/sites/places/LiveNow.module.css",
@@ -16584,11 +16568,11 @@
     },
     {
       "path": "library/ui/apps/sites/places/PlaceDetail.module.css",
-      "sha256": "8005e2991750902a24354f4a377f7e71c8eb3a1d41227545f9341c7188f18328"
+      "sha256": "71886bdf0c28112eff090050c81c572138e175d6a104ab1d8726d901a2e58e21"
     },
     {
       "path": "library/ui/apps/sites/places/PlaceDetail.tsx",
-      "sha256": "3f79e91251f6d91d891ef41ba737378141f1b30452b1a949200b57c1ddfff1f8"
+      "sha256": "011fdc8a9d350aae46594f3533f4ec4f73d9011040a3ea9f86ee2f1c3452eb61"
     },
     {
       "path": "library/ui/apps/sites/places/PlaceGrid.module.css",
@@ -17236,11 +17220,11 @@
     },
     {
       "path": "library/ui/components/Modal/Modal.module.css",
-      "sha256": "9611af22de2a4c0393fbd9c9df34b050ed179c92c5e2131a8b8c6910df328edd"
+      "sha256": "9e2d627928ca4fa20c1e7f6ca6da6b0052e04fff86917b7de6fa9388d2e65afc"
     },
     {
       "path": "library/ui/components/Modal/Modal.tsx",
-      "sha256": "d6a246f557cb0cb70c38192ad1b7cc61b54e0c7842212e5fe14dfafac9fc3250"
+      "sha256": "beb24a8854847a1d50ee45adbd129fba185a1adea587c49d5f127c2978add73c"
     },
     {
       "path": "library/ui/components/ModalCard/ModalCard.module.css",
@@ -56240,21 +56224,6 @@
     },
     {
       "from": "library/ui/apps/sites/events/DetailModal.tsx",
-      "to": "library/ui/apps/sites/events/Dialog.tsx",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/sites/events/DetailModal.tsx",
-      "to": "library/ui/apps/sites/events/Dialog.tsx",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/sites/events/DetailModal.tsx",
-      "to": "library/ui/apps/sites/events/Dialog.tsx",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/sites/events/DetailModal.tsx",
       "to": "library/ui/apps/sites/events/cards.tsx",
       "kind": "native:runtime"
     },
@@ -56300,21 +56269,6 @@
     },
     {
       "from": "library/ui/apps/sites/events/DetailModal.tsx",
-      "to": "library/ui/components/CloseButton/CloseButton.tsx",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/sites/events/DetailModal.tsx",
-      "to": "library/ui/components/CloseButton/CloseButton.tsx",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/sites/events/DetailModal.tsx",
-      "to": "library/ui/components/CloseButton/CloseButton.tsx",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/sites/events/DetailModal.tsx",
       "to": "library/ui/components/EventCard/EventCard.tsx",
       "kind": "native:runtime"
     },
@@ -56330,32 +56284,32 @@
     },
     {
       "from": "library/ui/apps/sites/events/DetailModal.tsx",
-      "to": "library/ui/foundations/icons/index.ts",
+      "to": "library/ui/components/Modal/Modal.tsx",
       "kind": "native:runtime"
     },
     {
       "from": "library/ui/apps/sites/events/DetailModal.tsx",
-      "to": "library/ui/foundations/icons/index.ts",
+      "to": "library/ui/components/Modal/Modal.tsx",
       "kind": "production:runtime"
     },
     {
       "from": "library/ui/apps/sites/events/DetailModal.tsx",
-      "to": "library/ui/foundations/icons/index.ts",
+      "to": "library/ui/components/Modal/Modal.tsx",
       "kind": "test:runtime"
     },
     {
-      "from": "library/ui/apps/sites/events/Dialog.tsx",
-      "to": "library/ui/apps/sites/events/Dialog.module.css",
+      "from": "library/ui/apps/sites/events/DetailModal.tsx",
+      "to": "library/ui/foundations/icons/index.ts",
       "kind": "native:runtime"
     },
     {
-      "from": "library/ui/apps/sites/events/Dialog.tsx",
-      "to": "library/ui/apps/sites/events/Dialog.module.css",
+      "from": "library/ui/apps/sites/events/DetailModal.tsx",
+      "to": "library/ui/foundations/icons/index.ts",
       "kind": "production:runtime"
     },
     {
-      "from": "library/ui/apps/sites/events/Dialog.tsx",
-      "to": "library/ui/apps/sites/events/Dialog.module.css",
+      "from": "library/ui/apps/sites/events/DetailModal.tsx",
+      "to": "library/ui/foundations/icons/index.ts",
       "kind": "test:runtime"
     },
     {
@@ -59135,21 +59089,6 @@
     },
     {
       "from": "library/ui/apps/sites/index.ts",
-      "to": "library/ui/apps/sites/events/Dialog.tsx",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/sites/index.ts",
-      "to": "library/ui/apps/sites/events/Dialog.tsx",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/sites/index.ts",
-      "to": "library/ui/apps/sites/events/Dialog.tsx",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/sites/index.ts",
       "to": "library/ui/apps/sites/events/EventsPage.tsx",
       "kind": "native:runtime"
     },
@@ -60665,21 +60604,6 @@
     },
     {
       "from": "library/ui/apps/sites/places/JumpInModal.tsx",
-      "to": "library/ui/apps/sites/places/Dialog.tsx",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/sites/places/JumpInModal.tsx",
-      "to": "library/ui/apps/sites/places/Dialog.tsx",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/sites/places/JumpInModal.tsx",
-      "to": "library/ui/apps/sites/places/Dialog.tsx",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/sites/places/JumpInModal.tsx",
       "to": "library/ui/apps/sites/places/JumpInModal.module.css",
       "kind": "native:runtime"
     },
@@ -60710,32 +60634,32 @@
     },
     {
       "from": "library/ui/apps/sites/places/JumpInModal.tsx",
-      "to": "library/ui/components/CloseButton/CloseButton.tsx",
+      "to": "library/ui/components/JumpInCTA/JumpInCTA.tsx",
       "kind": "native:runtime"
     },
     {
       "from": "library/ui/apps/sites/places/JumpInModal.tsx",
-      "to": "library/ui/components/CloseButton/CloseButton.tsx",
+      "to": "library/ui/components/JumpInCTA/JumpInCTA.tsx",
       "kind": "production:runtime"
     },
     {
       "from": "library/ui/apps/sites/places/JumpInModal.tsx",
-      "to": "library/ui/components/CloseButton/CloseButton.tsx",
+      "to": "library/ui/components/JumpInCTA/JumpInCTA.tsx",
       "kind": "test:runtime"
     },
     {
       "from": "library/ui/apps/sites/places/JumpInModal.tsx",
-      "to": "library/ui/components/JumpInCTA/JumpInCTA.tsx",
+      "to": "library/ui/components/Modal/Modal.tsx",
       "kind": "native:runtime"
     },
     {
       "from": "library/ui/apps/sites/places/JumpInModal.tsx",
-      "to": "library/ui/components/JumpInCTA/JumpInCTA.tsx",
+      "to": "library/ui/components/Modal/Modal.tsx",
       "kind": "production:runtime"
     },
     {
       "from": "library/ui/apps/sites/places/JumpInModal.tsx",
-      "to": "library/ui/components/JumpInCTA/JumpInCTA.tsx",
+      "to": "library/ui/components/Modal/Modal.tsx",
       "kind": "test:runtime"
     },
     {
@@ -60905,21 +60829,6 @@
     },
     {
       "from": "library/ui/apps/sites/places/PlaceDetail.tsx",
-      "to": "library/ui/components/CloseButton/CloseButton.tsx",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/sites/places/PlaceDetail.tsx",
-      "to": "library/ui/components/CloseButton/CloseButton.tsx",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/sites/places/PlaceDetail.tsx",
-      "to": "library/ui/components/CloseButton/CloseButton.tsx",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/sites/places/PlaceDetail.tsx",
       "to": "library/ui/components/InputField/InputFieldWebControls.tsx",
       "kind": "native:runtime"
     },
@@ -60946,6 +60855,21 @@
     {
       "from": "library/ui/apps/sites/places/PlaceDetail.tsx",
       "to": "library/ui/components/JumpInCTA/JumpInCTA.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/sites/places/PlaceDetail.tsx",
+      "to": "library/ui/components/Modal/Modal.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/sites/places/PlaceDetail.tsx",
+      "to": "library/ui/components/Modal/Modal.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/sites/places/PlaceDetail.tsx",
+      "to": "library/ui/components/Modal/Modal.tsx",
       "kind": "test:runtime"
     },
     {
@@ -71016,11 +70940,6 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/ui/apps/sites/events/DetailModal.tsx",
-      "kind": "type"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
-      "to": "library/ui/apps/sites/events/Dialog.tsx",
       "kind": "type"
     },
     {

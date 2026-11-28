@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { act, cleanup, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { createMemoryRouter, RouterProvider } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from "vitest";
@@ -426,7 +426,8 @@ describe("EventsView", () => {
       expect(router.state.location.search).toBe("?id=up");
       const dialog = await screen.findByRole("dialog", { name: "Watch Party" });
       expect(within(dialog).getByText("Cards and chips.")).toBeTruthy();
-      await user.keyboard("{Escape}");
+      // The native dialog keeps focus inside in a browser; jsdom does not move it, so Escape goes to the dialog.
+      fireEvent.keyDown(dialog, { key: "Escape" });
       await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
       expect(router.state.location.search).toBe("");
     });
@@ -434,12 +435,12 @@ describe("EventsView", () => {
 
   describe("when the URL deep-links an event", () => {
     describe("and the service knows it", () => {
-      it("should open it and keep focus inside the dialog", async () => {
-        const { user } = setup("/events?id=cal");
+      it("should open it in the shared modal dialog, which keeps focus inside natively", async () => {
+        setup("/events?id=cal");
         const dialog = await screen.findByRole("dialog", { name: "Poker Night" });
-        await waitFor(() => expect(dialog.contains(document.activeElement)).toBe(true));
-        for (let i = 0; i < 8; i++) await user.tab();
-        expect(dialog.contains(document.activeElement)).toBe(true);
+        expect(dialog.tagName).toBe("DIALOG");
+        expect(dialog.getAttribute("data-layout")).toBe("detail");
+        expect(dialog.hasAttribute("open")).toBe(true);
       });
     });
 

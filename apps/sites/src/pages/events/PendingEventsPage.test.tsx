@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, screen, waitFor, within } from "@testing-library/react";
+import { cleanup, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { Profiler, Suspense, use, type ReactNode } from "react";
 import { useLocation } from "react-router";
@@ -675,8 +675,7 @@ describe("when opening the Pending Events page", () => {
     it("should open the review again from its card after it was closed", async () => {
       renderAdminPage(<PendingEventsPage />, PATH, { strict });
       await user.click(await screen.findByRole("link", { name: "Moon concert" }));
-      expect(screen.getByRole("dialog", { name: "Moon concert" })).toBeTruthy();
-      await user.keyboard("{Escape}");
+      fireEvent.keyDown(screen.getByRole("dialog", { name: "Moon concert" }), { key: "Escape" });
       expect(screen.queryByRole("dialog")).toBeNull();
       await user.click(screen.getByRole("link", { name: "Moon concert" }));
       expect(await screen.findByRole("dialog", { name: "Moon concert" })).toBeTruthy();
