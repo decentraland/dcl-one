@@ -8,6 +8,39 @@ A local Polygon refold fixture replayed 288 legacy sales in 288 distinct blocks 
 
 The index process increments `catalyst_index_sales_repair_failures_total` by indexer and network when a historical sales repair fails. The error log includes the starting block and requests spent. The cursor keeps its last verified boundary.
 
+## Marketplace legacy book publication
+
+Local PostgreSQL 17.6 held 1M synthetic Matic shadow rows and 1,000
+visible Ethereum rows. With the existing live indexes and projection
+write triggers, the cursor-locked full replacement baseline published
+an empty Matic book in 39.05 s and replaced 1M existing Matic rows in
+56.11 s. The replacement insert took 53.56 s. Each case ran once without
+a competing writer and preserved all 1,000 Ethereum rows.
+
+On the earlier single-transaction differential path, the same row counts took 40.71 s for
+initial publication and 4.79 s to publish a successor with 10,000 changed
+rows, including 1,000 replaced keys. PostgreSQL deleted 1,000 rows and
+inserted or updated 10,000. Each case ran once locally without a competing
+writer and kept the Ethereum rows. The transaction still scans the
+network's visible and shadow rows.
+
+A full local rebuild on PostgreSQL 17.6 replayed 1,792,300 synthetic
+Polygon order logs into an initially empty Polygon book while preserving
+142,000 Ethereum rows. The result held 1,000,000 Polygon orders, including
+69,700 unexpired open orders and 138,000 expired open orders. The fixed
+15 s transaction and 120 s pass budgets were active. From opening the
+rebuild to acknowledging the book took **120.03 s**. The shared legacy
+projection gate was pending for **52.40 s** of that time. Cleanup ended
+on pass two at **136.48 s** from opening. This was one local run with a
+five-second wait between passes and no competing writer, RPC or extra
+transfer history. Deployment timings also depend on the event history,
+I/O contention and when the next NFT publication can commit.
+
+The lane increments `catalyst_legacy_order_rebuild_step_timeouts_total`
+when a cursor-locked page exhausts its full time budget and
+`catalyst_legacy_order_rebuild_restarts_total` when it discards a build
+on a changed checkpoint. Both counters carry the network.
+
 ## Marketplace order book reads
 
 PostgreSQL 17.6 on Apple Silicon held one million legacy orders (700,000

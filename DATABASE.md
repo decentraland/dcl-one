@@ -3560,6 +3560,46 @@ cover a point below the cursor.) Such a binary also leaves `diverged_at` as
 it finds it; the newer binary's next pass that finds the cursor block on its
 stored hash clears it.
 
+**Rolling back the legacy order writer.** When possible, wait for the
+legacy rebuild to reach `cleanup` or finish and for `shop.projection_write`
+to acknowledge the completed book before rolling back. An earlier writer
+can publish NFT ownership during an open
+reconciliation, but the schema keeps the partial legacy book pending.
+
+If you must roll back with reconciliation open, stop the index processes
+on that database and wait for their transactions to end. With the writers
+stopped, use the administrative connection to run the transaction below
+for the affected network. For Ethereum, replace both occurrences of
+`matic` with `ethereum`.
+
+```sql
+BEGIN;
+SELECT 1 FROM shop.chain_cursor
+WHERE indexer = 'nft' AND network = 'matic' FOR UPDATE;
+
+WITH abandoned AS (
+    UPDATE shop.legacy_order_rebuild
+    SET phase = 'cleanup', applying = false
+    WHERE network = 'matic' AND applying AND phase <> 'cleanup'
+    RETURNING network
+)
+UPDATE shop.legacy_order_cursor AS book
+SET through_hash = NULL
+FROM abandoned WHERE book.network = abandoned.network;
+COMMIT;
+```
+
+This retires the unfinished build and invalidates the book's marker in
+the same transaction. A missing marker already withholds the book. Leave
+`shop.projection_write` and the live order rows for the writer. A
+same-height acknowledgement alone cannot make the invalidated book
+readable. Start the previous writer with a legacy order fold. Its next
+fold clears and refolds the full affected book because the marker no
+longer stands. The legacy routes return `503 nft-index` until that fold
+publishes, and the older whole-book fold can also delay NFT publication.
+When the current writer resumes, it cleans up the retired shadow rows
+and apply journal in bounded steps.
+
 The schema migration object pass adds the Ethereum NFT cursor's estate
 repair trigger. It clears the marker when a writer completes a requested
 rebuild by resetting the cursor to its start. During a reorg the upgraded
@@ -5799,9 +5839,10 @@ they took 48 ms and 46 ms respectively.
 feed's orders leg and the legacy listings of both catalog versions on a
 node that walks the NFT index. It is one row per
 `OrderCreated` of the Marketplace contracts the nft walk takes in, folded
-from `shop.nft_event` by `services/catalyst/shop/src/market/legacy_orders.rs`
-in the nft fold's transaction, so it is published with the ownership it is
-read beside. The shop writes and reads it; no other area does.
+from `shop.nft_event` by `services/catalyst/shop/src/market/legacy_orders.rs`.
+Incremental writes are part of the NFT fold. A full rebuild writes a private
+book first and publishes its differences under the NFT cursor lock. Shop
+owns this projection.
 
 Invariants:
 
@@ -5812,7 +5853,7 @@ Invariants:
   the log's normalised value.
 - A fold rewrites every order of each token an order event past its marker
   touched, over the token's whole history, and leaves an unchanged row
-  alone. A rebuild (`since = -1`) folds every token.
+  alone. A rebuild (`since = -1`) opens the private build.
 - A reorg rewind deletes the orders of the tokens whose events it deletes,
   in its own transaction, and clears the publish marker; the rebuild that
   follows restores the orders whose creation remains.
@@ -5842,8 +5883,8 @@ Invariants:
   book's block in `shop.legacy_order_refold` (network, contract, token;
   primary key only), whichever binary wrote it, an earlier one's included.
   The next order fold refolds those tokens with the ones touched past its
-  marker, and deletes them in its own transaction; a rebuild clears the
-  network's. The queue holds a repair window's tokens until the next fold.
+  marker and deletes them in its own transaction. The queue holds a repair
+  window's tokens until the next fold or the shadow rebuild drains it.
   The trigger costs one primary-key read of `shop.legacy_order_cursor` per
   order event written; transfers do not fire it. While a network has a
   refold queued, its book is not read. The `nft-index` message names the
@@ -5861,24 +5902,86 @@ Invariants:
   (`shop.chain_checkpoint`) carries its hash. Every binary's rewind drops the
   points past its target, so a branch republished at the same height carries
   another hash; a book left behind past the 64 kept points loses its point.
-  A fold over a book that does not stand, and every rebuild (`since = -1`),
-  deletes the network's orders and refolds them whole, in the nft fold's
-  transaction, so no order of a lost branch survives. This binary's rewind
-  lowers the block to its target and clears the hash.
-- A reader serves the book only while it stands and its block, written in
-  the nft fold's transaction, is the published nft fold (`folded_block`),
-  checked on the read's snapshot; otherwise the `nft-index` envelope. The
+  The NFT fold opens a private build for an unstanding book or a full NFT
+  fold. A rewind lowers the live marker and clears its hash. The build
+  verifies the opening checkpoint and moving anchor and uses the cursor's
+  rewind and rebuild counters to distinguish ordinary pruning from a
+  branch change.
+- A reader serves the book only while it stands and its marker is the
+  published NFT fold (`folded_block`) on the read's snapshot. An active
+  private build returns the `nft-index` envelope until it publishes,
+  including a `since = -1` rebuild over a previously served book. The
   walk publishes a fold only after it commits and reads the head, so between
   the two the rows hold an unpublished fold: a read then answers the
   envelope rather than rows past the published block. A walk that advanced
   without folding leaves the book at the published block, still read.
-- A database that predates the table gets it empty and with no marker. The
-  schema run reads no log: a whole book is one statement of minutes on a
-  real node, past the run's 60 s statement limit, and it would run inside
-  the run's single transaction. Without a marker the book does not stand, so
-  readers answer the `nft-index` envelope, and the first nft fold after the
-  upgrade refolds it whole in the fold's own transaction (its own statement
-  limit), then publishes it with the fold.
+- The full fold probes at most 513 raw events in primary-key order. With
+  at most 512 events, no order events, and no live rows or queued refolds,
+  it can publish an empty book immediately. Otherwise it opens
+  `shop.legacy_order_rebuild` with the NFT checkpoint at `upto`. It neither
+  clears the live book nor deletes queued repairs when opening. The NFT
+  walk publishes as usual and runs alone while the build or its cleanup
+  needs the lane.
+- Each step processes at most 4,096 rows or order keys. The initial scan
+  and tail seek by `(block_number, log_index)` on the source primary key.
+  Only order logs enter the indexed build input. One creation page uses
+  indexed next-creation and latest-terminal probes to materialize the
+  private book. Repairs behind the scanned position enter a revisioned
+  queue that a deployed writer cannot consume. Replay pages the input and
+  output for a token and repeats if its revision changed.
+- The lane sets its deadlines before locking the NFT cursor. The pass
+  allows two minutes, each transaction gets up to 15 seconds, and lock
+  waits get at most 10 seconds. The rows and their positions commit
+  together, so the next pass resumes after a timeout or crash. A step
+  that runs out of its full budget after acquiring the cursor halves the
+  page size for the current writer acquisition.
+- After the private book catches up, the lane marks only that network's
+  legacy order projection pending. Bounded pages of the live and shadow
+  primary keys discover deletions, insertions and changed rows. A separate
+  queue records live writes from a deployed writer during reconciliation
+  and shadow writes during catch-up after the keyset pass. The live
+  relation and its indexes stay in place.
+- Same-height NFT publications still acknowledge NFT ownership and
+  `nft_order`. The schema keeps `legacy_order` pending through
+  reconciliation and any branch restart. Under the NFT cursor lock, the
+  final step checks that the tail and the queues are caught up, then
+  records the certified book marker. The next ordinary NFT publication
+  acknowledges the complete book. A newer complete publication by a
+  deployed writer can retire the private build before it starts to write
+  live rows. Private cleanup runs in bounded steps. The schema object
+  pass creates the new objects without reading the log.
+- Order-event insert, update and delete triggers look up the shadow
+  scan position once per order event and queue covered tokens. Live
+  and shadow order statement triggers journal affected keys during
+  reconciliation. The legacy pending trigger checks the network's
+  rebuild row when an NFT publication tries to acknowledge it.
+  The lane reports a stalled rebuild after 30 minutes without progress.
+
+While the legacy book is unavailable, routes that require it report
+`503` with source `nft-index`. Unfiltered catalogue browsing can omit
+legacy listings. NFT ownership, `/v1/nfts`, direct v3 trade reads and
+reads scoped to the other network can continue publishing and serving.
+The rebuild row's `phase` and `progressed_at` show whether it is
+advancing, and the network's `legacy_order` row in
+`shop.projection_write` shows whether its completed book has been
+acknowledged.
+
+For the earlier full-replacement baseline on local PostgreSQL 17.6 with
+1M synthetic Matic shadow rows, 1,000
+Ethereum rows and the existing live indexes and projection write triggers,
+the cursor-locked publication transaction took **39.05 s** on an empty
+Matic book and **56.11 s** when replacing 1M visible Matic rows. The
+replacement insert took 53.56 s. Each transaction preserved the Ethereum
+rows and published exactly 1M Matic rows. This is one local measurement
+per case, without concurrent writer load.
+The earlier single-transaction differential publish took **40.71 s** on an empty Matic book and
+**4.79 s** on a successor with 10,000 changed rows, including 1,000
+replaced keys, with the same row counts. Both runs preserved the 1,000
+Ethereum rows. These are single local measurements without a competing
+writer. On the current lane, a local full rebuild of one million Polygon
+orders alongside 142,000 Ethereum rows reached the next acknowledgement
+in **120.03 s**. The shared legacy projection gate was pending for
+**52.40 s**. [Measured rebuild workload](METRICS.md#marketplace-legacy-book-publication)
 
 The page, count and readiness checks share a `REPEATABLE READ, READ ONLY`
 snapshot. An explicit network or chain-bound contract can narrow the NFT
