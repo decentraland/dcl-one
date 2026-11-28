@@ -156,6 +156,14 @@ pub struct RawSettings {
     /// `BUILDER_FOUNDATION_URL`: the Foundation builder API a linked
     /// publication is verified against; unset answers 503 there.
     pub foundation_url: Option<String>,
+    /// Whether this deployment walks the Polygon committee index
+    /// (`MARKETPLACE_COMMITTEE_INDEX_ENABLED` on a node serving mainnet
+    /// Polygon). Walked, an unpublished or stale committee publication is
+    /// this deployment's own lag, which the curation console answers with
+    /// 503. Not walked, no current publication lists no indexed members. A
+    /// current publication is read and authorized either way, whichever
+    /// process maintains it.
+    pub committee_index_walked: bool,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -168,6 +176,7 @@ pub struct Settings {
     pub admin_token: Option<String>,
     pub newsletter: Option<NewsletterForward>,
     pub foundation_url: Option<String>,
+    pub committee_index_walked: bool,
 }
 
 fn non_empty(value: &Option<String>) -> Option<String> {
@@ -249,6 +258,7 @@ impl Settings {
             admin_token: non_empty(&raw.admin_token),
             newsletter,
             foundation_url,
+            committee_index_walked: raw.committee_index_walked,
         })
     }
 }

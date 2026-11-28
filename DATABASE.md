@@ -119,6 +119,26 @@ from a deployment's content hash. Each world scene has a stable identity
 exactly one active scene retains it, including a moved base; overlapping none
 or several creates a new identity. Retired identities keep their storage rows.
 
+A DCL NAME world's publish is authorized during validation, before its write
+transaction, and re-checked inside that transaction. After the transaction
+takes the world's publish lock and row lock, it holds the names index's
+publication row (the Ethereum `nft` cursor) `FOR SHARE` and reads the NAME's
+holder under it. A fold withdrawn since validation answers 503 `nft-index`; a
+holder replaced since then answers the owner's 400 refusal, or 409 to a scoped
+grantee, who retries against the new owner. Either way the world keeps its scene
+and owner. No withdrawal, refold or publication of the NFT index commits while
+the share is held. The NFT fold locks that row `FOR UPDATE` from its first
+projection write to its commit, and the sales fold locks it `FOR UPDATE` at its
+publication step. Every publication or withdrawal updates it. None of those
+transactions takes a world lock, so the order (world locks, then the cursor)
+cannot deadlock. The share is taken only in that short write transaction, after
+upload, hashing and validation. A fold's publication waits for at most one scene
+write. A publish that arrives during a fold waits for that fold's commit, up to
+`HOLD_WAIT` (5 s, as `lock_timeout`), and then reads its publication. Past that
+wait it answers the names index's retryable 503, so it never holds the world and
+store locks behind a long refold. Personal and ENS worlds, and a node reading NAMEs
+from the subgraph, hold nothing.
+
 Partial batches for one entity hold a session advisory lock from their first
 pending-upload/replay read through the staging or committed-publication decision.
 The guard owns one connection from the shared pool, and every guarded query and
@@ -2737,7 +2757,7 @@ See the [synthetic fixture measurements](METRICS.md#wallet-activity-transfers) f
 
 `sale_publication.last_sale_through` records the block through which the table holds every published sale. `last_sale_generation` records the publication generation the table was kept for. Each pass applies the ledger past `last_sale_through`, at most 5,000,000 blocks at a time. Once the table is current, that is the new window itself. After step `0078_shop_nft_last_sale` adds the columns, or after a rebuild, it is the earlier history. A receipt can be retried after its block is covered and set the token ID of a trade's mint. The pass then recomputes those tokens' latest sale from the ledger and keeps a later sale. Every writer rotates the generation when it replaces the history or corrects a published sale. A writer from before step 0078 does so without touching the table or these columns, so they no longer match. The table is then not read, and the next pass of a current writer deletes the network's rows and refills them from the start. It does the same when the coverage is cleared. The schema object pass creates the table.
 
-A `/v1/nfts` read checks the publication of each network its page can return, on the read's own snapshot (`sale_fold::last_sale_networks`). The publication must be valid and fresh, as the sales reads require, its table must be kept for its generation, and `last_sale_through` must reach its block. For such a network, `sold_at` is the later of the token's latest legacy `OrderSuccessful` (`shop.nft.sold_at`, or the LAND source's subquery) and its row in `shop.nft_last_sale`, joined on the primary key. Elsewhere, including on a testnet node, `sold_at` keeps the legacy order alone. On a walker, a shallow NAME page of any sort reads the index instead of the marketplace graph when the Ethereum latest sales are admitted on the snapshot that supplies its rows, because the graph's `soldAt` counts other sales. Such a page follows the index path's rules: the `first + skip` window, and the trades mirror's readiness on the same snapshot when it filters or sorts on orders. Admission is checked at the request's clock, and the page's values and order use that answer. An ordinary shallow page can read the graph when the names index or the latest sales are not ready. A page filtered or sorted by orders uses the native page even when the latest-sale display is unavailable, and returns the named readiness response if its required listing sources cannot answer.
+A `/v1/nfts` read checks the publication of each network its page can return, on the read's own snapshot (`sale_fold::last_sale_networks`). The publication must be valid and fresh, as the sales reads require, its table must be kept for its generation, and `last_sale_through` must reach its block. For such a network, `sold_at` is the later of the token's latest legacy `OrderSuccessful` (`shop.nft.sold_at`, or the LAND source's subquery) and its row in `shop.nft_last_sale`, joined on the primary key. Elsewhere, including on a testnet node, `sold_at` keeps the legacy order alone. On a walker, a shallow NAME page of any sort reads the index instead of the marketplace graph when the Ethereum latest sales are admitted on the snapshot that supplies its rows, because the graph's `soldAt` counts other sales. Such a page follows the index path's rules: the `first + skip` window, and the trades mirror's readiness on the same snapshot when it filters or sorts on orders. Admission is checked at the request's clock, and the page's values and order use that answer. An ordinary shallow page can read the graph when the names index or the latest sales are not ready. Without a configured marketplace graph, such a page answers the unavailable envelope of the index source it waits for (`nft-index` or `sales-index`), not `marketplace-subgraph`. A page filtered or sorted by orders uses the native page even when the latest-sale display is unavailable, and returns the named readiness response if its required listing sources cannot answer.
 
 The recently sold sort reads the capped total first, on the same snapshot. With enough candidates and no owner, lessor or on-sale-only filter, each source is walked in three parts. Enough means at least 400 per row of the `first + skip` window, or more than the cap with a window of at most 12,500. The parts:
 - its tokens with a latest sale, walked newest first through `nft_last_sale_recent_idx` (`(network, sold_at DESC, contract_address, token_id)`), each sale looking up its token by primary key;
@@ -3682,7 +3702,12 @@ runs. When Polygon is in scope, Shop accounts require a fresh committee
 fold covering the published sales block and include every indexed member
 through that block, including former members. An index that is off, not yet published or
 published more than 30 minutes ago (`READY_WINDOW`) admits only the
-configured addresses, and a failed read answers 503. Changing a column builder reads updates this section
+configured addresses, and a failed read answers 503. The curation console
+lists a current publication whichever process maintains it. Without one, a
+deployment that walks the index (`MARKETPLACE_COMMITTEE_INDEX_ENABLED` on a node
+serving mainnet Polygon) answers 503, never an empty committee, because the
+publication is its own lag. A deployment that does not walk it (the switch off,
+or a testnet, which schedules no committee walk) lists no indexed members. Changing a column builder reads updates this section
 and the AGENTS.md "Ownership" entry in the same change.
 
 ## Third-party registry

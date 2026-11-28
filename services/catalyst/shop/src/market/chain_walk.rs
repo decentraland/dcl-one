@@ -262,6 +262,14 @@ impl IndexSettings {
         self.chain_id(net) == net.chain_id()
     }
 
+    /// Whether this deployment walks the Polygon curation committee index:
+    /// `MARKETPLACE_COMMITTEE_INDEX_ENABLED` on a node serving mainnet
+    /// Polygon, where the committee contracts live. The posture turns the
+    /// switch on for testnets too, which schedule no committee walk.
+    pub fn walks_committee(&self) -> bool {
+        self.committee_enabled && self.serves_mainnet(ChainNet::Matic)
+    }
+
     /// Refuses a chain that is neither the network's mainnet nor its
     /// testnet: the walk would read another network's contracts.
     pub fn check_supported_chain_ids(&self) -> Result<(), String> {
@@ -2661,6 +2669,20 @@ pub(crate) async fn test_owner(
 
 #[cfg(test)]
 mod tests {
+    /// The committee is walked only where the switch is on and the node
+    /// serves mainnet Polygon: a testnet pair schedules no committee walk.
+    #[test]
+    fn the_committee_is_walked_only_on_mainnet_polygon() {
+        let settings = |committee_enabled, chain_id_matic| super::IndexSettings {
+            committee_enabled,
+            chain_id_matic,
+            ..super::IndexSettings::default()
+        };
+        assert!(settings(true, 137).walks_committee());
+        assert!(!settings(true, 80_002).walks_committee());
+        assert!(!settings(false, 137).walks_committee());
+    }
+
     #[test]
     fn legacy_topic_decoders_preserve_prefix_width_and_integer_boundaries() {
         let address = format!("0x{}{}", "F".repeat(24), "AB".repeat(20));

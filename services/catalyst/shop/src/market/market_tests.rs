@@ -11982,7 +11982,7 @@ async fn a_names_page_by_latest_sale_reads_the_admitted_index() {
         .unwrap();
     let filters =
         super::nfts::parse_filters(&[("category".to_string(), "ens".to_string())]).unwrap();
-    let (rows, _, _) = super::nft_reads::names_page_if_admitted(
+    let super::nft_reads::NamesPage::Served(rows, _, _) = super::nft_reads::names_page_if_admitted(
         &state,
         &filters,
         2,
@@ -11990,8 +11990,9 @@ async fn a_names_page_by_latest_sale_reads_the_admitted_index() {
         real - chrono::Duration::minutes(2),
     )
     .await
-    .unwrap()
-    .expect("admitted at the request's clock");
+    .unwrap() else {
+        panic!("admitted at the request's clock");
+    };
     let beta = rows.iter().find(|r| r.nft.token_id == "1002").unwrap();
     assert_eq!(beta.nft.sold_at, 3_000_000);
     sqlx::query("UPDATE shop.chain_cursor SET folded_at = timezone('UTC', now()) WHERE network = 'ethereum'")
@@ -12026,6 +12027,33 @@ async fn a_names_page_by_latest_sale_reads_the_admitted_index() {
     assert_eq!(body["data"][0]["nft"]["tokenId"], "1001", "{body}");
     assert_eq!(sold_at(&body, "1001"), Some(2_000_000));
     assert!(graph_reads() > 0);
+
+    // Without the marketplace graph, a page not admitted names the index
+    // source it waits for (the sales index here, the names index once its
+    // fold is unpublished), never `marketplace-subgraph`.
+    let reads_before = graph_reads();
+    let mut unset = state.settings.clone();
+    unset.marketplace_subgraph_url = None;
+    let without_graph = market_router(Arc::new(super::MarketplaceState::new(
+        pool.clone(),
+        crate::http::Outbound::for_tests(),
+        unset,
+    )));
+    for (sql, source) in [
+        ("SELECT 1", "sales-index"),
+        (
+            "UPDATE shop.chain_cursor SET folded_block = NULL, folded_at = NULL WHERE indexer = 'nft' AND network = 'ethereum'",
+            "nft-index",
+        ),
+    ] {
+        sqlx::query(sql).execute(pool).await.unwrap();
+        for uri in [by_sale, browse] {
+            let (status, body) = get(without_graph.clone(), uri).await;
+            assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{uri}: {body}");
+            assert_eq!(body["source"], source, "{uri}: {body}");
+        }
+    }
+    assert_eq!(graph_reads(), reads_before, "no graph to read");
     own.drop().await;
 }
 

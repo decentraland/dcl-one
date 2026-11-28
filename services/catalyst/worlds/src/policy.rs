@@ -368,14 +368,35 @@ fn owner_answer(
 fn names_unavailable(e: &NamesError) -> AuthorityNotEstablished {
     match e {
         NamesError::NotEstablished(_) => reader_unavailable(NAMES_NOT_CURRENT, &e.to_string()),
+        // Not transient: refused like any undetermined owner, not retried.
+        NamesError::Ambiguous(_) => reader_unavailable(NAMES_AMBIGUOUS, &e.to_string()),
         NamesError::Failed(_) => reader_unavailable("DCL NAME source", &e.to_string()),
     }
 }
 
 /// The store a refusal names when the NAME source cannot establish an owner
-/// now (the index not current for an authorization, an ambiguous label):
-/// undetermined, and short-lived.
+/// now (the index not current for an authorization): undetermined, and
+/// short-lived.
 const NAMES_NOT_CURRENT: &str = "DCL NAME source (not established)";
+
+/// The store a refusal names when two holders claim the NAME's label once
+/// lowercased: undetermined until a transfer resolves it, not by waiting.
+const NAMES_AMBIGUOUS: &str = "DCL NAME source (ambiguous label)";
+
+/// The names index's reason when `why` is its transient "cannot establish an
+/// owner now" ([`NAMES_NOT_CURRENT`]); `None` for every other refusal, an
+/// ambiguous label ([`NAMES_AMBIGUOUS`]) included. A write answers this
+/// case as the names index being unavailable, a retryable 503, not as a
+/// denial.
+pub fn names_not_current(why: &AuthorityNotEstablished) -> Option<&str> {
+    match why {
+        AuthorityNotEstablished::UndeterminedStoreUnavailable {
+            store: NAMES_NOT_CURRENT,
+            reason_for_operators,
+        } => Some(reason_for_operators),
+        _ => None,
+    }
+}
 
 fn reader_unavailable(store: &'static str, reason: &str) -> AuthorityNotEstablished {
     AuthorityNotEstablished::UndeterminedStoreUnavailable {
@@ -837,6 +858,41 @@ impl Policy {
             return Err(reader_unavailable("DCL NAME source", NO_NAME_AUTHORITY_MSG));
         };
         owner_answer(names.name_owner_on(conn, label, Purpose::Authorize).await).0
+    }
+
+    /// Inside the transaction on `conn` that writes a publish of `world`,
+    /// after it took the world's locks: the NAME source's publication held
+    /// until that transaction ends ([`NameAuthority::hold_publication_on`]),
+    /// then `holder` confirmed as the NAME's holder under it. The publish
+    /// was authorized before that transaction began, so a fold withdrawn or
+    /// a holder replaced since then refuses the write, and no withdrawal or
+    /// refold commits until the write has. Personal and ENS worlds, and a
+    /// source without publications (the subgraph), have nothing to hold.
+    pub async fn confirm_name_holder_on(
+        &self,
+        conn: &mut sqlx::PgConnection,
+        world: &WorldName,
+        holder: &Address,
+    ) -> Result<(), AuthorityNotEstablished> {
+        if self.personal_worlds.owner_of(world).is_some() || world.is_ens_world() {
+            return Ok(());
+        }
+        let (Some(label), Some(names)) = (dcl_label(world), self.names_reader()) else {
+            return Ok(());
+        };
+        if !names.observes() {
+            return Ok(());
+        }
+        names
+            .hold_publication_on(conn)
+            .await
+            .map_err(|e| names_unavailable(&e))?;
+        match owner_answer(names.name_owner_on(conn, label, Purpose::Authorize).await).0? {
+            Some(owner) if owner == *holder => Ok(()),
+            _ => Err(AuthorityNotEstablished::RefusedLacksAuthority {
+                detail: format!("{holder} no longer holds the NAME of {world}"),
+            }),
+        }
     }
 
     /// [`Self::live_name_owner`] as a future that owns what it needs, so a
@@ -2875,7 +2931,7 @@ mod tests {
 
         fn holder(&self, label: &str) -> Result<Option<String>, NamesError> {
             if self.ambiguous.lock().unwrap().contains(label) {
-                return Err(NamesError::NotEstablished(format!("{label}: two holders")));
+                return Err(NamesError::Ambiguous(format!("{label}: two holders")));
             }
             Ok(self.holders.lock().unwrap().get(label).cloned())
         }
