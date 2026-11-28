@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useCallback, useEffect } from 'react';
 
 import {
   isValidNumericInput,
@@ -11,7 +11,9 @@ import { withSdk } from '../../../hoc/withSdk';
 import { Block } from '../../Block';
 import { Container } from '../../Container';
 import { TextField, InfoTooltip, Label } from '../../ui';
+import { getValue } from '../../../lib/logic/get-set-value';
 import { fromTransform, toTransform, fromTransformConfig, preserveRotationInput } from './utils';
+import { useTransformPreview } from './useTransformPreview';
 import type { Props } from './types';
 import { Link, type Props as LinkProps } from './Link';
 import './TransformInspector.css';
@@ -23,12 +25,29 @@ export default withSdk<Props>(({ sdk, entities, initialOpen = true }) => {
   const hasTransform = useHasComponent(entity, Transform);
   const transform = Transform.getOrNull(entity) ?? undefined;
   const config = TransformConfig.getOrNull(entity) ?? undefined;
-  const { getInputProps } = useMultiComponentInput(
+  const { getInputProps: getStoredInputProps } = useMultiComponentInput(
     entities,
     Transform,
     fromTransform,
     toTransform(transform, config),
     { validateInput: isValidNumericInput, tolerance: 4, preserveInput: preserveRotationInput },
+  );
+  // Must stay below the input hook: its effects release the preview only after
+  // the committed value has reached the inputs.
+  const { preview, clearPreview } = useTransformPreview(entities);
+  const getInputProps = useCallback(
+    (path: Parameters<typeof getStoredInputProps>[0]) => {
+      const props = getStoredInputProps(path);
+      return {
+        ...props,
+        value: preview ? (getValue(preview, path) || '').toString() : props.value,
+        onFocus: (event: React.FocusEvent<HTMLElement>) => {
+          clearPreview();
+          props.onFocus?.(event);
+        },
+      };
+    },
+    [getStoredInputProps, preview, clearPreview],
   );
   const { getInputProps: getConfigProps } = useComponentInput(
     entity,

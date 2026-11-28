@@ -210,6 +210,9 @@ export class PositionGizmo implements IGizmoTransformer {
       const gizmoNode = this.gizmoManager.attachedNode as TransformNode;
       if (gizmoNode) {
         this.update(this.currentEntities, gizmoNode);
+        // Written every frame so the Transform panel can show the values live;
+        // nothing is dispatched until the drag ends.
+        this.updateEntitiesInRealTime();
       }
     });
 
