@@ -53,7 +53,9 @@ pub fn register_series() {
 }
 
 pub(crate) fn selected_slot_occupancy(slots: usize) {
-    SELECTED_SLOTS.handle([]).set(slots as f64);
+    SELECTED_SLOTS
+        .handle([])
+        .set(crate::casts::usize_f64(slots));
 }
 pub(crate) fn selected_slot_refused() {
     SELECTED_REFUSED.handle([]).increment(1);
@@ -141,8 +143,10 @@ pub(crate) fn cluster_work_cancelled() {
 }
 
 pub(crate) fn cluster_work_depths(running: usize, queued: usize) {
-    WORK_RUNNING.handle([]).set(running as f64);
-    WORK_QUEUED.handle([]).set(queued as f64);
+    WORK_RUNNING
+        .handle([])
+        .set(crate::casts::usize_f64(running));
+    WORK_QUEUED.handle([]).set(crate::casts::usize_f64(queued));
 }
 
 pub(crate) fn cluster_feed_oversized() {
@@ -162,7 +166,9 @@ pub(crate) fn ws_pending_eviction() {
 
 /// `/ws` sockets currently in the handshake, out of `WS_MAX_PENDING_HANDSHAKES`.
 pub(crate) fn ws_pending_handshakes(held: usize) {
-    WS_PENDING_HELD.handle([]).set(held as f64);
+    WS_PENDING_HELD
+        .handle([])
+        .set(crate::casts::usize_f64(held));
 }
 
 /// A `/ws` upgrade the per-client cap cannot attribute; warns on the first

@@ -226,10 +226,11 @@ fn ceiling_ms(attempt: u32) -> u64 {
 
 async fn failed(pool: &PgPool, row: &Intent, error: &anyhow::Error) -> Result<(), sqlx::Error> {
     let attempt = row.attempts.saturating_add(1);
-    let delay = rand::rng().random_range(0..=ceiling_ms(attempt as u32));
+    let delay =
+        rand::rng().random_range(0..=ceiling_ms(u32::try_from(attempt).unwrap_or(u32::MAX)));
     let updated = sqlx::query("UPDATE social.livekit_removal_intents SET attempts=$5,next_attempt_at=$6,claim_id=NULL,claim_until=NULL WHERE root_key=$1 AND target_key=$2 AND generation=$3 AND claim_id=$4 AND claim_until>$7")
         .bind(&row.root_key).bind(&row.target_key).bind(row.generation).bind(row.claim_id).bind(attempt)
-        .bind(now_utc() + chrono::Duration::milliseconds(delay as i64)).bind(now_utc()).execute(pool).await?.rows_affected();
+        .bind(now_utc() + chrono::Duration::milliseconds(i64::try_from(delay).unwrap_or(i64::MAX))).bind(now_utc()).execute(pool).await?.rows_affected();
     if updated != 0 {
         declarations::LIVEKIT_REMOVAL_FAILURES
             .handle([])
@@ -620,8 +621,8 @@ pub(super) fn spawn_jobs(state: &Arc<CommsState>, jobs: &Jobs) {
                 passes=passes.wrapping_add(1);
                 if passes%60==1 {
                     let (count,oldest,attempts):(i64,Option<NaiveDateTime>,Option<i32>)=sqlx::query_as("SELECT count(*),min(created_at),max(attempts) FROM social.livekit_removal_intents").fetch_one(&state.pool).await?;
-                    declarations::LIVEKIT_REMOVAL_PENDING.handle([]).set(count as f64);
-                    declarations::LIVEKIT_REMOVAL_OLDEST_SECONDS.handle([]).set(oldest.map(|at|(now_utc()-at).num_seconds().max(0)).unwrap_or(0) as f64);
+                    declarations::LIVEKIT_REMOVAL_PENDING.handle([]).set(crate::casts::i64_f64(count));
+                    declarations::LIVEKIT_REMOVAL_OLDEST_SECONDS.handle([]).set(crate::casts::i64_f64(oldest.map(|at|(now_utc()-at).num_seconds().max(0)).unwrap_or(0)));
                     declarations::LIVEKIT_REMOVAL_MAX_ATTEMPTS.handle([]).set(attempts.unwrap_or(0) as f64);
                     ctx.progress(format!("{count} pending removal intents"));
                 }
@@ -633,6 +634,12 @@ pub(super) fn spawn_jobs(state: &Arc<CommsState>, jobs: &Jobs) {
 }
 
 #[cfg(test)]
+#[allow(
+    clippy::cast_sign_loss,
+    clippy::cast_possible_truncation,
+    clippy::cast_possible_wrap,
+    reason = "test fixtures use small literal values"
+)]
 mod tests {
     use super::*;
 
@@ -2193,8 +2200,13 @@ async fn drive_island_dispatch(
     let mut dispatch = dispatch.clone();
     let service = state.room_service();
     for repair in 0..2 {
-        let call =
-            service.remove_participant_with_cutoff(room, identity, Some(dispatch.cutoff as i64));
+        let call = service.remove_participant_with_cutoff(
+            room,
+            identity,
+            Some(crate::protocol::bus::cluster::cutoff_seconds(
+                dispatch.cutoff,
+            )),
+        );
         let outcome = if connection {
             tokio::time::timeout(Duration::from_secs(2), call)
                 .await
@@ -2218,7 +2230,7 @@ async fn drive_island_dispatch(
             classified,
             dispatch.phase,
             quarantine,
-            chrono::Utc::now().timestamp_millis().max(0) as u64,
+            crate::casts::unix_millis(),
             dispatch.cutoff,
         )
         .ok_or(IslandDispatchUncertain)?;

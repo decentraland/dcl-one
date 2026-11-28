@@ -3105,7 +3105,9 @@ fn display_names_drop_invisible_characters_and_never_carry_another_wallet() {
 /// `streamer_token` mints them (a version 7 UUID carries the time).
 fn streamer_minted_ago(place: &str, age_ms: i64) -> String {
     let mut bytes = *Uuid::new_v4().as_bytes();
-    let ms = ((chrono::Utc::now().timestamp_millis() - age_ms) as u64).to_be_bytes();
+    let ms = u64::try_from(chrono::Utc::now().timestamp_millis() - age_ms)
+        .unwrap()
+        .to_be_bytes();
     bytes[..6].copy_from_slice(&ms[2..]);
     bytes[6] = (bytes[6] & 0x0f) | 0x70;
     format!(

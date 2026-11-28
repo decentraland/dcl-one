@@ -976,6 +976,8 @@ async fn notify(state: &CommsState, row: &Cleanup, token: Uuid) -> Result<(), Ap
         }
     }
     for (index, recipient) in recipients.iter().enumerate().skip(cursor) {
+        let index = i32::try_from(index)
+            .map_err(|_| ApiError::internal("stream cleanup cursor out of range"))?;
         let mut metadata = metadata.clone();
         metadata["address"] = serde_json::json!(recipient.as_str());
         let event = StreamingNotification {
@@ -994,7 +996,7 @@ async fn notify(state: &CommsState, row: &Cleanup, token: Uuid) -> Result<(), Ap
         // A crash between acceptance and this checkpoint safely replays one
         // event/recipient identity; a successful prefix never starves its suffix.
         let changed=sqlx::query("UPDATE social.scene_stream_cleanup SET recipient_cursor=$4 WHERE access_id=$1 AND claim_token=$2 AND recipient_cursor=$3 AND recipients_resolved")
-            .bind(row.access_id).bind(token).bind(index as i32).bind(index as i32+1).execute(&state.pool).await?;
+            .bind(row.access_id).bind(token).bind(index).bind(index+1).execute(&state.pool).await?;
         if changed.rows_affected() == 0 {
             return Err(ApiError::internal("stream cleanup lease lost"));
         }
@@ -2210,7 +2212,7 @@ mod tests {
                 .fetch_one(&state.pool)
                 .await
                 .unwrap();
-                if cursor == index as i32 + 1 {
+                if cursor == i32::try_from(index).unwrap() + 1 {
                     break;
                 }
                 assert!(

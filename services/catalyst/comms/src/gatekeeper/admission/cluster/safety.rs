@@ -19,6 +19,10 @@ pub(super) const TOKEN_EXPIRY_SAFETY: std::time::Duration = std::time::Duration:
 const FULL_MAX_ISSUER_WAIT_SECONDS: u64 = super::MAX_ISLAND_TOKEN_TTL_SECONDS
     + LIVEKIT_TOKEN_LEEWAY.as_secs()
     + TOKEN_EXPIRY_SAFETY.as_secs();
+#[allow(
+    clippy::cast_possible_wrap,
+    reason = "the issuer wait is about two minutes of seconds"
+)]
 const SETTLED_RETENTION_SECONDS: i64 = FULL_MAX_ISSUER_WAIT_SECONDS as i64;
 
 #[derive(Clone)]
@@ -223,14 +227,14 @@ impl SafetyStore {
                 .map_err(|_| GatewayError::Unknown)?;
             if generation <= 0
                 || token_floor < 0
-                || token_floor as u64 > crate::protocol::bus::cluster::MAX_CONSUMER_SECONDS
+                || token_floor.unsigned_abs() > crate::protocol::bus::cluster::MAX_CONSUMER_SECONDS
             {
                 return Err(GatewayError::Unknown);
             }
             Ok(SafetyLease {
                 snapshot: SafetySnapshot {
-                    generation: generation as u64,
-                    token_floor: token_floor as u64,
+                    generation: generation.unsigned_abs(),
+                    token_floor: token_floor.unsigned_abs(),
                 },
                 tx,
             })
@@ -414,7 +418,9 @@ impl SafetyStore {
         }
         let (now,prior):(i64,i64)=sqlx::query_as("SELECT floor(extract(epoch FROM timezone('UTC',clock_timestamp())))::bigint,COALESCE((SELECT max(cutoff) FROM social.island_cleanup_dispatches WHERE wallet=$1),0)")
             .bind(wallet).fetch_one(&mut *lease.tx).await.map_err(|_|GatewayError::Unknown)?;
-        let cutoff = (now as u64)
+        let now = u64::try_from(now).map_err(|_| GatewayError::Unknown)?;
+        let prior = u64::try_from(prior).map_err(|_| GatewayError::Unknown)?;
+        let cutoff = now
             .checked_add(5)
             .ok_or(GatewayError::Unknown)?
             .max(floor + 1)
@@ -425,12 +431,13 @@ impl SafetyStore {
                     .checked_add(1)
                     .ok_or(GatewayError::Unknown)?,
             )
-            .max((prior as u64).checked_add(1).ok_or(GatewayError::Unknown)?);
+            .max(prior.checked_add(1).ok_or(GatewayError::Unknown)?);
         if cutoff > crate::protocol::bus::cluster::MAX_CONSUMER_SECONDS
-            || cutoff.saturating_sub(now as u64) >= 59
+            || cutoff.saturating_sub(now) >= 59
         {
             return Err(GatewayError::Unknown);
         }
+        let cutoff_param = i64::try_from(cutoff).map_err(|_| GatewayError::Unknown)?;
         if let Some(previous) = previous {
             sqlx::query("UPDATE social.island_cleanup_dispatches SET state='superseded',quarantine_until=NULL WHERE dispatch_id=$1 AND state='settled_late'")
                 .bind(previous).execute(&mut *lease.tx).await.map_err(|_|GatewayError::Unknown)?;
@@ -443,7 +450,7 @@ impl SafetyStore {
         let id = Uuid::new_v4();
         sqlx::query("INSERT INTO social.island_cleanup_dispatches(dispatch_id,wallet,purpose,pulse_source,pulse_takeover_id,enforcement_cause,intent_root_key,intent_target_key,intent_generation,room_name,participant_identity,cutoff,fence_generation,phase,state) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,'dispatched')")
             .bind(id).bind(wallet).bind(purpose).bind(source).bind(takeover).bind(enforcement.map(|v|v.0)).bind(enforcement.map(|v|v.1)).bind(enforcement.map(|v|v.2)).bind(enforcement.map(|v|v.3))
-            .bind(room).bind(identity).bind(cutoff as i64).bind(i64::try_from(lease.snapshot.generation).map_err(|_|GatewayError::Unknown)?.checked_add(1).ok_or(GatewayError::Unknown)?).bind(phase.as_str())
+            .bind(room).bind(identity).bind(cutoff_param).bind(i64::try_from(lease.snapshot.generation).map_err(|_|GatewayError::Unknown)?.checked_add(1).ok_or(GatewayError::Unknown)?).bind(phase.as_str())
             .execute(&mut *lease.tx).await.map_err(|_|GatewayError::Unknown)?;
         Self::advance(&mut lease.tx, wallet, None).await?;
         Ok(Some(Dispatch {
@@ -461,12 +468,14 @@ impl SafetyStore {
     ) -> Result<Dispatch, GatewayError> {
         let row=sqlx::query("SELECT cutoff,state,quarantine_until,phase FROM social.island_cleanup_dispatches WHERE dispatch_id=$1").bind(id).fetch_one(&mut **tx).await.map_err(|_|GatewayError::Unknown)?;
         let cutoff: i64 = row.try_get("cutoff").map_err(|_| GatewayError::Unknown)?;
-        if cutoff <= 0 || cutoff as u64 > crate::protocol::bus::cluster::MAX_CONSUMER_SECONDS {
+        if cutoff <= 0
+            || cutoff.unsigned_abs() > crate::protocol::bus::cluster::MAX_CONSUMER_SECONDS
+        {
             return Err(GatewayError::Unknown);
         }
         Ok(Dispatch {
             dispatch_id: id,
-            cutoff: cutoff as u64,
+            cutoff: cutoff.unsigned_abs(),
             state: DispatchState::decode(row.try_get("state").map_err(|_| GatewayError::Unknown)?)?,
             quarantine_until: row
                 .try_get("quarantine_until")
@@ -480,8 +489,12 @@ impl SafetyStore {
         wallet: &str,
         floor: Option<u64>,
     ) -> Result<(), GatewayError> {
+        let floor = floor
+            .map(i64::try_from)
+            .transpose()
+            .map_err(|_| GatewayError::Unknown)?;
         sqlx::query("UPDATE social.island_admission_fences SET generation=generation+1,token_floor=GREATEST(token_floor,COALESCE($2,token_floor)),updated_at=timezone('UTC',clock_timestamp()) WHERE wallet=$1")
-            .bind(wallet).bind(floor.map(|v|v as i64)).execute(&mut **tx).await.map_err(|_|GatewayError::Unknown)?;
+            .bind(wallet).bind(floor).execute(&mut **tx).await.map_err(|_|GatewayError::Unknown)?;
         Ok(())
     }
     /// An immutable dispatch UUID, never its scheduling lease, owns settlement.
@@ -602,10 +615,11 @@ impl SafetyStore {
                         || fence.audience != audience
                         || fence.lane != "realm"
                         || fence.owner_session != stamp.session
-                        || fence.owner_epoch != epoch as u64
-                        || fence.fencing_token != token as u64
-                        || !(fence.assignment_revision == revision as u64
-                            || fence.assignment_revision == (revision as u64).saturating_add(1))
+                        || fence.owner_epoch != epoch.unsigned_abs()
+                        || fence.fencing_token != token.unsigned_abs()
+                        || !(fence.assignment_revision == revision.unsigned_abs()
+                            || fence.assignment_revision
+                                == revision.unsigned_abs().saturating_add(1))
                     {
                         return Err(GatewayError::Unknown);
                     }
@@ -669,7 +683,8 @@ impl SafetyStore {
         .fetch_one(&mut *lease.tx)
         .await
         .map_err(|_| GatewayError::Unknown)?;
-        let cutoff = (now as u64)
+        let now = u64::try_from(now).map_err(|_| GatewayError::Unknown)?;
+        let cutoff = now
             .checked_add(5)
             .ok_or(GatewayError::Unknown)?
             .max(
@@ -686,10 +701,11 @@ impl SafetyStore {
                     .ok_or(GatewayError::Unknown)?,
             );
         if cutoff > crate::protocol::bus::cluster::MAX_CONSUMER_SECONDS
-            || cutoff.saturating_sub(now as u64) >= 59
+            || cutoff.saturating_sub(now) >= 59
         {
             return Err(GatewayError::Unknown);
         }
+        let cutoff_param = i64::try_from(cutoff).map_err(|_| GatewayError::Unknown)?;
         let changed=sqlx::query("UPDATE social.island_cleanup_dispatches SET state='superseded',quarantine_until=NULL WHERE dispatch_id=$1 AND wallet=$2 AND state='quarantine' AND settled_at IS NOT NULL")
             .bind(id).bind(&wallet).execute(&mut *lease.tx).await.map_err(|_|GatewayError::Unknown)?.rows_affected();
         if changed != 1 {
@@ -697,7 +713,7 @@ impl SafetyStore {
         }
         let next = Uuid::new_v4();
         sqlx::query("INSERT INTO social.island_cleanup_dispatches(dispatch_id,wallet,purpose,pulse_source,pulse_takeover_id,enforcement_cause,intent_root_key,intent_target_key,intent_generation,room_name,participant_identity,cutoff,fence_generation,phase,state) SELECT $2,wallet,purpose,pulse_source,pulse_takeover_id,enforcement_cause,intent_root_key,intent_target_key,intent_generation,room_name,participant_identity,$3,$4,'quarantine_final','dispatched' FROM social.island_cleanup_dispatches WHERE dispatch_id=$1 AND wallet=$5 AND state='superseded' AND settled_at IS NOT NULL")
-            .bind(id).bind(next).bind(cutoff as i64).bind(i64::try_from(lease.snapshot.generation).map_err(|_|GatewayError::Unknown)?.checked_add(1).ok_or(GatewayError::Unknown)?).bind(&wallet).execute(&mut *lease.tx).await.map_err(|_|GatewayError::Unknown)?;
+            .bind(id).bind(next).bind(cutoff_param).bind(i64::try_from(lease.snapshot.generation).map_err(|_|GatewayError::Unknown)?.checked_add(1).ok_or(GatewayError::Unknown)?).bind(&wallet).execute(&mut *lease.tx).await.map_err(|_|GatewayError::Unknown)?;
         sqlx::query("UPDATE social.island_takeover_receipts SET latest_dispatch=$2 WHERE wallet=$3 AND latest_dispatch=$1")
             .bind(id).bind(next).bind(&wallet).execute(&mut *lease.tx).await.map_err(|_|GatewayError::Unknown)?;
         Self::advance(&mut lease.tx, &wallet, None).await?;
@@ -884,7 +900,7 @@ impl crate::gatekeeper::CommsState {
         if lease.commit().await.is_err() {
             return false;
         }
-        let now = chrono::Utc::now().timestamp_millis().max(0) as u64;
+        let now = crate::casts::unix_millis();
         super::subscriber::floor_wait_ms(stamp.token_not_before, now) == Some(0)
             && super::subscriber::floor_wait_ms(stamp.credential_not_before, now) == Some(0)
     }
@@ -921,7 +937,7 @@ impl crate::gatekeeper::CommsState {
         if lease.commit().await.is_err() {
             return false;
         }
-        let now = chrono::Utc::now().timestamp_millis().max(0) as u64;
+        let now = crate::casts::unix_millis();
         super::subscriber::floor_wait_ms(stamp.token_not_before, now) == Some(0)
             && super::subscriber::floor_wait_ms(stamp.credential_not_before, now) == Some(0)
     }
@@ -1932,7 +1948,7 @@ mod durable_tests {
             .fetch_one(&store.pool)
             .await
             .unwrap(),
-            d.cutoff as i64
+            i64::try_from(d.cutoff).unwrap()
         );
         teardown(store, admin, name).await;
     }

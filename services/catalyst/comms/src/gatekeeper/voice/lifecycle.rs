@@ -125,7 +125,7 @@ async fn finish_webhook_community(
         let key = format!("community-streaming-ended-{event_id}");
         let event = community_streaming_ended_event(
             &community_id.to_string(),
-            users.len() as i64,
+            crate::casts::len_i64(users.len()),
             &key,
             now.and_utc().timestamp_millis(),
         );

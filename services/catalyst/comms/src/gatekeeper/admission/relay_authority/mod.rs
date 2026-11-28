@@ -43,6 +43,7 @@ use tokio::{sync::Semaphore, time::Instant};
 use uuid::Uuid;
 
 const CONTENT_TYPE: &str = "application/x-protobuf";
+#[allow(clippy::cast_possible_truncation, reason = "REPLAY_TTL is 11 seconds")]
 const MAX_REPLAYS: usize = MAX_LEASES * (REPLAY_TTL.as_secs() as usize + 5);
 const MAX_CHECKS: usize = 128;
 const CHECK_TIMEOUT: Duration = Duration::from_millis(650);
@@ -507,7 +508,7 @@ impl RelayAuthority {
         wire::authority_response::Result::Lease(wire::Lease {
             lease_id: id.to_vec(),
             authority_incarnation: self.incarnation.to_vec(),
-            ttl_ms: LEASE_TTL.as_millis() as u32,
+            ttl_ms: u32::try_from(LEASE_TTL.as_millis()).unwrap_or(u32::MAX),
             admitted: Some(wire::AdmittedRoom {
                 room: room.claims.video.room.clone(),
                 identity: room.claims.sub.clone(),

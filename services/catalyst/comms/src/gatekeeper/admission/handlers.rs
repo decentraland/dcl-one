@@ -28,7 +28,7 @@ use crate::world_identity::is_world_realm_name;
 pub async fn status(State(state): State<SharedState>) -> Json<Value> {
     let current_time = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_millis() as u64)
+        .map(crate::casts::millis)
         .unwrap_or(0);
     Json(serde_json::json!({
         "version": env!("CARGO_PKG_VERSION"),

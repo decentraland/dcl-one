@@ -96,7 +96,7 @@ impl ControlPosition {
         out.extend(self.epoch.to_le_bytes());
         out.extend(self.sequence.to_le_bytes());
         for value in [&self.audience, &self.realm] {
-            out.extend((value.len() as u16).to_le_bytes());
+            out.extend(u16::try_from(value.len()).ok()?.to_le_bytes());
             out.extend(value.as_bytes());
         }
         if let Some(position) = self.position {
@@ -183,7 +183,7 @@ mod tests {
             let bytes = hex::decode(vector["wire_hex"].as_str().unwrap()).unwrap();
             assert_eq!(
                 bytes.len(),
-                vector["length_bytes"].as_u64().unwrap() as usize
+                usize::try_from(vector["length_bytes"].as_u64().unwrap()).unwrap()
             );
             if vector["subject"] == LegacyRoomIntent::SUBJECT {
                 let decoded = LegacyRoomIntent::decode(&bytes);

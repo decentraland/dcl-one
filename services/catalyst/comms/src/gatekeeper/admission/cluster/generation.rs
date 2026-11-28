@@ -18,7 +18,7 @@ fn binding(
     }
     let value = PulseGenerationBinding {
         audience: audience.into(),
-        epoch: epoch as u64,
+        epoch: epoch.unsigned_abs(),
         source_incarnation: source,
     };
     value

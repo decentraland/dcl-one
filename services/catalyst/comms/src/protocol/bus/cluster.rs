@@ -10,6 +10,15 @@ use crate::protocol::pulse::decentraland::pulse::{PeerClusterChange, PeerCluster
 pub const MAX_SAFE_SECONDS: u64 = 9_007_199_254_740_991;
 pub const MAX_CONSUMER_SECONDS: u64 = MAX_SAFE_SECONDS / 1000;
 
+/// A dispatch cutoff, already bounded by [`MAX_CONSUMER_SECONDS`], as signed seconds.
+#[allow(
+    clippy::cast_possible_wrap,
+    reason = "dispatch cutoffs are checked against MAX_CONSUMER_SECONDS (below 2^44)"
+)]
+pub fn cutoff_seconds(cutoff: u64) -> i64 {
+    cutoff as i64
+}
+
 /// Completion retains its operation identity across transport loss and retries.
 pub struct Completion {
     pub wallet: String,
@@ -387,9 +396,12 @@ mod tests {
                         takeover_id: "T".into(),
                         displaced_session: format!("0x{}", "03".repeat(20)),
                         displaced_cluster_id: "x".repeat(
-                            vector["construction"]["displaced_cluster_repeat"]
-                                .as_u64()
-                                .unwrap() as usize,
+                            usize::try_from(
+                                vector["construction"]["displaced_cluster_repeat"]
+                                    .as_u64()
+                                    .unwrap(),
+                            )
+                            .unwrap(),
                         ),
                         displaced_realm: "r".into(),
                     },
@@ -399,7 +411,7 @@ mod tests {
             assert_eq!(reply.encode_to_vec(), expected);
             assert_eq!(
                 expected.len(),
-                vector["length_bytes"].as_u64().unwrap() as usize
+                usize::try_from(vector["length_bytes"].as_u64().unwrap()).unwrap()
             );
             let lookup = ClusterLookup {
                 wallet: reply.wallet.clone(),

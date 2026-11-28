@@ -50,11 +50,14 @@ use crate::shared::{cors, nul_guard};
 
 /// Evidence files of one report: the report form's count (`REPORT_LIMITS`
 /// in `apps/sites/src/data/lib/catalyst/landings/report.ts`).
-const MAX_FILES: usize = 5;
+const MAX_FILES_U32: u32 = 5;
+const MAX_FILES: usize = MAX_FILES_U32 as usize;
 /// The node's cap on one evidence file, enough for a screenshot or a short
 /// clip. It is half the form's 10 MB: the bytes stay in the shared store for
 /// as long as the report does.
-const MAX_FILE_BYTES: usize = 5 * 1024 * 1024;
+const MAX_FILE_BYTES_U32: u32 = 5 * 1024 * 1024;
+const MAX_FILE_BYTES: usize = MAX_FILE_BYTES_U32 as usize;
+const MAX_FILE_BYTES_I64: i64 = MAX_FILE_BYTES_U32 as i64;
 /// Reports one wallet may file in a rolling hour (`player_reports_reporter_idx`):
 /// a person writes each report by hand, and five an hour is above what the
 /// whole node receives in a day.
@@ -62,7 +65,7 @@ const REPORTS_PER_HOUR: i64 = 5;
 /// Unfiled slots one wallet may hold, counted over the last
 /// `PENDING_SLOT_WINDOW_HOURS` (`player_report_evidence_reporter_idx`): the
 /// evidence of one hour's reports.
-const PENDING_SLOTS_PER_REPORTER: i64 = REPORTS_PER_HOUR * MAX_FILES as i64;
+const PENDING_SLOTS_PER_REPORTER: i64 = REPORTS_PER_HOUR * MAX_FILES_U32 as i64;
 /// A form left open is filed within a day or not at all; past it the slots
 /// stop counting and the sweep deletes them.
 const PENDING_SLOT_WINDOW_HOURS: i32 = 24;
@@ -71,12 +74,17 @@ const PENDING_SLOT_WINDOW_HOURS: i32 = 24;
 /// quotas, for the people one address can stand for (a household, an
 /// office), and far above the form's use (`MAX_FILES` per report, a few
 /// reports a day on the whole node).
+#[allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    reason = "a constant of 25 slots"
+)]
 const SOURCE_SLOTS_PER_DAY: u32 = 4 * PENDING_SLOTS_PER_REPORTER as u32;
 /// Evidence one client address may send to the store, in KiB: a bucket of
 /// this size that refills over a day. It is the slot budget with every slot
 /// filled once at the file cap; each `PUT` of the declared size and type
 /// spends its size, also one the slot then refuses.
-const SOURCE_KIB_PER_DAY: u32 = SOURCE_SLOTS_PER_DAY * (MAX_FILE_BYTES / 1024) as u32;
+const SOURCE_KIB_PER_DAY: u32 = SOURCE_SLOTS_PER_DAY * (MAX_FILE_BYTES_U32 / 1024);
 const SOURCE_WINDOW: std::time::Duration = std::time::Duration::from_secs(24 * 60 * 60);
 /// What one slot counts for at least in the node's bound, whatever size it
 /// declares. A slot may declare one byte, so the declared sizes alone do
@@ -99,11 +107,11 @@ const RESERVATION_MINUTES: i32 = 15;
 const NODE_SHARE_DIVISOR: i64 = 16;
 /// The least an address's share is, whatever the bound: one report's files
 /// at the cap, so a small bound still takes a whole report from an address.
-const NODE_SHARE_FLOOR_BYTES: i64 = (MAX_FILES * MAX_FILE_BYTES) as i64;
+const NODE_SHARE_FLOOR_BYTES: i64 = MAX_FILES_U32 as i64 * MAX_FILE_BYTES_I64;
 /// Expired slots one presign deletes at most. A presign mints at most
 /// `MAX_FILES` slots, so twenty presigns' worth a pass keeps the sweep ahead
 /// of the slots that expire and bounds the rows one request locks.
-const SWEEP_BATCH: i64 = 20 * MAX_FILES as i64;
+const SWEEP_BATCH: i64 = 20 * MAX_FILES_U32 as i64;
 /// The form's limit for the description and for the comments.
 const TEXT_MAX: usize = 500;
 /// The largest valid body is five 255-character filenames or two
@@ -279,7 +287,7 @@ fn spend(budget: &RateLimiter, source: &str, cost: u32, what: &str) -> Result<()
 
 /// A file's cost in the byte budget: its size in whole KiB, rounded up.
 fn kib(bytes: usize) -> u32 {
-    bytes.div_ceil(1024) as u32
+    u32::try_from(bytes.div_ceil(1024)).unwrap_or(u32::MAX)
 }
 
 /// Deletes up to `SWEEP_BATCH` unfiled slots older than the pending window,
@@ -496,7 +504,7 @@ async fn presign(
                 file.content_type
             )));
         }
-        if file.file_size < 1 || file.file_size > MAX_FILE_BYTES as i64 {
+        if file.file_size < 1 || file.file_size > MAX_FILE_BYTES_I64 {
             return Err(ApiError::bad_request(format!(
                 "fileSize must be between 1 and {MAX_FILE_BYTES} bytes"
             )));
@@ -519,7 +527,7 @@ async fn presign(
     .bind(PENDING_SLOT_WINDOW_HOURS)
     .fetch_one(&mut *tx)
     .await?;
-    if pending + slots.len() as i64 > PENDING_SLOTS_PER_REPORTER {
+    if pending + crate::casts::len_i64(slots.len()) > PENDING_SLOTS_PER_REPORTER {
         return Err(ApiError::http(
             429,
             format!("At most {PENDING_SLOTS_PER_REPORTER} unsubmitted evidence files at a time"),
@@ -529,7 +537,7 @@ async fn presign(
     spend(
         &state.source_slots,
         &source,
-        slots.len() as u32,
+        u32::try_from(slots.len()).unwrap_or(u32::MAX),
         "evidence files",
     )?;
     check_node_bound(
@@ -728,7 +736,7 @@ async fn upload(
         )));
     }
     let declared_size: i64 = row.get("declared_size");
-    if body.len() as i64 != declared_size {
+    if crate::casts::len_i64(body.len()) != declared_size {
         return Err(ApiError::bad_request(format!(
             "the file must hold the {declared_size} bytes the presign declared"
         )));
@@ -1602,17 +1610,17 @@ mod tests {
 
     #[tokio::test]
     async fn the_node_bounds_a_day_of_evidence_from_all_wallets_and_addresses() {
-        let cap = 2 * MAX_FILE_BYTES as i64 + NODE_SLOT_FLOOR_BYTES;
+        let cap = 2 * MAX_FILE_BYTES_I64 + NODE_SLOT_FLOOR_BYTES;
         let Some((app, dir, pool)) = app_alone(cap).await else {
             eprintln!("SKIP: player reports need CATALYST_TEST_DATABASE_URL");
             return;
         };
         // Each presign is a fresh wallet at a fresh address, so no wallet
         // quota and no address budget is near. A small file counts for the floor.
-        let (status, value) = presign_sized(&app, "203.0.113.21", MAX_FILE_BYTES as i64).await;
+        let (status, value) = presign_sized(&app, "203.0.113.21", MAX_FILE_BYTES_I64).await;
         assert_eq!(status, StatusCode::OK, "{value}");
         let first = Uuid::parse_str(value["reportId"].as_str().unwrap()).unwrap();
-        let (status, value) = presign_sized(&app, "203.0.113.22", MAX_FILE_BYTES as i64).await;
+        let (status, value) = presign_sized(&app, "203.0.113.22", MAX_FILE_BYTES_I64).await;
         assert_eq!(status, StatusCode::OK, "{value}");
         let (status, value) = presign_sized(&app, "203.0.113.23", 1).await;
         assert_eq!(status, StatusCode::OK, "{value}");
@@ -1639,7 +1647,7 @@ mod tests {
         .execute(&pool)
         .await
         .unwrap();
-        let (status, value) = presign_sized(&app, "203.0.113.25", MAX_FILE_BYTES as i64).await;
+        let (status, value) = presign_sized(&app, "203.0.113.25", MAX_FILE_BYTES_I64).await;
         assert_eq!(status, StatusCode::OK, "{value}");
         let (status, _) = presign_sized(&app, "203.0.113.26", 1).await;
         assert_eq!(status, StatusCode::TOO_MANY_REQUESTS);
@@ -1668,7 +1676,11 @@ mod tests {
             .iter()
             .filter(|(status, _)| *status == StatusCode::TOO_MANY_REQUESTS)
             .count();
-        assert_eq!((accepted, refused), (room as usize, 9), "{answers:?}");
+        assert_eq!(
+            (accepted, refused),
+            (usize::try_from(room).unwrap(), 9),
+            "{answers:?}"
+        );
         let slots: i64 = sqlx::query_scalar("SELECT count(*) FROM social.player_report_evidence")
             .fetch_one(&pool)
             .await
@@ -1679,7 +1691,7 @@ mod tests {
 
     #[tokio::test]
     async fn addresses_at_their_share_leave_the_node_open_to_another_address() {
-        let share = 6 * MAX_FILE_BYTES as i64;
+        let share = 6 * MAX_FILE_BYTES_I64;
         let Some((app, dir, _)) = app_alone(NODE_SHARE_DIVISOR * share).await else {
             eprintln!("SKIP: player reports need CATALYST_TEST_DATABASE_URL");
             return;
@@ -1690,7 +1702,7 @@ mod tests {
         for n in 1..=5 {
             let address = format!("203.0.113.{n}");
             for _ in 0..6 {
-                let (status, value) = presign_sized(&app, &address, MAX_FILE_BYTES as i64).await;
+                let (status, value) = presign_sized(&app, &address, MAX_FILE_BYTES_I64).await;
                 assert_eq!(status, StatusCode::OK, "{value}");
             }
             let (status, value) = presign_sized(&app, &address, 1).await;
@@ -1698,7 +1710,7 @@ mod tests {
             assert!(value.to_string().contains("This address"), "{value}");
         }
         // The node still takes the files of a sixth.
-        let (status, value) = presign_sized(&app, "203.0.113.6", MAX_FILE_BYTES as i64).await;
+        let (status, value) = presign_sized(&app, "203.0.113.6", MAX_FILE_BYTES_I64).await;
         assert_eq!(status, StatusCode::OK, "{value}");
         let _ = std::fs::remove_dir_all(dir);
     }

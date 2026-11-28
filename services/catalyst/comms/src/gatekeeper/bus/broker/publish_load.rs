@@ -1,4 +1,9 @@
 //! Test-only load fixture: real AppState -> feed outbox -> BrokerBus -> loopback NATS.
+#![allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_precision_loss,
+    reason = "load-test durations and sample counts stay far below each target type's range"
+)]
 use super::*;
 use crate::archipelago::{Settings, feed::ControlPositionAnnouncement, test_support::state_on};
 use crate::protocol::bus::control_position::{ControlPosition, SUBJECT};
