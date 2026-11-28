@@ -9,6 +9,11 @@ pub fn millis(d: Duration) -> u64 {
     u64::try_from(d.as_millis()).unwrap_or(u64::MAX)
 }
 
+/// Whole microseconds, saturated at `u64::MAX`.
+pub fn micros(d: Duration) -> u64 {
+    u64::try_from(d.as_micros()).unwrap_or(u64::MAX)
+}
+
 /// Whole nanoseconds, saturated at `u64::MAX` (about 584 years).
 pub fn nanos(d: Duration) -> u64 {
     u64::try_from(d.as_nanos()).unwrap_or(u64::MAX)
@@ -48,6 +53,17 @@ pub fn index_usize(n: i64) -> usize {
 /// A `u64` as a `bigint`, saturated at `i64::MAX`.
 pub fn saturating_i64(n: u64) -> i64 {
     i64::try_from(n).unwrap_or(i64::MAX)
+}
+
+/// `n` clamped to the `i32` range.
+pub fn clamp_i32(n: i64) -> i32 {
+    let clamped = n.clamp(i64::from(i32::MIN), i64::from(i32::MAX));
+    i32::try_from(clamped).unwrap_or_default()
+}
+
+/// A count as an `integer` column, saturated at `i32::MAX`.
+pub fn sat_i32(n: u32) -> i32 {
+    i32::try_from(n).unwrap_or(i32::MAX)
 }
 
 /// A statement's row count, saturated.
