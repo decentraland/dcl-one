@@ -330,10 +330,10 @@ impl Topology {
         }
         declarations::WORLD_PRESENCE_SESSIONS
             .handle([])
-            .set(state.world.live.len() as f64);
+            .set(crate::casts::usize_f64(state.world.live.len()));
         declarations::WORLD_PRESENCE_WALLETS
             .handle([])
-            .set(view.world.len() as f64);
+            .set(crate::casts::usize_f64(view.world.len()));
         if changed {
             self.bump(view);
         } else {

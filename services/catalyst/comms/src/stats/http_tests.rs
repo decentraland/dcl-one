@@ -672,7 +672,7 @@ async fn source_handler_fixtures_match_pulse_state_and_all_http_aliases() {
                 .as_array()
                 .unwrap()
                 .iter()
-                .map(|v| v.as_u64().unwrap() as u8)
+                .map(|v| u8::try_from(v.as_u64().unwrap()).unwrap())
                 .collect();
             let observation = if subject.ends_with(".heartbeat") {
                 Heartbeat::decode(bytes.as_slice())

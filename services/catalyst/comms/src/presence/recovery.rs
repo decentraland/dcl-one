@@ -405,7 +405,7 @@ impl Presence {
             .map_err(|_| RecoveryFailure::Deadline)??;
         declarations::PRESENCE_REFUSED_ROOMS
             .handle([])
-            .set(refused.len() as f64);
+            .set(crate::casts::usize_f64(refused.len()));
         if !refused.is_empty() {
             tracing::warn!(
                 count = refused.len(),

@@ -114,6 +114,10 @@ fn thumbnail(scene: &OrderedJson, url: &str) -> Result<Option<OrderedJson>, Erro
         .filter(|h| truthy(h))
         .map(|hash| OrderedJson::String(format!("{url}/contents/{}", js_string(hash)))))
 }
+#[allow(
+    clippy::cast_precision_loss,
+    reason = "JavaScript numbers are f64; the rounding matches the upstream rendering"
+)]
 fn js_string(value: &OrderedJson) -> String {
     match value {
         OrderedJson::String(s) => s.clone(),

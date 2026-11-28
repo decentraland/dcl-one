@@ -109,10 +109,12 @@ struct RecoveredRoom {
 }
 impl RecoveredRoom {
     fn count(&self) -> i64 {
-        self.participants
-            .iter()
-            .filter(|p| counts_as_player(&p.identity))
-            .count() as i64
+        crate::casts::len_i64(
+            self.participants
+                .iter()
+                .filter(|p| counts_as_player(&p.identity))
+                .count(),
+        )
     }
 }
 #[derive(Clone, Default)]
@@ -319,8 +321,8 @@ impl Presence {
             }
         }
         CommsStats {
-            rooms: rooms.filter(|r| r.count() > 0).count() as i64,
-            users: identities.len() as i64,
+            rooms: crate::casts::len_i64(rooms.filter(|r| r.count() > 0).count()),
+            users: crate::casts::len_i64(identities.len()),
         }
     }
     /// Public lobby projection only. Admission must use the bounded async API.
