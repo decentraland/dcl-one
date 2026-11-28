@@ -1851,6 +1851,42 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn community_imports_recover_older_sql_imports_on_upgrade() {
+        use crate::scratch::{OwnedDatabase, Schema};
+
+        let Some(db) = OwnedDatabase::new("community_imports", Schema::Full, 2).await else {
+            return;
+        };
+        sqlx::raw_sql("DROP TABLE social.community_imports;
+            CREATE SCHEMA dcl_migration;
+            CREATE TABLE dcl_migration.social_community_member_loaded (community_id uuid);
+            CREATE TABLE dcl_migration.social_community_ranking_loaded (community_id uuid);
+            INSERT INTO social.communities (id, name, owner_address) VALUES
+              ('00000000-0000-4000-8000-000000000001', 'members', '0x0000000000000000000000000000000000000001'),
+              ('00000000-0000-4000-8000-000000000002', 'ranking', '0x0000000000000000000000000000000000000001'),
+              ('00000000-0000-4000-8000-000000000003', 'native', '0x0000000000000000000000000000000000000001');
+            INSERT INTO dcl_migration.social_community_member_loaded SELECT id FROM social.communities WHERE name = 'members';
+            INSERT INTO dcl_migration.social_community_ranking_loaded SELECT id FROM social.communities WHERE name = 'ranking';")
+            .execute(&db.pool).await.unwrap();
+        for expected in [vec!["members", "ranking"], vec!["ranking"]] {
+            migrate(&db.pool, crate::SCHEMA_SQL, crate::MIGRATIONS_SQL)
+                .await
+                .unwrap();
+            let marked: Vec<String> = sqlx::query_scalar(
+                "SELECT c.name FROM social.community_imports i
+                JOIN social.communities c ON c.id = i.community_id ORDER BY c.name",
+            )
+            .fetch_all(&db.pool)
+            .await
+            .unwrap();
+            assert_eq!(marked, expected);
+            sqlx::query("DELETE FROM social.community_imports WHERE community_id = '00000000-0000-4000-8000-000000000001'")
+                .execute(&db.pool).await.unwrap();
+        }
+        db.drop().await;
+    }
+
+    #[tokio::test]
     async fn streaming_recipient_upgrade_preserves_scalar_intents_and_delivery_progress() {
         let Some(pool) = crate::scratch::pool(2).await else {
             return;

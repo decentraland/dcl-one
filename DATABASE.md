@@ -1167,6 +1167,14 @@ credentials and compliance metric outcomes. Delayed DNS, combined network phases
 and deployed providers remain unverified; the probes do not establish exhaustive
 provider equivalence.
 
+## Community thumbnail reads
+
+`social.community_imports` records one upstream community ID per SQL import, keyed by community ID
+and removed with its community. Imported communities have local authority, so `communities.origin`
+alone cannot distinguish them from locally created ones. The raw-thumbnail lookup uses the primary
+keys of the community, thumbnail and import tables. Local bytes take precedence over a short-lived
+redirect to the configured upstream CDN.
+
 ## Community place ids
 
 `social.community_places.place_id` holds a places catalogue id or a world name,

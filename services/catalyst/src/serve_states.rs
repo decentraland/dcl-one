@@ -634,6 +634,7 @@ pub(super) fn social_states(
     explore: &explore::SharedState,
     onboarding: Arc<explore::api::onboarding::OnboardingState>,
     analytics: Option<social::analytics::Analytics>,
+    thumbnail_upstream: Option<explore::MirrorSource>,
 ) -> anyhow::Result<social::States> {
     config
         .social
@@ -728,6 +729,7 @@ pub(super) fn social_states(
                 .unwrap_or(public_url.clone())
                 .trim_end_matches('/')
                 .to_string(),
+            thumbnail_upstream,
             faces: faces.clone(),
             places_ownership_check: config.social.communities_places_ownership_check,
             mirror_interval: Duration::from_secs(
@@ -1040,7 +1042,7 @@ mod event_notice_configuration_tests {
             let onboarding = Arc::new(explore::api::onboarding::OnboardingState::new(pool.clone()));
             let social = social_states(
                 &config, &pool, &storage, &http, &content, &market, comms, None, &explore,
-                onboarding, None,
+                onboarding, None, None,
             )
             .unwrap();
             let settings = &social.notifications.settings;

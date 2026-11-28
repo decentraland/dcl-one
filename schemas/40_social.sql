@@ -402,6 +402,34 @@ CREATE TABLE social.community_thumbnails (
     CONSTRAINT community_thumbnails_pkey PRIMARY KEY (community_id)
 );
 
+-- SQL imports take local authority. Keep their source identity after the mirror row is removed.
+CREATE TABLE social.community_imports (
+    community_id uuid PRIMARY KEY REFERENCES social.communities (id) ON DELETE CASCADE
+);
+
+-- Older imports recorded membership and ranking inputs in optional import-tool ledgers.
+CREATE FUNCTION social.legacy_community_import_ids() RETURNS SETOF uuid
+LANGUAGE plpgsql STABLE SET search_path = pg_catalog AS $community_imports$
+DECLARE
+    ledger regclass;
+BEGIN
+    FOR ledger IN
+        SELECT c.oid::regclass FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+        WHERE n.nspname = 'dcl_migration'
+          AND c.relname IN ('social_community_member_loaded', 'social_community_ranking_loaded')
+          AND has_schema_privilege(n.oid, 'USAGE') AND has_table_privilege(c.oid, 'SELECT')
+    LOOP
+        RETURN QUERY EXECUTE format(
+            'SELECT c.id FROM social.communities c WHERE c.origin = ''local''
+             AND EXISTS (SELECT 1 FROM %s l WHERE l.community_id = c.id)', ledger);
+    END LOOP;
+END
+$community_imports$;
+
+-- Seed only when the table is created. Subsequent imports register their source IDs themselves.
+INSERT INTO social.community_imports (community_id)
+SELECT * FROM social.legacy_community_import_ids() ON CONFLICT DO NOTHING;
+
 -- Presence in the community voice room ('voice-chat-community-' ||
 -- community_id); presence is not permission. Participant/moderator counts and
 -- "has an active voice chat" derive from this table.

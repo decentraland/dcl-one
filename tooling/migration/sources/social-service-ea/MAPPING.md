@@ -180,6 +180,14 @@ undeployed), which the places import skips, so it is reported too.
 
 ## Community thumbnails
 
+The communities load records each source ID in `social.community_imports`, including when a newer
+local edit wins. With `COMMUNITIES_MIRROR_THUMBNAIL_URL` set, the raw-thumbnail route can redirect
+these IDs to the upstream CDN until local bytes are available. When schema migration creates the
+import table, it seeds older IDs once from readable member or ranking import records. To register
+older IDs if those records were unavailable when the table was created, replay
+`run social-service-ea --step communities --restart` with the source and target database connections
+to register the IDs. Communities created only on the node keep their local thumbnail or return 404.
+
 Upstream keeps a community's picture on its CDN bucket, not in this database, at
 `social/communities/<id>/raw-thumbnail.png`; the import moves the rows, and the takeover
 deletes the mirror row that pointed at upstream's copy. `migrate.py blobs social-service-ea`

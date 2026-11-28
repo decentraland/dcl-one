@@ -2614,6 +2614,154 @@ fn settings_fold_restricted_names_and_validate_moderators() {
     }
 }
 
+#[tokio::test]
+async fn raw_thumbnail_prefers_local_bytes_and_redirects_imported_misses() {
+    use crate::db::scratch::{OwnedDatabase, Schema};
+
+    // Other tests hold the database-wide store lock to exercise upload timeouts.
+    let Some(database) = OwnedDatabase::new("thumbnail_redirect", Schema::Full, 6).await else {
+        return;
+    };
+    let settings = Settings {
+        thumbnail_upstream: super::mirror::thumbnail_source(
+            "https://upstream.example.org/assets",
+            &[],
+            false,
+        )
+        .unwrap(),
+        ..Settings::for_tests()
+    };
+    let rig = Rig::with_pool(settings, State::explore_for_tests, database.pool.clone()).await;
+    let owner = wallet();
+    let imported = rig.community(&owner, false).await;
+    let native = rig.community(&owner, false).await;
+    // Take over the first community with the actual SQL importer, which keeps local authority.
+    let mut tx = rig.pool.begin().await.unwrap();
+    sqlx::query(
+        "CREATE TEMP TABLE stage ON COMMIT DROP AS SELECT * FROM social.communities WHERE id = $1",
+    )
+    .bind(imported)
+    .execute(&mut *tx)
+    .await
+    .unwrap();
+    sqlx::raw_sql(include_str!(concat!(
+        env!("DCL_ONE_ROOT"),
+        "/tooling/migration/sources/social-service-ea/communities.load.sql"
+    )))
+    .execute(&mut *tx)
+    .await
+    .unwrap();
+    tx.commit().await.unwrap();
+
+    let get = |id: CommunityId, conditional: bool| {
+        let mut request = Request::get(format!("/social/communities/{id}/raw-thumbnail.png?v=old"));
+        if conditional {
+            request = request.header(header::IF_NONE_MATCH, "*");
+        }
+        rig.app
+            .clone()
+            .oneshot(request.body(Body::empty()).unwrap())
+    };
+    let expected = format!(
+        "https://upstream.example.org/assets/social/communities/{imported}/raw-thumbnail.png"
+    );
+    let response = get(imported, false).await.unwrap();
+    assert_eq!(response.status(), StatusCode::FOUND);
+    assert_eq!(response.headers()[header::LOCATION], expected);
+    assert_eq!(
+        response.headers()[header::CACHE_CONTROL],
+        "public, max-age=60"
+    );
+    assert_eq!(
+        get(native, false).await.unwrap().status(),
+        StatusCode::NOT_FOUND
+    );
+    assert_eq!(
+        get(CommunityId::new(), false).await.unwrap().status(),
+        StatusCode::NOT_FOUND
+    );
+
+    let bytes = png(1500);
+    let mut tx = rig.pool.begin().await.unwrap();
+    let hash = super::thumbnail::store_thumbnail(&mut tx, &rig.state.storage, imported, &bytes)
+        .await
+        .unwrap();
+    tx.commit().await.unwrap();
+    let response = get(imported, false).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(response.headers()[header::CONTENT_TYPE], "image/png");
+    assert!(response.headers().get(header::LOCATION).is_none());
+    assert_eq!(
+        axum::body::to_bytes(response.into_body(), bytes.len())
+            .await
+            .unwrap()
+            .as_ref(),
+        bytes.as_slice()
+    );
+    assert_eq!(
+        get(imported, true).await.unwrap().status(),
+        StatusCode::NOT_MODIFIED
+    );
+
+    rig.state.storage.denylist().operator_insert(&hash);
+    assert_eq!(
+        get(imported, true).await.unwrap().status(),
+        StatusCode::NOT_FOUND
+    );
+    rig.state.storage.denylist().operator_remove(&hash);
+    rig.state.storage.delete(&hash).await.unwrap();
+    let response = get(imported, true).await.unwrap();
+    assert_eq!(response.status(), StatusCode::FOUND);
+    assert_eq!(response.headers()[header::LOCATION], expected);
+
+    let offline = Rig::with_pool(
+        Settings::for_tests(),
+        State::explore_for_tests,
+        rig.pool.clone(),
+    )
+    .await;
+    let response = offline
+        .app
+        .clone()
+        .oneshot(
+            Request::get(format!("/social/communities/{imported}/raw-thumbnail.png"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+
+    for (active, suspended) in [(false, false), (true, true)] {
+        sqlx::query("UPDATE social.communities SET active = $2 WHERE id = $1")
+            .bind(imported)
+            .bind(active)
+            .execute(&rig.pool)
+            .await
+            .unwrap();
+        super::queries::set_suspended(&rig.pool, imported, suspended, "moderator", None)
+            .await
+            .unwrap();
+        assert_eq!(
+            get(imported, false).await.unwrap().status(),
+            StatusCode::NOT_FOUND
+        );
+    }
+    super::queries::set_suspended(&rig.pool, imported, false, "moderator", None)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE social.community_thumbnails SET thumbnail_hash = '../invalid' WHERE community_id = $1")
+        .bind(imported).execute(&rig.pool).await.unwrap();
+    for conditional in [false, true] {
+        let response = get(imported, conditional).await.unwrap();
+        assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+        assert!(response.headers().get(header::LOCATION).is_none());
+    }
+    offline.finish();
+    rig.finish();
+    database.drop().await;
+}
+
 /// The raw thumbnail's caching: long only for the current hash's URL, short
 /// with an ETag otherwise, and an update moves the versioned URL.
 #[tokio::test]

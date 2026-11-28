@@ -176,13 +176,21 @@ pub(crate) async fn banned(pool: &PgPool, id: CommunityId, wallet: &Address) -> 
     Ok(active.unwrap_or(false))
 }
 
-pub async fn thumbnail_hash(pool: &PgPool, id: CommunityId) -> sqlx::Result<Option<String>> {
-    sqlx::query_scalar(
-        "SELECT thumbnail_hash FROM social.community_thumbnails WHERE community_id = $1",
+/// The local blob key and whether this community can fall back to its upstream artwork.
+pub(super) async fn thumbnail_sources(
+    pool: &PgPool,
+    id: CommunityId,
+) -> sqlx::Result<(Option<String>, bool)> {
+    let row = sqlx::query_as(
+        "SELECT t.thumbnail_hash, c.active AND NOT c.suspended AND
+            (c.origin = 'upstream' OR EXISTS (SELECT 1 FROM social.community_imports i WHERE i.community_id = c.id))
+         FROM social.communities c LEFT JOIN social.community_thumbnails t ON t.community_id = c.id
+         WHERE c.id = $1",
     )
     .bind(id)
     .fetch_optional(pool)
-    .await
+    .await?;
+    Ok(row.unwrap_or_default())
 }
 
 type DetailRow = (

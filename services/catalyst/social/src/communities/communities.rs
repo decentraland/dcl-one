@@ -261,8 +261,22 @@ fn thumbnail_error(status: StatusCode, message: &'static str) -> Response {
         .into_response()
 }
 
-/// Serves the stored thumbnail: long-cached when `v` names the current
-/// hash, short-cached with an ETag otherwise.
+fn missing_thumbnail(state: &SharedState, id: CommunityId, has_upstream: bool) -> Response {
+    if has_upstream && let Some(base) = &state.settings.thumbnail_upstream {
+        let url = super::mirror::upstream_thumbnail(base, id.as_uuid());
+        return (
+            StatusCode::FOUND,
+            [
+                (header::LOCATION, url.as_str()),
+                (header::CACHE_CONTROL, THUMBNAIL_CACHE_UNVERSIONED),
+            ],
+        )
+            .into_response();
+    }
+    thumbnail_error(StatusCode::NOT_FOUND, "thumbnail not found")
+}
+
+/// Serve local artwork first. A miss for an imported community can redirect to the upstream CDN.
 pub async fn get_raw_thumbnail(
     State(state): State<SharedState>,
     Path(id_str): Path<String>,
@@ -272,18 +286,37 @@ pub async fn get_raw_thumbnail(
     let Ok(id) = CommunityId::parse(&id_str) else {
         return thumbnail_error(StatusCode::NOT_FOUND, "thumbnail not found");
     };
-    let hash = match queries::thumbnail_hash(&state.pool, id).await {
-        Ok(h) => h,
+    let (hash, has_upstream) = match queries::thumbnail_sources(&state.pool, id).await {
+        Ok(sources) => sources,
         Err(e) => {
             tracing::error!(error = %e, "raw-thumbnail: db error");
             return thumbnail_error(StatusCode::INTERNAL_SERVER_ERROR, "database error");
         }
     };
     let Some(hash) = hash else {
-        return thumbnail_error(StatusCode::NOT_FOUND, "thumbnail not found");
+        return missing_thumbnail(&state, id, has_upstream);
     };
-    let mut headers = HeaderMap::new();
     let versioned = get_first(&pairs, super::THUMBNAIL_VERSION_PARAM).as_deref() == Some(&hash);
+    match local_thumbnail(&state.storage, &hash, versioned, &request_headers).await {
+        Ok(Some(response)) => response,
+        Ok(None) if state.storage.withholds(&hash) => {
+            thumbnail_error(StatusCode::NOT_FOUND, "thumbnail not found")
+        }
+        Ok(None) => missing_thumbnail(&state, id, has_upstream),
+        Err(e) => {
+            tracing::error!(error = %e, hash = %hash, "raw-thumbnail: blob store error");
+            thumbnail_error(StatusCode::INTERNAL_SERVER_ERROR, "content store error")
+        }
+    }
+}
+
+async fn local_thumbnail(
+    storage: &crate::storage::Storage,
+    hash: &str,
+    versioned: bool,
+    request_headers: &HeaderMap,
+) -> Result<Option<Response>, crate::storage::StorageError> {
+    let mut headers = HeaderMap::new();
     headers.insert(
         header::CACHE_CONTROL,
         HeaderValue::from_static(if versioned {
@@ -303,26 +336,23 @@ pub async fn get_raw_thumbnail(
             .map(|t| t.trim().trim_start_matches("W/"))
             .any(|t| t == "*" || t.as_bytes() == etag.as_bytes());
         if matches {
-            return (StatusCode::NOT_MODIFIED, headers).into_response();
+            return Ok(storage
+                .file_info(hash)
+                .await?
+                .map(|_| (StatusCode::NOT_MODIFIED, headers).into_response()));
         }
     }
-    match state.storage.retrieve(&hash).await {
-        Ok(Some(bytes)) => {
-            let content_type = detect_image_mime_type(&bytes)
-                .map(|m| m.as_str())
-                .unwrap_or("image/png");
-            headers.insert(header::CONTENT_TYPE, HeaderValue::from_static(content_type));
-            if let Ok(v) = HeaderValue::from_str(&bytes.len().to_string()) {
-                headers.insert(header::CONTENT_LENGTH, v);
-            }
-            (StatusCode::OK, headers, bytes).into_response()
-        }
-        Ok(None) => thumbnail_error(StatusCode::NOT_FOUND, "thumbnail not found"),
-        Err(e) => {
-            tracing::error!(error = %e, hash = %hash, "raw-thumbnail: blob store error");
-            thumbnail_error(StatusCode::INTERNAL_SERVER_ERROR, "content store error")
-        }
+    let Some(bytes) = storage.retrieve(hash).await? else {
+        return Ok(None);
+    };
+    let content_type = detect_image_mime_type(&bytes)
+        .map(|m| m.as_str())
+        .unwrap_or("image/png");
+    headers.insert(header::CONTENT_TYPE, HeaderValue::from_static(content_type));
+    if let Ok(v) = HeaderValue::from_str(&bytes.len().to_string()) {
+        headers.insert(header::CONTENT_LENGTH, v);
     }
+    Ok(Some((StatusCode::OK, headers, bytes).into_response()))
 }
 
 fn selected_community(pairs: &[(String, String)]) -> Result<Option<CommunityId>, CommError> {

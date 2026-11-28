@@ -120,7 +120,7 @@ columns = [
 
 [[step]]
 name = "communities"
-targets = ["social.communities", "social.community_mirror"]
+targets = ["social.communities", "social.community_mirror", "social.community_imports"]
 extract = "communities.extract.sql"
 load = "communities.load.sql"
 key = ["id"]

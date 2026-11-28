@@ -263,10 +263,15 @@ async fn a_pass_copies_the_listing_read_only_and_resumes_sweeps_and_fuses() {
             .await
             .unwrap(),
     );
+    let shared: Shared = Arc::default();
+    let cfg = stub(shared.clone()).await;
     let state = Arc::new(CommunitiesState::new(
         pool.clone(),
         storage,
-        Settings::for_tests(),
+        Settings {
+            thumbnail_upstream: Some(cfg.thumbnail_base.clone()),
+            ..Settings::for_tests()
+        },
         None,
         &Outbound::for_tests(),
         CommunitiesState::explore_for_tests(&pool),
@@ -298,7 +303,6 @@ async fn a_pass_copies_the_listing_read_only_and_resumes_sweeps_and_fuses() {
 
     let tag = format!("Mirror{}", &Uuid::new_v4().simple().to_string()[..8]);
     let ids: Vec<Uuid> = (0..150).map(|_| Uuid::new_v4()).collect();
-    let shared: Shared = Arc::default();
     {
         let mut s = shared.lock().unwrap();
         s.rows = ids
@@ -311,7 +315,6 @@ async fn a_pass_copies_the_listing_read_only_and_resumes_sweeps_and_fuses() {
             .push(json!({"id": "broken", "name": "x", "ownerAddress": "nope"}));
         s.thumbs = ids.iter().step_by(2).copied().collect();
     }
-    let cfg = stub(shared.clone()).await;
     let client = Outbound::for_tests();
     let cancel = CancellationToken::new();
     let hour = Duration::from_secs(3600);
@@ -342,6 +345,21 @@ async fn a_pass_copies_the_listing_read_only_and_resumes_sweeps_and_fuses() {
     assert_eq!(scalar_i64(&pool, roles, ids[0]).await, 0, "no local role");
 
     // 2. The read routes: the upstream count and thumbnail.
+    let thumbnail = app
+        .clone()
+        .oneshot(
+            Request::get(format!("/social/communities/{}/raw-thumbnail.png", ids[0]))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(thumbnail.status(), StatusCode::FOUND);
+    let location = thumbnail.headers()[header::LOCATION].to_str().unwrap();
+    assert_eq!(location, upstream_thumbnail(&cfg.thumbnail_base, ids[0]));
+    let upstream = client.get(location).send().await.unwrap();
+    assert_eq!(upstream.status(), StatusCode::OK);
+    assert_eq!(upstream.bytes().await.unwrap().as_ref(), b"\x89PNG");
     let (status, body) = call(&app, "GET", &format!("/v2/communities/{}", ids[0])).await;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(body["data"]["membersCount"], 1000);
@@ -571,4 +589,35 @@ async fn a_pass_copies_the_listing_read_only_and_resumes_sweeps_and_fuses() {
     assert!(active(&pool, ids[100]).await);
 
     let _ = std::fs::remove_dir_all(&storage_dir);
+}
+
+#[test]
+fn thumbnail_redirect_base_is_optional_and_public() {
+    let local = ["https://node.example.org"];
+    assert!(
+        super::thumbnail_source("", &local, false)
+            .unwrap()
+            .is_none()
+    );
+    assert!(super::thumbnail_source("", &local, true).is_err());
+    for mirroring in [false, true] {
+        let base =
+            super::thumbnail_source("  https://cdn.example.org/assets/  ", &local, mirroring)
+                .unwrap()
+                .unwrap();
+        assert_eq!(base.base(), "https://cdn.example.org/assets");
+    }
+    for value in [
+        "https://node.example.org/assets",
+        "https://user:password@cdn.example.org",
+        "https://cdn.example.org/assets?token=secret",
+        "https://cdn.example.org/assets#private",
+    ] {
+        assert!(super::thumbnail_source(value, &local, true).is_err());
+        assert!(
+            super::thumbnail_source(value, &local, false)
+                .unwrap()
+                .is_none()
+        );
+    }
 }
