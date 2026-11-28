@@ -4237,15 +4237,18 @@ items pass within its money budget.
    mainnet mirror posture choose it. Keep both collections subgraph URLs
    for direct reads. Keep the replacement writers running through the
    first publication on every network being handed over.
-4. Check the ownership and publication in one query.
+4. Check ownership and publication for every network being handed over.
+   Edit the `VALUES` list to match the cutover scope. A network still
+   appears if its cursor or projection row is missing.
 
    ```sql
-   SELECT p.network, c.chain_id, p.owned_at, p.projected_through,
+   SELECT selected.network, c.chain_id, p.owned_at, p.projected_through,
           c.folded_block, c.folded_at, c.full_history,
           c.quarantined_at, c.diverged_at, p.pending, p.generation
-   FROM shop.collection_projection p
-   JOIN shop.chain_cursor c ON c.network = p.network AND c.indexer = 'collections'
-   ORDER BY p.network;
+   FROM (VALUES ('ethereum'), ('matic')) AS selected(network)
+   LEFT JOIN shop.collection_projection p ON p.network = selected.network
+   LEFT JOIN shop.chain_cursor c ON c.network = selected.network AND c.indexer = 'collections'
+   ORDER BY selected.network;
    ```
 
    Resume automatic releases once each handed-over network has
@@ -4260,10 +4263,11 @@ items pass within its money budget.
 **While the first projection runs**
 
 The publishing transaction locks the collections cursor row and takes
-the network's exclusive catalogue advisory lock. On Ethereum's first
-publication in a process or lease, it also invalidates any existing
-projection row before taking the advisory lock. The replacement rows,
-ownership and publication commit together with Ethereum's v1 royalties.
+the network's exclusive catalogue advisory lock. On Ethereum, the first
+publication after a process starts, a lease changes or a pass fails locks
+any existing projection row to invalidate it before taking the advisory
+lock. The replacement rows, ownership and publication commit together
+with Ethereum's v1 royalties.
 A mirror-sized fixture took 1.270–1.314 s on Polygon (6,196 collections
 and 11,986 items) and 22–25 ms on Ethereum (42 collections and 438 items).
 Both probes waited about 1.27–1.31 s on Polygon and 18–21 ms on
@@ -4284,15 +4288,36 @@ An interruption before commit rolls back the entire projection, including
 ownership and the cursor publication. The committed event log and
 `fold_through` stay. On the next publishable pass the new owner starts
 the projection again from that log. The heavier Polygon retry took
-2.167 s. If a publication is still running after two minutes, leave
-automatic releases paused and inspect the writer's query and blocking
-locks before deciding whether to let it finish or hand back the network. Restarting the writer before commit discards
-that attempt's projection work.
+2.167 s.
+
+If publication is still running after two minutes, leave automatic releases
+paused. Find the publisher's transaction in `pg_stat_activity` and inspect
+its blockers with `pg_blocking_pids(pid)`. If aborting the switch, stop all
+catalogue writers sharing the database and confirm their transactions have
+ended before running the query in step 4. Use the committed `owned_at`
+value separately for each selected network.
+
+- If `owned_at` is null, restore that network's pre-cutover mirror settings
+  and leave it out of the explicit `MARKETPLACE_COLLECTIONS_INDEX_OWNS`
+  list. Keep the existing catalogue rows and mirror passes.
+- If `owned_at` is set and the network is returning to the mirror, follow
+  the hand-back below. Keep any network staying native in the ownership
+  list on every writer.
+
+Restart the writers after settling the settings and completing any required
+hand-back for each network.
 
 **Handing a network back to the mirror**
 
-1. Stop the catalogue writers. On each writer, explicitly set
-   `MARKETPLACE_COLLECTIONS_INDEX_OWNS` to the networks that stay owned,
+Hand-back takes the advisory lock before touching the projection row.
+It can deadlock with Ethereum publication, which takes those locks in
+the opposite order when invalidating the row. Run hand-back only after
+ownership has committed and all catalogue writers have stopped and their
+transactions have ended.
+
+1. Stop the catalogue writers and wait for their transactions to end.
+   On each writer, explicitly set `MARKETPLACE_COLLECTIONS_INDEX_OWNS`
+   to the networks that stay owned,
    or to an empty value if neither stays owned. Enable
    `MARKETPLACE_MIRRORS_ENABLED=true` and restore the handed-back network's
    subgraph URL. Unsetting an explicitly blank URL restores the default
