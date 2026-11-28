@@ -33,6 +33,11 @@ type DropdownCommon<T extends string> = Omit<
   helpLabel?: string
   /** Submits the choice with a form: one hidden field for each chosen value. */
   name?: string
+  /**
+   * `light` (the default) is the Figma Dropdown. `dark` is not in Figma: a translucent black field and a
+   * raised dark list that marks the chosen option with a ruby fill, as the Places filters draw it.
+   */
+  variant?: 'light' | 'dark'
 }
 
 export type DropdownSingleProps<T extends string> = DropdownCommon<T> & {
@@ -186,6 +191,7 @@ function FigmaDropdown<T extends string = string>(props: WithoutAppearance<Dropd
     help,
     helpLabel = 'More information',
     name,
+    variant = 'light',
     multiple,
     value,
     onChange,
@@ -302,6 +308,7 @@ function FigmaDropdown<T extends string = string>(props: WithoutAppearance<Dropd
       ref={root}
       className={[styles.root, className].filter(Boolean).join(' ')}
       data-disabled={disabled || undefined}
+      data-variant={variant}
     >
       <span className={labelHidden && !help ? styles.hidden : styles.header}>
         <span id={labelId} className={labelHidden ? styles.hidden : styles.label} onClick={() => trigger.current?.focus()}>
@@ -337,9 +344,15 @@ function FigmaDropdown<T extends string = string>(props: WithoutAppearance<Dropd
         <span className={styles.value} data-placeholder={text === '' || undefined}>
           {text === '' ? placeholder : text}
         </span>
-        <svg className={styles.arrow} viewBox="0 0 12 6" aria-hidden="true" focusable="false">
-          <path d="M1 0.75 6 5.25 11 0.75" />
-        </svg>
+        {variant === 'dark' ? (
+          <svg className={styles.caret} viewBox="0 0 10 5" aria-hidden="true" focusable="false">
+            <path d="M0 0h10L5 5z" />
+          </svg>
+        ) : (
+          <svg className={styles.arrow} viewBox="0 0 12 6" aria-hidden="true" focusable="false">
+            <path d="M1 0.75 6 5.25 11 0.75" />
+          </svg>
+        )}
       </button>
       <div
         ref={list}
