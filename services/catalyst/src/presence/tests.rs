@@ -994,7 +994,7 @@ mod module_sources {
         let ids = [format!("allowed-{tag}"), format!("denied-{tag}")];
         // Synthetic persisted rows test the read policy, not deployment admission.
         for (i, id) in ids.iter().enumerate() {
-            let pointer = format!("{},0", coordinate + i as i32);
+            let pointer = format!("{},0", coordinate + i32::try_from(i).unwrap());
             let metadata = serde_json::json!({"v":{"scene":{"base":pointer,"parcels":[pointer]},"display":{"title":"allowed title","description":"text"},"contact":{"name":"creator"}}});
             sqlx::query("INSERT INTO content.deployments (deployer_address,version,entity_type,entity_id,entity_metadata,entity_timestamp,entity_pointers,local_timestamp,auth_chain) VALUES ('0x0000000000000000000000000000000000000001','v3','scene',$1,$2,to_timestamp(1),$3,to_timestamp(1),'[]'::json)").bind(id).bind(metadata).bind(vec![pointer.clone()]).execute(&pool).await.unwrap();
             sqlx::query("INSERT INTO content.active_pointers (pointer,entity_id,entity_type) VALUES ($1,$2,'scene')").bind(pointer).bind(id).execute(&pool).await.unwrap();
@@ -1183,7 +1183,7 @@ mod module_sources {
             .encode_to_vec(),
             discovery: ServiceDiscoveryMessage {
                 status: Some(ServiceStatus {
-                    current_time: chrono::Utc::now().timestamp_millis() as u64,
+                    current_time: u64::try_from(chrono::Utc::now().timestamp_millis()).unwrap(),
                     user_count: u32::MAX,
                     ..Default::default()
                 }),
@@ -1542,7 +1542,7 @@ mod module_sources {
             let pass = tokio::spawn(async move {
                 super::collector::run_pass(
                     &running,
-                    pass_at + chrono::Duration::seconds(index as i64 + 1),
+                    pass_at + chrono::Duration::seconds(i64::try_from(index).unwrap() + 1),
                 )
                 .await
             });

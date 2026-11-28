@@ -506,14 +506,14 @@ async fn baseline_empty_topology_differs_from_feed_loss() {
         .await
         .expect("discovery source time must advance while tracker passes are stopped")
     }
-    let stopped_at = chrono::Utc::now().timestamp_millis() as u64;
+    let stopped_at = u64::try_from(chrono::Utc::now().timestamp_millis()).unwrap();
     let advancing_before_expiry = advancing_discovery(&mut discovery, stopped_at).await;
     assert!(fixture.social.ctx.is_online(wallet));
     assert_eq!(fixture.state.feed.topology.snapshot().received_at, received);
     assert!(
         catalyst::shared::test_wait::until(async || !fixture.social.ctx.is_online(wallet)).await
     );
-    let expired_at = chrono::Utc::now().timestamp_millis() as u64;
+    let expired_at = u64::try_from(chrono::Utc::now().timestamp_millis()).unwrap();
     let advancing_after_expiry = advancing_discovery(&mut discovery, expired_at).await;
     assert!(advancing_after_expiry > advancing_before_expiry);
     eprintln!(

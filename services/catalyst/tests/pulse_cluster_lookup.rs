@@ -132,8 +132,8 @@ async fn real_versioned_control_ordering_expiry_and_reconnect_keep_exact_authori
                 origin,
                 ControlPosition {
                     audience: "ordered-readers".into(),
-                    wallet: address(origin as usize),
-                    session: address(origin as usize + 100),
+                    wallet: address(usize::try_from(origin).unwrap()),
+                    session: address(usize::try_from(origin).unwrap() + 100),
                     epoch,
                     sequence: 1,
                     realm: "first".into(),
@@ -172,7 +172,7 @@ async fn real_versioned_control_ordering_expiry_and_reconnect_keep_exact_authori
         wrong_session.session = address(999);
         publish_control(&client, &wrong_session, *origin).await;
         let mut marker = input.clone();
-        marker.wallet = address(700 + *origin as usize);
+        marker.wallet = address(700 + usize::try_from(*origin).unwrap());
         marker.epoch = 1;
         marker.sequence = 1;
         publish_control(&client, &marker, *origin).await;
@@ -265,7 +265,7 @@ async fn real_versioned_control_ordering_expiry_and_reconnect_keep_exact_authori
         input.sequence = 6;
         publish_control(&reader, input, *origin).await;
         let mut marker = input.clone();
-        marker.wallet = address(900 + *origin as usize);
+        marker.wallet = address(900 + usize::try_from(*origin).unwrap());
         marker.epoch = 1;
         marker.sequence = 1;
         publish_control(&reader, &marker, *origin).await;
@@ -768,7 +768,7 @@ async fn current_lookup_survives_lost_edges_and_broker_restart_without_reemittin
             format!("peer.{}.takeover_completed", address(1)),
             catalyst::comms::protocol::pulse::decentraland::pulse::TakeoverCompleted {
                 takeover_id: inactive.pending_takeovers[0].takeover_id.clone(),
-                revoke_before: chrono::Utc::now().timestamp() as u64 + 1,
+                revoke_before: u64::try_from(chrono::Utc::now().timestamp()).unwrap() + 1,
             }
             .encode_to_vec()
             .into(),

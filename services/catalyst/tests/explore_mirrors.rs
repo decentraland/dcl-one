@@ -137,7 +137,7 @@ async fn serve_upstream(
                 if offset == 0 && fail_first_page {
                     return Err(StatusCode::INTERNAL_SERVER_ERROR);
                 }
-                let index = (offset / page) as usize;
+                let index = usize::try_from(offset / page).unwrap();
                 let data = pages.get(index).cloned().unwrap_or_default();
                 Ok(Json(json!({"ok": true, "total": total, "data": data})))
             }
@@ -207,7 +207,10 @@ async fn mirrored_worlds_serve_the_upstream_shape() {
     let (status, body) = get_json(&pool, "/api/worlds?limit=100&offset=0").await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["ok"], Value::Bool(true));
-    assert_eq!(body["total"].as_i64(), Some(rows.len() as i64));
+    assert_eq!(
+        body["total"].as_i64(),
+        Some(i64::try_from(rows.len()).unwrap())
+    );
     let served = body["data"].as_array().expect("data array");
     assert_eq!(served.len(), rows.len());
     for upstream in &rows {
@@ -2627,7 +2630,10 @@ async fn live_worlds_pass_against_places_decentraland_org() {
     assert!(out.complete, "{out:?}");
     assert!(out.upserted > 1000, "{out:?}");
     let mirrored = count(&pool, "SELECT count(*) FROM explore.place WHERE world").await;
-    assert_eq!(mirrored, out.upserted as i64 - out.skipped_rows as i64);
+    assert_eq!(
+        mirrored,
+        i64::try_from(out.upserted).unwrap() - i64::try_from(out.skipped_rows).unwrap()
+    );
     let (status, body) = get_json(&pool, "/api/worlds?limit=3&order_by=most_active").await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["total"].as_i64(), Some(mirrored));

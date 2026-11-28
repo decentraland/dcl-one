@@ -1,3 +1,11 @@
+// Request, chain and DB values: a silently truncated, wrapped or rounded cast is a bug.
+#![deny(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    clippy::cast_possible_wrap,
+    clippy::cast_precision_loss
+)]
+
 use std::path::{Path, PathBuf};
 
 use anyhow::Context;
@@ -1145,11 +1153,12 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
                 .ok()
                 .filter(|u| matches!(u.scheme(), "http" | "https") && !u.cannot_be_a_base())
                 .context("CAMERA_REEL_SOURCE_BUCKET_URL is not an http(s) URL")?;
+            let max_connections = u32::from(concurrency.min(16)) + 2;
             let concurrency = usize::from(concurrency);
             let target = db::connect_pool(
                 &database_url,
                 &db::PoolSettings {
-                    max_connections: concurrency.min(16) as u32 + 2,
+                    max_connections,
                     ..Default::default()
                 },
             )

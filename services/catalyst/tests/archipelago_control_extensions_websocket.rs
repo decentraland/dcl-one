@@ -381,7 +381,7 @@ async fn current_owner(
     catalyst::comms::archipelago::control_v4::V4Owner {
         address,
         session,
-        epoch: epoch as u64,
+        epoch: u64::try_from(epoch).unwrap(),
     }
 }
 
@@ -1160,7 +1160,11 @@ async fn configured_heartbeats_coalesce_legacy_intents_without_per_heartbeat_own
         tracing_subscriber::registry().with(OwnerReads(reads.clone())),
     );
     for sample in 0..20 {
-        send(&mut socket, &heartbeat(sample as f32)).await;
+        send(
+            &mut socket,
+            &heartbeat(f32::from(i16::try_from(sample).unwrap())),
+        )
+        .await;
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
     legacy_barrier(&mut socket, 20).await;

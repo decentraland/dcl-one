@@ -1,3 +1,11 @@
+// Request, chain and DB values: a silently truncated, wrapped or rounded cast is a bug.
+#![deny(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    clippy::cast_possible_wrap,
+    clippy::cast_precision_loss
+)]
+
 pub use dcl_auth as auth;
 #[cfg(test)]
 mod cross_tests;

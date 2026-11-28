@@ -43,9 +43,9 @@ impl HeldPulseGeneration {
             // The election lock is held by this exact session throughout allocation/commit.
             let epoch: i64 = sqlx::query_scalar("INSERT INTO social.pulse_authority_generation(deployment_audience,epoch,source_incarnation) VALUES($1,nextval('social.archipelago_v4_connection_epoch'),$2::uuid) ON CONFLICT(deployment_audience) DO UPDATE SET epoch=EXCLUDED.epoch,source_incarnation=EXCLUDED.source_incarnation,updated_at=timezone('UTC',clock_timestamp()) WHERE social.pulse_authority_generation.epoch<EXCLUDED.epoch RETURNING epoch")
                 .bind(write_audience).bind(write_source).fetch_one(&mut *tx).await?;
-            if epoch <= 0 { return Err(sqlx::Error::RowNotFound); }
+            let epoch = u64::try_from(epoch).ok().filter(|e| *e > 0).ok_or(sqlx::Error::RowNotFound)?;
             tx.commit().await?;
-            Ok(epoch as u64)
+            Ok(epoch)
         })).await?;
         let lost = guard.lost().clone();
         Ok(Arc::new(Self {

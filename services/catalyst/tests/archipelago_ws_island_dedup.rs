@@ -25,7 +25,8 @@ type WsStream =
 
 fn test_config(island_changed_dedup_ms: u64) -> Settings {
     let mut settings = archipelago::settings();
-    settings.server.island_changed_dedup_ms = island_changed_dedup_ms as f64;
+    settings.server.island_changed_dedup_ms =
+        f64::from(u32::try_from(island_changed_dedup_ms).unwrap());
     settings
 }
 

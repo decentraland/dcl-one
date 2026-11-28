@@ -1,4 +1,9 @@
 // from: catalyrst/crates/catalyrst-comms/tests/v4_assignment_fence/recovery.rs
+#![allow(
+    clippy::cast_sign_loss,
+    clippy::cast_possible_wrap,
+    reason = "test fixtures and measurements use small values"
+)]
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;

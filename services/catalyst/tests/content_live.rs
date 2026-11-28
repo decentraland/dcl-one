@@ -30,6 +30,12 @@
 //! after `open`, writes on) times `POST /content/entities` and `DELETE
 //! /scenes/{coord}` over the N parcels of
 //! `CATALYST_CONTENT_LIVE_BENCH_PARCELS` and prints the percentiles.
+#![allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    clippy::cast_precision_loss,
+    reason = "test fixtures and measurements use small values"
+)]
 
 use alloy::signers::{Signer, local::PrivateKeySigner};
 use reqwest::header::{CONTENT_TYPE, HeaderMap};

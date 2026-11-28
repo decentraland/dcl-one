@@ -225,8 +225,13 @@ async fn forward_batch(
     let mut by_slot: HashMap<usize, Value> = HashMap::new();
     if let Some(Value::Array(elements)) = body {
         for element in elements {
-            if let Some(slot) = element.get("id").and_then(Value::as_u64) {
-                by_slot.insert(slot as usize, element);
+            // An id beyond `usize` names no slot.
+            if let Some(slot) = element
+                .get("id")
+                .and_then(Value::as_u64)
+                .and_then(|id| usize::try_from(id).ok())
+            {
+                by_slot.insert(slot, element);
             }
         }
     }

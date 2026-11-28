@@ -329,7 +329,7 @@ async fn add_scenes(fake: &Shared, world: &str, count: usize) -> Vec<String> {
             "version": "v3",
             "type": "scene",
             "pointers": [parcel],
-            "timestamp": 1_700_000_000_000i64 + i as i64,
+            "timestamp": 1_700_000_000_000i64 + i64::try_from(i).unwrap(),
             "content": [{"file": "main.js", "hash": file_hash}],
             "metadata": {
                 "main": "main.js",

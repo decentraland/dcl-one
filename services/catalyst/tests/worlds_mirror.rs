@@ -137,7 +137,7 @@ fn scene_entity(
         "version": "v3",
         "type": "scene",
         "pointers": [base],
-        "timestamp": 1_700_000_000_000i64 + state.blobs.len() as i64,
+        "timestamp": 1_700_000_000_000i64 + i64::try_from(state.blobs.len()).unwrap(),
         "content": content,
         "metadata": {
             "display": {"title": title, "navmapThumbnail": files.first().map(|f| f.0)},

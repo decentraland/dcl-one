@@ -174,6 +174,13 @@ impl Monitor {
         for net in ChainNet::ALL {
             for (index, url) in chain_jobs::expected_cursors(market, net, rentals) {
                 let settings = &market.settings.market.indexes;
+                let Ok(chain_id) = u64::try_from(index.chain_id()) else {
+                    tracing::warn!(
+                        source = index.indexer(),
+                        "index chain ID is negative; not reported"
+                    );
+                    continue;
+                };
                 cursors.push(CursorTarget {
                     target: Target {
                         source: index.indexer(),
@@ -181,7 +188,7 @@ impl Monitor {
                     },
                     url,
                     stop_block: settings.stop_block(net),
-                    chain_id: index.chain_id() as u64,
+                    chain_id,
                     lag_limit: net.confirmations() + net.publish_lag(),
                 });
             }
@@ -334,13 +341,22 @@ impl Monitor {
         }
         SAMPLE_TIMESTAMP_SECONDS
             .handle([])
-            .set(now.and_utc().timestamp() as f64);
+            .set(gauge(now.and_utc().timestamp()));
         Ok(())
     }
 }
 
 fn age(now: NaiveDateTime, at: Option<NaiveDateTime>) -> f64 {
-    at.map_or(f64::NAN, |at| (now - at).num_seconds().max(0) as f64)
+    at.map_or(f64::NAN, |at| gauge((now - at).num_seconds().max(0)))
+}
+
+/// An integer as a gauge sample.
+#[allow(
+    clippy::cast_precision_loss,
+    reason = "blocks, seconds and counts are far below 2^53"
+)]
+fn gauge(n: impl Into<i128>) -> f64 {
+    n.into() as f64
 }
 
 impl CursorTarget {
@@ -349,11 +365,12 @@ impl CursorTarget {
         let lag = head
             .zip(row)
             .filter(|(_, r)| {
-                self.target.source == "land_authz" || r.chain_id == Some(self.chain_id as i64)
+                self.target.source == "land_authz"
+                    || r.chain_id.and_then(|c| u64::try_from(c).ok()) == Some(self.chain_id)
             })
-            .map(|(h, r)| (h as i128 - i128::from(r.last_block)).max(0) as f64);
+            .map(|(h, r)| gauge((i128::from(h) - i128::from(r.last_block)).max(0)));
         t.set(SOURCE_OBSERVED, f64::from(lag.is_some()));
-        t.set(LAG_LIMIT_BLOCKS, self.lag_limit as f64);
+        t.set(LAG_LIMIT_BLOCKS, gauge(self.lag_limit));
         let held = self
             .stop_block
             .zip(row)
@@ -364,11 +381,10 @@ impl CursorTarget {
             f64::from(row.is_some_and(|r| r.full_history) && !held),
         );
         t.set(LAG_BLOCKS, lag.unwrap_or(f64::NAN));
-        t.set(LAST_BLOCK, row.map_or(f64::NAN, |r| r.last_block as f64));
+        t.set(LAST_BLOCK, row.map_or(f64::NAN, |r| gauge(r.last_block)));
         t.set(
             FOLDED_BLOCK,
-            row.and_then(|r| r.folded_block)
-                .map_or(f64::NAN, |b| b as f64),
+            row.and_then(|r| r.folded_block).map_or(f64::NAN, gauge),
         );
         t.set(FOLD_AGE_SECONDS, age(now, row.and_then(|r| r.folded_at)));
         t.set(
@@ -384,7 +400,7 @@ impl MirrorTarget {
         t.set(SOURCE_OBSERVED, f64::from(row.is_some()));
         t.set(MIRROR_AGE_LIMIT_SECONDS, self.max_age.as_secs_f64());
         t.set(MIRROR_AGE_SECONDS, age(now, row.and_then(|r| r.completed)));
-        t.set(MIRROR_PAGES, row.map_or(f64::NAN, |r| r.pages as f64));
+        t.set(MIRROR_PAGES, row.map_or(f64::NAN, |r| gauge(r.pages)));
     }
 }
 

@@ -3,6 +3,13 @@
 //! forward, and the give-up DELETE only takes rows that are still at the cap. Both
 //! properties live in SQL, so they are asserted against a real postgres
 //! (CATALYST_TEST_DATABASE_URL; one scratch database per test).
+#![allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    clippy::cast_possible_wrap,
+    clippy::cast_precision_loss,
+    reason = "test fixtures and measurements use small values"
+)]
 
 use catalyst::content::failed_deployments_store::LiveFailedDeploymentsStore;
 use catalyst::content::failed_deployments_store::prune_failed_deployments;

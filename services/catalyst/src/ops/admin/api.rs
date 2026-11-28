@@ -377,7 +377,9 @@ pub async fn audit_list(
             let limit = filter
                 .limit
                 .unwrap_or(audit::DEFAULT_PAGE)
-                .clamp(1, audit::MAX_PAGE) as usize;
+                .clamp(1, audit::MAX_PAGE);
+            // Clamped to 1..=MAX_PAGE, so the conversion holds.
+            let limit = usize::try_from(limit).unwrap_or(0);
             let next_before = (rows.len() == limit)
                 .then(|| rows.last().map(|r| r.id))
                 .flatten();

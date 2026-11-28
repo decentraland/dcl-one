@@ -1,4 +1,8 @@
 // from: catalyrst/crates/catalyrst-pulse/tests/batch_bandwidth.rs
+#![allow(
+    clippy::cast_precision_loss,
+    reason = "test fixtures and measurements use small values"
+)]
 use std::net::{SocketAddr, UdpSocket};
 use std::sync::{
     Arc,
@@ -249,9 +253,11 @@ async fn crowded_movement_halves_enet_ipv4_egress_bytes() {
 }
 
 fn measure_webtransport(batch: bool) -> usize {
+    use catalyst::comms::pulse::transport::webtransport::client::{
+        Client, ClientConfig, ClientEvent,
+    };
     use catalyst::comms::pulse::transport::webtransport::{WtConfig, WtHost};
     use sha2::{Digest, Sha256};
-    use catalyst::comms::pulse::transport::webtransport::client::{Client, ClientConfig, ClientEvent};
 
     let certificate = rcgen::generate_simple_self_signed(vec!["localhost".into()]).unwrap();
     let hash = Sha256::digest(certificate.cert.der().as_ref()).to_vec();

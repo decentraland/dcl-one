@@ -32,10 +32,11 @@ fn dev_cert() -> (String, String, Vec<u8>) {
 }
 
 fn now_ms() -> i64 {
-    SystemTime::now()
+    let ms = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap()
-        .as_millis() as i64
+        .as_millis();
+    i64::try_from(ms).unwrap()
 }
 
 async fn signed_handshake(ts_ms: i64) -> (Vec<u8>, String) {
@@ -127,7 +128,7 @@ fn serve_and_connect() -> (tokio::runtime::Runtime, Client) {
         bind_addr: "127.0.0.1:0".parse().unwrap(),
         cert_pem,
         key_pem,
-        slot_base: ENET_CAPACITY as u32,
+        slot_base: u32::try_from(ENET_CAPACITY).unwrap(),
         slot_capacity: 64,
         max_datagram_bytes: 1200,
         max_message_bytes: MAX_MESSAGE_BYTES,
@@ -145,7 +146,8 @@ fn serve_and_connect() -> (tokio::runtime::Runtime, Client) {
         })
         .await
         .unwrap();
-        let transports = Transports::with_webtransport(enet, ENET_CAPACITY as u32, wt, events);
+        let transports =
+            Transports::with_webtransport(enet, u32::try_from(ENET_CAPACITY).unwrap(), wt, events);
         tokio::spawn(PulseServer::new().serve(transports, 50));
     });
 

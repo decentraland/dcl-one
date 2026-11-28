@@ -1240,7 +1240,7 @@ async fn status(state: &SharedState) -> String {
     b.push_str(&stat(
         "failed deployments",
         &failed
-            .map(|f| human(f.max(0) as u64))
+            .map(|f| human(u64::try_from(f).unwrap_or(0)))
             .unwrap_or_else(|| "unavailable".into()),
         false,
         false,

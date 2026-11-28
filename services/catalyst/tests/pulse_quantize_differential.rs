@@ -112,7 +112,7 @@ fn every_code_stays_within_field_width() {
     let vel_max_code = (1u32 << VEL_BITS) - 1;
     let point_max_code = (1u32 << POINT_BITS) - 1;
     for i in -2000..=2000 {
-        let v = i as f32 * 0.06;
+        let v = f32::from(i16::try_from(i).unwrap()) * 0.06;
         assert!(
             encode(v, POS_MIN, POS_MAX, POS_BITS) <= pos_max_code,
             "position code out of range for {v}"

@@ -14,6 +14,13 @@
 //!   `/snapshots`; B syncs from A's `/snapshots` + `/pointer-changes` and ends
 //!   with A's active entities, generates the same CIDs from them, and on a
 //!   fresh bootstrap from A skips every snapshot it generated itself.
+#![allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    clippy::cast_possible_wrap,
+    clippy::cast_precision_loss,
+    reason = "test fixtures and measurements use small values"
+)]
 
 use std::collections::HashMap;
 use std::sync::Arc;

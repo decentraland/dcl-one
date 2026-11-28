@@ -170,7 +170,7 @@ fn pinned_javascript_protocol_packets_roundtrip_without_wire_changes() {
             .as_array()
             .unwrap()
             .iter()
-            .map(|v| v.as_u64().unwrap() as u8)
+            .map(|v| u8::try_from(v.as_u64().unwrap()).unwrap())
             .collect();
         let encoded = if packet["type"] == "ClientPacket" {
             ClientPacket::decode(bytes.as_slice())

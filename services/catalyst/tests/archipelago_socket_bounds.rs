@@ -712,7 +712,14 @@ async fn raw_peer_close(
     let start = std::time::Instant::now();
     let mut payload = vec![3, 232];
     payload.extend_from_slice(reason.as_bytes());
-    let mut frame = vec![0x88, 0x80 | payload.len() as u8, 1, 2, 3, 4];
+    let mut frame = vec![
+        0x88,
+        0x80 | u8::try_from(payload.len()).unwrap(),
+        1,
+        2,
+        3,
+        4,
+    ];
     frame.extend(
         payload
             .iter()
@@ -826,7 +833,7 @@ async fn clean_peer_close_echoes_exact_reason_and_ends_tcp_at_each_application_s
             wait(|| !links[0].needs_assignment()).await;
         }
         let (bytes, ended) = raw_peer_close(&mut socket, stage).await;
-        let mut expected = vec![0x88, (2 + stage.len()) as u8, 3, 232];
+        let mut expected = vec![0x88, u8::try_from(2 + stage.len()).unwrap(), 3, 232];
         expected.extend_from_slice(stage.as_bytes());
         if bytes != expected || ended.is_err() {
             failures.push((stage.to_string(), bytes, expected, ended));
@@ -1787,7 +1794,7 @@ async fn baseline_v4_authentication_is_not_exposed() {
     let mut challenge = vec![0x0a, 42];
     challenge.extend_from_slice(b"0x0000000000000000000000000000000000000101");
     challenge.extend_from_slice(&[0x12, 0]);
-    let mut frame = vec![0x0a, challenge.len() as u8];
+    let mut frame = vec![0x0a, u8::try_from(challenge.len()).unwrap()];
     frame.extend(challenge);
     socket.send(Message::Binary(frame.into())).await.unwrap();
     assert!(matches!(

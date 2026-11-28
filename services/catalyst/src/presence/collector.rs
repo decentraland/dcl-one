@@ -133,21 +133,27 @@ pub async fn fetch(
     })
 }
 
+/// A count as an `integer` column, saturated.
+fn count(n: usize) -> i32 {
+    i32::try_from(n).unwrap_or(i32::MAX)
+}
+
 pub fn summarize(snapshot_id: i64, data: &SnapshotData) -> SnapshotSummary {
     SnapshotSummary {
         snapshot_id,
-        peers: data.peers.len() as i32,
-        islands: data.islands.len() as i32,
-        hot_scenes: data.hot_scenes.len() as i32,
-        scenes_polled: data.occupancy.len() as i32,
-        scene_users: data.occupancy.iter().map(|(_, _, a)| a.len() as i32).sum(),
-        worlds_polled: data.world_rows.len() as i32,
-        active_worlds: data
-            .world_rows
-            .iter()
-            .filter(|(_, a, _)| !a.is_empty())
-            .count() as i32,
-        world_users: data.world_rows.iter().map(|(_, a, _)| a.len() as i32).sum(),
+        peers: count(data.peers.len()),
+        islands: count(data.islands.len()),
+        hot_scenes: count(data.hot_scenes.len()),
+        scenes_polled: count(data.occupancy.len()),
+        scene_users: data.occupancy.iter().map(|(_, _, a)| count(a.len())).sum(),
+        worlds_polled: count(data.world_rows.len()),
+        active_worlds: count(
+            data.world_rows
+                .iter()
+                .filter(|(_, a, _)| !a.is_empty())
+                .count(),
+        ),
+        world_users: data.world_rows.iter().map(|(_, a, _)| count(a.len())).sum(),
     }
 }
 
@@ -268,7 +274,7 @@ pub async fn store_snapshot(pool: &PgPool, data: &SnapshotData) -> Result<i64> {
         .bind(o.iter().map(|(_, _, a)| json!(a)).collect::<Vec<Value>>())
         .bind(
             o.iter()
-                .map(|(_, _, a)| a.len() as i32)
+                .map(|(_, _, a)| count(a.len()))
                 .collect::<Vec<i32>>(),
         )
         .execute(&mut *tx)
@@ -292,7 +298,7 @@ pub async fn store_snapshot(pool: &PgPool, data: &SnapshotData) -> Result<i64> {
         .bind(w.iter().map(|(_, a, _)| json!(a)).collect::<Vec<Value>>())
         .bind(
             w.iter()
-                .map(|(_, a, _)| a.len() as i32)
+                .map(|(_, a, _)| count(a.len()))
                 .collect::<Vec<i32>>(),
         )
         .bind(w.iter().map(|(_, _, l)| *l).collect::<Vec<i32>>())
