@@ -4,19 +4,21 @@
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 
+use crate::shared::casts::{ApproxF64, f64_to_usize};
+
 /// The old `BLOOM_FILTER_EXPECTED_ELEMENTS` default; a node sized differently
 /// passes its own count to [`BloomFilter::with_capacity`].
 pub const DEFAULT_EXPECTED_ELEMENTS: usize = 10_000_000;
 const FPR: f64 = 0.01;
 
 fn optimal_bits(n: usize, p: f64) -> usize {
-    let m = -(n as f64 * p.ln()) / (2.0_f64.ln().powi(2));
-    m.ceil() as usize
+    let m = -(n.approx_f64() * p.ln()) / (2.0_f64.ln().powi(2));
+    f64_to_usize(m.ceil())
 }
 
 fn optimal_k(m: usize, n: usize) -> usize {
-    let k = (m as f64 / n as f64) * 2.0_f64.ln();
-    k.ceil() as usize
+    let k = (m.approx_f64() / n.approx_f64()) * 2.0_f64.ln();
+    f64_to_usize(k.ceil())
 }
 
 pub struct BloomFilter {
@@ -69,7 +71,12 @@ impl BloomFilter {
         let mut hasher = DefaultHasher::new();
         item.hash(&mut hasher);
         seed.hash(&mut hasher);
-        (hasher.finish() as usize) % self.num_bits
+        #[allow(
+            clippy::cast_possible_truncation,
+            reason = "keeps the hash's low bits by design"
+        )]
+        let hash = hasher.finish() as usize;
+        hash % self.num_bits
     }
 }
 

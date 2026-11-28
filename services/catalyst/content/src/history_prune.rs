@@ -388,7 +388,7 @@ async fn pass(
     counter!(BLOBS_KEPT).increment(report.blobs_kept);
     counter!(BLOB_FAILURES).increment(report.blob_failures);
     counter!(BYTES_FREED).increment(report.bytes);
-    report.elapsed_ms = started.elapsed().as_millis() as u64;
+    report.elapsed_ms = crate::shared::casts::millis(started.elapsed());
     tracing::info!(
         deployments = report.deployments,
         content_files = report.content_files,

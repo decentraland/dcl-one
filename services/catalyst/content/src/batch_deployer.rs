@@ -6,6 +6,7 @@
 //! can be neither deployed nor recorded is counted lost, and the caller must not
 //! advance its cursor past it.
 
+use crate::shared::casts::ApproxF64;
 use std::collections::HashSet;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -165,7 +166,8 @@ impl SummaryClock {
         if elapsed < every {
             return None;
         }
-        let rate = synced_total.saturating_sub(self.last_synced) as f64 / elapsed.as_secs_f64();
+        let rate =
+            synced_total.saturating_sub(self.last_synced).approx_f64() / elapsed.as_secs_f64();
         self.last_at = now;
         self.last_synced = synced_total;
         Some(rate)
@@ -536,6 +538,10 @@ fn skipped(entity: &SyncDeployment, skip: Skip, report: Option<&Arc<DeploymentRe
 }
 
 #[cfg(test)]
+#[allow(
+    clippy::cast_possible_wrap,
+    reason = "test fixtures use small literal values"
+)]
 mod tests {
     use super::*;
     use crate::auth::hash_bytes_v1;

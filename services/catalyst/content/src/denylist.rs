@@ -74,7 +74,7 @@ pub async fn load<'e, E: PgExecutor<'e>>(executor: E) -> sqlx::Result<Vec<String
             .bind(MAX_ENTRIES + 1)
             .fetch_all(executor)
             .await?;
-    if ids.len() as i64 > MAX_ENTRIES {
+    if crate::shared::casts::len_i64(ids.len()) > MAX_ENTRIES {
         return Err(sqlx::Error::Protocol(format!(
             "content.denylist holds more than {MAX_ENTRIES} rows; refusing to project it"
         )));
@@ -100,7 +100,7 @@ pub async fn rows<'e, E: PgExecutor<'e>>(executor: E) -> sqlx::Result<Vec<Row>> 
     .bind(MAX_ENTRIES + 1)
     .fetch_all(executor)
     .await?;
-    if rows.len() as i64 > MAX_ENTRIES {
+    if crate::shared::casts::len_i64(rows.len()) > MAX_ENTRIES {
         return Err(sqlx::Error::Protocol(format!(
             "content.denylist holds more than {MAX_ENTRIES} rows; refusing to serve it"
         )));
@@ -327,7 +327,7 @@ async fn import(
     .bind(&file.ids)
     .fetch_one(&mut *tx)
     .await?;
-    let after = rows + file.ids.len() as i64 - present;
+    let after = rows + crate::shared::casts::len_i64(file.ids.len()) - present;
     anyhow::ensure!(
         after <= max,
         "the import would list {after} ids, more than {max}; nothing was imported"
@@ -532,7 +532,7 @@ pub fn parse_remote(body: &[u8]) -> anyhow::Result<Vec<String>> {
         })
         .collect();
     anyhow::ensure!(
-        ids.len() as i64 <= MAX_ENTRIES,
+        crate::shared::casts::len_i64(ids.len()) <= MAX_ENTRIES,
         "the denylist names {} ids, more than {MAX_ENTRIES}",
         ids.len()
     );
@@ -646,6 +646,10 @@ impl ContentState {
 }
 
 #[cfg(test)]
+#[allow(
+    clippy::cast_possible_wrap,
+    reason = "test fixtures use small literal values"
+)]
 mod tests {
     use super::*;
     use crate::Denylist;

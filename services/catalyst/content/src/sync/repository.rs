@@ -5,6 +5,7 @@
 //! persisted resume point. The gauges the status routes read are the shared
 //! [`SyncStatus`], updated on the same calls that persist.
 
+use crate::shared::casts::ApproxF64;
 use std::collections::HashSet;
 use std::sync::Arc;
 
@@ -73,7 +74,7 @@ impl LiveDeploymentRepository {
                 bloom.add(id);
             }
             count += page.len() as u64;
-            if (page.len() as i64) < requested {
+            if (crate::shared::casts::len_i64(page.len())) < requested {
                 return Ok(count);
             }
         }
@@ -170,7 +171,7 @@ impl LiveDeploymentRepository {
         .map_err(|e| SyncError::Storage(e.to_string()))?;
         crate::metrics::SYNC_HEARTBEAT
             .handle([])
-            .set(timestamp as f64 / 1000.);
+            .set(timestamp.approx_f64() / 1000.);
         self.status.set_heartbeat_ms(timestamp);
         Ok(())
     }
@@ -296,7 +297,7 @@ impl LiveDeploymentRepository {
             rows_affected = superseded,
             pointers_cleared = cleared,
             snapshots_outdated = outdated,
-            elapsed_ms = start.elapsed().as_millis() as u64,
+            elapsed_ms = crate::shared::casts::millis(start.elapsed()),
             "Resolved deleter_deployment"
         );
         Ok(())
@@ -457,6 +458,10 @@ where
 }
 
 #[cfg(test)]
+#[allow(
+    clippy::cast_sign_loss,
+    reason = "test fixtures use small literal values"
+)]
 mod tests {
     use super::*;
     use crate::sync_test_support::{test_pool, unique};
@@ -1018,8 +1023,8 @@ mod tests {
                          '{}', 0, timezone('UTC', now()))",
             )
             .bind(hash)
-            .bind(offset as f64)
-            .bind(i as f64)
+            .bind(offset.approx_f64())
+            .bind(i.approx_f64())
             .execute(&pool)
             .await
             .unwrap();

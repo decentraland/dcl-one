@@ -1,3 +1,4 @@
+use crate::shared::casts::ApproxF64;
 use axum::Json;
 use axum::extract::State;
 use axum::http::StatusCode;
@@ -107,7 +108,8 @@ pub struct AboutBff {
 
 fn network_id(eth_network: &str) -> u64 {
     if let Some(pair) = crate::shared::network::ChainPair::from_eth_network(eth_network) {
-        return pair.chain_ids().0 as u64;
+        // Chain ids are positive.
+        return pair.chain_ids().0.unsigned_abs();
     }
     match eth_network {
         "goerli" => 5,
@@ -130,10 +132,10 @@ fn above_ninety_percent(
     mem_total: u64,
     mem_available: u64,
 ) -> bool {
-    let cpu_load = load_one_minute * 100.0 / cpus.max(1) as f64;
+    let cpu_load = load_one_minute * 100.0 / cpus.max(1).approx_f64();
     let mem_load = match mem_total {
         0 => 0.0,
-        total => total.saturating_sub(mem_available) as f64 * 100.0 / total as f64,
+        total => total.saturating_sub(mem_available).approx_f64() * 100.0 / total.approx_f64(),
     };
     let overloaded = cpu_load > 90.0 || mem_load > 90.0;
     // `/about` is polled several times a second: log the transitions, not
@@ -172,7 +174,9 @@ fn resources_overloaded() -> bool {
     let load_one_minute = 0.0;
     // SAFETY: sysconf reads a system constant.
     #[cfg(unix)]
-    let cpus = unsafe { libc::sysconf(libc::_SC_NPROCESSORS_ONLN) }.max(1) as u64;
+    let cpus = unsafe { libc::sysconf(libc::_SC_NPROCESSORS_ONLN) }
+        .max(1)
+        .unsigned_abs();
     #[cfg(not(unix))]
     let cpus = std::thread::available_parallelism().map_or(1, |count| count.get()) as u64;
     let (mem_total, mem_available) = std::fs::read_to_string("/proc/meminfo")

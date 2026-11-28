@@ -300,7 +300,7 @@ fn land_position_resolves(position: &str) -> bool {
         let low =
             v & ((alloy_primitives::U256::from(1u8) << 128) - alloy_primitives::U256::from(1u8));
         let raw = u128::try_from(low).unwrap_or_default();
-        raw as i128
+        raw.cast_signed()
     };
     in_bounds(half(token >> 128), half(token))
 }

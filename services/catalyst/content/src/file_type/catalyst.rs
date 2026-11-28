@@ -21,6 +21,7 @@ use std::borrow::Cow;
 use std::io;
 
 use super::{SAMPLE, Source, Tokenizer};
+use crate::shared::casts::to_usize;
 use crate::storage::StorageError;
 
 /// `fromTokenizer` restarts after an ID3 tag and `detectConfident` after a UTF-8 BOM.
@@ -82,7 +83,7 @@ pub(crate) async fn file_type(
 /// `peekBuffer(this.buffer, {length, mayBeLess: true})` into a fresh 4100-byte buffer.
 async fn sample<S: Source>(tok: &mut Tokenizer<'_, S>, len: u64) -> Result<Vec<u8>, StorageError> {
     let mut b = tok.peek(len).await?;
-    b.resize(SAMPLE as usize, 0);
+    b.resize(to_usize(SAMPLE), 0);
     Ok(b)
 }
 
@@ -804,7 +805,10 @@ async fn ebml_element<S: Source>(
     let Some(mut len) = ebml_field(tok).await? else {
         return Ok(None);
     };
-    len[0] ^= 0x80u8.checked_shr(len.len() as u32 - 1).unwrap_or(0);
+    len[0] ^= u32::try_from(len.len() - 1)
+        .ok()
+        .and_then(|shift| 0x80u8.checked_shr(shift))
+        .unwrap_or(0);
     let len = &len[len.len() - len.len().min(6)..];
     let be = |bytes: &[u8]| bytes.iter().fold(0u64, |n, &b| (n << 8) | u64::from(b));
     Ok(Some(((id.len() <= 6).then(|| be(&id)), be(len))))
@@ -834,7 +838,7 @@ async fn png<S: Source>(tok: &mut Tokenizer<'_, S>, size: u64) -> Result<Pass, S
         match &header[4..] {
             b"IDAT" => return Ok(Pass::Found("image/png")),
             b"acTL" => return Ok(Pass::Found("image/apng")),
-            _ if !tok.ignore(length as u64 + 4).await? => return Ok(Pass::Stop),
+            _ if !tok.ignore(u64::from(length.unsigned_abs()) + 4).await? => return Ok(Pass::Stop),
             _ => {}
         }
         if tok.pos + 8 >= size {
@@ -1209,7 +1213,7 @@ fn inflate_raw(data: &[u8], limit: u64) -> io::Result<Option<Vec<u8>>> {
     loop {
         out.reserve(4 * 1024);
         let before = (inflater.total_in(), inflater.total_out());
-        let consumed = inflater.total_in() as usize;
+        let consumed = to_usize(inflater.total_in());
         let status = inflater
             .decompress_vec(&data[consumed..], &mut out, FlushDecompress::None)
             .map_err(io::Error::other)?;
@@ -1217,7 +1221,7 @@ fn inflate_raw(data: &[u8], limit: u64) -> io::Result<Option<Vec<u8>>> {
             return Ok(None);
         }
         if status == Status::StreamEnd {
-            return if inflater.total_in() as usize == data.len() {
+            return if to_usize(inflater.total_in()) == data.len() {
                 Ok(Some(out))
             } else {
                 Err(io::Error::other("data after the deflate stream"))
@@ -1230,6 +1234,10 @@ fn inflate_raw(data: &[u8], limit: u64) -> io::Result<Option<Vec<u8>>> {
 }
 
 #[cfg(test)]
+#[allow(
+    clippy::cast_possible_truncation,
+    reason = "test fixtures use small literal values"
+)]
 mod tests {
     use super::*;
 

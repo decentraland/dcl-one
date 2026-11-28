@@ -6,6 +6,7 @@
 //! print as `Number.prototype.toString`. `serde_json::Value` without
 //! `preserve_order` sorts keys, so it cannot stand in.
 
+use crate::shared::casts::ApproxF64;
 use std::{collections::BTreeMap, fmt};
 
 use serde::{Serialize, Serializer, ser::SerializeMap};
@@ -95,14 +96,14 @@ impl<'de, const LEGACY: bool> Deserialize<'de> for JsValue<LEGACY> {
             }
             fn visit_i64<E>(self, v: i64) -> Result<JsValue<LEGACY>, E> {
                 Ok(if LEGACY {
-                    JsValue::Number(v as f64)
+                    JsValue::Number(v.approx_f64())
                 } else {
                     JsValue::Signed(v)
                 })
             }
             fn visit_u64<E>(self, v: u64) -> Result<JsValue<LEGACY>, E> {
                 Ok(if LEGACY {
-                    JsValue::Number(v as f64)
+                    JsValue::Number(v.approx_f64())
                 } else {
                     JsValue::Unsigned(v)
                 })
@@ -198,8 +199,8 @@ pub(super) fn write(value: &LegacyValue, out: &mut String) {
     match value {
         JsValue::Null => out.push_str("null"),
         JsValue::Bool(b) => out.push_str(if *b { "true" } else { "false" }),
-        JsValue::Signed(n) => out.push_str(&number(*n as f64)),
-        JsValue::Unsigned(n) => out.push_str(&number(*n as f64)),
+        JsValue::Signed(n) => out.push_str(&number(n.approx_f64())),
+        JsValue::Unsigned(n) => out.push_str(&number(n.approx_f64())),
         JsValue::Number(n) => out.push_str(&number(*n)),
         JsValue::String(s) => write_string(s, out),
         JsValue::Array(items) => {
@@ -289,14 +290,17 @@ fn number(value: f64) -> String {
     let digits: String = mantissa.chars().filter(|c| *c != '.').collect();
     let digits = digits.trim_end_matches('0');
     let digits = if digits.is_empty() { "0" } else { digits };
-    let k = digits.len() as i32;
+    // At most 17 significant digits.
+    let k = i32::try_from(digits.len()).unwrap_or(i32::MAX);
     let n = exp + 1;
+    // Each branch's bound keeps its count non-negative.
+    let count = |c: i32| usize::try_from(c).unwrap_or(0);
     if k <= n && n <= 21 {
-        format!("{digits}{}", "0".repeat((n - k) as usize))
+        format!("{digits}{}", "0".repeat(count(n - k)))
     } else if 0 < n && n <= 21 {
-        format!("{}.{}", &digits[..n as usize], &digits[n as usize..])
+        format!("{}.{}", &digits[..count(n)], &digits[count(n)..])
     } else if -6 < n && n <= 0 {
-        format!("0.{}{digits}", "0".repeat((-n) as usize))
+        format!("0.{}{digits}", "0".repeat(count(-n)))
     } else {
         let e = n - 1;
         let sign = if e >= 0 { "+" } else { "-" };

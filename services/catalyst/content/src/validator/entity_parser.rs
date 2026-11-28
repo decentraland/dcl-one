@@ -2,6 +2,7 @@
 //! every field checked for its JSON type, pointers lowercased, `version`
 //! defaulting to `v3`.
 
+use crate::shared::casts::{ApproxF64, f64_to_i64};
 use serde::Deserialize;
 
 use super::error::ValidatorError;
@@ -118,10 +119,10 @@ fn checked_f64_to_i64(v: f64) -> Option<i64> {
     if !v.is_finite() {
         return None;
     }
-    if v < i64::MIN as f64 || v > i64::MAX as f64 {
+    if v < i64::MIN.approx_f64() || v > i64::MAX.approx_f64() {
         return None;
     }
-    Some(v as i64)
+    Some(f64_to_i64(v))
 }
 
 fn validate_timestamp(raw: &RawEntity) -> Result<i64, ValidatorError> {

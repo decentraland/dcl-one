@@ -790,6 +790,11 @@ fn extract_outfit_names_for_extra_slots(metadata: &serde_json::Value) -> Vec<Str
 }
 
 #[cfg(test)]
+#[allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    reason = "test fixtures use small literal values"
+)]
 mod tests {
     use super::*;
 

@@ -526,6 +526,10 @@ where
 }
 
 #[cfg(test)]
+#[allow(
+    clippy::cast_precision_loss,
+    reason = "test fixtures use small literal values"
+)]
 mod tests {
     use super::*;
 

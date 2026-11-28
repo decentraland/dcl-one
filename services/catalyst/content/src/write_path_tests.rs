@@ -9,6 +9,14 @@
 //! dropped at the end; the profile contract runs on the process's scratch
 //! database. Both skip without the variable.
 
+#![allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    clippy::cast_possible_wrap,
+    clippy::cast_precision_loss,
+    reason = "test fixtures use small literal values"
+)]
+
 use std::collections::HashMap;
 use std::sync::Arc;
 

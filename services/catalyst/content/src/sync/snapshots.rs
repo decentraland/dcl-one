@@ -1048,6 +1048,11 @@ async fn spool_snapshot_attempt(
 }
 
 #[cfg(test)]
+#[allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_precision_loss,
+    reason = "test fixtures use small literal values"
+)]
 mod tests {
     use super::*;
     use crate::auth::{hash_bytes, hash_bytes_v1};

@@ -1,3 +1,10 @@
+#![allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    clippy::cast_precision_loss,
+    reason = "test fixtures use small literal values"
+)]
+
 use super::SnapshotPassVerdict::*;
 use super::*;
 use serde_json::{Value, json};

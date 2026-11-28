@@ -6,6 +6,12 @@
 //! `CATALYST_TEST_DATABASE_URL` (a `catalyst` database with schema.sql
 //! applied, e.g. the lab one) and are skipped without it.
 
+#![allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_precision_loss,
+    reason = "test fixtures use small literal values"
+)]
+
 use std::path::PathBuf;
 
 use axum::Router;

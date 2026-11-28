@@ -7,6 +7,7 @@
 //! the due query excludes them, so a cycle moves only the rows it acts on. Plus
 //! the daily prune of records older than a TTL.
 
+use crate::shared::casts::ApproxF64;
 use futures::StreamExt;
 use std::sync::Arc;
 use tokio::sync::Semaphore;
@@ -93,7 +94,7 @@ pub const UNDECIDED_RECORDS: &str = "content_failed_deployments_undecided";
 /// undecided (its first failure, which no re-report moves), between the base interval and a
 /// day: the wait doubles attempt by attempt.
 fn undecided_attempt(failure: &FailedDeployment, now_ms: i64) -> (u32, u64) {
-    let undecided_for = (now_ms - failure.failure_timestamp).max(0) as u64;
+    let undecided_for = (now_ms - failure.failure_timestamp).max(0).unsigned_abs();
     (
         failure.retry_count,
         undecided_for.clamp(BASE_RETRY_INTERVAL_MS, MAX_RETRY_INTERVAL_MS),
@@ -131,7 +132,7 @@ fn retried_record(
         reason,
         error_description: error.to_string(),
         retry_count,
-        next_retry_at: now_ms + wait_ms as i64,
+        next_retry_at: now_ms + crate::shared::casts::saturating_i64(wait_ms),
         ..failure.clone()
     }
 }
@@ -258,7 +259,7 @@ impl RetryFailedDeployments {
         let now_ms = chrono::Utc::now().timestamp_millis();
         let evicted = self.evict_exhausted(now_ms).await;
         match self.failed_store.count_undecided().await {
-            Ok(undecided) => dcl_metrics::gauge!(UNDECIDED_RECORDS).set(undecided as f64),
+            Ok(undecided) => dcl_metrics::gauge!(UNDECIDED_RECORDS).set(undecided.approx_f64()),
             Err(e) => warn!(error = %e, "Failed to count undecided failed deployments"),
         }
         self.count_failed_deployments().await;
@@ -519,6 +520,10 @@ pub async fn run_prune_loop(
 }
 
 #[cfg(test)]
+#[allow(
+    clippy::cast_possible_wrap,
+    reason = "test fixtures use small literal values"
+)]
 mod tests {
     use super::*;
     use crate::sync::{AuthLink, AuthLinkType};
