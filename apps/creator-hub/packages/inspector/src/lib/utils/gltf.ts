@@ -28,6 +28,12 @@ export function parseGltfJson(bytes: Uint8Array): GltfJson | null {
   }
 }
 
+/**
+ * Whether a glTF node or mesh name marks collision geometry: the scene renderer hides every mesh
+ * whose name contains `collider`, in any case, and uses it for the invisible layer.
+ */
+export const isColliderName = (name: string) => name.toLowerCase().includes('collider');
+
 function decodeUri(uri: string) {
   try {
     return decodeURIComponent(uri);

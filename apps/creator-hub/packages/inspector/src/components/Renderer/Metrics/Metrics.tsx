@@ -136,14 +136,16 @@ const Metrics = withSdk<WithSdkProps>(({ sdk }) => {
   const overlayRef = useOutsideClick(handleToggleMetricsOverlay);
 
   const getWarningMessages = (): string[] => {
-    const baseMessage = 'Your scene contains too many';
     const warnings: string[] = [];
 
-    Object.entries(limitsExceeded).forEach(([key, isExceeded]) => {
-      if (isExceeded) {
-        warnings.push(`${baseMessage} ${key}`);
-      }
-    });
+    const exceeded = Object.keys(limitsExceeded);
+    if (exceeded.length > 0) {
+      warnings.push(
+        `Your scene has more ${exceeded.join(', ')} than suggested for its size. ` +
+          'These numbers are performance guidelines, not hard limits: the scene still publishes ' +
+          'and nothing is removed from it, but it may run slower for visitors.',
+      );
+    }
 
     if (entitiesOutOfBoundaries.length > 0) {
       warnings.push(

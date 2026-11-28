@@ -119,4 +119,72 @@ describe('GltfInspector/utils', () => {
       expect(getNode({ ...folder }, incompleteTree, utils.isModel)).toBe(null);
     });
   });
+  describe('countVisibleTriangles', () => {
+    const gltf = {
+      nodes: [
+        { name: 'body', mesh: 0 },
+        { name: 'body_copy', mesh: 0 },
+        { name: 'wall_collider', mesh: 1 },
+        { name: 'empty' },
+      ],
+      meshes: [
+        {
+          primitives: [
+            { indices: 0, attributes: { POSITION: 1 } },
+            { attributes: { POSITION: 1 } },
+            { mode: 5, attributes: { POSITION: 1 } },
+            { mode: 1, attributes: { POSITION: 1 } },
+          ],
+        },
+        { primitives: [{ indices: 0 }] },
+      ],
+      accessors: [{ count: 300 }, { count: 90 }],
+    };
+    const json = new TextEncoder().encode(JSON.stringify(gltf));
+
+    it('should count the visible triangles of a .gltf, once per node and without colliders', () => {
+      // per instance: 300/3 indexed + 90/3 unindexed + (90 - 2) strip, lines ignored
+      expect(utils.countVisibleTriangles(json)).toBe(2 * (100 + 30 + 88));
+    });
+
+    it('should read the JSON chunk of a .glb', () => {
+      const glb = new Uint8Array(20 + json.length);
+      const view = new DataView(glb.buffer);
+      view.setUint32(0, 0x46546c67, true);
+      view.setUint32(4, 2, true);
+      view.setUint32(8, glb.length, true);
+      view.setUint32(12, json.length, true);
+      view.setUint32(16, 0x4e4f534a, true);
+      glb.set(json, 20);
+      expect(utils.countVisibleTriangles(glb)).toBe(436);
+    });
+
+    it('should count a triangle fan as its vertices minus two', () => {
+      const fan = {
+        nodes: [{ name: 'disc', mesh: 0 }],
+        meshes: [{ primitives: [{ mode: 6, attributes: { POSITION: 0 } }] }],
+        accessors: [{ count: 12 }],
+      };
+      expect(utils.countVisibleTriangles(new TextEncoder().encode(JSON.stringify(fan)))).toBe(10);
+    });
+
+    it('should leave out a collider named on the mesh, with any casing', () => {
+      const named = {
+        nodes: [{ name: 'body', mesh: 0 }, { name: 'wall', mesh: 1 }, { mesh: 2 }],
+        meshes: [
+          { primitives: [{ indices: 0 }] },
+          { name: 'wallCollider', primitives: [{ indices: 0 }] },
+          { name: 'floor_collider', primitives: [{ indices: 0 }] },
+        ],
+        accessors: [{ count: 300 }],
+      };
+      expect(utils.countVisibleTriangles(new TextEncoder().encode(JSON.stringify(named)))).toBe(
+        100,
+      );
+    });
+
+    it('should return null for a file that is not glTF', () => {
+      expect(utils.countVisibleTriangles(new Uint8Array([1, 2, 3]))).toBe(null);
+    });
+  });
 });

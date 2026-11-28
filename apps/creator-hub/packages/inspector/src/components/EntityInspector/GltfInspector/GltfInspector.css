@@ -3,3 +3,8 @@
   flex-direction: column;
   width: 100%;
 }
+
+.GltfInspector .GltfColliderWarning {
+  align-items: flex-start;
+  gap: 4px;
+}
