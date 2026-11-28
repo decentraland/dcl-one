@@ -339,10 +339,11 @@ async fn materialize(
     query.fetch_optional(conn).await
 }
 
-const SHADOW_TABLES: [(&str, &str); 3] = [
+const SHADOW_TABLES: [(&str, &str); 4] = [
     ("legacy_order_build", "marketplace_address, order_id"),
     ("legacy_order_build_event", "block_number, log_index"),
     ("legacy_order_build_dirty", "contract_address, token_id"),
+    ("legacy_order_apply_dirty", "marketplace_address, order_id"),
 ];
 
 async fn clear_shadow(

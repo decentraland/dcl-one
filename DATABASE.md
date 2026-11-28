@@ -3560,6 +3560,46 @@ cover a point below the cursor.) Such a binary also leaves `diverged_at` as
 it finds it; the newer binary's next pass that finds the cursor block on its
 stored hash clears it.
 
+**Rolling back the legacy order writer.** When possible, wait for the
+legacy rebuild to reach `cleanup` or finish and for `shop.projection_write`
+to acknowledge the completed book before rolling back. An earlier writer
+can publish NFT ownership during an open
+reconciliation, but the schema keeps the partial legacy book pending.
+
+If you must roll back with reconciliation open, stop the index processes
+on that database and wait for their transactions to end. With the writers
+stopped, use the administrative connection to run the transaction below
+for the affected network. For Ethereum, replace both occurrences of
+`matic` with `ethereum`.
+
+```sql
+BEGIN;
+SELECT 1 FROM shop.chain_cursor
+WHERE indexer = 'nft' AND network = 'matic' FOR UPDATE;
+
+WITH abandoned AS (
+    UPDATE shop.legacy_order_rebuild
+    SET phase = 'cleanup', applying = false
+    WHERE network = 'matic' AND applying AND phase <> 'cleanup'
+    RETURNING network
+)
+UPDATE shop.legacy_order_cursor AS book
+SET through_hash = NULL
+FROM abandoned WHERE book.network = abandoned.network;
+COMMIT;
+```
+
+This retires the unfinished build and invalidates the book's marker in
+the same transaction. A missing marker already withholds the book. Leave
+`shop.projection_write` and the live order rows for the writer. A
+same-height acknowledgement alone cannot make the invalidated book
+readable. Start the previous writer with a legacy order fold. Its next
+fold clears and refolds the full affected book because the marker no
+longer stands. The legacy routes return `503 nft-index` until that fold
+publishes, and the older whole-book fold can also delay NFT publication.
+When the current writer resumes, it cleans up the retired shadow rows
+and apply journal in bounded steps.
+
 The schema migration object pass adds the Ethereum NFT cursor's estate
 repair trigger. It clears the marker when a writer completes a requested
 rebuild by resetting the cursor to its start. During a reorg the upgraded
@@ -5910,6 +5950,12 @@ Invariants:
   deployed writer can retire the private build before it starts to write
   live rows. Private cleanup runs in bounded steps. The schema object
   pass creates the new objects without reading the log.
+- Order-event insert, update and delete triggers look up the shadow
+  scan position once per order event and queue covered tokens. Live
+  and shadow order statement triggers journal affected keys during
+  reconciliation. The legacy pending trigger checks the network's
+  rebuild row when an NFT publication tries to acknowledge it.
+  The lane reports a stalled rebuild after 30 minutes without progress.
 
 While the legacy book is unavailable, routes that require it report
 `503` with source `nft-index`. Unfiltered catalogue browsing can omit

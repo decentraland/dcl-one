@@ -942,6 +942,26 @@ mod tests {
         db.drop().await;
     }
 
+    async fn deployed_full_fold(pool: &PgPool) {
+        // The deployed full fold knows only the live table and marker.
+        let mut old = pool.begin().await.unwrap();
+        sqlx::query("SELECT 1 FROM shop.chain_cursor WHERE indexer = 'nft' AND network = 'matic' FOR UPDATE")
+            .execute(&mut *old).await.unwrap();
+        sqlx::query("DELETE FROM shop.legacy_order WHERE network = 'matic'")
+            .execute(&mut *old)
+            .await
+            .unwrap();
+        sqlx::query(FOLD_SQL)
+            .bind("matic")
+            .bind(-1_i64)
+            .bind(nft_index::ZERO_ADDRESS)
+            .execute(&mut *old)
+            .await
+            .unwrap();
+        write_marker(&mut old, ChainNet::Matic).await.unwrap();
+        old.commit().await.unwrap();
+    }
+
     #[tokio::test]
     async fn a_deployed_writer_and_reconciliation_publish_complete_reader_snapshots() {
         let Some(db) = crate::market::tests::support::OwnDb::create("legacy_orders_handover").await
@@ -977,23 +997,7 @@ mod tests {
         open_matic(&db.pool).await;
         assert_eq!(step_matic(&db.pool, 1).await, RebuildStep::Batched);
 
-        // The deployed full fold knows only the live table and marker.
-        let mut old = db.pool.begin().await.unwrap();
-        sqlx::query("SELECT 1 FROM shop.chain_cursor WHERE indexer = 'nft' AND network = 'matic' FOR UPDATE")
-            .execute(&mut *old).await.unwrap();
-        sqlx::query("DELETE FROM shop.legacy_order WHERE network = 'matic'")
-            .execute(&mut *old)
-            .await
-            .unwrap();
-        sqlx::query(FOLD_SQL)
-            .bind("matic")
-            .bind(-1_i64)
-            .bind(nft_index::ZERO_ADDRESS)
-            .execute(&mut *old)
-            .await
-            .unwrap();
-        write_marker(&mut old, ChainNet::Matic).await.unwrap();
-        old.commit().await.unwrap();
+        deployed_full_fold(&db.pool).await;
         nft_cursor(&db.pool, 50, Some(50), Some(50)).await;
 
         let mut reader = db.pool.begin().await.unwrap();
@@ -1606,6 +1610,125 @@ mod tests {
         );
         nft_on(&db.pool, 1, 50, Some(50), Some(50)).await;
         assert!(legacy_rows_published(&db.pool).await);
+        db.drop().await;
+    }
+
+    #[tokio::test]
+    async fn a_rollback_invalidates_the_partial_book_until_the_older_writer_refolds_it() {
+        let Some(db) = crate::market::tests::support::OwnDb::create("legacy_orders_rollback").await
+        else {
+            return;
+        };
+        let (market, _) = markets();
+        for n in 1..=2_u8 {
+            order_event(
+                &db.pool,
+                i64::from(n),
+                "order_created",
+                market,
+                i64::from(n),
+                n,
+                SELLER,
+                None,
+                Some(100),
+            )
+            .await;
+        }
+        nft_cursor(&db.pool, 50, Some(50), Some(50)).await;
+        fold_matic(&db.pool, -1).await;
+        nft_cursor(&db.pool, 50, Some(50), Some(50)).await;
+        assert!(stands(&db.pool).await);
+        assert!(legacy_rows_published(&db.pool).await);
+        sqlx::query("UPDATE shop.nft_event SET amount = 200 WHERE kind = 'order_created'")
+            .execute(&db.pool)
+            .await
+            .unwrap();
+        open_matic(&db.pool).await;
+        while build_phase(&db.pool).await != "reconcile" {
+            assert_eq!(step_matic(&db.pool, 1).await, RebuildStep::Batched);
+        }
+        assert_eq!(step_matic(&db.pool, 1).await, RebuildStep::Batched);
+        let partial = book(&db.pool).await;
+        assert_eq!(
+            (partial[0].3.as_str(), partial[1].3.as_str()),
+            ("200", "100")
+        );
+        assert!(!legacy_rows_published(&db.pool).await);
+
+        // An earlier writer can leave work in the apply journal. Run the
+        // documented hand-back with the index writers stopped.
+        let mut old = db.pool.begin().await.unwrap();
+        sqlx::query("SELECT 1 FROM shop.chain_cursor WHERE indexer = 'nft' AND network = 'matic' FOR UPDATE")
+            .execute(&mut *old).await.unwrap();
+        sqlx::query("UPDATE shop.legacy_order SET price = 201 WHERE order_id = $1")
+            .bind(id(1))
+            .execute(&mut *old)
+            .await
+            .unwrap();
+        write_marker(&mut old, ChainNet::Matic).await.unwrap();
+        old.commit().await.unwrap();
+        {
+            let mut conn = db.pool.acquire().await.unwrap();
+            assert_eq!(
+                visible_readiness_on(&mut conn, ChainNet::Matic)
+                    .await
+                    .unwrap(),
+                Readiness::Published,
+                "the old marker alone would admit the partial book"
+            );
+        }
+        assert!(!legacy_rows_published(&db.pool).await);
+        let journal_size = || {
+            sqlx::query_scalar::<_, i64>(
+                "SELECT count(*) FROM shop.legacy_order_apply_dirty WHERE network = 'matic'",
+            )
+            .fetch_one(&db.pool)
+        };
+        assert_eq!(journal_size().await.unwrap(), 1);
+        sqlx::raw_sql(
+            "BEGIN;
+             SELECT 1 FROM shop.chain_cursor
+             WHERE indexer = 'nft' AND network = 'matic' FOR UPDATE;
+
+             WITH abandoned AS (
+                 UPDATE shop.legacy_order_rebuild
+                 SET phase = 'cleanup', applying = false
+                 WHERE network = 'matic' AND applying AND phase <> 'cleanup'
+                 RETURNING network
+             )
+             UPDATE shop.legacy_order_cursor AS book
+             SET through_hash = NULL
+             FROM abandoned WHERE book.network = abandoned.network;
+             COMMIT;",
+        )
+        .execute(&db.pool)
+        .await
+        .unwrap();
+        assert!(!legacy_rows_published(&db.pool).await);
+        assert_eq!(build_phase(&db.pool).await, "cleanup");
+
+        // The former reader's marker proof refuses a raw same-height
+        // acknowledgement until the writer has replaced the complete book.
+        nft_cursor(&db.pool, 50, Some(50), Some(50)).await;
+        let mut conn = db.pool.acquire().await.unwrap();
+        assert_eq!(
+            visible_readiness_on(&mut conn, ChainNet::Matic)
+                .await
+                .unwrap(),
+            Readiness::Behind
+        );
+        drop(conn);
+        deployed_full_fold(&db.pool).await;
+        assert!(!legacy_rows_published(&db.pool).await);
+        nft_cursor(&db.pool, 50, Some(50), Some(50)).await;
+        assert!(legacy_rows_published(&db.pool).await);
+        assert!(stands(&db.pool).await);
+        let full = book(&db.pool).await;
+        assert_eq!((full[0].3.as_str(), full[1].3.as_str()), ("200", "200"));
+
+        finish_rebuild(&db.pool).await;
+        assert_eq!(journal_size().await.unwrap(), 0);
+        assert_eq!(book(&db.pool).await, full);
         db.drop().await;
     }
 
