@@ -32,6 +32,7 @@ export const HELP_COPY = {
     subtitle: "Our support team is here to answer your questions!",
     button: "CHAT NOW",
     contactPrompt: "You can also reach support at",
+    emailButton: "Email support",
     supportEmail: "support@decentraland.org",
   },
 } as const;

@@ -350,12 +350,13 @@ describe("HelpView chat banner", () => {
   });
 
   const chatButton = () => screen.getByRole("button", { name: "CHAT NOW" });
-  const contactLink = () => screen.queryByRole("link", { name: "support@decentraland.org" });
-  async function checkInlineContact() {
+  const contactLink = () => screen.queryByRole("link", { name: "Email support" });
+  async function checkEmailFallback() {
     expect(contactLink()).toBeNull();
-    await userEvent.setup().click(chatButton());
+    await user.click(chatButton());
     expect(contactLink()?.getAttribute("href")).toBe("mailto:support@decentraland.org");
-    expect(chatButton()).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "CHAT NOW" })).toBeNull();
+    expect(document.activeElement).toBe(contactLink());
   }
 
   describe("when chat is disabled", () => {
@@ -368,7 +369,7 @@ describe("HelpView chat banner", () => {
     });
 
     it("should reveal a contact on click without loading the widget", async () => {
-      await checkInlineContact();
+      await checkEmailFallback();
       expect(document.querySelector("script[data-intercom]")).toBeNull();
     });
   });
@@ -380,10 +381,14 @@ describe("HelpView chat banner", () => {
       Object.assign(window, { Intercom: intercom });
       document.querySelector("script[data-intercom]")!.dispatchEvent(new Event("load"));
       await waitFor(() => expect(intercom).toHaveBeenCalledWith("boot", expect.not.objectContaining({ hide_default_launcher: expect.anything() })));
-      await checkInlineContact();
+      await checkEmailFallback();
       act(() => (intercom.mock.calls.find(([command]) => command === "ready")![1] as () => void)());
-      await user.click(screen.getByRole("button", { name: "CHAT NOW" }));
+      expect(document.activeElement).toBe(contactLink());
+      await user.tab();
+      expect(document.activeElement).toBe(chatButton());
+      await user.keyboard("{Enter}");
       expect(intercom).toHaveBeenCalledWith("show");
+      expect(document.activeElement).toBe(chatButton());
       expect(contactLink()).toBeNull();
     });
   });
@@ -393,11 +398,11 @@ describe("HelpView chat banner", () => {
       vi.spyOn(console, "error").mockImplementation(() => {});
     });
 
-    it("should offer inline contact on click", async () => {
+    it("should offer an email action on click", async () => {
       renderView({ intercomAppId: "app-test" });
       document.querySelector("script[data-intercom]")!.dispatchEvent(new Event("error"));
       await waitFor(() => expect(document.querySelector("script[data-intercom]")).toBeNull());
-      await checkInlineContact();
+      await checkEmailFallback();
     });
   });
 
@@ -418,7 +423,7 @@ describe("HelpView chat banner", () => {
       expect(intercom).toHaveBeenCalledWith("shutdown");
       expect(intercom.mock.lastCall![1]).not.toHaveProperty("Wallet");
       act(() => firstReady());
-      await checkInlineContact();
+      await checkEmailFallback();
     });
   });
 });
