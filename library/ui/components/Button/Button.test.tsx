@@ -652,16 +652,18 @@ describe('when a Button is set inline in running text', () => {
     expect(link).toHaveAttribute('data-variant', 'inline')
   })
 
-  it('should not type-check with a size, an icon, a loading state or as icon-only', () => {
+  // Checked by the typecheck, not at run time: each line fails to compile without its directive.
+  it('should not type-check with a size, an icon, a content layout, a loading state or as icon-only', () => {
     // @ts-expect-error An inline Button takes the text's size.
     void (<Button variant="inline" size="sm" label="Ana" />)
     // @ts-expect-error An inline Button has no icon slot.
     void (<Button variant="inline" startIcon={<svg />} label="Ana" />)
+    // @ts-expect-error An inline Button keeps its label at its own width.
+    void (<Button variant="inline" contentLayout="fill" label="Ana" />)
     // @ts-expect-error An inline Button has no loading state.
     void (<Button variant="inline" loading label="Ana" />)
     // @ts-expect-error An inline Button is text, never icon-only.
     void (<Button variant="inline" iconOnly aria-label="Ana" />)
-    expect(true).toBe(true)
   })
 })
 

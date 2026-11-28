@@ -23,10 +23,7 @@ function Fixture() {
           margin: 0
         }}
       >
-        <span data-before>By</span>{' '}
-        <Button variant="inline" forceState="hover">
-          AudioHotLab
-        </Button>{' '}
+        <span data-before>By</span> <Button variant="inline">AudioHotLab</Button>{' '}
         <span data-after>here</span>
       </p>
     </main>

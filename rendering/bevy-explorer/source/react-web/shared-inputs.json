@@ -16968,7 +16968,7 @@
     },
     {
       "path": "library/ui/components/Button/Button.module.css",
-      "sha256": "b5440081f6a2487ad36fbe1c490960087a3101b4a0f4a8bbb172055ee57a497a"
+      "sha256": "639393588cf4724be59a0bca84f06f5f23340ba4a602e476fe5ce294f0d4107a"
     },
     {
       "path": "library/ui/components/Button/Button.module.css.d.ts",
@@ -16976,7 +16976,7 @@
     },
     {
       "path": "library/ui/components/Button/Button.tsx",
-      "sha256": "63a5404860a721aca0ad7f53e5e411051332531473d6aca818514583d49c6991"
+      "sha256": "10198ba8851abc43499dbae13d8b7df994ac7e0b642d0c31be85ba529b6ea5bb"
     },
     {
       "path": "library/ui/components/CardActionButton/CardActionButton.module.css",

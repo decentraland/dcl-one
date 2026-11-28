@@ -153,7 +153,10 @@
     text-transform: none;
     vertical-align: baseline;
   }
-  .root[data-variant='inline']:is(:hover, [data-force-state='hover']):not([aria-disabled='true']) {
+  /* On the label itself: the content box is an inline flex box, and a decoration set on the root does not reach
+     the text inside it. */
+  .root[data-variant='inline']:is(:hover, [data-force-state='hover']):not([aria-disabled='true'])
+    .label {
     text-decoration: underline;
   }
   .root[data-variant='inline']:is(:focus-visible, [data-force-state='focus']) {

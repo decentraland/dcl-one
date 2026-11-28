@@ -16,7 +16,6 @@ type Measured = {
   padding: string
   borderWidth: string
   background: string
-  decoration: string
   height: number
   lineTop: number
   wordTop: number
@@ -55,7 +54,6 @@ const measure = () =>
         padding: cs.padding,
         borderWidth: cs.borderTopWidth,
         background: cs.backgroundColor,
-        decoration: cs.textDecorationLine,
         height: button.getBoundingClientRect().height,
         lineTop: range.getBoundingClientRect().top,
         wordTop: word.top
@@ -100,10 +98,71 @@ describe('when a Button is set inline in running text', () => {
     }
   )
 
-  it('should underline only while hovered', async () => {
+  it('should draw an underline under the label only while the pointer is over it', async () => {
     await ready()
-    const [body, byline] = await measure()
-    expect(body!.decoration).toBe('none')
-    expect(byline!.decoration).toBe('underline')
+    const box = await b.evaluate<{
+      x: number
+      y: number
+      width: number
+      height: number
+      cx: number
+      cy: number
+    }>(
+      `(() => {
+        const button = document.querySelector('[data-case="byline"] button')
+        const range = document.createRange(); range.selectNodeContents(button.querySelector('[data-button-label]'))
+        const r = range.getBoundingClientRect(), c = button.getBoundingClientRect()
+        return { x: r.left, y: r.top, width: r.width, height: r.height, cx: c.left + c.width / 2, cy: c.top + c.height / 2 }
+      })()`
+    )
+    const clip = { x: box.x, y: box.y, width: box.width, height: box.height, scale: 1 }
+    const shot = async () =>
+      (
+        (await b.session.send('Page.captureScreenshot', { format: 'png', clip })) as {
+          data: string
+        }
+      ).data
+    const decoration = () =>
+      b.evaluate<string>(
+        `getComputedStyle(document.querySelector('[data-case="byline"] [data-button-label]')).textDecorationLine`
+      )
+    await b.session.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: 1, y: 1 })
+    const atRest = await shot()
+    expect(await decoration()).toBe('none')
+    await b.session.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: box.cx, y: box.cy })
+    await b.evaluate(
+      'new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(()=>resolve(null))))'
+    )
+    expect(await decoration()).toBe('underline')
+    expect(await shot()).not.toBe(atRest)
+    await b.session.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: 1, y: 1 })
+    await b.evaluate(
+      'new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(()=>resolve(null))))'
+    )
+    expect(await shot()).toBe(atRest)
+  })
+
+  it('should draw a 2px primary text ring 2px out when focused by keyboard', async () => {
+    await ready()
+    await b.evaluate('document.activeElement?.blur()')
+    await b.session.send('Input.dispatchKeyEvent', {
+      type: 'keyDown',
+      key: 'Tab',
+      code: 'Tab',
+      windowsVirtualKeyCode: 9
+    })
+    await b.session.send('Input.dispatchKeyEvent', {
+      type: 'keyUp',
+      key: 'Tab',
+      code: 'Tab',
+      windowsVirtualKeyCode: 9
+    })
+    const ring = await b.evaluate<{ focused: boolean; ring: string }>(
+      `(() => {
+        const button = document.querySelector('[data-case="body"] button'), cs = getComputedStyle(button)
+        return { focused: document.activeElement === button, ring: [cs.outlineStyle, cs.outlineWidth, cs.outlineColor, cs.outlineOffset].join(' ') }
+      })()`
+    )
+    expect(ring).toEqual({ focused: true, ring: 'solid 2px rgb(252, 252, 252) 2px' })
   })
 })

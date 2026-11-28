@@ -78,11 +78,12 @@ type DefaultLook = (
   | {
       /**
        * Not in Figma: a button set in running text, read as a link. It takes the surrounding text's font and
-       * colour, keeps its case, has no box, and underlines on hover. It takes no `size`, `viewport`, icon or
-       * loading state.
+       * colour, keeps its case, has no box, and underlines on hover. It takes no `size`, `viewport`, icon,
+       * `contentLayout` or loading state.
        */
       variant: 'inline'
       iconOnly?: false
+      contentLayout?: never
       size?: never
       viewport?: never
       loading?: never
