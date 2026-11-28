@@ -1,3 +1,6 @@
+import { basename } from 'node:path';
+
+import { watch, type FSWatcher } from 'chokidar';
 import log from 'electron-log/main';
 
 import {
@@ -51,6 +54,12 @@ import {
  * at most {@link MAX_RESTARTS} times in {@link RESTART_WINDOW_MS}, and reports each step
  * to the editor (BEVY_REALM_SUPERVISION_EVENT). A deliberate stop never restarts. A server
  * that cannot run on this machine is not restarted: the realm goes on without it.
+ *
+ * A realm also restarts when the scene's `package.json` or `package-lock.json` changes on disk
+ * (an install from a terminal, an agent, the Hub's own SDK update). `sdk-commands start` works
+ * out where `@dcl/sdk` and `@dcl/ecs` live once, when it starts, and its file watcher skips
+ * `node_modules`, so after an install moved or removed a package every rebuild failed with
+ * "Could not resolve" until the scene was reopened. See {@link watchDependencies}.
  */
 
 type Realm = {
@@ -66,7 +75,17 @@ type Realm = {
   serverDown: boolean;
   /** It printed its ready line: the editor can load from it. False while it boots. */
   ready: boolean;
+  /** Watches the scene's dependency files once it serves; see {@link watchDependencies}. */
+  dependencies?: { watcher: FSWatcher; timer?: ReturnType<typeof setTimeout> };
 };
+
+// The files an install writes when it is done with `node_modules`. npm writes both at the end
+// of an install, and an edit by hand that changes the dependencies goes through `package.json`.
+export const DEPENDENCY_FILES = ['package.json', 'package-lock.json'];
+
+// Quiet time after the last change before the realm restarts, so the two writes of one install
+// (and a burst of installs, as when an agent adds packages one by one) cost one restart.
+export const DEPENDENCY_SETTLE_MS = 2_000;
 
 export const MAX_RESTARTS = 3;
 export const RESTART_WINDOW_MS = 60_000;
@@ -256,6 +275,7 @@ async function startInternal(path: string): Promise<{ url: string; wsUrl: string
   log.info(`[BevyRealm] Serving ${path} at ${url}`);
   clearRealmDown(path);
   watchExit(path, child);
+  watchDependencies(path, realm);
   if (realm.servesMultiplayer) watchServer(path, realm);
 
   // Usage analytics (fire-and-forget): a realm only starts when the Bevy renderer is the
@@ -290,12 +310,76 @@ function relayBuildEvents(path: string, child: Child): void {
   });
 }
 
+/**
+ * Restarts the realm when the scene's dependencies change on disk, once they settle. The new
+ * realm reads `node_modules` as it is now; the editor reloads on it like after any restart.
+ */
+function watchDependencies(path: string, realm: Realm): void {
+  const watcher = watch(path, {
+    depth: 0,
+    ignoreInitial: true,
+    // Only the project folder itself and its dependency files; nothing below it is walked.
+    ignored: file => file !== path && !DEPENDENCY_FILES.includes(basename(file)),
+  });
+  const dependencies: NonNullable<Realm['dependencies']> = { watcher };
+  realm.dependencies = dependencies;
+  const onChange = (file: string) => {
+    if (!DEPENDENCY_FILES.includes(basename(file))) return;
+    if (dependencies.timer) clearTimeout(dependencies.timer);
+    dependencies.timer = setTimeout(() => {
+      dependencies.timer = undefined;
+      void restartForDependencies(path, realm);
+    }, DEPENDENCY_SETTLE_MS);
+  };
+  watcher
+    .on('add', onChange)
+    .on('change', onChange)
+    .on('unlink', onChange)
+    .on('error', err => log.warn(`[BevyRealm] Watching the dependencies of ${path}:`, err));
+}
+
+function unwatchDependencies(realm: Realm | undefined): void {
+  const dependencies = realm?.dependencies;
+  if (!dependencies) return;
+  realm.dependencies = undefined;
+  if (dependencies.timer) clearTimeout(dependencies.timer);
+  void dependencies.watcher.close().catch(() => {});
+}
+
+async function restartForDependencies(path: string, realm: Realm): Promise<void> {
+  // A realm that was replaced, stopped or is already being restarted starts from the files as
+  // they are now anyway.
+  if (shuttingDown || realms.get(path) !== realm || !isRealmRunning(realm)) return;
+  if (restartPending(path) || starting.has(path)) return;
+  log.info(`[BevyRealm] The dependencies of ${path} changed: restarting its server`);
+  notify({ kind: 'restarting', path });
+  try {
+    await stopRealm(path, REALM_SERVER_RESTARTING);
+    const started = await start(path);
+    notify({ kind: 'restarted', path, ...started });
+  } catch (error) {
+    // The editor that asked has left the scene; there is no one to tell.
+    if (error instanceof StartCancelled || shuttingDown) return;
+    const message = error instanceof Error ? error.message : String(error);
+    log.error(`[BevyRealm] Restarting ${path} after a dependency change failed: ${message}`);
+    markRealmDown(path);
+    notify({
+      kind: 'stopped',
+      path,
+      cause: 'restart',
+      message,
+      restartInMs: scheduleRestart(path),
+    });
+  }
+}
+
 function watchExit(path: string, child: Child): void {
   const servingSince = Date.now();
   const onExit = (message: string) => {
     const realm = realms.get(path);
     if (shuttingDown || realm?.child !== child) return;
     realms.delete(path);
+    unwatchDependencies(realm);
     markRealmDown(path);
     // The pending restart replaces this realm; its stop was reported with the server's.
     if (restartPending(path)) return;
@@ -435,13 +519,14 @@ function notify(event: BevyRealmSupervisionEvent): void {
   window.webContents.send(BEVY_REALM_SUPERVISION_EVENT, event);
 }
 
-async function stopRealm(path: string): Promise<void> {
+async function stopRealm(path: string, hint = REALM_SERVER_PREVIEW_HINT): Promise<void> {
   starting.delete(path);
   const realm = realms.get(path);
   const promise = realm?.child.kill().catch(() => {});
   realms.delete(path);
+  unwatchDependencies(realm);
   if (realm?.servesMultiplayer && !realm.serverDown && !shuttingDown) {
-    realmServerStopped(path, REALM_SERVER_PREVIEW_HINT);
+    realmServerStopped(path, hint);
   }
   await promise;
 }

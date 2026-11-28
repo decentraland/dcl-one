@@ -10,6 +10,35 @@ const mocks = vi.hoisted(() => ({
   send: vi.fn(),
   spawnsMultiplayerServer: vi.fn(async () => false),
   previewRunsServer: vi.fn(() => false),
+  watchers: [] as FakeWatcher[],
+}));
+
+type FakeWatcher = {
+  root: string;
+  handlers: Map<string, (file: string) => void>;
+  close: ReturnType<typeof vi.fn>;
+  emit: (event: string, file: string) => void;
+};
+
+vi.mock('chokidar', () => ({
+  watch: vi.fn((root: string) => {
+    const handlers = new Map<string, (file: string) => void>();
+    const fake: FakeWatcher = {
+      root,
+      handlers,
+      close: vi.fn(async () => undefined),
+      emit: (event, file) => handlers.get(event)?.(file),
+    };
+    const watcher = {
+      on: (event: string, handler: (file: string) => void) => {
+        handlers.set(event, handler);
+        return watcher;
+      },
+      close: fake.close,
+    };
+    mocks.watchers.push(fake);
+    return watcher;
+  }),
 }));
 
 vi.mock('electron-log/main', () => ({ default: { info: vi.fn(), warn: vi.fn(), error: vi.fn() } }));
@@ -30,6 +59,7 @@ vi.mock('../src/modules/realm-server-logs', async importOriginal => ({
 }));
 
 import {
+  DEPENDENCY_SETTLE_MS,
   MAX_RESTARTS,
   RESTART_WINDOW_MS,
   ensure,
@@ -815,6 +845,124 @@ describe('bevy-realm restarts', () => {
     it('should reuse it without restart events', () => {
       expect(run).toHaveBeenCalledTimes(1);
       expect(supervisionEvents()).toEqual([]);
+    });
+  });
+});
+
+describe('bevy-realm dependency changes', () => {
+  const path = '/scenes/deps';
+  let fake: FakeChild;
+  let next: FakeChild;
+
+  const watcher = () => mocks.watchers[mocks.watchers.length - 1];
+
+  beforeEach(async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] });
+    mocks.watchers.length = 0;
+    fake = createFakeChild();
+    mocks.child = fake.child;
+    await start(path);
+    next = createFakeChild();
+    mocks.child = next.child;
+    vi.mocked(getAvailablePort).mockResolvedValueOnce(8005);
+  });
+
+  afterEach(async () => {
+    await killAllRealms();
+    vi.useRealTimers();
+    mocks.send.mockClear();
+    vi.mocked(run).mockClear();
+  });
+
+  it('should watch the scene folder once the realm serves', () => {
+    expect(watcher().root).toBe(path);
+  });
+
+  describe('when an install rewrites package-lock.json', () => {
+    beforeEach(async () => {
+      watcher().emit('change', `${path}/package-lock.json`);
+      await flush();
+    });
+
+    it('should not restart before the changes settle', async () => {
+      await vi.advanceTimersByTimeAsync(DEPENDENCY_SETTLE_MS - 1);
+      expect(run).toHaveBeenCalledTimes(1);
+    });
+
+    describe('and the changes settle', () => {
+      beforeEach(async () => {
+        await vi.advanceTimersByTimeAsync(DEPENDENCY_SETTLE_MS);
+      });
+
+      it('should replace the realm with a new one', () => {
+        expect({
+          killed: vi.mocked(fake.child.kill).mock.calls.length,
+          spawned: vi.mocked(run).mock.calls.length,
+        }).toEqual({
+          killed: 1,
+          spawned: 2,
+        });
+      });
+
+      it('should tell the editor to reload on the new realm', () => {
+        expect(supervisionEvents()).toEqual([
+          { kind: 'restarting', path },
+          {
+            kind: 'restarted',
+            path,
+            url: 'http://localhost:8005',
+            wsUrl: 'ws://localhost:8005/data-layer',
+          },
+        ]);
+      });
+
+      it('should stop watching through the old realm', () => {
+        expect(mocks.watchers[0].close).toHaveBeenCalled();
+      });
+
+      it('should watch again through the new realm', () => {
+        expect(mocks.watchers).toHaveLength(2);
+      });
+    });
+  });
+
+  describe('when package.json and package-lock.json change a moment apart', () => {
+    beforeEach(async () => {
+      watcher().emit('change', `${path}/package.json`);
+      await vi.advanceTimersByTimeAsync(DEPENDENCY_SETTLE_MS / 2);
+      watcher().emit('change', `${path}/package-lock.json`);
+      await vi.advanceTimersByTimeAsync(DEPENDENCY_SETTLE_MS);
+    });
+
+    it('should restart the realm once', () => {
+      expect(run).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  describe('when another file of the scene changes', () => {
+    beforeEach(async () => {
+      watcher().emit('change', `${path}/scene.json`);
+      await vi.advanceTimersByTimeAsync(DEPENDENCY_SETTLE_MS);
+    });
+
+    it('should not restart the realm', () => {
+      expect(run).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe('when the editor leaves the scene before the changes settle', () => {
+    beforeEach(async () => {
+      watcher().emit('change', `${path}/package-lock.json`);
+      await kill(path);
+      await vi.advanceTimersByTimeAsync(DEPENDENCY_SETTLE_MS);
+    });
+
+    it('should not start a realm', () => {
+      expect(run).toHaveBeenCalledTimes(1);
+    });
+
+    it('should stop watching', () => {
+      expect(watcher().close).toHaveBeenCalled();
     });
   });
 });
