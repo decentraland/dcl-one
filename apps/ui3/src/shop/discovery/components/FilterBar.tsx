@@ -4,25 +4,14 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 
 import { t } from "@shop/discovery/intl";
-import type { ShopSort } from "@shop/discovery/api";
+import { SORTS, type SortOption } from "@shop/discovery/lib/itemsGrid";
 import { RARITIES } from "@shop/discovery/lib/rarity";
 import Icon from "./Icon";
 import "./filterbar.css";
 
 export { RARITIES };
 
-export type SortOption = { key: string; label: string; server: ShopSort };
-
-export const SORTS: SortOption[] = [
-  { key: "newest", label: "filterBar.sortNewest", server: "newest" },
-  { key: "price-asc", label: "filterBar.sortCheapest", server: "cheapest" },
-  { key: "price-desc", label: "filterBar.sortMostExpensive", server: "most_expensive" },
-  { key: "name", label: "filterBar.sortName", server: "name" },
-];
-
-export const RELEVANCE_SORT: SortOption = { key: "relevance", label: "filterBar.sortRelevance", server: "relevance" };
-
-export const DEALS_SORTS: SortOption[] = [{ key: "discount", label: "filterBar.sortBiggestDiscount", server: "discount" }, ...SORTS];
+export { DEALS_SORTS, RELEVANCE_SORT, SORTS, type SortOption } from "@shop/discovery/lib/itemsGrid";
 
 export type FilterChip = { key: string; label: string; onRemove: () => void };
 

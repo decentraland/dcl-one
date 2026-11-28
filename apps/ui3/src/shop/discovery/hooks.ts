@@ -6,6 +6,7 @@ import { useSearchParams } from "react-router";
 
 import { fetchCommunityProfiles } from "../../data/hooks/useCommunityProfiles";
 import { shortAddress } from "@shop/model/address";
+import { readUrlFilters, type FilterValue } from "@shop/discovery/lib/urlFilters";
 import { readMirrorFreshness, type IndexFreshness } from "@shop/discovery/freshness";
 import { fetchCampaign, type Campaign } from "./lib/contentful";
 import { fetchCampaignContracts } from "./lib/campaign";
@@ -14,26 +15,13 @@ import { useShopQuery } from "./query";
 import { cachedProfile, rememberProfiles } from "./lib/profileCache";
 import { shopClient } from "../api/host";
 
-export type FilterValue = string | string[] | boolean | null;
+export { readUrlFilters, type FilterValue };
 
 function encode(value: FilterValue | undefined): string | null {
   if (value === null || value === undefined || value === false || value === "") return null;
   if (Array.isArray(value)) return value.length ? value.join(",") : null;
   if (value === true) return "true";
   return String(value);
-}
-
-function decode(raw: string | null, fallback: FilterValue): FilterValue {
-  if (raw === null) return fallback;
-  if (Array.isArray(fallback)) return raw ? raw.split(",").filter(Boolean) : [];
-  if (typeof fallback === "boolean") return raw === "true";
-  return raw;
-}
-
-export function readUrlFilters<T extends Record<string, FilterValue>>(searchParams: URLSearchParams, defaults: T): T {
-  const out = { ...defaults };
-  for (const key of Object.keys(defaults) as (keyof T)[]) out[key] = decode(searchParams.get(String(key)), defaults[key] as FilterValue) as T[keyof T];
-  return out;
 }
 
 export function useUrlFilters<T extends Record<string, FilterValue>>(defaults: T): [T, (patch: Partial<T>) => void] {

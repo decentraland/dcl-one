@@ -11,8 +11,8 @@ import { fetchItemMeta, fetchPrimaryListingForItem, fetchTokenById, itemListingK
 import { LAND_NETWORKS } from "@shop/land/contracts";
 import { itemIdFromTokenId } from "@ui/shop/detail/lib/token-id";
 import { routeSegment } from "@ui/shop/discovery/lib/routes";
-import { dealsRequestedIn, itemsFilterDefaults, itemsGrid, itemsQuery } from "@ui/shop/discovery/lib/itemsGrid";
-import { readUrlFilters } from "@ui/shop/discovery/hooks";
+import { dealsRequestedIn, itemsFilterDefaults, itemsGrid, itemsQuery } from "@shop/discovery/lib/itemsGrid";
+import { readUrlFilters } from "@shop/discovery/lib/urlFilters";
 import { REMOTE_FLAG, remoteFlagOn } from "@shop/discovery/lib/rolloutFlags";
 import { RAIL_KEYS, readDeals, readListings, readTrending } from "@ui/shop/discovery/pages/overviewRails";
 import type { ShopPageId } from "@ui/shop/routes";

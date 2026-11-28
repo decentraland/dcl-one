@@ -4,6 +4,7 @@
 import { useEffect, useId, useState, type ReactNode } from "react";
 
 import { t } from "@shop/discovery/intl";
+import { STATUSES, type FilterStatus } from "@shop/discovery/lib/itemsGrid";
 import { CATEGORIES, type Sub, type Top } from "@shop/discovery/lib/categories";
 import { PRICE_SLIDER_MAX, PRICE_SLIDER_STEPS, priceToSliderPct, priceToSliderPos, sliderPosToPrice } from "@shop/discovery/lib/price-slider";
 import { RARITIES, rarityColor, rarityLabel } from "@shop/discovery/lib/rarity";
@@ -11,8 +12,7 @@ import { CollectionFilter, CreatorFilter, useCollectionName, useCreatorNames } f
 import Icon from "./Icon";
 import "./filters.css";
 
-export type FilterStatus = "all" | "on_sale" | "not_for_sale";
-export const STATUSES: FilterStatus[] = ["all", "on_sale", "not_for_sale"];
+export { STATUSES, type FilterStatus };
 
 function parentOfLeaf(key: string | null): string | null {
   for (const top of CATEGORIES) for (const sub of top.subs ?? []) if (sub.subs?.some((leaf) => leaf.key === key)) return sub.key;

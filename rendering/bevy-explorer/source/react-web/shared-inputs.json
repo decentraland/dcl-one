@@ -1059,6 +1059,14 @@
           "kind": "regular"
         },
         {
+          "name": "itemsGrid.test.ts",
+          "kind": "regular"
+        },
+        {
+          "name": "itemsGrid.ts",
+          "kind": "regular"
+        },
+        {
           "name": "outfit.test.ts",
           "kind": "regular"
         },
@@ -1092,6 +1100,10 @@
         },
         {
           "name": "sale.ts",
+          "kind": "regular"
+        },
+        {
+          "name": "urlFilters.ts",
           "kind": "regular"
         }
       ]
