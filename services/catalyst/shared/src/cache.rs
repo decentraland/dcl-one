@@ -356,12 +356,17 @@ where
 }
 
 /// Single-flight with no memo. A caller that asks for a key while a read of
-/// it is in flight gets that read's output; once the output is out the key
-/// is free again, so a caller arriving after starts a read of its own (an
-/// answer is never served past the read that produced it). The caller that
-/// starts a read runs it inline, so it may borrow what that caller holds. A
-/// read whose caller is cancelled ends without output, and the callers that
-/// joined it get its keys back to read again, never a value nobody read.
+/// it is in flight may take that read's output; once the output is out the
+/// key is free again, so a caller arriving after starts a read of its own
+/// (an answer is never served past the read that produced it). A joined
+/// output was read for another caller, which may have observed a state this
+/// one must not be answered from, so a joiner validates it
+/// ([`Coalesce::run_accepting`], or the caller itself with
+/// [`Coalesce::run_many`]) and reads again when it does not hold. The caller
+/// that starts a read runs it inline, so it may borrow what that caller
+/// holds. A read whose caller is cancelled ends without output, and the
+/// callers that joined it get its keys back to read again, never a value
+/// nobody read.
 pub struct Coalesce<K, O>
 where
     K: Eq + Hash + Clone,
@@ -375,6 +380,17 @@ where
 /// The flights a caller joined: each one's output channel and the caller's
 /// keys it reads.
 type Joined<K, O> = Vec<(u64, watch::Receiver<Option<O>>, Vec<K>)>;
+
+/// What [`Coalesce::run_many`] answers a caller.
+pub struct Many<K, O> {
+    /// The output of this caller's own read, when some key was not in flight.
+    pub own: Option<O>,
+    /// Each joined read's output, with this caller's keys it read: the
+    /// caller validates it before serving it.
+    pub joined: Vec<(O, Vec<K>)>,
+    /// This caller's keys whose joined read ended without output.
+    pub orphaned: Vec<K>,
+}
 
 /// The read a caller leads: its keys leave the map when it ends, published
 /// or cancelled (only while they still name this flight), and its joiners
@@ -448,6 +464,12 @@ where
                 continue;
             }
             match self.flights.entry(key.clone()) {
+                // A read that published is over, though its caller has not
+                // released its keys yet: this caller reads anew.
+                MapEntry::Occupied(mut done) if done.get().1.borrow().is_some() => {
+                    done.insert((id, receiver.clone()));
+                    led.push(key.clone());
+                }
                 MapEntry::Occupied(flight) => {
                     let (other, channel) = flight.get();
                     match joined.iter_mut().find(|(id, _, _)| id == other) {
@@ -473,11 +495,27 @@ where
         (flight, joined)
     }
 
-    /// The output of `key`'s flight, joined or read here with `read`.
+    /// The output of `key`'s flight, joined or read here with `read`, for a
+    /// caller that may be answered from any read in flight.
     pub async fn run<F, Fut>(&self, key: K, read: F) -> O
     where
         F: FnOnce() -> Fut,
         Fut: Future<Output = O>,
+    {
+        self.run_accepting(key, read, |_| async { true }).await
+    }
+
+    /// The output of `key`'s flight: this caller's own read with `read`, or
+    /// a joined read's output that `accept` takes. A joined output `accept`
+    /// refuses, and a joined read that ended without output, are read again
+    /// (a read that published no longer holds its key). This caller's own
+    /// read is always its answer.
+    pub async fn run_accepting<F, Fut, A, AFut>(&self, key: K, read: F, mut accept: A) -> O
+    where
+        F: FnOnce() -> Fut,
+        Fut: Future<Output = O>,
+        A: FnMut(O) -> AFut,
+        AFut: Future<Output = bool>,
     {
         let mut read = Some(read);
         loop {
@@ -490,8 +528,12 @@ where
                 }
                 (None, joined) => {
                     for (_, mut channel, _) in joined {
-                        if let Ok(output) = channel.wait_for(Option::is_some).await {
-                            return (*output).clone().expect("waited for an output");
+                        let output = match channel.wait_for(Option::is_some).await {
+                            Ok(output) => (*output).clone().expect("waited for an output"),
+                            Err(_) => continue,
+                        };
+                        if accept(output.clone()).await {
+                            return output;
                         }
                     }
                 }
@@ -501,29 +543,35 @@ where
 
     /// The outputs for many keys: the keys in flight join those flights, and
     /// `read` reads the rest in one flight (called only when some key is not
-    /// in flight). Answers this caller's read's output first, then each
-    /// joined flight's, and the keys whose joined flight ended without one,
-    /// which the caller reads again.
-    pub async fn run_many<F, Fut>(&self, keys: &[K], read: F) -> (Vec<O>, Vec<K>)
+    /// in flight). The caller serves its own read's output and validates
+    /// each joined one per key ([`Many`]).
+    pub async fn run_many<F, Fut>(&self, keys: &[K], read: F) -> Many<K, O>
     where
         F: FnOnce(Vec<K>) -> Fut,
         Fut: Future<Output = O>,
     {
         let (flight, joined) = self.claim(keys);
-        let mut outputs = Vec::with_capacity(joined.len() + 1);
+        let mut many = Many {
+            own: None,
+            joined: Vec::with_capacity(joined.len()),
+            orphaned: Vec::new(),
+        };
         if let Some(flight) = flight {
             let output = read(flight.keys.clone()).await;
             flight.publish(&output);
-            outputs.push(output);
+            many.own = Some(output);
         }
-        let mut orphaned = Vec::new();
         for (_, mut channel, keys) in joined {
-            match channel.wait_for(Option::is_some).await {
-                Ok(output) => outputs.push((*output).clone().expect("waited for an output")),
-                Err(_) => orphaned.extend(keys),
-            }
+            let output = match channel.wait_for(Option::is_some).await {
+                Ok(output) => (*output).clone().expect("waited for an output"),
+                Err(_) => {
+                    many.orphaned.extend(keys);
+                    continue;
+                }
+            };
+            many.joined.push((output, keys));
         }
-        (outputs, orphaned)
+        many
     }
 
     /// The keys in flight now.
@@ -681,6 +729,40 @@ mod tests {
         assert_eq!(coalesce.in_flight(), 0);
     }
 
+    /// A joiner that refuses the joined output reads again itself; the
+    /// leader is answered its own read.
+    #[tokio::test]
+    async fn a_refused_joined_output_is_read_again() {
+        let coalesce: Arc<Coalesce<&'static str, u32>> = Arc::new(Coalesce::new());
+        let gate = Arc::new(Gate::default());
+        let leader = {
+            let (coalesce, gate) = (coalesce.clone(), gate.clone());
+            tokio::spawn(async move {
+                coalesce
+                    .run("k", || async {
+                        gate.pass().await;
+                        1
+                    })
+                    .await
+            })
+        };
+        settle().await;
+        let joiner = {
+            let coalesce = coalesce.clone();
+            tokio::spawn(async move {
+                coalesce
+                    .run_accepting("k", || async { 2 }, |seen| async move { seen != 1 })
+                    .await
+            })
+        };
+        settle().await;
+        gate.open();
+        assert_eq!(leader.await.unwrap(), 1);
+        assert_eq!(joiner.await.unwrap(), 2, "the refused 1 was read again");
+        assert_eq!(coalesce.reads_started(), 2);
+        assert_eq!(coalesce.in_flight(), 0);
+    }
+
     #[tokio::test]
     async fn overlapping_sets_read_each_key_once() {
         let coalesce: Arc<Coalesce<u32, Vec<u32>>> = Arc::new(Coalesce::new());
@@ -703,14 +785,17 @@ mod tests {
         let second = call(vec![2, 3]);
         settle().await;
         gate.open();
-        let (first, orphaned) = first.await.unwrap();
-        assert_eq!((first, orphaned), (vec![vec![1, 2]], vec![]));
-        let (second, orphaned) = second.await.unwrap();
+        let first = first.await.unwrap();
+        assert_eq!(first.own, Some(vec![1, 2]));
+        assert!(first.joined.is_empty() && first.orphaned.is_empty());
+        let second = second.await.unwrap();
+        assert_eq!(second.own, Some(vec![3]), "its own read");
         assert_eq!(
-            (second, orphaned),
-            (vec![vec![3], vec![1, 2]], vec![]),
-            "its own read, then the joined one"
+            second.joined,
+            vec![(vec![1, 2], vec![2])],
+            "the joined read, with the key it read"
         );
+        assert!(second.orphaned.is_empty());
         assert_eq!(*asked.lock().unwrap(), vec![vec![1, 2], vec![3]]);
         assert_eq!(coalesce.in_flight(), 0);
     }
@@ -734,7 +819,9 @@ mod tests {
         settle().await;
         leader.abort();
         let _ = leader.await;
-        assert_eq!(joiner.await.unwrap(), (vec![vec![3]], vec![2]));
+        let joiner = joiner.await.unwrap();
+        assert_eq!((joiner.own, joiner.orphaned), (Some(vec![3]), vec![2]));
+        assert!(joiner.joined.is_empty());
         assert_eq!(coalesce.in_flight(), 0);
     }
 

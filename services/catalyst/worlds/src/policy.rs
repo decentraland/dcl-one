@@ -918,31 +918,30 @@ impl Policy {
             let Some(observed) = entry.1 else {
                 return entry;
             };
-            let current = match self.names_reader() {
-                Some(names) => {
-                    self.admission_checks
-                        .run(observed, || async move {
-                            names
-                                .still_current(&observed, Purpose::Authorize)
-                                .await
-                                .unwrap_or(false)
-                        })
-                        .await
-                }
-                None => false,
-            };
-            if current {
+            if self.publication_stands(observed).await {
                 return entry;
             }
+            // A re-read joined from another admission is served only as the
+            // memo serves one: while the publication it was read under
+            // stands (a newer one may have come while it was in flight).
             self.admission_refreshes
-                .run((key.clone(), observed), || async {
-                    let (fresh, not_current) =
-                        timed_owner_lookup(self.name_owner_lookup(world), left()).await;
-                    if !not_current {
-                        self.admission_owners.insert(key.clone(), fresh.clone());
-                    }
-                    fresh
-                })
+                .run_accepting(
+                    (key.clone(), observed),
+                    || async {
+                        let (fresh, not_current) =
+                            timed_owner_lookup(self.name_owner_lookup(world), left()).await;
+                        if !not_current {
+                            self.admission_owners.insert(key.clone(), fresh.clone());
+                        }
+                        fresh
+                    },
+                    |(_, read_under)| async move {
+                        match read_under {
+                            Some(read_under) => self.publication_stands(read_under).await,
+                            None => true,
+                        }
+                    },
+                )
                 .await
         })
         .await
@@ -950,6 +949,23 @@ impl Policy {
         answer
             .0
             .map_err(|e| reader_unavailable("name authority", &e))
+    }
+
+    /// Whether an answer read under `observed` may still authorize: the
+    /// publication stands and is current. Concurrent checks of one
+    /// publication share one read, and none is kept past it.
+    async fn publication_stands(&self, observed: Observation) -> bool {
+        let Some(names) = self.names_reader() else {
+            return false;
+        };
+        self.admission_checks
+            .run(observed, || async move {
+                names
+                    .still_current(&observed, Purpose::Authorize)
+                    .await
+                    .unwrap_or(false)
+            })
+            .await
     }
 
     /// Records `owner` as `world`'s holder, an answer the caller just proved,
@@ -3103,6 +3119,42 @@ mod tests {
         assert_eq!(asked() - before, 1, "one re-read for every admission");
         assert_eq!(p.world_owner(&world).await.unwrap(), Some(b));
         assert_eq!(asked() - before, 1, "the memo serves the re-read");
+    }
+
+    /// A re-read joined from another admission is served only while the
+    /// publication it was read under stands: the re-read reads B under the
+    /// second publication and is held there, a third publishes C, and an
+    /// admission that joined the re-read meanwhile reads again and is
+    /// answered C. The re-read's own caller is answered B, as before.
+    #[tokio::test]
+    async fn a_joined_refresh_is_validated_before_it_is_served() {
+        use crate::comms::interfaces::AccessPolicy;
+        let (p, indexed) = indexed_policy();
+        let p = Arc::new(p);
+        let (world, a, b, c) = (world_name(), wallet(), wallet(), wallet());
+        let label = world.owner_label().unwrap().to_string();
+        indexed.publish(&label, Some(&a));
+        assert_eq!(p.world_owner(&world).await.unwrap(), Some(a));
+        indexed.publish(&label, Some(&b));
+        let pause = Arc::new(tokio::sync::Notify::new());
+        *indexed.pause.lock().unwrap() = Some(pause.clone());
+        let leader = tokio::spawn({
+            let (p, world) = (p.clone(), world.clone());
+            async move { p.world_owner(&world).await }
+        });
+        indexed.entered.notified().await;
+        indexed.publish(&label, Some(&c));
+        let follower = tokio::spawn({
+            let (p, world) = (p.clone(), world.clone());
+            async move { p.world_owner(&world).await }
+        });
+        // The follower joins the re-read in flight before it answers.
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        *indexed.pause.lock().unwrap() = None;
+        pause.notify_waiters();
+        assert_eq!(leader.await.unwrap().unwrap(), Some(b));
+        assert_eq!(follower.await.unwrap().unwrap(), Some(c.clone()));
+        assert_eq!(p.world_owner(&world).await.unwrap(), Some(c));
     }
 
     /// Concurrent memo hits under one publication share one validation, and

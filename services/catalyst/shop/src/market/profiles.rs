@@ -568,6 +568,8 @@ async fn process_profiles_observed(
                     .buffer_unordered(THIRD_PARTY_CONCURRENCY)
                     .collect::<HashMap<String, Vec<String>>>()
             );
+            #[cfg(test)]
+            state.test_hold_after_ownership().await;
             let (read, indexed_names, seen) = owned_res?;
             owned = read;
             observed = seen.map(|seen| seen.publications);
@@ -672,6 +674,23 @@ pub(super) async fn process_and_cache_profiles(
     entities: &[Value],
     looked_up: owned_items::Publications,
 ) -> Result<Vec<(String, Value)>, String> {
+    Ok(
+        process_and_cache_observed(state, pointers, entities, looked_up)
+            .await?
+            .into_iter()
+            .map(|(key, profile, _)| (key, profile))
+            .collect(),
+    )
+}
+
+/// [`process_and_cache_profiles`], each profile with the publications its
+/// ownership read observed (`None`: it depends on none).
+async fn process_and_cache_observed(
+    state: &MarketplaceState,
+    pointers: &[String],
+    entities: &[Value],
+    looked_up: owned_items::Publications,
+) -> Result<Vec<(String, Value, Option<owned_items::Publications>)>, String> {
     let processed = process_profiles_observed(state, entities).await?;
     let mut out = Vec::with_capacity(entities.len());
     let mut filled: HashSet<String> = Default::default();
@@ -685,7 +704,7 @@ pub(super) async fn process_and_cache_profiles(
             );
         }
         if !profile.is_null() {
-            out.push((key, profile));
+            out.push((key, profile, observed));
         }
     }
     for pointer in pointers {
@@ -704,9 +723,14 @@ pub(crate) enum Failure {
     Reader(String),
 }
 
+/// A profile as one read answers it: the processed profile (`Null`: none)
+/// and the publications its ownership read observed (`None`: it depends on
+/// none).
+pub(crate) type ReadProfile = (Value, Option<owned_items::Publications>);
+
 /// What one profile read answers every caller that joined it: pointer ->
-/// its processed profile (`Null`: none), or the read's failure.
-pub(crate) type ProfileRead = Result<std::sync::Arc<HashMap<String, Value>>, Failure>;
+/// its profile, or the read's failure.
+pub(crate) type ProfileRead = Result<std::sync::Arc<HashMap<String, ReadProfile>>, Failure>;
 
 impl Failure {
     fn layer(&self) -> &'static str {
@@ -725,25 +749,26 @@ impl Failure {
 }
 
 /// Reads `pointers`' entities and processes them under `looked_up`
-/// ([`process_and_cache_profiles`], which fills the per-id cache): pointer
-/// -> its profile, `Null` for a pointer without one.
+/// ([`process_and_cache_observed`], which fills the per-id cache): pointer
+/// -> its profile, `Null` (depending on nothing) for a pointer without one.
 async fn read_profiles(
     state: &MarketplaceState,
     pointers: &[String],
     looked_up: owned_items::Publications,
-) -> Result<HashMap<String, Value>, Failure> {
+) -> Result<HashMap<String, ReadProfile>, Failure> {
     let entities = active_entities(state, pointers)
         .await
         .map_err(|()| Failure::Db)?;
-    let mut read: HashMap<String, Value> = HashMap::with_capacity(pointers.len());
-    for (key, profile) in process_and_cache_profiles(state, pointers, &entities, looked_up)
-        .await
-        .map_err(Failure::Reader)?
+    let mut read: HashMap<String, ReadProfile> = HashMap::with_capacity(pointers.len());
+    for (key, profile, observed) in
+        process_and_cache_observed(state, pointers, &entities, looked_up)
+            .await
+            .map_err(Failure::Reader)?
     {
-        read.entry(key).or_insert(profile);
+        read.entry(key).or_insert((profile, observed));
     }
     for pointer in pointers {
-        read.entry(pointer.clone()).or_insert(Value::Null);
+        read.entry(pointer.clone()).or_insert((Value::Null, None));
     }
     Ok(read)
 }
@@ -751,17 +776,32 @@ async fn read_profiles(
 /// Per-id hits are reused across id sets; only misses are fetched; answer
 /// `(pointer, profile)` in request order, each pointer once. A miss another
 /// request is reading under the same publications joins that read
-/// (`profile_flights`), and the rest are read together in one.
+/// (`profile_flights`), and the rest are read together in one. A joined
+/// read answered another request, so it is served only as a cache hit would
+/// be: a profile read under the publications this request looked up (or
+/// depending on none). A joined failure (a wallet of the other request's own
+/// may have failed it), a profile read under another publication, and a key
+/// whose read was dropped are read again here, for this request's keys
+/// alone.
 async fn profiles_via_cache(
     state: &MarketplaceState,
     pointers: &[String],
 ) -> Result<Vec<(String, Value)>, Failure> {
-    let wanted = unique_pointers(pointers);
     // The key of every hit and fill: a profile read under another
     // publication of the nft index is never served.
     let publications = owned_items::Publications::current(state)
         .await
         .map_err(|_| Failure::Db)?;
+    profiles_under(state, pointers, publications).await
+}
+
+/// [`profiles_via_cache`] for a request that looked up `publications`.
+pub(super) async fn profiles_under(
+    state: &MarketplaceState,
+    pointers: &[String],
+    publications: owned_items::Publications,
+) -> Result<Vec<(String, Value)>, Failure> {
+    let wanted = unique_pointers(pointers);
     let mut found: HashMap<String, Value> = Default::default();
     let mut missing: Vec<String> = Vec::new();
     for pointer in &wanted {
@@ -775,31 +815,54 @@ async fn profiles_via_cache(
             None => missing.push(pointer.clone()),
         }
     }
-    let mut pending: Vec<(String, owned_items::Publications)> = missing
-        .iter()
-        .map(|pointer| (pointer.clone(), publications))
-        .collect();
-    // A read another request joined and then dropped hands its keys back.
-    while !pending.is_empty() {
-        let (reads, orphaned) = state
+    if !missing.is_empty() {
+        let mut keep = |pointer: &String, profile: &Value| {
+            if missing.contains(pointer) && !profile.is_null() {
+                found
+                    .entry(pointer.clone())
+                    .or_insert_with(|| profile.clone());
+            }
+        };
+        let keys: Vec<(String, owned_items::Publications)> = missing
+            .iter()
+            .map(|pointer| (pointer.clone(), publications))
+            .collect();
+        let many = state
             .profile_flights
-            .run_many(&pending, |led| async move {
+            .run_many(&keys, |led| async move {
                 let pointers: Vec<String> = led.into_iter().map(|(pointer, _)| pointer).collect();
                 read_profiles(state, &pointers, publications)
                     .await
                     .map(std::sync::Arc::new)
             })
             .await;
-        for read in reads {
-            for (pointer, profile) in read?.iter() {
-                if missing.contains(pointer) && !profile.is_null() {
-                    found
-                        .entry(pointer.clone())
-                        .or_insert_with(|| profile.clone());
+        if let Some(own) = many.own {
+            for (pointer, (profile, _)) in own?.iter() {
+                keep(pointer, profile);
+            }
+        }
+        let mut again: Vec<String> = many
+            .orphaned
+            .into_iter()
+            .map(|(pointer, _)| pointer)
+            .collect();
+        for (read, keys) in many.joined {
+            for (pointer, _) in keys {
+                match read.as_ref().ok().and_then(|read| read.get(&pointer)) {
+                    Some((profile, observed))
+                        if observed.is_none_or(|observed| observed == publications) =>
+                    {
+                        keep(&pointer, profile)
+                    }
+                    _ => again.push(pointer),
                 }
             }
         }
-        pending = orphaned;
+        if !again.is_empty() {
+            for (pointer, (profile, _)) in read_profiles(state, &again, publications).await? {
+                keep(&pointer, &profile);
+            }
+        }
     }
     Ok(wanted
         .into_iter()

@@ -3072,7 +3072,7 @@ async fn a_fill_is_filed_under_the_publication_its_read_observed() {
     .await
     .unwrap();
     assert!(filled[0].1.to_string().contains(&hat), "{filled:?}");
-    let outfits = super::lambdas_catalog::fill_outfits(state, OWNER, looked_up)
+    let (outfits, _) = super::lambdas_catalog::fill_outfits(state, OWNER, looked_up)
         .await
         .unwrap_or_else(|_| panic!("the outfits fill reads"));
     assert!(outfits.to_string().contains(&hat), "{outfits}");
@@ -3097,6 +3097,214 @@ async fn a_fill_is_filed_under_the_publication_its_read_observed() {
         (StatusCode::SERVICE_UNAVAILABLE, Some("nft-index")),
         "{body}"
     );
+    db.drop().await;
+}
+
+async fn post_profiles(state: &SharedState, ids: &[&str]) -> (StatusCode, Value) {
+    let resp = router(state.clone())
+        .oneshot(
+            Request::post("/lambdas/profiles")
+                .body(Body::from(json!({ "ids": ids }).to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let status = resp.status();
+    let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    (status, serde_json::from_slice(&body).unwrap_or(Value::Null))
+}
+
+/// Polygon published `secs` ago (Ethereum two minutes ago).
+async fn publish_polygon_secs_ago(pool: &PgPool, secs: i64) {
+    set_nft_cursor(pool, "ethereum", Some(2)).await;
+    sqlx::query(
+        "INSERT INTO shop.chain_cursor (indexer, network, start_block, last_block, folded_block, folded_at, full_history, chain_id) \
+         VALUES ('nft', 'matic', 1, 100, 100, timezone('UTC', now()) - make_interval(secs => $1), true, 137) \
+         ON CONFLICT (indexer, network) DO UPDATE SET folded_block = 100, folded_at = EXCLUDED.folded_at",
+    )
+    .bind(secs as f64)
+    .execute(pool)
+    .await
+    .unwrap();
+}
+
+/// A read in flight answers a joined outfits request only as the memo
+/// would (#2219): a request that arrives after the networks the read
+/// needed stop being fresh joins it under the same publications, but is
+/// not given its ownership; it reads again and fails closed. The read's
+/// own request is answered as before.
+#[tokio::test]
+async fn a_joined_outfits_read_is_not_served_past_its_freshness() {
+    let Some(OwnershipFixture {
+        db, walking, hat, ..
+    }) = ownership_fixture().await
+    else {
+        return;
+    };
+    let state = &walking;
+    let window = super::chain_walk::READY_WINDOW.num_seconds();
+    publish_polygon_secs_ago(&db.pool, window - 3).await;
+    let outfits = format!("/lambdas/outfits/{OWNER}");
+    state.test_hold_reads();
+    let leader = tokio::spawn({
+        let (state, uri) = (state.clone(), outfits.clone());
+        async move { get(&state, &uri).await }
+    });
+    state.test_held.notified().await;
+    tokio::time::sleep(std::time::Duration::from_secs(4)).await;
+    let follower = tokio::spawn({
+        let (state, uri) = (state.clone(), outfits.clone());
+        async move { get(&state, &uri).await }
+    });
+    // The follower joins the read in flight before it answers.
+    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    assert_eq!(state.lambdas.outfit_flights.reads_started(), 1);
+    state.test_release();
+    let (status, body) = leader.await.unwrap();
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert!(body.to_string().contains(&hat), "{body}");
+    let (status, body) = follower.await.unwrap();
+    assert_eq!(
+        (status, body["source"].as_str()),
+        (StatusCode::SERVICE_UNAVAILABLE, Some("nft-index")),
+        "a joined answer past the freshness window: {body}"
+    );
+    assert_eq!(state.lambdas.outfit_flights.reads_started(), 2);
+    db.drop().await;
+}
+
+/// A read in flight answers a joined request only under the publications
+/// that request looked up: the reads look up Polygon withdrawn, Polygon
+/// publishes before their ownership queries, and is withdrawn again while
+/// they are held (the same key as their lookup). Requests that join them
+/// then read again, and neither the outfits nor the profile come back from
+/// the withdrawn publication; the reads' own callers are answered as before.
+#[tokio::test]
+async fn a_joined_read_under_another_publication_is_read_again() {
+    let Some(OwnershipFixture {
+        db, walking, hat, ..
+    }) = ownership_fixture().await
+    else {
+        return;
+    };
+    let state = &walking;
+    set_nft_cursor(&db.pool, "ethereum", Some(2)).await;
+    set_nft_cursor(&db.pool, "matic", None).await;
+    let looked_up = super::owned_items::Publications::current(state)
+        .await
+        .unwrap();
+    assert_eq!(looked_up.matic, None);
+    set_nft_cursor(&db.pool, "matic", Some(2)).await;
+    state.test_hold_reads();
+    let outfits_leader = tokio::spawn({
+        let state = state.clone();
+        async move {
+            let resp = super::lambdas_catalog::outfits_under(&state, OWNER, looked_up).await;
+            let status = resp.status();
+            let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
+                .await
+                .unwrap();
+            (status, String::from_utf8_lossy(&body).to_string())
+        }
+    });
+    state.test_held.notified().await;
+    let profile_leader = tokio::spawn({
+        let state = state.clone();
+        async move {
+            super::profiles::profiles_under(&state, &[OWNER.to_string()], looked_up)
+                .await
+                .map_err(|e| format!("{e:?}"))
+        }
+    });
+    state.test_held.notified().await;
+    set_nft_cursor(&db.pool, "matic", None).await;
+    assert_eq!(
+        super::owned_items::Publications::current(state)
+            .await
+            .unwrap(),
+        looked_up,
+        "the lookup key recurs"
+    );
+    let outfits_follower = tokio::spawn({
+        let state = state.clone();
+        async move { get(&state, &format!("/lambdas/outfits/{OWNER}")).await }
+    });
+    let profile_follower = tokio::spawn({
+        let state = state.clone();
+        async move { get(&state, &format!("/lambdas/profiles/{OWNER}")).await }
+    });
+    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    assert_eq!(state.lambdas.outfit_flights.reads_started(), 1);
+    assert_eq!(state.profile_flights.reads_started(), 1);
+    state.test_release();
+
+    let (status, body) = outfits_leader.await.unwrap();
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert!(body.contains(&hat), "{body}");
+    let profile = profile_leader.await.unwrap().unwrap();
+    assert!(profile[0].1.to_string().contains(&hat), "{profile:?}");
+    let (status, body) = outfits_follower.await.unwrap();
+    assert_eq!(
+        (status, body["source"].as_str()),
+        (StatusCode::SERVICE_UNAVAILABLE, Some("nft-index")),
+        "{body}"
+    );
+    let (status, body) = profile_follower.await.unwrap();
+    assert_eq!(
+        (status, body["message"].as_str()),
+        (StatusCode::NOT_FOUND, Some("Profile not found")),
+        "{body}"
+    );
+    db.drop().await;
+}
+
+/// A profile request that joins a wider read keeps its own answer when
+/// another wallet fails that read: with Polygon withdrawn, the wallet's
+/// ownership cannot be read, so `[default1, wallet]` answers `[]`, while
+/// `[default1]`, held on the same read, reads default1 alone (a default
+/// profile needs no ownership) and answers it.
+#[tokio::test]
+async fn a_narrow_profile_request_survives_a_wider_failing_read() {
+    let Some(OwnershipFixture { db, walking, .. }) = ownership_fixture().await else {
+        return;
+    };
+    let state = &walking;
+    deploy(
+        &db.pool,
+        "bafydefault1",
+        "profile",
+        "default1",
+        json!({ "avatars": [{ "name": "default-one", "avatar": { "bodyShape": "urn:decentraland:off-chain:base-avatars:BaseMale",
+            "wearables": ["urn:decentraland:off-chain:base-avatars:eyes_00"] } }] }),
+        &[],
+    )
+    .await;
+    set_nft_cursor(&db.pool, "ethereum", Some(2)).await;
+    set_nft_cursor(&db.pool, "matic", None).await;
+    state.test_hold_reads();
+    let wide = tokio::spawn({
+        let state = state.clone();
+        async move { post_profiles(&state, &["default1", OWNER]).await }
+    });
+    state.test_held.notified().await;
+    let narrow = tokio::spawn({
+        let state = state.clone();
+        async move { post_profiles(&state, &["default1"]).await }
+    });
+    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    assert_eq!(
+        state.profile_flights.reads_started(),
+        1,
+        "the narrow request joined"
+    );
+    state.test_release();
+    assert_eq!(wide.await.unwrap(), (StatusCode::OK, json!([])));
+    let (status, body) = narrow.await.unwrap();
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body.as_array().map(Vec::len), Some(1), "{body}");
+    assert!(body.to_string().contains("default-one"), "{body}");
     db.drop().await;
 }
 
