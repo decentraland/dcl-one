@@ -8,9 +8,10 @@
 //! poller archives (`economy.price_snapshots`); without a spot younger than
 //! `price::store::SNAPSHOT_MAX_AGE` it answers the price envelope, never a
 //! price from a constant.
-//! `/v1/trendings` ranks the last week's sales read from the collections
-//! subgraphs (a reader, 10 min, at most 1,000 sales per network) and
-//! hydrates the winners through the items query.
+//! `/v1/trendings` ranks the last week's sales (`trending_sales`, at most
+//! 1,000 per network: the published sales history on the same snapshot
+//! where the node serves the mainnet sales index, else the collections
+//! subgraphs' `sales`) and hydrates the winners through the items query.
 
 use crate::types::{ASSET_TYPE_USD_PEGGED_MANA, ManaUsdRate};
 use std::collections::HashMap;
@@ -22,7 +23,7 @@ use axum::http::header::CACHE_CONTROL;
 use axum::response::{IntoResponse, Response};
 use chrono::{NaiveTime, Utc};
 use serde::Serialize;
-use serde_json::{Value, json};
+use serde_json::json;
 use sqlx::Row;
 
 use super::catalog::{
@@ -31,7 +32,7 @@ use super::catalog::{
 };
 use super::catalogue::{self, Access, CatalogueRead, Purpose};
 use super::mirrors::Mirror;
-use super::readers::{self, Ttl, cached, int_of, str_of};
+use super::readers::{self, Ttl, cached, int_of};
 use super::shop::{MAX_USD_WEI, SHOP_SORT_VALUES, ShopSortBy};
 use super::wire::{
     ApiError, ChainId, DataTotal, NETWORK_VALUES, NFT_CATEGORY_VALUES, Network, NftCategory,
@@ -1066,23 +1067,7 @@ pub async fn get_catalog_items(
 const TRENDING_DEFAULT_SIZE: i64 = 20;
 const SALES_CUT: f64 = 0.6;
 const VOLUME_CUT: f64 = 0.4;
-pub const TRENDING_SALES_LIMIT: i64 = 1000;
 pub const TRENDING_WINDOW_DAYS: i64 = 7;
-
-const SALES_QUERY: &str = r#"
-query recentSales($from: BigInt!, $first: Int!) {
-  sales(first: $first, orderBy: timestamp, orderDirection: desc, where: { timestamp_gt: $from }) {
-    id
-    searchItemId
-    searchContractAddress
-    price
-    timestamp
-    type
-    seller
-    buyer
-    item { id creator }
-  }
-}"#;
 
 /// Midnight UTC `days` ago as unix seconds, the anchor upstream derived.
 pub fn midnight_days_ago(days: i64) -> i64 {
@@ -1091,30 +1076,6 @@ pub fn midnight_days_ago(days: i64) -> i64 {
         .and_time(NaiveTime::MIN)
         .and_utc()
         .timestamp()
-}
-
-/// The last `days` of `sales` on every configured collections subgraph, at
-/// most [`TRENDING_SALES_LIMIT`] per network, memoized 10 min.
-pub async fn recent_sales(state: &MarketplaceState, days: i64) -> Result<Vec<Value>, Response> {
-    let urls = readers::require_both_collections(state)?;
-    let from = midnight_days_ago(days);
-    let mut out = Vec::new();
-    for (network, url) in urls {
-        let key = format!("sales:{}:{from}", network.db_name());
-        let data = cached(state, Ttl::M10, key, || async {
-            readers::query(
-                state,
-                url,
-                SALES_QUERY,
-                json!({ "from": from.to_string(), "first": TRENDING_SALES_LIMIT }),
-            )
-            .await
-        })
-        .await
-        .map_err(|e| readers::upstream_failed("/v1/trendings", &e))?;
-        out.extend(readers::rows(&data, "sales"));
-    }
-    Ok(out)
 }
 
 fn volume_of(item: &Item, sales_count: i64) -> u128 {
@@ -1222,39 +1183,57 @@ pub async fn get_trendings(
     let size = p.get_integer("size").unwrap_or(TRENDING_DEFAULT_SIZE);
     let include_social_emotes =
         p.get_string("includeSocialEmotes", None).as_deref() != Some("false");
-    // The gate first, on a short read: a refusal answers without waiting on
-    // the sales reader's subgraph call, which runs with no connection held;
-    // the read is then opened again, rechecked, for the rows.
-    if let Err(envelope) = priced_preflight(&state, None).await {
-        return envelope;
-    }
     let cache_control = [(CACHE_CONTROL, "no-cache")];
-    if size <= 0 {
-        return (cache_control, Json(json!({ "data": [] }))).into_response();
-    }
-    let sales = match recent_sales(&state, TRENDING_WINDOW_DAYS).await {
-        Ok(s) => s,
-        Err(envelope) => return envelope,
+    // Without the mainnet sales index the signal is the subgraph reader's:
+    // the gate first, on a short read, then the call with no connection
+    // held, then the read again, rechecked, for the rows.
+    let fetched = if super::trending_sales::native(&state) {
+        None
+    } else {
+        if let Err(envelope) = priced_preflight(&state, None).await {
+            return envelope;
+        }
+        if size <= 0 {
+            return (cache_control, Json(json!({ "data": [] }))).into_response();
+        }
+        match super::trending_sales::subgraph_sales(&state, TRENDING_WINDOW_DAYS).await {
+            Ok(sales) => Some(sales),
+            Err(envelope) => return envelope,
+        }
     };
     let mut read = match priced_read(&state, None).await {
         Ok(read) => read,
         Err(envelope) => return envelope,
     };
+    if size <= 0 {
+        return (cache_control, Json(json!({ "data": [] }))).into_response();
+    }
+    // The native signal, on the rows' own snapshot.
+    let (published, sales) = match fetched {
+        Some(sales) => (None, sales),
+        None => {
+            match super::trending_sales::recent(&state, &mut read.tx, TRENDING_WINDOW_DAYS).await {
+                Ok((published, sales)) => (Some(published), sales),
+                Err(envelope) => return envelope,
+            }
+        }
+    };
     let mut counts: HashMap<(String, String), i64> = HashMap::new();
     let mut order: Vec<(String, String)> = Vec::new();
-    for sale in &sales {
-        let item_id = str_of(sale, "searchItemId");
-        let contract = str_of(sale, "searchContractAddress").to_lowercase();
-        if item_id.is_empty() || contract.is_empty() {
+    for sale in sales {
+        if sale.contract_address.is_empty() || sale.item_id.is_empty() {
             continue;
         }
-        let key = (contract, item_id);
+        let key = (sale.contract_address, sale.item_id);
         if !counts.contains_key(&key) {
             order.push(key.clone());
         }
         *counts.entry(key).or_insert(0) += 1;
     }
     if counts.is_empty() {
+        if let Err(envelope) = super::trending_sales::ensure_fresh(published.as_ref()) {
+            return envelope;
+        }
         return (cache_control, Json(json!({ "data": [] }))).into_response();
     }
     let filters = ItemFilters {
@@ -1273,6 +1252,10 @@ pub async fn get_trendings(
         .collect();
     let data = select_trending(&order, &counts, fetched, size);
     let _ = int_of;
+    // The page answers only while the sales it ranked are still published.
+    if let Err(envelope) = super::trending_sales::ensure_fresh(published.as_ref()) {
+        return envelope;
+    }
     (cache_control, Json(json!({ "data": data }))).into_response()
 }
 
@@ -1828,7 +1811,7 @@ mod tests {
             assert!(v[key].is_number(), "{key} is a number on the old wire: {v}");
         }
         assert!(v["price"].is_string() && v["itemId"].is_string(), "{v}");
-        assert_eq!(v["tradeId"], Value::Null);
+        assert_eq!(v["tradeId"], serde_json::Value::Null);
         assert_eq!(v["category"], "wearable");
     }
 

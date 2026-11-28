@@ -1,24 +1,20 @@
 //! Shop recommendations implementation.
 
 use super::*;
+use crate::market::trending_sales::SignalSale;
 
 /// Windowed sale count and settled volume per `<contract>-<itemId>`.
-pub fn aggregate_sales(sales: &[Value]) -> HashMap<String, SaleSignal> {
+pub fn aggregate_sales(sales: &[SignalSale]) -> HashMap<String, SaleSignal> {
     let mut out: HashMap<String, SaleSignal> = HashMap::new();
     for sale in sales {
-        let (Some(contract), Some(item)) = (
-            readers::opt_str_of(sale, "searchContractAddress"),
-            readers::opt_str_of(sale, "searchItemId"),
-        ) else {
+        if sale.contract_address.is_empty() || sale.item_id.is_empty() {
             continue;
-        };
+        }
         let entry = out
-            .entry(format!("{}-{item}", contract.to_lowercase()))
+            .entry(format!("{}-{}", sale.contract_address, sale.item_id))
             .or_default();
         entry.sales += 1;
-        entry.volume = entry
-            .volume
-            .saturating_add(readers::str_of(sale, "price").parse::<u128>().unwrap_or(0));
+        entry.volume = entry.volume.saturating_add(sale.wei());
     }
     out
 }
