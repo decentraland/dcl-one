@@ -1112,6 +1112,22 @@ pub async fn get_nfts(
 mod tests {
     use super::*;
 
+    #[test]
+    fn estate_parcels_outside_the_integer_range_are_dropped() {
+        let parcels = json!([
+            {"x": "-150", "y": 150},
+            {"x": 2_147_483_648_i64, "y": 0},
+            {"x": 0, "y": "-2147483649"},
+            {"x": 3, "y": "4"}
+        ]);
+        let kept: Vec<(i32, i32)> = parcels_of(Some(&parcels), "0xestate", "7")
+            .into_iter()
+            .map(|p| (p.x, p.y))
+            .collect();
+        assert_eq!(kept, [(-150, 150), (3, 4)]);
+        assert!(parcels_of(None, "0xestate", "7").is_empty());
+    }
+
     fn pairs(list: &[(&str, &str)]) -> Vec<(String, String)> {
         list.iter()
             .map(|(k, v)| (k.to_string(), v.to_string()))
