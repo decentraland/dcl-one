@@ -1366,8 +1366,8 @@ packages:
   undici-types@8.3.0:
     resolution: {integrity: sha512-j375ScV60dom+YkPFIfTLcOiPxkN/buHz5GobjLhixFuANaNs3C9l4GmrWqejgXWJ7BbJcFYpTEUkS1Ge8bpZQ==}
 
-  undici@7.29.0:
-    resolution: {integrity: sha512-IDxfleLmmbSskfWSUATiN1nfn2rDuvnMOqb5CWR92iIfojA0Ud+ulOAAEQ57LPr9rWmsreUyf5lwyao+7GNNVw==}
+  undici@7.30.2:
+    resolution: {integrity: sha512-mLyPQnHwUxaM/rideoK/+KL8DaAJLRl4aBCfmX444aCSLnIaomqPLtNRe2jdCYcsk5wZzXrDIQC8ZeYNRAYyIA==}
     engines: {node: '>=20.18.1'}
 
   util-deprecate@1.0.2:
@@ -1601,7 +1601,7 @@ snapshots:
       ignore: 5.3.2
       qrcode: 1.5.4
       typescript: 5.9.3
-      undici: 7.29.0
+      undici: 7.30.2
     transitivePeerDependencies:
       - '@well-known-components/interfaces'
       - bufferutil
@@ -2713,7 +2713,7 @@ snapshots:
 
   undici-types@8.3.0: {}
 
-  undici@7.29.0: {}
+  undici@7.30.2: {}
 
   util-deprecate@1.0.2: {}
 
