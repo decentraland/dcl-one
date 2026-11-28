@@ -417,27 +417,19 @@ async fn read_pages_keep_counts_when_empty_and_reject_offsets_outside_sql_range(
         );
     }
     for offset in ["9223372036854775808", "18446744073709551615"] {
-        for (path, message) in [
-            (format!("/api/users/{owner}/images"), "user not found"),
-            (format!("/api/places/{place}/images"), "place not found"),
+        // Past the `bigint` range the offset is refused before any read.
+        for path in [
+            format!("/api/users/{owner}/images"),
+            format!("/api/places/{place}/images"),
+            format!("/api/wearables/{owner}-0/images"),
         ] {
             let (status, body) = get(&state, &format!("{path}?offset={offset}")).await;
-            assert_eq!(status, StatusCode::NOT_FOUND);
+            assert_eq!(status, StatusCode::BAD_REQUEST);
             assert_eq!(
                 serde_json::from_slice::<Value>(&body).unwrap(),
-                json!({"message":message})
+                json!({"message":"invalid offset"})
             );
         }
-        let (status, body) = get(
-            &state,
-            &format!("/api/wearables/{owner}-0/images?offset={offset}"),
-        )
-        .await;
-        assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
-        assert_eq!(
-            serde_json::from_slice::<Value>(&body).unwrap(),
-            json!({"message":"failed to fetch the images of the item"})
-        );
     }
     sqlx::query("DELETE FROM camera_reel.images WHERE user_address=$1")
         .bind(owner)
