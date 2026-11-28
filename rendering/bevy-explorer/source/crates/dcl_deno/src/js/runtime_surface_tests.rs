@@ -1,4 +1,4 @@
-use super::{context, create_runtime, fetch_outcome, redirect_servers, run_scene};
+use super::{context, create_runtime, fetch_outcome, redirect_servers, run_scene, run_scene_with};
 use deno_core::JsRuntime;
 use std::time::Duration;
 
@@ -454,6 +454,35 @@ fn run_in_child(test: &str, body: impl FnOnce() -> String) {
         output.status,
         String::from_utf8_lossy(&output.stderr),
     );
+}
+
+/// A scene over its heap limit is terminated, not the process. Large single allocations at the
+/// cap are the hard case: each must fit before the termination can run.
+#[test]
+fn a_scene_over_its_heap_limit_is_terminated_not_the_process() {
+    run_in_child("a_scene_over_its_heap_limit_is_terminated_not_the_process", || {
+        const CAP: usize = 64 * 1024 * 1024;
+        // under the cap: runs to the end
+        run_scene_with(
+            false,
+            false,
+            CAP,
+            "globalThis.keep = []; for (let i = 0; i < 2; i++) { keep.push(new Array(1e6).fill(1.5)); }",
+        )
+        .unwrap();
+        // 24 MB and 40 MB allocations until the cap: terminated
+        for length in ["3e6", "5e6"] {
+            let err = run_scene_with(
+                false,
+                false,
+                CAP,
+                &format!("globalThis.keep = []; for (;;) {{ keep.push(new Array({length}).fill(1.5)); }}"),
+            )
+            .expect_err("the scene ran past its heap limit");
+            assert!(err.contains("terminated"), "{length}: {err}");
+        }
+        "terminated".to_owned()
+    });
 }
 
 #[test]

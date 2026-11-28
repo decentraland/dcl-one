@@ -1092,63 +1092,6 @@ mod tests {
         .unwrap();
     }
 
-    const HEAP_LIMIT_CHILD: &str = "DCL_DENO_HEAP_LIMIT_CHILD";
-
-    /// A scene over its heap limit is terminated, not the process. Large single allocations
-    /// at the cap are the hard case: each must fit before the termination can run. Runs in a
-    /// child process, so a fatal out-of-memory fails this test instead of the whole run.
-    #[test]
-    fn a_scene_over_its_heap_limit_is_terminated_not_the_process() {
-        if std::env::var_os(HEAP_LIMIT_CHILD).is_some() {
-            heap_limit_child();
-            return;
-        }
-        let output = std::process::Command::new(std::env::current_exe().unwrap())
-            .args([
-                "--exact",
-                "js::tests::a_scene_over_its_heap_limit_is_terminated_not_the_process",
-                "--nocapture",
-                "--test-threads=1",
-            ])
-            .env(HEAP_LIMIT_CHILD, "1")
-            .output()
-            .unwrap();
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        assert!(
-            output.status.success(),
-            "the process did not survive ({}):\n{stdout}\n{stderr}",
-            output.status
-        );
-        assert!(
-            stdout.contains("1 passed"),
-            "the child test did not run:\n{stdout}\n{stderr}"
-        );
-    }
-
-    fn heap_limit_child() {
-        const CAP: usize = 64 * 1024 * 1024;
-        // under the cap: runs to the end
-        run_scene_with(
-            false,
-            false,
-            CAP,
-            "globalThis.keep = []; for (let i = 0; i < 2; i++) { keep.push(new Array(1e6).fill(1.5)); }",
-        )
-        .unwrap();
-        // 24 MB and 40 MB allocations until the cap: terminated
-        for length in ["3e6", "5e6"] {
-            let err = run_scene_with(
-                false,
-                false,
-                CAP,
-                &format!("globalThis.keep = []; for (;;) {{ keep.push(new Array({length}).fill(1.5)); }}"),
-            )
-            .expect_err("the scene ran past its heap limit");
-            assert!(err.contains("terminated"), "{length}: {err}");
-        }
-    }
-
     /// `@dcl/ecs` installs its own `clearInterval` when the global is missing, and that one only
     /// deletes SDK timers: the interval would keep firing.
     #[test]
