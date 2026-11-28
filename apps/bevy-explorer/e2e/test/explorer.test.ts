@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { describe, test } from 'node:test'
 import { ConsoleError, FakeConsole, commandOf, redactLine } from '../driver/console.ts'
-import { type CaptureSequence, type CommandRecord, Explorer, parseLiveScenes, parsePortables, parseSmartWearables, saveCaptureFrames, type WorldState } from '../driver/explorer.ts'
+import { type AudioState, type CaptureSequence, type CommandRecord, Explorer, parseLiveScenes, parsePortables, parseSmartWearables, saveCaptureFrames, type WorldState } from '../driver/explorer.ts'
 import { enterWorld } from '../driver/session.ts'
 
 function world(overrides: Partial<WorldState> = {}): string {
@@ -590,6 +590,30 @@ describe('Explorer', () => {
     assert.deepEqual(await explorer.mediaRetryDelay(100), { firstDelayMs: 100, maxReopens: 5 })
     await explorer.mediaRetryDelay()
     assert.deepEqual(fake.lines, ['/media_state', '/media_retry_delay 100', '/media_retry_delay'])
+  })
+
+  test('audioState reads the audio reply of /media_state and passes its filter', async () => {
+    const reply = {
+      scene: { hash: 'bafkreiscene', title: 'Sound check', parcel: { x: 10, y: -4 } },
+      sceneIsCurrent: true,
+      note: null,
+      listener: { x: 168, y: 0.88, z: -56 },
+      summary: { total: 2, playing: 1, audioSources: 1, streams: 0, videos: 1 },
+      onlyPlaying: false,
+      returned: 2,
+      entries: [
+        { kind: 'audio_source', crdtEntityId: 512, source: 'sounds/loop.mp3', state: 'playing', playing: true, requested: true, loop: true, spatial: true, volume: { authored: 1, live: 0.42 }, pitch: 1, currentTime: 3.5, duration: 12, distance: 4.2, position: { x: 170, y: 1, z: -52 } },
+        { kind: 'video_player', crdtEntityId: 513, source: 'media/intro.webm', state: 'loading', playing: false, requested: true, loop: false, spatial: false, volume: { authored: 0.5, live: null }, scheduled: true, currentTime: null, duration: null, distance: null, position: null }
+      ]
+    } satisfies AudioState
+    const fake = new FakeConsole({ media_state: JSON.stringify(reply) })
+    const explorer = new Explorer(fake)
+    const state = await explorer.audioState()
+    assert.deepEqual(state, reply)
+    assert.deepEqual(state.entries.map((entry) => entry.kind), ['audio_source', 'video_player'])
+    assert.equal(state.entries[0]!.volume.live, 0.42)
+    await explorer.audioState({ onlyPlaying: true })
+    assert.deepEqual(fake.lines, ['/media_state --audio', '/media_state --audio --only-playing'])
   })
 
   test('mediaState exposes selected live video frames without an audio volume field', async () => {

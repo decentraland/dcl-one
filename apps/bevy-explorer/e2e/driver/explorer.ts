@@ -168,6 +168,42 @@ export interface MediaState {
   players: MediaPlayerRow[]
 }
 
+/** One emitter, stream or video `/media_state --audio` lists. */
+export interface AudioEntry {
+  kind: 'audio_source' | 'audio_stream' | 'video_player'
+  crdtEntityId: number
+  source: string
+  /** an emitter: `playing`, `ready`, `loading`, `ended`, `error`, `none`; a stream or video: its player's last state */
+  state: string
+  /** sounding now */
+  playing: boolean
+  /** the scene's `playing` */
+  requested: boolean
+  loop: boolean
+  spatial: boolean
+  /** `authored`: the component's volume as the engine reads it, 0 to 1; `live`: the gain sent to the backend */
+  volume: { authored: number; live: number | null }
+  pitch?: number
+  currentTime?: number | null
+  duration?: number | null
+  scheduled?: boolean
+  distance: number | null
+  position: { x: number; y: number; z: number } | null
+}
+
+/** `/media_state --audio`: the sound of the scene under the player, nearest first. */
+export interface AudioState {
+  scene: { hash: string; title: string; parcel: { x: number; y: number } }
+  /** `false` while the player arrives and is not in the scene yet; `note` then says its emitters are muted */
+  sceneIsCurrent: boolean
+  note: string | null
+  listener: { x: number; y: number; z: number }
+  summary: { total: number; playing: number; audioSources: number; streams: number; videos: number }
+  onlyPlaying: boolean
+  returned: number
+  entries: AudioEntry[]
+}
+
 /** `/media_retry_delay`: the wait before a failed web source's first reopen and the reopens allowed. */
 export interface MediaRetryDelay {
   firstDelayMs: number
@@ -1350,6 +1386,11 @@ export class Explorer {
 
   mediaState(): Promise<MediaState> {
     return this.json<MediaState>('/media_state')
+  }
+
+  /** The emitters, streams and videos of the scene under the player, nearest first. */
+  audioState(options: { onlyPlaying?: boolean } = {}): Promise<AudioState> {
+    return this.json<AudioState>(options.onlyPlaying ? '/media_state --audio --only-playing' : '/media_state --audio')
   }
 
   /** The wait before a failed web media source's first reopen; with `ms`, sets it first. */

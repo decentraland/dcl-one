@@ -22,6 +22,50 @@ use scene_runner::{
 #[derive(Component, Debug)]
 pub struct AudioSource(PbAudioSource);
 
+impl AudioSource {
+    /// The component as the scene wrote it.
+    pub(crate) fn proto(&self) -> &PbAudioSource {
+        &self.0
+    }
+}
+
+/// A decoded clip's length in seconds.
+pub(crate) fn clip_seconds(clip: &bevy_kira_audio::AudioSource) -> f64 {
+    clip.sound.frames.len() as f64 / f64::from(clip.sound.sample_rate)
+}
+
+/// What the backend is doing with a sounding emitter: written while the backend has an instance
+/// of its clip, and removed when it stops or while the clip is not started yet, so `/media_state --audio` reads the same state on native and on the web.
+#[derive(Component, Debug, Clone, Copy, PartialEq)]
+pub(crate) struct EmitterPlayback {
+    /// Seconds into the clip.
+    pub(crate) position: f64,
+    /// The gain sent to the backend: the emitter's volume, the scene volume setting, zero while
+    /// its scene is not current, and the distance falloff of a spatial emitter.
+    pub(crate) gain: f32,
+}
+
+/// The backend saw the emitter's clip play to its end. It stays while the scene still asks for
+/// the clip and goes when the scene stops asking or the clip starts again, so `/media_state --audio` can
+/// tell a clip that ended from one the backend has not started yet.
+#[derive(Component, Debug)]
+pub(crate) struct EmitterEnded;
+
+impl EmitterPlayback {
+    pub(crate) fn write(
+        self,
+        commands: &mut Commands,
+        entity: Entity,
+        existing: Option<Mut<EmitterPlayback>>,
+    ) {
+        if let Some(mut existing) = existing {
+            existing.set_if_neq(self);
+        } else {
+            commands.entity(entity).try_insert(self);
+        }
+    }
+}
+
 impl From<PbAudioSource> for AudioSource {
     fn from(value: PbAudioSource) -> Self {
         Self(value)

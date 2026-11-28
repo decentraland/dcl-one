@@ -372,6 +372,10 @@ the [conventions ADR](../../../docs/adr/2026-11-17-console-command-conventions.m
   `/smart_wearable run|kill|restart <urn>` and the `, smart wearable` mark in `/live_scenes`
   ([Smart wearables and portables](#smart-wearables-and-portables)); a portable experience's map
   pins: `/map_pins_state`.
+- Sound: `/media_state --audio [--only-playing]` lists the `AudioSource` emitters, audio streams and
+  video players of the scene under the player, nearest first: what the scene asked for
+  (`requested`, `volume.authored`, `loop`, `spatial`) beside what the engine plays (`playing`,
+  `state`, `volume.live`, `currentTime`, `duration`), with a `summary` of the whole scene.
 - Scene pointer: `/hover_entity <entity>` and `/click_entity <entity>` hover and click a scene
   entity by id through the pointer pipeline, on native and web alike, and answer with the hit, the
   hover entries, the scene's pointer events and a diagnosis (`docs/guidelines/running.md`). A hover

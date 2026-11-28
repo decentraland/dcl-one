@@ -1,4 +1,5 @@
 use super::*;
+use bevy::ecs::system::SystemParam;
 use bevy_console::ConsoleCommand;
 use common::structs::PrimaryUser;
 use console::{AddDebugSection, DebugSection, DoAddConsoleCommand};
@@ -56,36 +57,106 @@ fn media_retry_delay(mut cmd: ConsoleCommand<MediaRetryDelay>) {
     );
 }
 
-/// Inspect scene media players and their requested and scheduled playback states.
+/// One scene media player as `/media_state` reads it, with or without `--audio`.
+pub(crate) struct MediaRead<'a, T: AVPlayer> {
+    /// the player's own entity
+    pub(crate) id: Entity,
+    pub(crate) entity: &'a SceneEntity,
+    pub(crate) player: &'a T,
+    /// its scene is one the player stands in
+    pub(crate) in_scene: bool,
+    /// chosen to play
+    pub(crate) scheduled: bool,
+    pub(crate) transform: Option<&'a GlobalTransform>,
+    /// the backend's ends of the player, once it has them
+    #[cfg(any(feature = "ffmpeg", feature = "html"))]
+    pub(crate) sinks: Option<&'a AVSinks<T>>,
+}
+
+/// The loaded media players of one kind (`VideoPlayer` or `AudioStream`), each with its backend
+/// sinks: the one walk both replies of `/media_state` share.
+#[derive(SystemParam)]
+pub(crate) struct MediaPlayers<'w, 's, T: AVPlayer> {
+    players: Query<
+        'w,
+        's,
+        (
+            Entity,
+            &'static T,
+            &'static SceneEntity,
+            Has<InScene>,
+            Has<ShouldBePlaying<T>>,
+            Option<&'static GlobalTransform>,
+        ),
+    >,
+    #[cfg(any(feature = "ffmpeg", feature = "html"))]
+    sinks: Query<'w, 's, &'static AVSinks<T>>,
+}
+
+impl<T: AVPlayer> MediaPlayers<'_, '_, T> {
+    pub(crate) fn count(&self) -> usize {
+        self.players.iter().len()
+    }
+
+    pub(crate) fn iter(&self) -> impl Iterator<Item = MediaRead<'_, T>> + '_ {
+        self.players.iter().map(
+            |(id, player, entity, in_scene, scheduled, transform)| MediaRead {
+                id,
+                entity,
+                player,
+                in_scene,
+                scheduled,
+                transform,
+                #[cfg(any(feature = "ffmpeg", feature = "html"))]
+                sinks: self.sinks.get(id).ok(),
+            },
+        )
+    }
+}
+
+/// Inspect scene media players and their requested and scheduled playback states. With
+/// `--audio`, reply instead with the sound of the scene under the player: its `AudioSource`
+/// emitters, audio streams and video players, nearest first.
 #[derive(clap::Parser, ConsoleCommand)]
 #[command(name = "/media_state")]
-struct MediaState;
+struct MediaState {
+    /// Reply with the sound of the scene under the player instead of the loaded players.
+    #[arg(long)]
+    audio: bool,
+    /// With --audio, list only the entries that are sounding; `summary` still counts the scene.
+    #[arg(long, requires = "audio")]
+    only_playing: bool,
+}
 
+#[allow(clippy::too_many_arguments)]
 fn media_state(
     mut cmd: ConsoleCommand<MediaState>,
-    video: Query<(
-        Entity,
-        &VideoPlayer,
-        &SceneEntity,
-        Has<InScene>,
-        Has<ShouldBePlaying<VideoPlayer>>,
-    )>,
-    audio: Query<(
-        Entity,
-        &AudioStream,
-        &SceneEntity,
-        Has<InScene>,
-        Has<ShouldBePlaying<AudioStream>>,
-    )>,
+    video: MediaPlayers<VideoPlayer>,
+    audio: MediaPlayers<AudioStream>,
     scenes: Query<&RendererSceneContext>,
     player: Query<Entity, With<PrimaryUser>>,
     containing: ContainingScene,
+    emitters: crate::audio_state::Emitters,
     receivers: Query<&livestream_manager::ReceiverImage>,
     #[cfg(any(feature = "ffmpeg", feature = "html"))] images: Res<Assets<Image>>,
-    #[cfg(any(feature = "ffmpeg", feature = "html"))] video_sinks: Query<&AVSinks<VideoPlayer>>,
-    #[cfg(any(feature = "ffmpeg", feature = "html"))] audio_sinks: Query<&AVSinks<AudioStream>>,
 ) {
-    let Some(Ok(_)) = cmd.take() else { return };
+    let Some(Ok(command)) = cmd.take() else {
+        return;
+    };
+    if command.audio {
+        match crate::audio_state::audio_state(
+            &emitters,
+            &containing,
+            &scenes,
+            &audio,
+            &video,
+            command.only_playing,
+        ) {
+            Ok(reply) => cmd.reply_ok(reply),
+            Err(reason) => cmd.reply_failed(reason),
+        }
+        return;
+    }
     let mut rows = Vec::new();
     let parcel = player.single().ok().and_then(|e| containing.get_parcel(e));
     let scene = parcel.and_then(|e| scenes.get(e).ok()).map(|s| &s.title);
@@ -102,16 +173,23 @@ fn media_state(
         json!({"type":kind, "entity":entity.id.to_string(), "scene":scenes.get(entity.root).ok().map(|ctx| &ctx.title),
                "inScene":here, "requested":config.playing(), "scheduled":scheduled, "volume":config.volume(), "loop":config.r#loop(), "rate":config.playback_rate()})
     };
-    for (_ent, player, entity, here, scheduled) in &video {
-        if Some(entity.root) == parcel {
+    for read in video.iter() {
+        if Some(read.entity.root) == parcel {
             parcel_video += 1;
-            parcel_external += usize::from(is_external(player.url()));
+            parcel_external += usize::from(is_external(read.player.url()));
         }
-        let mut item = row("video", entity, here, scheduled, &player.config());
-        item["source"] = json!(source_label(player.url()));
+        let mut item = row(
+            "video",
+            read.entity,
+            read.in_scene,
+            read.scheduled,
+            &read.player.config(),
+        );
+        item["source"] = json!(source_label(read.player.url()));
         #[cfg(any(feature = "ffmpeg", feature = "html"))]
-        add_sink(&mut item, video_sinks.get(_ent).ok(), &images);
-        if let Ok(receiver) = receivers.get(_ent) {
+        add_sink(&mut item, read.sinks, &images);
+        // a LiveKit video stream plays through its receiver, not the backend's sinks
+        if let Ok(receiver) = receivers.get(read.id) {
             item["lastPlaybackState"] = json!(receiver.state.borrow().as_str_name());
             #[cfg(any(feature = "ffmpeg", feature = "html"))]
             {
@@ -122,15 +200,21 @@ fn media_state(
         }
         rows.push(item);
     }
-    for (_ent, player, entity, here, scheduled) in &audio {
-        if Some(entity.root) == parcel {
+    for read in audio.iter() {
+        if Some(read.entity.root) == parcel {
             parcel_audio += 1;
-            parcel_external += usize::from(is_external(player.url()));
+            parcel_external += usize::from(is_external(read.player.url()));
         }
-        let mut item = row("audio", entity, here, scheduled, &player.config());
-        item["source"] = json!(source_label(player.url()));
+        let mut item = row(
+            "audio",
+            read.entity,
+            read.in_scene,
+            read.scheduled,
+            &read.player.config(),
+        );
+        item["source"] = json!(source_label(read.player.url()));
         #[cfg(any(feature = "ffmpeg", feature = "html"))]
-        add_sink(&mut item, audio_sinks.get(_ent).ok(), &images);
+        add_sink(&mut item, read.sinks, &images);
         rows.push(item);
     }
     let backend = if cfg!(feature = "html") {
@@ -140,13 +224,13 @@ fn media_state(
     } else {
         "No playback backend"
     };
-    cmd.reply_ok(json!({"backend":backend, "scene":scene, "video":video.iter().len(), "audio":audio.iter().len(), "parcelVideo":parcel_video, "parcelAudio":parcel_audio, "parcelExternal":parcel_external, "players":rows,
+    cmd.reply_ok(json!({"backend":backend, "scene":scene, "video":video.count(), "audio":audio.count(), "parcelVideo":parcel_video, "parcelAudio":parcel_audio, "parcelExternal":parcel_external, "players":rows,
         "unavailable":{"scene":"No loaded scene at the player's parcel."}}).to_string());
 }
 
 // Stream paths and queries can contain credentials. A remote origin or a local content key
 // identifies the source without exposing playback credentials in the panel or console logs.
-fn source_label(source: &str) -> String {
+pub(crate) fn source_label(source: &str) -> String {
     let source = source.trim();
     if livestream_manager::is_livekit_video(source) {
         return String::from("livekit-video stream");
