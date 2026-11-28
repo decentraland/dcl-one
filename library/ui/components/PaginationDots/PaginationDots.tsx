@@ -12,6 +12,11 @@ export type PaginationDotsProps = {
    * decentraland.org's carousels and rails: 8px dots, the current one white.
    */
   appearance?: 'default' | 'plain'
+  /**
+   * `compact` (default) keeps the design's 8px between dots, so a plain dot's target is 16px wide. `wide` puts 24px
+   * between dots, so every target is at least 24px square, the WCAG 2.5.8 minimum.
+   */
+  spacing?: 'compact' | 'wide'
   /** The row's accessible name. With one, the dots are a named group. */
   label?: string
   /** A dot's accessible name, from its page counted from one. "Go to slide N" by default. */
@@ -30,6 +35,7 @@ export function PaginationDots({
   current,
   onSelect,
   appearance = 'default',
+  spacing = 'compact',
   label,
   pageLabel = slideName,
   className
@@ -39,6 +45,7 @@ export function PaginationDots({
     <div
       className={[styles.root, className].filter(Boolean).join(' ')}
       data-appearance={appearance}
+      data-spacing={spacing}
       {...(label ? { role: 'group', 'aria-label': label } : null)}
     >
       {Array.from({ length: count }, (_, page) => (

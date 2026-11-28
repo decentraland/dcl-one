@@ -68,6 +68,7 @@ function RailDots({
     <PaginationDots
       className={styles.dots}
       appearance="plain"
+      spacing="wide"
       count={pages}
       current={active}
       onSelect={onSelect}

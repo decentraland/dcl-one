@@ -88,6 +88,13 @@ describe('PaginationDots', () => {
       expect(container.firstElementChild).toHaveAttribute('data-appearance', 'default')
     })
 
+    it('should use the compact spacing by default and carry the wide spacing', () => {
+      const { container, rerender } = render(<PaginationDots count={2} current={0} onSelect={() => {}} />)
+      expect(container.firstElementChild).toHaveAttribute('data-spacing', 'compact')
+      rerender(<PaginationDots count={2} current={0} onSelect={() => {}} spacing="wide" />)
+      expect(container.firstElementChild).toHaveAttribute('data-spacing', 'wide')
+    })
+
     it('should carry the plain look and the caller class', () => {
       const { container } = render(
         <PaginationDots count={2} current={0} onSelect={() => {}} appearance="plain" className="extra" />

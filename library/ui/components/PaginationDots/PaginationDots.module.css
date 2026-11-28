@@ -1,8 +1,9 @@
 @layer dcl.reset, dcl.foundations, dcl.components;
 /* Figma `pagination-dots` (Navigation): 14px dots at white 20%, white 40% under the pointer, and a 40px ruby pill for
- * the current page, 8px apart. Not in Figma: the `plain` look, decentraland.org's 8px dots at white 40% with the
- * current one white, as its carousels draw them. Each dot's pseudo-element widens its target to 24px high and to the
- * middle of the gaps beside it. */
+ * the current page, 8px apart. The 14px dot and the 40px pill have no token. Not in Figma: the `plain` look,
+ * decentraland.org's 8px dots at white 40% with the current one white, as its carousels draw them, and the `wide`
+ * spacing, 24px between dots. Each dot's pseudo-element widens its target to 24px high and to the middle of the gaps
+ * beside it. */
 @layer dcl.components {
   .root {
     --pagination-dot: 14px;
@@ -16,8 +17,12 @@
   }
 
   .root[data-appearance='plain'] {
-    --pagination-dot: 8px;
-    --pagination-dot-current: 8px;
+    --pagination-dot: var(--dcl-space-8);
+    --pagination-dot-current: var(--dcl-space-8);
+  }
+
+  .root[data-spacing='wide'] {
+    --pagination-dot-gap: var(--dcl-space-24);
   }
 
   .dot {
@@ -36,7 +41,7 @@
   .dot::after {
     content: '';
     position: absolute;
-    inset: calc((var(--pagination-dot) - 24px) / 2) calc(var(--pagination-dot-gap) / -2);
+    inset: calc((var(--pagination-dot) - var(--dcl-space-24)) / 2) calc(var(--pagination-dot-gap) / -2);
   }
 
   .dot[aria-current='true'] {
@@ -79,9 +84,17 @@
       forced-color-adjust: none;
     }
 
+    .root[data-appearance] .dot:not([aria-current='true']):hover {
+      background: ButtonFace;
+    }
+
     .root[data-appearance] .dot[aria-current='true'] {
       border-color: Highlight;
       background: Highlight;
+    }
+
+    .dot:focus-visible {
+      outline-color: Highlight;
     }
   }
 }

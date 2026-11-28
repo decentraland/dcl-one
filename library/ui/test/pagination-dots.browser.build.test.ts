@@ -89,3 +89,55 @@ describe('when the plain dots render', () => {
     expect((await dots('plain')).map((d) => d.current)).toEqual([null, null, null, 'true'])
   })
 })
+
+describe('when the plain dots use the wide spacing', () => {
+  it('should draw them on a 32px pitch with 32x24 targets that do not overlap', async () => {
+    const row = await dots('wide')
+    expect(row.map((d) => [d.width, d.height])).toEqual(Array(4).fill([8, 8]))
+    expect(row.slice(1).map((d, i) => d.x - row[i]!.x)).toEqual([32, 32, 32])
+    for (const dot of row) expect([dot.target.width, dot.target.height]).toEqual([32, 24])
+    for (let i = 1; i < row.length; i++)
+      expect(row[i]!.target.left).toBe(row[i - 1]!.target.left + row[i - 1]!.target.width)
+  })
+})
+
+describe('when colours are forced', () => {
+  it('should keep a hovered default dot as a system button and outline the focus in the highlight', async () => {
+    await browser.session.send('Emulation.setEmulatedMedia', {
+      features: [
+        { name: 'forced-colors', value: 'active' },
+        { name: 'prefers-reduced-motion', value: 'reduce' }
+      ]
+    })
+    const row = await dots('default')
+    const at = row[0]!
+    await browser.session.send('Input.dispatchMouseEvent', {
+      type: 'mouseMoved',
+      x: at.x + at.width / 2,
+      y: at.y + at.height / 2
+    })
+    await browser.evaluate(`document.querySelectorAll('#default button')[1].focus()`)
+    for (const type of ['keyDown', 'keyUp'] as const)
+      await browser.session.send('Input.dispatchKeyEvent', { type, key: 'Tab', code: 'Tab' })
+    const colours = await browser.evaluate<{
+      hovered: string
+      resting: string
+      outline: string
+      highlight: string
+      focused: number
+    }>(`(()=>{
+      const buttons = Array.from(document.querySelectorAll('#default button'))
+      const probe = document.createElement('span')
+      probe.style.forcedColorAdjust = 'none'
+      document.body.append(probe)
+      probe.style.color = 'Highlight'
+      const highlight = getComputedStyle(probe).color
+      probe.remove()
+      return { hovered: getComputedStyle(buttons[0]).backgroundColor, resting: getComputedStyle(buttons[3]).backgroundColor,
+        outline: getComputedStyle(buttons[2]).outlineColor, highlight, focused: buttons.indexOf(document.activeElement) }
+    })()`)
+    expect(colours.focused).toBe(2)
+    expect(colours.hovered).toBe(colours.resting)
+    expect(colours.outline).toBe(colours.highlight)
+  })
+})
