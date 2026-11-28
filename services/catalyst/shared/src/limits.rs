@@ -55,10 +55,13 @@ impl Bucket {
 
 fn refill_time(debt: u128, capacity: u32) -> Duration {
     let nanos = debt.div_ceil(u128::from(capacity));
-    Duration::new(
-        (nanos / 1_000_000_000) as u64,
-        (nanos % 1_000_000_000) as u32,
-    )
+    let secs = u64::try_from(nanos / 1_000_000_000).unwrap_or(u64::MAX);
+    #[allow(
+        clippy::cast_possible_truncation,
+        reason = "the modulus keeps it below 10^9"
+    )]
+    let subsec = (nanos % 1_000_000_000) as u32;
+    Duration::new(secs, subsec)
 }
 
 #[derive(Debug)]
@@ -228,7 +231,9 @@ impl RateLimiter {
         if let Some((key, _)) = buckets.exact.get_key_value(key) {
             return BucketKey::Exact(key.clone());
         }
-        let index = (self.overflow_hash.hash_one(key) % buckets.overflow.len() as u64) as usize;
+        let len = crate::casts::len_u64(buckets.overflow.len());
+        // Below the overflow length, so it fits.
+        let index = crate::casts::to_usize(self.overflow_hash.hash_one(key) % len);
         let has_debt = buckets.overflow[index].is_some_and(|b| b.remaining(now, self.capacity) > 0);
         let room = buckets.exact.len() < self.max_buckets - buckets.overflow.len();
         if !has_debt && (room || buckets.expired(now).is_some()) {
