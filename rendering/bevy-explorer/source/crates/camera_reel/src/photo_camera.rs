@@ -79,7 +79,7 @@ impl Default for PhotoCameraSettings {
 impl PhotoCameraSettings {
     /// `position` kept within `max_distance_from_player` of the player: itself when it is in
     /// reach, else the nearest point that is.
-    pub fn within_reach(&self, position: Vec3, player_position: Vec3) -> Vec3 {
+    pub(crate) fn within_reach(&self, position: Vec3, player_position: Vec3) -> Vec3 {
         if position.distance(player_position) > self.max_distance_from_player {
             let direction = (position - player_position).normalize_or_zero();
             player_position + direction * self.max_distance_from_player
@@ -93,13 +93,13 @@ impl PhotoCameraSettings {
 /// one.
 /// A part left `None` stays as it is.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
-pub struct PhotoPose {
+pub(crate) struct PhotoPose {
     /// Where the camera goes, in bevy's world.
-    pub position: Option<Vec3>,
+    pub(crate) position: Option<Vec3>,
     /// A point to aim it at, in bevy's world; aiming also levels the roll.
-    pub look_at: Option<Vec3>,
+    pub(crate) look_at: Option<Vec3>,
     /// The vertical field of view, in degrees.
-    pub fov: Option<f32>,
+    pub(crate) fov: Option<f32>,
 }
 
 /// One frame of player input for the photo camera.
@@ -281,7 +281,7 @@ impl PhotoCamera {
     /// to the rendered camera so that nothing is left to ease. The position is kept within reach
     /// of the player, as a flown camera's is, and the field of view within the settings' bounds.
     /// A point straight above or below the camera has no heading, so aiming at one keeps the yaw.
-    pub fn place(
+    pub(crate) fn place(
         &mut self,
         pose: &PhotoPose,
         settings: &PhotoCameraSettings,

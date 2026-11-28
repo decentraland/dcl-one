@@ -55,7 +55,7 @@ pub struct PhotoModeChanged {
 
 /// What keeps photo mode closed.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum PhotoModeBlock {
+pub(crate) enum PhotoModeBlock {
     /// A scene's `CameraModeArea` or `VirtualCamera` holds the camera.
     SceneCamera,
     /// The player is out of the world, and the camera looks at it from above.
@@ -64,7 +64,7 @@ pub enum PhotoModeBlock {
 
 /// Why photo mode cannot open, and closes if it is open: the one rule for it. A request to
 /// enable it is dropped while this holds, so a command that opens it asks here first.
-pub fn photo_mode_block(camera: &PrimaryCamera, out_of_world: bool) -> Option<PhotoModeBlock> {
+pub(crate) fn photo_mode_block(camera: &PrimaryCamera, out_of_world: bool) -> Option<PhotoModeBlock> {
     if camera.scene_override.is_some() {
         Some(PhotoModeBlock::SceneCamera)
     } else if out_of_world {
@@ -78,7 +78,7 @@ pub fn photo_mode_block(camera: &PrimaryCamera, out_of_world: bool) -> Option<Ph
 /// the follow target, the rendered camera and its projection in the frame it is asked, so the
 /// pose is there for the next frame's render and nothing eases toward it.
 #[derive(SystemParam)]
-pub struct PhotoCameraPlacer<'w, 's> {
+pub(crate) struct PhotoCameraPlacer<'w, 's> {
     commands: Commands<'w, 's>,
     camera: Query<
         'w,
@@ -99,7 +99,7 @@ pub struct PhotoCameraPlacer<'w, 's> {
 impl PhotoCameraPlacer<'_, '_> {
     /// Places the photo camera and returns where it is now: the pose asked for, or the nearest
     /// point within reach of the player. `None` while photo mode is not open.
-    pub fn place(&mut self, pose: &PhotoPose) -> Option<Transform> {
+    pub(crate) fn place(&mut self, pose: &PhotoPose) -> Option<Transform> {
         let (entity, mut transform, projection, mut photo, tweening) =
             self.camera.single_mut().ok()?;
         if tweening {
