@@ -138,11 +138,11 @@ class CiLocalTest(unittest.TestCase):
 
     def test_every_library_ui_module_ui3_imports_selects_the_ui3_tests(self):
         root = Path(__file__).resolve().parents[2]
-        # The package specifier, or a relative path into library/ui (browser tests run outside `pnpm test`).
+        # The ui3 Vitest project excludes *.browser.test.ts; *.browser.test.tsx still runs with the unit tests.
         specifier = re.compile(r"""['"](?:@dcl/one-ui|(?:\.\./)+library/ui)(/[^'"?]*)?['"?]""")
         imported = set()
         for source in (root / 'apps/ui3/src').rglob('*'):
-            if source.suffix not in ('.ts', '.tsx') or 'node_modules' in source.parts or '.browser.test.' in source.name:
+            if source.suffix not in ('.ts', '.tsx') or 'node_modules' in source.parts or source.name.endswith('.browser.test.ts'):
                 continue
             for match in specifier.finditer(source.read_text(encoding='utf-8', errors='ignore')):
                 sub = (match.group(1) or '').strip('/')
