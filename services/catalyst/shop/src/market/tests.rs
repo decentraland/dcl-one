@@ -2369,6 +2369,29 @@ async fn the_committee_is_walked_only_where_its_job_can_run() {
         !state("sepolia", true, rpc).walks_committee(),
         "a testnet schedules no committee walk"
     );
+    // Without the RPC nothing is scheduled, but the cursor stays monitored
+    // (its URL unset): the misconfiguration is an alertable gap.
+    use super::chain_walk::{ChainNet, INDEXER_COMMITTEE};
+    let missing = state("mainnet", true, None);
+    assert!(
+        super::chain_jobs::projections(&missing, ChainNet::Matic, Some(false))
+            .iter()
+            .all(|job| !job.lease.starts_with("committee-index")),
+        "no committee job without an RPC"
+    );
+    let monitored = super::chain_jobs::expected_cursors(&missing, ChainNet::Matic, Some(false));
+    assert!(
+        monitored
+            .iter()
+            .any(|(index, url)| index.indexer() == INDEXER_COMMITTEE && url.is_none()),
+        "the committee cursor is monitored with no URL"
+    );
+    let walked = state("mainnet", true, rpc);
+    assert!(
+        super::chain_jobs::projections(&walked, ChainNet::Matic, Some(false))
+            .iter()
+            .any(|job| job.lease.starts_with("committee-index"))
+    );
 }
 
 #[tokio::test]

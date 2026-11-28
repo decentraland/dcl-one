@@ -1529,7 +1529,9 @@ fn visit_projections(
             market_cfg(),
         );
     }
-    if state.walks_committee() && net == ChainNet::Matic {
+    // The switch alone: `add` schedules nothing without the URL, and the
+    // cursor stays in the monitored targets with none, an alertable gap.
+    if settings.walks_committee() && net == ChainNet::Matic {
         add(
             "committee-index",
             state.polygon_mainnet_rpc_url(),
