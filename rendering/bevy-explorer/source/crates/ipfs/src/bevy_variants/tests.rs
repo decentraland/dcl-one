@@ -301,7 +301,7 @@ async fn a_near_lod_descriptor_comes_from_the_variants_base() {
 }
 
 #[tokio::test]
-async fn a_far_lod_is_offered_on_the_terms_of_a_manifest_and_bc() {
+async fn a_far_lod_is_offered_with_a_base_on_an_eligible_scene_and_bc() {
     let (mut io, dir) = io_with_cache("far-lod");
     assert_eq!(
         io.bevy_far_lod(SCENE),
@@ -354,6 +354,14 @@ async fn a_missing_far_lod_is_remembered_and_failures_pause_far_lods() {
     };
     let status = reqwest::StatusCode::from_u16;
 
+    // the variants client turning itself off for the session leaves far LODs to their breaker
+    for _ in 0..BREAKER_FAILURES {
+        io.bevy_variants.transport_failed("connection refused");
+    }
+    assert!(io.bevy_variants.disabled().is_some());
+    assert!(!io.far_lods_off());
+    assert!(io.far_lod_may_request());
+
     // a 404 is remembered for the scene, by its lower-case id
     let missing = url("bafkreiMissing");
     io.far_lod_fetched(&missing, Err(Some(status(404).unwrap())));
@@ -405,46 +413,10 @@ async fn a_missing_far_lod_is_remembered_and_failures_pause_far_lods() {
         io.bevy_far_lod("bafkreimissing"),
         FarLodSource::Unavailable(_)
     ));
-    std::fs::remove_dir_all(dir).unwrap();
-}
-
-#[tokio::test]
-async fn far_lods_outlive_the_variants_session_switch() {
-    let (io, dir) = io_with_cache("far-lod-session-switch");
-    io.set_bevy_variants_base(Some("https://abgen.example"), "test");
-    io.context.write().await.about = Some(ServerAbout {
-        content: Some(EndpointConfig {
-            healthy: true,
-            public_url: "https://peer.example/content".to_owned(),
-        }),
-        ..Default::default()
-    });
-    let _ = io.bevy_variants.bc.set(true);
-    let url = |scene: &str| match io.bevy_far_lod(scene) {
-        FarLodSource::Url(url) => url,
-        other => panic!("{scene}: {other:?}"),
-    };
-
-    // manifest and texture failures turn the variants client off for the session
-    for _ in 0..BREAKER_FAILURES {
-        io.bevy_variants.transport_failed("connection refused");
-    }
+    // a pause is not off: far LODs stay spawned
+    assert!(!io.far_lods_off());
     assert!(io.bevy_variants.disabled().is_some());
-
-    // far LODs are still offered, and their own breaker sees the outage
-    assert!(matches!(io.bevy_far_lod(SCENE), FarLodSource::Url(_)));
-    assert!(!io.far_lods_off());
-    assert!(io.far_lod_may_request());
-    for n in 0..far_lod::FAR_LOD_BREAKER_FAILURES {
-        io.far_lod_fetched(&url(&format!("bafkrei{n}")), Err(None));
-    }
-    let status = io.far_lod_status();
-    assert_eq!(status.failures, far_lod::FAR_LOD_BREAKER_FAILURES);
-    assert!(status.paused_for.is_some());
-    assert!(!io.far_lod_may_request());
-    assert!(!io.far_lods_off());
-
-    // an answer resumes them
+    // an answer resumes far LODs, the session switch still tripped
     io.far_lod_fetched(&url("bafkrei0"), Ok(()));
     assert!(io.far_lod_status().paused_for.is_none());
     assert!(io.far_lod_may_request());
