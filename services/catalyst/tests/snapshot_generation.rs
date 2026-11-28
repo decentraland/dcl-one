@@ -1022,6 +1022,9 @@ fn sync_settings(peer: &str) -> SyncSettings {
         max_retries: 3,
         retry_concurrency: 2,
         prune_ttl_days: 7,
+        item_replay_interval: None,
+        item_replay_page_pause: std::time::Duration::from_millis(200),
+        item_replay_concurrency: 8,
         discard_overtaken: false,
     }
 }

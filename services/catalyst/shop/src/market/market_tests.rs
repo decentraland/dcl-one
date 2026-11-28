@@ -9991,7 +9991,7 @@ async fn polygon_bids_come_from_the_bid_book_and_never_without_their_seller() {
         .await
         .unwrap();
     assert!(
-        super::chain_walk::mark_folded(&pool, &ix, &owner, 210, chrono::Utc::now())
+        super::chain_walk::mark_folded(&pool, &ix, &owner, 210)
             .await
             .unwrap()
     );
@@ -10117,7 +10117,7 @@ async fn polygon_bids_come_from_the_bid_book_and_never_without_their_seller() {
         .await
         .unwrap();
     assert!(
-        super::chain_walk::mark_folded(&pool, &ix, &legacy_owner, 220, chrono::Utc::now())
+        super::chain_walk::mark_folded(&pool, &ix, &legacy_owner, 220)
             .await
             .unwrap()
     );
@@ -10153,7 +10153,7 @@ async fn polygon_bids_come_from_the_bid_book_and_never_without_their_seller() {
     assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body}");
     assert_eq!(body["source"], "sales-index", "{body}");
     assert!(
-        super::chain_walk::mark_folded(&pool, &ix, &legacy_owner, 220, chrono::Utc::now())
+        super::chain_walk::mark_folded(&pool, &ix, &legacy_owner, 220)
             .await
             .unwrap()
     );

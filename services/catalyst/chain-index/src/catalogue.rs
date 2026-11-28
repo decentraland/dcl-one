@@ -28,8 +28,8 @@ pub const INDEXER_COLLECTIONS: &str = "collections";
 /// How old a publish may be before readers stop trusting it (a stopped job).
 pub const READY_WINDOW: ChronoDuration = ChronoDuration::minutes(30);
 
-/// How far ahead of the caller's clock the database's `updated_at` may be and
-/// still count as advanced.
+/// How far ahead of the caller's clock the database's `updated_at` and
+/// `folded_at` may be and still count.
 pub const MAX_CLOCK_SKEW: ChronoDuration = ChronoDuration::minutes(10);
 
 /// The publish marker alone as SQL, for the fail-closed readers of an index
@@ -40,7 +40,7 @@ pub const MAX_CLOCK_SKEW: ChronoDuration = ChronoDuration::minutes(10);
 /// quarantine and rebuild) within [`READY_WINDOW`] of the caller's clock,
 /// bound to the expected chain and out of quarantine, without
 /// `folded_block = last_block`, which a pass breaks for as long as it walks
-/// and folds. `folded_at` is the walker's clock: one up to
+/// and folds. `folded_at` is the database's clock: one up to
 /// [`MAX_CLOCK_SKEW`] ahead of the caller's still counts. A reader bounds
 /// every row it reads by that `folded_block`, in the snapshot it read it in:
 /// a walk may already have committed the next window.

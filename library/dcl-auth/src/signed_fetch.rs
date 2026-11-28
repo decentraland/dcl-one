@@ -382,15 +382,34 @@ pub enum SignatureRefusal {
 }
 
 /// The first of `payloads` that verifies settles it; only an invalid
-/// signature tries the next.
+/// signature tries the next. A malformed chain settles it first. A payload
+/// the chain's last link doesn't sign can't verify, so it is refused
+/// without walking the chain.
 async fn first_verifying(
     chain: &AuthChain,
     payloads: &[String],
     now_secs: i64,
     validator: Option<&dyn Eip1654Validator>,
 ) -> Result<(), SignatureRefusal> {
+    crate::verify::check_structure(chain, None).map_err(SignatureRefusal::Settled)?;
+    let signed = chain
+        .last()
+        .filter(|link| {
+            matches!(
+                link.link_type,
+                AuthLinkType::EcdsaSignedEntity | AuthLinkType::EcdsaEip1654SignedEntity
+            )
+        })
+        .map(|link| link.payload.as_str());
     let mut last = None;
     for payload in payloads {
+        if signed != Some(payload.as_str()) {
+            last = Some(AuthError::FinalAuthorityMismatch {
+                expected: payload.clone(),
+                actual: signed.unwrap_or_default().to_string(),
+            });
+            continue;
+        }
         match verify_login_chain_async(chain, payload, Some(now_secs * 1000), validator).await {
             Ok(()) => return Ok(()),
             Err(e) if is_invalid_signature(&e) => last = Some(e),
@@ -773,5 +792,146 @@ mod tests {
                 AuthError::InvalidEphemeralPayload(_)
             ))
         ));
+    }
+
+    struct CountingContract(std::sync::atomic::AtomicUsize);
+
+    #[async_trait::async_trait]
+    impl Eip1654Validator for CountingContract {
+        async fn validate_signature(
+            &self,
+            _contract_address: &str,
+            _hash: &[u8],
+            _signature: &[u8],
+        ) -> Result<bool, AuthError> {
+            self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            Ok(true)
+        }
+    }
+
+    fn contract_link(link_type: AuthLinkType, payload: &str) -> AuthLink {
+        AuthLink {
+            link_type,
+            payload: payload.to_string(),
+            signature: Some(format!("0x{}", "11".repeat(65))),
+        }
+    }
+
+    fn delegating(to: &str) -> String {
+        format!("Decentraland Login\nEphemeral address: {to}\nExpiration: 2099-01-01T00:00:00.000Z")
+    }
+
+    const CONTRACT: &str = "0x00000000000000000000000000000000000c0de0";
+
+    #[tokio::test]
+    async fn a_chain_whose_last_link_signs_none_of_the_candidates_asks_no_contract() {
+        let mut chain = vec![AuthLink {
+            link_type: AuthLinkType::SIGNER,
+            payload: CONTRACT.to_string(),
+            signature: Some(String::new()),
+        }];
+        chain
+            .extend((0..8).map(|_| {
+                contract_link(AuthLinkType::EcdsaEip1654Ephemeral, &delegating(CONTRACT))
+            }));
+        chain.push(contract_link(
+            AuthLinkType::EcdsaEip1654SignedEntity,
+            "post:/elsewhere:1000:{}",
+        ));
+        let contract = CountingContract(Default::default());
+        let request = SignedRequest {
+            method: "POST",
+            paths: &["/a", "/b"],
+            timestamp: "1000",
+            metadata: "{}",
+        };
+        assert!(matches!(
+            verify_signature(
+                &chain,
+                &request,
+                1,
+                LegacyPayload::Accepted,
+                Some(&contract)
+            )
+            .await,
+            Err(SignatureRefusal::Invalid(_))
+        ));
+        assert_eq!(contract.0.load(std::sync::atomic::Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn a_malformed_chain_is_refused_as_malformed_whatever_its_last_link_signs() {
+        let chain = vec![
+            AuthLink {
+                link_type: AuthLinkType::SIGNER,
+                payload: wallet().address(),
+                signature: Some(String::new()),
+            },
+            AuthLink {
+                link_type: AuthLinkType::EcdsaSignedEntity,
+                payload: "mid-chain entity".to_string(),
+                signature: Some(format!("0x{}", "11".repeat(65))),
+            },
+            AuthLink {
+                link_type: AuthLinkType::EcdsaSignedEntity,
+                payload: "post:/elsewhere:1000:{}".to_string(),
+                signature: Some(format!("0x{}", "11".repeat(65))),
+            },
+        ];
+        let request = SignedRequest {
+            method: "POST",
+            paths: &["/a"],
+            timestamp: "1000",
+            metadata: "{}",
+        };
+        let refusal = verify_signature(&chain, &request, 1, LegacyPayload::Accepted, None).await;
+        assert!(
+            matches!(
+                refusal,
+                Err(SignatureRefusal::Settled(AuthError::MalformedChain(_)))
+            ),
+            "{refusal:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_contract_wallets_chain_is_walked_once_whatever_the_candidate_paths() {
+        let ephemeral = Wallet::random().unwrap();
+        let signed = build_payload_v6("POST", "/b", "1000", "{}");
+        let chain = vec![
+            AuthLink {
+                link_type: AuthLinkType::SIGNER,
+                payload: CONTRACT.to_string(),
+                signature: Some(String::new()),
+            },
+            contract_link(
+                AuthLinkType::EcdsaEip1654Ephemeral,
+                &delegating(&ephemeral.address()),
+            ),
+            AuthLink {
+                link_type: AuthLinkType::EcdsaSignedEntity,
+                payload: signed.clone(),
+                signature: Some(ephemeral.sign_message(signed.as_bytes()).unwrap()),
+            },
+        ];
+        let contract = CountingContract(Default::default());
+        let request = SignedRequest {
+            method: "POST",
+            paths: &["/a", "/b"],
+            timestamp: "1000",
+            metadata: "{}",
+        };
+        assert!(
+            verify_signature(
+                &chain,
+                &request,
+                1,
+                LegacyPayload::Accepted,
+                Some(&contract)
+            )
+            .await
+            .is_ok()
+        );
+        assert_eq!(contract.0.load(std::sync::atomic::Ordering::SeqCst), 1);
     }
 }

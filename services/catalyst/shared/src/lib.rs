@@ -50,6 +50,7 @@ pub mod test_keys;
 #[cfg(any(test, feature = "test-support"))]
 pub mod test_wait;
 pub mod upstream;
+pub mod validator_signature;
 pub mod writes;
 
 /// Current UTC wall time for database timestamp binds.

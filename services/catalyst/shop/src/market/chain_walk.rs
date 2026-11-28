@@ -16,7 +16,9 @@
 //! measurement window) never publishes, and neither does one held short by
 //! `MARKETPLACE_INDEX_STOP_BLOCK_*`. Readers trust an index through
 //! [`is_ready`]: `folded_block = last_block` and `folded_at` at most
-//! [`READY_WINDOW`] old at the caller's clock. The `nft` index's readers use
+//! [`READY_WINDOW`] old at the caller's clock. `folded_at` is the database's
+//! clock: one up to [`MAX_CLOCK_SKEW`] ahead of the caller's still counts.
+//! The `nft` index's readers use
 //! the publish marker alone (`owned_items::Rule`): every pass advances
 //! `last_block` before it folds and publishes. Accepting work that waits on
 //! an index (tip claims) uses the liveness view [`is_walked`] instead: ready,
@@ -53,7 +55,7 @@ pub use crate::chain_index::catalogue::INDEXER_COLLECTIONS;
 pub const INDEXER_NFT: &str = "nft";
 pub const INDEXER_SALES: &str = "sales";
 pub const INDEXER_TRADE_EVENTS: &str = "trade_events";
-pub const INDEXER_THIRD_PARTY_REGISTRY: &str = "third_party_registry";
+pub const INDEXER_THIRD_PARTY_REGISTRY: &str = crate::chain_index::third_party_index::INDEXER;
 
 /// The indexers whose projection triggers in `schemas/30_shop.sql` require
 /// writers to lock the cursor before touching the triggered rows.
@@ -991,18 +993,16 @@ pub async fn mark_folded(
     ix: &dyn ChainIndex,
     owner: &Owner,
     block: i64,
-    now: DateTime<Utc>,
 ) -> anyhow::Result<bool> {
     let mut tx = pool.begin().await?;
     let updated = sqlx::query(
-        "UPDATE shop.chain_cursor SET folded_block = last_block, folded_at = $4 \
+        "UPDATE shop.chain_cursor SET folded_block = last_block, folded_at = timezone('UTC', now()) \
          WHERE indexer = $1 AND network = $2 AND last_block = $3 AND full_history AND last_block_hash IS NOT NULL \
            AND fold_through = $3 AND quarantine_reason IS NULL",
     )
     .bind(owner.indexer)
     .bind(owner.net.db_name())
     .bind(block)
-    .bind(now.naive_utc())
     .execute(&mut *tx)
     .await?;
     let published = updated.rows_affected() == 1;
@@ -1033,7 +1033,8 @@ pub async fn unpublish(pool: &PgPool, owner: &Owner, block: i64) -> anyhow::Resu
 
 /// The readiness rule, at the caller's clock, for a projection read on
 /// chain `chain_id`: a whole history folded through its last block within
-/// [`READY_WINDOW`], bound to that chain and not in quarantine.
+/// [`READY_WINDOW`], bound to that chain and not in quarantine. A fold
+/// stamped up to [`MAX_CLOCK_SKEW`] ahead of the caller's clock counts.
 pub fn is_ready_on(c: &Cursor, chain_id: i64, now: DateTime<Utc>) -> bool {
     fresh_fold_on(c, chain_id, now) == Some(c.last_block)
 }
@@ -1047,7 +1048,7 @@ pub(crate) fn fresh_fold_on(c: &Cursor, chain_id: i64, now: DateTime<Utc>) -> Op
             && *folded <= c.last_block
             && c.chain_id == Some(chain_id)
             && c.quarantined_at.is_none()
-            && age >= ChronoDuration::zero()
+            && age >= -MAX_CLOCK_SKEW
             && age <= READY_WINDOW
     })
 }
@@ -1186,7 +1187,9 @@ pub fn ready_sql_on(alias: &str, now_p: &str, ethereum_chain: i64, matic_chain: 
         "({alias}.full_history AND {alias}.folded_block = {alias}.last_block \
           AND {alias}.chain_id = CASE {alias}.network WHEN 'ethereum' THEN {ethereum_chain}::bigint WHEN 'matic' THEN {matic_chain}::bigint END \
           AND {alias}.quarantined_at IS NULL \
-          AND {alias}.folded_at <= {now_p} AND {alias}.folded_at >= {now_p} - interval '30 minutes')"
+          AND {alias}.folded_at <= {now_p} + interval '{skew} seconds' \
+          AND {alias}.folded_at >= {now_p} - interval '30 minutes')",
+        skew = MAX_CLOCK_SKEW.num_seconds(),
     )
 }
 
@@ -2612,7 +2615,7 @@ pub(crate) async fn close(
         && u64::try_from(out.indexed_to)
             .is_ok_and(|b| b <= latest_safe && within_publish_lag(net, latest, b))
     {
-        out.published = mark_folded(pool, ix, owner, out.indexed_to, Utc::now()).await?;
+        out.published = mark_folded(pool, ix, owner, out.indexed_to).await?;
         if out.published {
             ix.published(pool, out.indexed_to).await;
         }
@@ -2855,10 +2858,70 @@ mod tests {
             now
         ));
         assert!(!is_ready(&cursor_row(100, None, None, true), now));
+        assert!(
+            is_ready(
+                &cursor_row(100, Some(100), Some(now + ChronoDuration::minutes(5)), true),
+                now
+            ),
+            "stamped by a database clock ahead of the reader's"
+        );
         assert!(!is_ready(
-            &cursor_row(100, Some(100), Some(now + ChronoDuration::seconds(5)), true),
+            &cursor_row(
+                100,
+                Some(100),
+                Some(now + MAX_CLOCK_SKEW + ChronoDuration::seconds(1)),
+                true
+            ),
             now
         ));
+    }
+
+    /// `mark_folded` stamps `folded_at` on the database clock; a reader
+    /// whose own clock is up to [`MAX_CLOCK_SKEW`] behind it still reads the
+    /// fold as ready, in SQL as in Rust.
+    #[tokio::test]
+    async fn a_fold_stamped_by_the_database_is_ready_to_a_reader_whose_clock_is_behind() {
+        let Some(pool) = crate::db::scratch::isolated_pool(2).await else {
+            return;
+        };
+        sqlx::query(
+            "INSERT INTO shop.chain_cursor (indexer, network, start_block, last_block, folded_block, \
+                 fold_through, folded_at, full_history, chain_id) \
+             VALUES ('nft', 'matic', 1, 100, 100, 100, timezone('UTC', now()), true, 137)",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        let folded_at: chrono::NaiveDateTime = sqlx::query_scalar(
+            "SELECT folded_at FROM shop.chain_cursor WHERE indexer = 'nft' AND network = 'matic'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        let ready = |reader_behind: ChronoDuration| {
+            let pool = pool.clone();
+            async move {
+                let now = folded_at.and_utc() - reader_behind;
+                let sql: bool = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
+                    "SELECT {} FROM shop.chain_cursor c WHERE indexer = 'nft' AND network = 'matic'",
+                    ready_sql("c", "$1")
+                )))
+                .bind(now.naive_utc())
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+                let rust = cursor(&pool, INDEXER_NFT, ChainNet::Matic)
+                    .await
+                    .unwrap()
+                    .is_some_and(|c| is_ready(&c, now));
+                (sql, rust)
+            }
+        };
+        assert_eq!(ready(ChronoDuration::minutes(5)).await, (true, true));
+        assert_eq!(
+            ready(MAX_CLOCK_SKEW + ChronoDuration::seconds(1)).await,
+            (false, false)
+        );
     }
 
     #[test]

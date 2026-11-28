@@ -26,6 +26,8 @@ pub use crate::shared::feature_flags::{
 };
 
 pub const MIRROR: &str = "feature-flags";
+/// The builder's application, whose document the pass also stores.
+pub const BUILDER_APP: &str = "builder";
 const EMBEDDED_FLAGS: &str = include_str!("feature-flags.explorer.json");
 
 pub fn embedded_document() -> Value {
@@ -66,6 +68,16 @@ pub async fn store(pool: &PgPool, app: &str, doc: &Value, etag: Option<&str>) ->
     .execute(pool)
     .await?;
     Ok(())
+}
+
+/// The sibling document of the same feature-flags service: the source names
+/// one `<app>.json`; `builder.json` lives beside it.
+fn sibling_document(url: &str, app: &str) -> Option<String> {
+    let (dir, file) = url.rsplit_once('/')?;
+    if dir.is_empty() || !file.ends_with(".json") {
+        return None;
+    }
+    Some(format!("{dir}/{app}.json"))
 }
 
 /// One document: fetched with the referer strategy header, validated and
@@ -132,7 +144,9 @@ pub async fn refresh_app(
     Ok(())
 }
 
-/// One pass of the explorer document, served by this mirror's routes.
+/// One pass of the explorer document, served by this mirror's routes. The
+/// `builder` document beside it is stored too; failing to read it is logged
+/// and keeps the stored one.
 pub async fn run_pass(state: &Shared, ctx: &JobContext) -> anyhow::Result<()> {
     mirror::run(&state.pool, MIRROR, ctx, || async {
         let app = state.settings.feature_flags_app.as_str();
@@ -141,6 +155,12 @@ pub async fn run_pass(state: &Shared, ctx: &JobContext) -> anyhow::Result<()> {
         reload(&state.flags, &state.pool, app)
             .await
             .context("reloading the feature flags")?;
+        if BUILDER_APP != app
+            && let Some(builder_url) = sibling_document(url, BUILDER_APP)
+            && let Err(error) = mirror_document(state, BUILDER_APP, &builder_url).await
+        {
+            tracing::warn!(%error, "feature flags: the builder document was not mirrored");
+        }
         Ok(mirror::PassOutcome {
             items: count_entries(&state.flags.document()),
             cursor: etag,
@@ -216,4 +236,29 @@ async fn get_flag(State(state): State<Shared>, Path(name): Path<String>) -> Resp
         Json(json!({ "error": "flag_not_found", "name": name })),
     )
         .into_response()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{BUILDER_APP, sibling_document};
+
+    #[test]
+    fn the_builder_document_sits_beside_the_explorer_one() {
+        assert_eq!(
+            sibling_document(
+                "https://feature-flags.decentraland.org/explorer.json",
+                BUILDER_APP
+            ),
+            Some("https://feature-flags.decentraland.org/builder.json".into())
+        );
+        assert_eq!(
+            sibling_document("http://127.0.0.1:9/flags/explorer.json", BUILDER_APP),
+            Some("http://127.0.0.1:9/flags/builder.json".into())
+        );
+        assert_eq!(sibling_document("explorer.json", BUILDER_APP), None);
+        assert_eq!(
+            sibling_document("https://x.example/flags", BUILDER_APP),
+            None
+        );
+    }
 }

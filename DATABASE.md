@@ -3458,6 +3458,10 @@ retried. A row in quarantine is not walked, rewound or published.
 - `folded_at` is within 30 minutes;
 - it is bound to the chain the reader expects and is out of quarantine.
 
+The walk stamps `folded_at` with the database's clock, and readers compare
+it with their own. A `folded_at` up to 10 minutes ahead of the reader's clock
+still counts.
+
 The NFT and trade-events walks use the configured catalogue pair. NFT reader and
 status readiness expect mainnet publications (1/137). The
 Rentals histories have separate mainnet and Sepolia cursors. The other
@@ -4023,6 +4027,11 @@ and an emote's social outcome as `simple_outcome`, `multiple_outcome` or
 `random_outcome`. Search text folds ASCII letters alone, as the subgraph's
 helper does. `sold_at` is the newest primary sale only; secondary sales come
 with the sales index.
+
+`shop.items.content_hash` is the subgraph's `contentHash`: the hash the
+item's newest `AddItem` or `RescueItem` logged, empty when the item carries
+none. The fold writes it from the log, so a rebuild keeps it. The items
+mirror copies it from the subgraph for a network the fold doesn't own.
 
 **Reading the catalogue.** These readers of `shop.collections` and
 `shop.items` open one `REPEATABLE READ` transaction first
@@ -5293,6 +5302,169 @@ The upgrade requires stopping old writers and finishing offline imports before
 the coordinated startup, so identities cannot retire before this backfill.
 Noncanonical imported rooms and scenes already retired before the upgrade
 remain outside exact recovery; pending authority stays retryable where available.
+
+## Content item history coverage
+
+The sync leader proves, per item type, that the node holds every wearable and
+emote deployment its peers offer. The proof lets a caller treat a missing item
+as absent from the node's peers, as observed when the last full pass started.
+It never proves global absence. Without a current proof, a missing item is
+unknown.
+
+Workload and invariants:
+
+- Job `item-history-replay` runs in the process that holds the `sync` lease,
+  after the bootstrap. It doesn't run without leases
+  (`JOB_LEASES_ENABLED=false`), without a sync worker, or when
+  `SYNC_ENTITY_TYPES` leaves out both `wearable` and `emote`.
+- Each pass reads every peer's `/pointer-changes` filtered to
+  `entityType=emote&entityType=wearable`, ascending by `local_timestamp`, from
+  `SYNC_FROM_TIMESTAMP_MS`. It pages by the `from`/`lastId` keyset, one request
+  at a time per peer, `SYNC_ITEM_REPLAY_PAGE_PAUSE_MS` apart (default 200, 50
+  to 1000). Up to `SYNC_ITEM_REPLAY_CONCURRENCY` peers (default 8, 1 to 32)
+  are read at once, each from its own checkpoint.
+- For each page, one batched probe of `content.deployments`
+  (`deployments_entity_id_key`) finds the entities the node doesn't hold. Only
+  those go to the leader's deployer, which applies its download and flush
+  limits. A second probe after the drain counts every entity still missing,
+  every record that doesn't parse, and every implausible timestamp as debt.
+  A recorded failure in `content.failed_deployments` is debt, not
+  acceptance. A page that doesn't advance the keyset also adds debt and ends
+  that peer's walk. So does a page that still fails once its retry wait
+  (5 seconds, doubling) passes 5 minutes, after about 5 minutes of retries,
+  while the other peers go on: the pass completes with debt, and a later pass
+  reads that peer again.
+- The replay never reads or writes `content.server_sync_cursors`,
+  `content.processed_snapshots` or the sync properties in
+  `content.system_properties`. Existing deployment rows are never rewritten.
+- A pass starts `SYNC_ITEM_REPLAY_INTERVAL_SECS` after the previous one
+  started, or as soon as it ends when it took longer. The setting takes 0,
+  the default, which turns the replay off and leaves item coverage unknown,
+  or 600 to 1440; the node refuses to start with any other value. A pass
+  never starts while another runs.
+- Every pass starts from the floor again, so a deployment a peer commits
+  after a pass read past it is recovered by the next pass. Coverage stays
+  continuous while the next pass completes within 30 minutes of the previous
+  start: the larger of the interval and a pass, plus a pass, must fit in the
+  30-minute staleness window. A source takes about 2 minutes at the default
+  pause and 4.5 minutes at the largest, and a pass that reads every source at
+  once lasts about as long as its slowest one. With more sources than
+  `SYNC_ITEM_REPLAY_CONCURRENCY`, a pass lasts about as many source walks as
+  each reader takes in turn. At the default pause and 1200 seconds a pass of
+  one source walk per reader leaves about 8 minutes for a slow pass, and
+  coverage stays continuous up to five walks per reader (40 sources at the
+  default concurrency); at the smallest interval, up to seven. When a
+  completed pass is longer than that allows, the replay logs a warning with
+  its length and the number of sources, and readers get `Stale` for part of
+  every cycle.
+- Passes stay full. A pass that read only past the previous pass's newest
+  `localTimestamp` would be cheaper, but it would date its proof from a start
+  it didn't reread: a deployment a peer commits late, with a timestamp below
+  where the previous pass stopped, would stay hidden under a fresh proof.
+  Coverage measures freshness from the start of a pass that read the whole
+  history, so the replay rereads it.
+
+`content.item_history_replay` holds one row: the pass in progress, with its
+scope (algorithm, sorted peer set, sorted item types, history floor), its
+start and the operator's stop switch.
+
+`content.item_history_replay_peers` holds one row per peer of that pass: the
+keyset to resume at, whether its walk is finished, its debt and the newest
+`localTimestamp` it read. Workload: as many rows as sources (tens at most),
+each updated once per page of its peer (at most about five times a second at
+the smallest page pause), all replaced when a pass starts and deleted when it
+completes. Invariants:
+
+- every row belongs to the pass in progress: its `pass_started_at` is the
+  pass row's, and the rows name exactly the pass's peers;
+- a row moves only forward: each checkpoint and each finish is a
+  compare-and-set on that peer's previous checkpoint, and a finished row
+  changes no more;
+- the pass completes only when every row is finished, in the transaction
+  that writes the coverage row (the rows' debt summed, their newest
+  `localTimestamp`) and clears both tables.
+
+A restarted or new leader resumes a recorded pass of the same scope whose
+rows name exactly its peers, under its original start, each peer from its own
+checkpoint. Otherwise it starts a new pass: it deletes the coverage row of any
+other scope and replaces the peer rows.
+
+`content.item_history_coverage` holds one row: the last completed pass, its
+scope, start, completion, debt, newest `localTimestamp`, and the lease session
+that wrote it (`lease_namespace`, `lease_pid`, `lease_backend_start`). The
+writer replaces it in the transaction that closes the pass; the next pass
+records its own start when it begins reading.
+
+Every checkpoint is one statement conditioned on `pg_locks` showing the
+advisory lock `(hashtext(namespace), hashtext('sync'))` granted to the
+writer's lease session. A pass's start and its completion each write in one
+transaction whose first write is so conditioned, and roll back when it isn't.
+The coverage row records that session's pid and
+`pg_stat_activity.backend_start`.
+
+Reader: `content::sync::item_coverage::item_history_coverage(conn,
+entity_type)` runs one statement: the coverage row joined to the lock's live
+holder. It answers `Covered { as_of }` (the pass start, UTC) only when all of
+these hold. Otherwise it answers `Unknown` with the reason:
+
+| Condition | Unknown reason |
+| --- | --- |
+| A coverage row exists | `NoRecord` |
+| `algorithm` is the reader's `ALGORITHM` (1) | `Algorithm` |
+| `entity_types` holds the type | `ExcludedType` |
+| `history_floor_ms` is 0 | `HistoryFloor` |
+| `debt` is 0 | `Debt` |
+| The live holder's pid and `backend_start` equal the recorded ones | `OwnerMismatch` |
+| The pass started at most 30 minutes ago (`STALE_AFTER`) | `Stale` |
+
+`OwnerMismatch` covers a lost lease, a takeover by another process, and a
+binary that writes no coverage, at once and regardless of age. A caller that
+reads entities in the same `REPEATABLE READ` transaction reads them from the
+snapshot the answer was taken in.
+
+Roles: the sync leader and every reader must connect as the same database
+role, or the readers' role must hold
+`pg_read_all_stats`. PostgreSQL shows a role without it the `backend_start`
+of its own role's sessions only, so a reader of another role reads every
+coverage as `OwnerMismatch` (test
+`a_reader_connected_as_the_leaders_role_sees_its_coverage_and_another_role_does_not`).
+The lease and the reader's check use the database session's pid and start
+time, so the node must reach PostgreSQL directly or through a pooler in
+session mode: a transaction-mode pooler hands one server backend to several
+clients and breaks the advisory lease itself.
+
+A process that serves unsynced with an empty `SYNC_SOURCE` (an island or a
+journey node) holds the whole of its content.
+`SyncStatus::is_own_content_authority` is true only there, and that process
+needs no replay.
+
+To stop the replay without a restart, run
+`INSERT INTO content.item_history_replay (stopped) VALUES (true) ON CONFLICT
+(id) DO UPDATE SET stopped = true`. To resume it, set `stopped` to false. The
+replay checks the switch before each page. The operator console's sync pause
+holds it too. A pass held for more than 30 minutes completes stale.
+
+Cost, measured on November 20, 2026 against the public
+`peer.decentraland.org` with one sequential client: the whole item history was
+160 pages of 500 deltas (79,702 deltas: 78,539 wearable, 1,163 emote),
+80,888,104 response bytes and 101.7 seconds. The median page took 0.44 s and
+the slowest 16.9 s. Every pass fetches every page again: the probe before
+download skips only the entities the node holds, not the pages. A pass on a
+node that holds everything adds about 32 seconds of page pauses, so it takes
+about 2 minutes and downloads no entity. Estimated from the measurement, the
+daily `/pointer-changes` traffic pulled from each source catalyst is:
+
+| `SYNC_ITEM_REPLAY_INTERVAL_SECS` | Passes a day | Traffic a day | Requests a day |
+| --- | --- | --- | --- |
+| 600 (smallest) | 144 | about 11.6 GB | about 23,000 |
+| 1200 | 72 | about 5.8 GB | about 11,500 |
+| 1440 (largest) | 60 | about 4.9 GB | about 9,600 |
+| 0 (off, default) | 0 | 0 | 0 |
+
+A node that syncs from several catalysts reads each of them in every pass, so
+its total is that times the number of sources. The page pause changes the
+pass length, not the traffic. Entity downloads on a node that lacks items
+aren't measured here.
 
 ## Shop reconciliation and availability sweeps
 

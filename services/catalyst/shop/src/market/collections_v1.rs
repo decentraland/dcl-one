@@ -265,6 +265,7 @@ pub fn fold(
             reviewed_at: add.block_time,
             sold_at: 0,
             first_listed_at: None,
+            content_hash: None,
         });
     }
     Some(Folded {

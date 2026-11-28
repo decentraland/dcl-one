@@ -39,6 +39,27 @@ pub struct ContentConfig {
     #[arg(long, env = "SYNC_FROM_TIMESTAMP_MS", default_value_t = 0)]
     pub sync_from_timestamp_ms: i64,
 
+    /// Seconds between the starts of two item history replay passes, or none
+    /// when a pass took longer: 0 (off, the default) or 600 to 1440. Each pass
+    /// reads every source catalyst's whole wearable and emote `/pointer-changes`
+    /// history (about 81 MB and 160 requests per source in November 2026), so
+    /// 1200 costs each source about 5.8 GB a day, 600 about 11.6 GB,
+    /// 1440 about 4.9 GB. A pass proves item coverage for 30 minutes from its
+    /// start; off, item coverage is unknown.
+    #[arg(long, env = "SYNC_ITEM_REPLAY_INTERVAL_SECS", default_value_t = 0)]
+    pub sync_item_replay_interval_secs: u64,
+
+    /// Milliseconds between two pages of an item history replay pass: 50 to
+    /// 1000 (a pass of 160 pages takes about 2 minutes at 200).
+    #[arg(long, env = "SYNC_ITEM_REPLAY_PAGE_PAUSE_MS", default_value_t = 200)]
+    pub sync_item_replay_page_pause_ms: u64,
+
+    /// How many source catalysts an item history replay pass reads at once:
+    /// 1 to 32. A pass lasts about as long as the slowest source when every
+    /// source is read at once.
+    #[arg(long, env = "SYNC_ITEM_REPLAY_CONCURRENCY", default_value_t = 8)]
+    pub sync_item_replay_concurrency: usize,
+
     /// Non-profile types first, then profiles; /about reports the ready types.
     #[arg(long, env = "PHASED_SYNC", default_value_t = true, action = clap::ArgAction::Set)]
     pub phased_sync: bool,

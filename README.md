@@ -85,6 +85,11 @@ packages run `pnpm test` (`apps/ui3`, `apps/sites`) and
 `scripts/gen-ts-bindings.sh`; the protocol runs `make -C library/protocol
 test`; the workflow guards run with `python3 -m unittest discover -s tooling/tests`.
 
+On a shared PostgreSQL cluster, set `CATALYST_TEST_RUN_ID` to a fresh ID of
+one to eight ASCII letters or digits. Share it only among this run's processes
+in the same PID namespace. The scratch helper creates and reaps databases
+within that run's namespace.
+
 ## Standards
 
 Web UI code follows [UI standards](docs/ui-standards.md); component styles use
