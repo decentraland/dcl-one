@@ -227,14 +227,15 @@ impl SafetyStore {
                 .map_err(|_| GatewayError::Unknown)?;
             if generation <= 0
                 || token_floor < 0
-                || token_floor.unsigned_abs() > crate::protocol::bus::cluster::MAX_CONSUMER_SECONDS
+                || crate::casts::non_negative(token_floor)
+                    > crate::protocol::bus::cluster::MAX_CONSUMER_SECONDS
             {
                 return Err(GatewayError::Unknown);
             }
             Ok(SafetyLease {
                 snapshot: SafetySnapshot {
-                    generation: generation.unsigned_abs(),
-                    token_floor: token_floor.unsigned_abs(),
+                    generation: crate::casts::non_negative(generation),
+                    token_floor: crate::casts::non_negative(token_floor),
                 },
                 tx,
             })
@@ -469,13 +470,14 @@ impl SafetyStore {
         let row=sqlx::query("SELECT cutoff,state,quarantine_until,phase FROM social.island_cleanup_dispatches WHERE dispatch_id=$1").bind(id).fetch_one(&mut **tx).await.map_err(|_|GatewayError::Unknown)?;
         let cutoff: i64 = row.try_get("cutoff").map_err(|_| GatewayError::Unknown)?;
         if cutoff <= 0
-            || cutoff.unsigned_abs() > crate::protocol::bus::cluster::MAX_CONSUMER_SECONDS
+            || crate::casts::non_negative(cutoff)
+                > crate::protocol::bus::cluster::MAX_CONSUMER_SECONDS
         {
             return Err(GatewayError::Unknown);
         }
         Ok(Dispatch {
             dispatch_id: id,
-            cutoff: cutoff.unsigned_abs(),
+            cutoff: crate::casts::non_negative(cutoff),
             state: DispatchState::decode(row.try_get("state").map_err(|_| GatewayError::Unknown)?)?,
             quarantine_until: row
                 .try_get("quarantine_until")
@@ -615,11 +617,11 @@ impl SafetyStore {
                         || fence.audience != audience
                         || fence.lane != "realm"
                         || fence.owner_session != stamp.session
-                        || fence.owner_epoch != epoch.unsigned_abs()
-                        || fence.fencing_token != token.unsigned_abs()
-                        || !(fence.assignment_revision == revision.unsigned_abs()
+                        || fence.owner_epoch != crate::casts::non_negative(epoch)
+                        || fence.fencing_token != crate::casts::non_negative(token)
+                        || !(fence.assignment_revision == crate::casts::non_negative(revision)
                             || fence.assignment_revision
-                                == revision.unsigned_abs().saturating_add(1))
+                                == crate::casts::non_negative(revision).saturating_add(1))
                     {
                         return Err(GatewayError::Unknown);
                     }

@@ -53,9 +53,9 @@ impl LegacyFence {
                 audience: audience.clone(),
                 lane: "realm".into(),
                 owner_session: session.into(),
-                owner_epoch: owner_epoch.unsigned_abs(),
-                assignment_revision: revision.unsigned_abs(),
-                fencing_token: token.unsigned_abs(),
+                owner_epoch: crate::casts::non_negative(owner_epoch),
+                assignment_revision: crate::casts::non_negative(revision),
+                fencing_token: crate::casts::non_negative(token),
             };
             Some((assignment, fence))
         });

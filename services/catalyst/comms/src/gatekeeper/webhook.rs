@@ -545,7 +545,7 @@ async fn room_event(
                 .to_owned(),
             identity: participant.identity.clone(),
             participant_sid: participant.sid.clone(),
-            event_time_ms: event.at.unsigned_abs(),
+            event_time_ms: crate::casts::non_negative(event.at),
             event_id: event.id.clone(),
         },
         canonical,

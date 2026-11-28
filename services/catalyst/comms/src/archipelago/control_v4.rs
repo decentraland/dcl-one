@@ -627,11 +627,11 @@ fn state_from_row(row: sqlx::postgres::PgRow) -> Result<AssignmentState, V4Error
     Ok(AssignmentState {
         lane: row.try_get("lane_key").map_err(failure)?,
         authority_incarnation: row.try_get("authority_incarnation").map_err(failure)?,
-        assignment_revision: revision.unsigned_abs(),
-        realm_revision: revision.unsigned_abs(),
+        assignment_revision: crate::casts::non_negative(revision),
+        realm_revision: crate::casts::non_negative(revision),
         owner_session: row.try_get("owner_session").map_err(failure)?,
-        owner_epoch: owner_epoch.unsigned_abs(),
-        fencing_token: fencing_token.unsigned_abs(),
+        owner_epoch: crate::casts::non_negative(owner_epoch),
+        fencing_token: crate::casts::non_negative(fencing_token),
         assignment: assignment
             .map(serde_json::from_value)
             .transpose()

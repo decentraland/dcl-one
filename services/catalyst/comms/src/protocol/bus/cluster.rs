@@ -10,13 +10,9 @@ use crate::protocol::pulse::decentraland::pulse::{PeerClusterChange, PeerCluster
 pub const MAX_SAFE_SECONDS: u64 = 9_007_199_254_740_991;
 pub const MAX_CONSUMER_SECONDS: u64 = MAX_SAFE_SECONDS / 1000;
 
-/// A dispatch cutoff, already bounded by [`MAX_CONSUMER_SECONDS`], as signed seconds.
-#[allow(
-    clippy::cast_possible_wrap,
-    reason = "dispatch cutoffs are checked against MAX_CONSUMER_SECONDS (below 2^44)"
-)]
+/// A dispatch cutoff as signed seconds, saturated (callers bound it by [`MAX_CONSUMER_SECONDS`]).
 pub fn cutoff_seconds(cutoff: u64) -> i64 {
-    cutoff as i64
+    i64::try_from(cutoff).unwrap_or(i64::MAX)
 }
 
 /// Completion retains its operation identity across transport loss and retries.
