@@ -6,10 +6,6 @@ inputs:
     description: 'Directory containing package.json'
     required: false
     default: '.'
-  npm-token:
-    description: 'NPM authentication token (leave empty for OIDC Trusted Publishing)'
-    required: false
-    default: ''
   initial-tag:
     description: 'Initial dist-tag for the published package'
     required: false
@@ -22,10 +18,6 @@ inputs:
     description: 'Package access level (public or restricted)'
     required: false
     default: 'public'
-  registry:
-    description: 'NPM registry URL'
-    required: false
-    default: 'https://registry.npmjs.org/'
   dry-run:
     description: 'Run in dry-run mode (skip actual publishing)'
     required: false
@@ -58,11 +50,10 @@ outputs:
 runs:
   using: 'composite'
   steps:
-    - name: Setup Node.js with npm authentication
+    - name: Setup Node.js
       uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
       with:
         node-version: ${{ inputs.node-version }}
-        registry-url: ${{ inputs.registry }}
 
     # The pnpm the Creator Hub pins, which corepack finds from the package's directory.
     - name: Enable corepack
@@ -92,42 +83,13 @@ runs:
         echo "📋 Version: $VERSION"
       id: package-info
 
-    - name: Verify npm authentication
-      if: inputs.npm-token != ''
-      shell: bash
-      working-directory: ${{ inputs.working-directory }}
-      env:
-        NODE_AUTH_TOKEN: ${{ inputs.npm-token }}
-      run: |
-        if [ "${{ inputs.dry-run }}" != "true" ]; then
-          echo "🔐 Verifying npm authentication..."
-          if pnpm whoami > /dev/null 2>&1; then
-            echo "✅ npm authentication verified as: $(pnpm whoami)"
-          else
-            echo "❌ Error: npm authentication failed"
-            echo "Registry: ${{ inputs.registry }}"
-            echo "Please check your NPM_TOKEN secret"
-            exit 1
-          fi
-        else
-          echo "🔍 Skipping auth verification in dry-run mode"
-        fi
-      id: verify-auth
-
     - name: Publish package
       shell: bash
       working-directory: ${{ inputs.working-directory }}
-      env:
-        INPUT_NPM_TOKEN: ${{ inputs.npm-token }}
       run: |
-        if [ -n "$INPUT_NPM_TOKEN" ]; then
-          export NODE_AUTH_TOKEN="$INPUT_NPM_TOKEN"
-        fi
-
         PACKAGE_NAME="${{ steps.package-info.outputs.package-name }}"
         VERSION="${{ steps.package-info.outputs.version }}"
         INITIAL_TAG="${{ inputs.initial-tag }}"
-        REGISTRY_BASE=$(echo "${{ inputs.registry }}" | sed 's|/*$||')
 
         # The version tag is created by a later job, so a run can publish and then fail before
         # tagging; the next run computes the same version, and npm refuses to publish it twice. A
@@ -160,7 +122,7 @@ runs:
 
         if [ "$?" -eq 0 ]; then
           echo "✅ Package published successfully"
-          NPM_URL="$REGISTRY_BASE/-/web/detail/$PACKAGE_NAME"
+          NPM_URL="https://registry.npmjs.org/-/web/detail/$PACKAGE_NAME"
           echo "npm-url=$NPM_URL" >> $GITHUB_OUTPUT
         else
           echo "❌ Package publishing failed"
@@ -172,13 +134,7 @@ runs:
       if: inputs.additional-tags != '' && inputs.dry-run != 'true'
       shell: bash
       working-directory: ${{ inputs.working-directory }}
-      env:
-        INPUT_NPM_TOKEN: ${{ inputs.npm-token }}
       run: |
-        if [ -n "$INPUT_NPM_TOKEN" ]; then
-          export NODE_AUTH_TOKEN="$INPUT_NPM_TOKEN"
-        fi
-
         PACKAGE_NAME="${{ steps.package-info.outputs.package-name }}"
         VERSION="${{ steps.package-info.outputs.version }}"
         ADDITIONAL_TAGS="${{ inputs.additional-tags }}"
