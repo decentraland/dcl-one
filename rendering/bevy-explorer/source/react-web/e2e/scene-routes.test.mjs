@@ -73,9 +73,8 @@ test('a node that fails or cannot be reached is asked again after the pause, not
 })
 
 test('a scene fetch sends a listed host through the node and any other host direct', async () => {
-  globalThis.self = { location: { origin: ORIGIN } }
   const sent = []
-  const sceneFetch = createSceneFetch(async request => { sent.push(request.url); return new Response('ok') }, () => ROUTES)
+  const sceneFetch = createSceneFetch(async request => { sent.push(request.url); return new Response('ok') }, () => ROUTES, ORIGIN)
   await sceneFetch('https://rooms.example/a')
   await sceneFetch('https://other.example/b')
   assert.deepEqual(sent, [`${ORIGIN}/_scene/rooms.example/a`, 'https://other.example/b'])
