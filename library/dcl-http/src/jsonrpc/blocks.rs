@@ -210,7 +210,7 @@ mod tests {
             };
             std::future::ready(Ok(BlockInfo {
                 number,
-                timestamp: 1000 + 2 * number as i64,
+                timestamp: 1000 + 2 * i64::try_from(number).unwrap(),
             }))
         }
     }
@@ -259,7 +259,7 @@ mod tests {
                 };
                 std::future::ready(Ok::<_, ()>(BlockInfo {
                     number,
-                    timestamp: 1000 + 2 * number as i64,
+                    timestamp: 1000 + 2 * i64::try_from(number).unwrap(),
                 }))
             }
         };
@@ -281,7 +281,7 @@ mod tests {
         };
         for t in [1501, 1777, 1203, 1999, 1501] {
             let block = search.block_at(t, chain(&reads)).await.unwrap().unwrap();
-            assert_eq!(block.number, ((t - 1000) / 2) as u64, "{t}");
+            assert_eq!(block.number, u64::try_from((t - 1000) / 2).unwrap(), "{t}");
             assert!(search.known.lock().unwrap().len() <= 8);
         }
         reads.store(0, Ordering::SeqCst);
