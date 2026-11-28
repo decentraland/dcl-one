@@ -4,6 +4,7 @@ import { readTarget, spec, until } from '../driver/index.ts'
 const scenario = spec(import.meta.url)
 const panel = { role: 'dialog', name: 'Debug panel' } as const
 const button = (name: string) => ({ role: 'button', name } as const)
+const imposterDebug = { role: 'switch', name: 'Debug imposters' } as const
 
 scenario('every registered debug reading resolves or explains what it is waiting for', async ({ explorer }) => {
   const sections = await explorer.json<{ title: string; query: string; fields: [string, string][] }[]>('/debug_panel')
@@ -82,6 +83,21 @@ scenario('the debug panel shows live plugin data and can play an avatar emote', 
     await until(() => explorer.hud.get(panel), (read) => read.text.includes(new URL(world.realm).origin), {
       timeoutMs: 10_000, what: 'the panel to display the current realm'
     })
+    await expand('LOD')
+    const lodState = () => explorer.json<{ debug_imposters: boolean }>('/lod_state')
+    const { debug_imposters: initialImposterDebug } = await lodState()
+    const waitImposterDebug = (enabled: boolean) => until(lodState, (state) => state.debug_imposters === enabled,
+      { timeoutMs: 10_000, what: `imposter coloring to be ${enabled ? 'on' : 'off'}` })
+    try {
+      await explorer.hud.click(imposterDebug)
+      await waitImposterDebug(!initialImposterDebug)
+      await explorer.hud.click(imposterDebug)
+      await waitImposterDebug(initialImposterDebug)
+    } finally {
+      if ((await lodState()).debug_imposters !== initialImposterDebug) {
+        await explorer.run(`/debug_imposters ${initialImposterDebug}`)
+      }
+    }
     await explorer.run('/session_graphics fps 47')
     await expand('Performance')
     await waitTarget(47)

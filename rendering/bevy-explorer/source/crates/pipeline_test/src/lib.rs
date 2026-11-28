@@ -44,6 +44,7 @@ pub fn headless_app_without_embedded_assets() -> App {
             .build()
             .disable::<LogPlugin>()
             .disable::<WinitPlugin>()
+            .disable::<bevy::gilrs::GilrsPlugin>()
             // keeps the render app in this app, so the pipeline cache is readable
             .disable::<PipelinedRenderingPlugin>()
             .set(WindowPlugin {

@@ -1246,6 +1246,13 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
 
 ## Deliberate choices that look like mistakes
 
+- **Imposter tile colors are an Explorer diagnostic.** Explorer owns the requested tile
+  identity and sets its per-mesh color tag, so requests sharing a bake can be distinguished.
+  Keeping the tint with the tile scheduler lets boimp retain its general-purpose render and
+  bake shaders. The session toggle installs forward shader wrappers that delegate sampling,
+  lighting and depth to boimp. Turning it off restores both original shaders. The Linux Vulkan
+  readback test links the pinned vertex and fragment layouts, including the normal prepass,
+  and checks the full frame and transparency across repeated toggles.
 - **Fog does not hide the loading edge.** The fog is the sky preset's: one exponential density
   (0.0005 per metre) and a colour by time of day, as the Unity client renders it. It does not
   thicken with a shorter scene load distance, so the edge of the loaded scenes shows through it,
