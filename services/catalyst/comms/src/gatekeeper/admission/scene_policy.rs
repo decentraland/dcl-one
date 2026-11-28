@@ -378,9 +378,9 @@ pub(crate) async fn try_get_lease_holders_for_parcels(
 
 /// DCL NAME display names for a bounded set of wallets through the node's
 /// NAME source (the old crate read the squid `ens` table). No source or a
-/// failing read answers `""`, as before; a failure is never memoized. An
-/// answer of the nft index is read each time: the memo keeps no
-/// publication, so it could serve a name the index has since moved.
+/// failing read answers `""`, as before; a failure is never memoized. The
+/// nft index is read each time, the whole set in one statement: the memo
+/// keeps no publication, so it could serve a name the index has since moved.
 pub async fn names_for(
     state: &CommsState,
     addresses: &[String],
@@ -395,6 +395,26 @@ pub async fn names_for(
     };
     // Best-effort display enrichment: a source that cannot answer shows no
     // name (never an authorization).
+    if names.observes() {
+        let wanted: Vec<String> = addresses.iter().map(|a| a.to_lowercase()).collect();
+        let read = names
+            .owned_names_of(&wanted, Purpose::Display)
+            .await
+            .inspect_err(|e| {
+                tracing::warn!(error = %e, "names resolve failed; falling back to empty names");
+            })
+            .ok();
+        for addr in wanted {
+            let name = read
+                .as_ref()
+                .and_then(|answer| answer.value.get(&addr))
+                .and_then(|held| held.first())
+                .map(|n| n.name.clone())
+                .unwrap_or_default();
+            out.insert(addr, name);
+        }
+        return out;
+    }
     let read = |addr: String| async move {
         match names.owned_names(&addr, Purpose::Display).await {
             Ok(answer) => Ok(answer
@@ -410,15 +430,11 @@ pub async fn names_for(
     };
     for addr in addresses {
         let addr = addr.to_lowercase();
-        let name = if names.observes() {
-            read(addr.clone()).await
-        } else {
-            state
-                .caches
-                .names
-                .get_or_fetch(addr.clone(), || read(addr.clone()))
-                .await
-        };
+        let name = state
+            .caches
+            .names
+            .get_or_fetch(addr.clone(), || read(addr.clone()))
+            .await;
         out.insert(addr, name.unwrap_or_default());
     }
     out
@@ -634,5 +650,206 @@ mod tests {
             "addresses": ["0xa"], "plots": ["1,1"], "onlyDev": false
         }));
         assert!(explicit.in_force(at("2024-03-01"), false));
+    }
+
+    /// A NAME source that counts its reads: the one-owner read and the
+    /// batch apart, or every read failing.
+    struct Counting {
+        observes: bool,
+        fails: bool,
+        single: std::sync::atomic::AtomicUsize,
+        batched: std::sync::atomic::AtomicUsize,
+    }
+
+    impl Counting {
+        fn new(observes: bool, fails: bool) -> Arc<Self> {
+            Arc::new(Self {
+                observes,
+                fails,
+                single: Default::default(),
+                batched: Default::default(),
+            })
+        }
+
+        fn held(owner: &str) -> Vec<crate::chain_index::names::OwnedName> {
+            // The wallets ending in an even digit hold one NAME, spelled
+            // after the wallet; the others hold none.
+            let even = owner
+                .chars()
+                .last()
+                .and_then(|c| c.to_digit(16))
+                .is_some_and(|d| d % 2 == 0);
+            even.then(|| crate::chain_index::names::OwnedName {
+                name: format!("n{}", &owner[owner.len() - 4..]),
+                contract_address: "0x0000000000000000000000000000000000000001".into(),
+                token_id: "1".into(),
+                price: None,
+            })
+            .into_iter()
+            .collect()
+        }
+
+        fn refused(&self) -> Result<(), crate::chain_index::names::NamesError> {
+            if self.fails {
+                Err(crate::chain_index::names::NamesError::NotEstablished(
+                    "the test source is not published".into(),
+                ))
+            } else {
+                Ok(())
+            }
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl crate::chain_index::names::NameAuthority for Counting {
+        async fn owned_names(
+            &self,
+            owner: &str,
+            _: crate::chain_index::names::Purpose,
+        ) -> Result<
+            crate::chain_index::names::Answer<Arc<Vec<crate::chain_index::names::OwnedName>>>,
+            crate::chain_index::names::NamesError,
+        > {
+            self.single
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            self.refused()?;
+            Ok(crate::chain_index::names::Answer {
+                value: Arc::new(Self::held(owner)),
+                observation: None,
+            })
+        }
+
+        async fn owned_names_of(
+            &self,
+            owners: &[String],
+            _: crate::chain_index::names::Purpose,
+        ) -> Result<
+            crate::chain_index::names::Answer<
+                std::collections::HashMap<String, Arc<Vec<crate::chain_index::names::OwnedName>>>,
+            >,
+            crate::chain_index::names::NamesError,
+        > {
+            self.batched
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            self.refused()?;
+            Ok(crate::chain_index::names::Answer {
+                value: owners
+                    .iter()
+                    .map(|o| (o.clone(), Arc::new(Self::held(o))))
+                    .collect(),
+                observation: None,
+            })
+        }
+
+        async fn name_owner(
+            &self,
+            _: &str,
+            _: crate::chain_index::names::Purpose,
+        ) -> Result<
+            crate::chain_index::names::Answer<Option<String>>,
+            crate::chain_index::names::NamesError,
+        > {
+            unreachable!("display names read owners")
+        }
+
+        async fn name_owners(
+            &self,
+            _: &[String],
+            _: crate::chain_index::names::Purpose,
+        ) -> Result<
+            crate::chain_index::names::Answer<std::collections::HashMap<String, Option<String>>>,
+            crate::chain_index::names::NamesError,
+        > {
+            unreachable!("display names read owners")
+        }
+
+        async fn still_current(
+            &self,
+            _: &crate::chain_index::names::Observation,
+            _: crate::chain_index::names::Purpose,
+        ) -> Result<bool, crate::chain_index::names::NamesError> {
+            Ok(true)
+        }
+
+        fn observes(&self) -> bool {
+            self.observes
+        }
+    }
+
+    fn state_with(source: Arc<Counting>) -> CommsState {
+        use crate::interfaces::test_support::{StubDirectory, StubPolicy, StubScenes};
+        CommsState::new(
+            sqlx::PgPool::connect_lazy("postgres://postgres@127.0.0.1:1/postgres").unwrap(),
+            crate::http::Outbound::for_tests(),
+            crate::gatekeeper::Settings::for_tests(),
+            None,
+            None,
+            Arc::new(StubPolicy::default()),
+            Arc::new(StubScenes::default()),
+            Arc::new(crate::presence::Presence::new()),
+            Arc::new(StubDirectory::default()),
+        )
+        .with_name_authority(Some(
+            source as Arc<dyn crate::chain_index::names::NameAuthority>,
+        ))
+    }
+
+    fn wallets(n: usize) -> Vec<String> {
+        (0..n).map(|i| format!("0xAB{i:038x}")).collect()
+    }
+
+    /// The nft index answers a scene's whole set of display names in one
+    /// read, keyed lowercased, a wallet holding none answering `""`.
+    #[tokio::test]
+    async fn the_index_reads_every_display_name_at_once() {
+        let source = Counting::new(true, false);
+        let state = state_with(source.clone());
+        let asked = wallets(50);
+        let names = names_for(&state, &asked).await;
+        assert_eq!(source.batched.load(std::sync::atomic::Ordering::SeqCst), 1);
+        assert_eq!(source.single.load(std::sync::atomic::Ordering::SeqCst), 0);
+        assert_eq!(names.len(), 50);
+        for wallet in &asked {
+            let wallet = wallet.to_lowercase();
+            let expected = Counting::held(&wallet)
+                .first()
+                .map(|n| n.name.clone())
+                .unwrap_or_default();
+            assert_eq!(names[&wallet], expected, "{wallet}");
+        }
+        assert!(names.values().any(String::is_empty));
+        assert!(names.values().any(|n| !n.is_empty()));
+    }
+
+    /// An index that cannot answer shows no names, nothing kept: the next
+    /// call reads again.
+    #[tokio::test]
+    async fn an_unanswered_index_shows_empty_names_and_reads_again() {
+        let source = Counting::new(true, true);
+        let state = state_with(source.clone());
+        let asked = wallets(3);
+        for round in 1..=2 {
+            let names = names_for(&state, &asked).await;
+            assert_eq!(names.len(), 3);
+            assert!(names.values().all(String::is_empty));
+            assert_eq!(
+                source.batched.load(std::sync::atomic::Ordering::SeqCst),
+                round
+            );
+        }
+    }
+
+    /// A source without publications (the subgraph) keeps its per-wallet
+    /// memo: a second call reads nothing.
+    #[tokio::test]
+    async fn the_subgraph_keeps_its_per_wallet_memo() {
+        let source = Counting::new(false, false);
+        let state = state_with(source.clone());
+        let asked = wallets(4);
+        let first = names_for(&state, &asked).await;
+        let second = names_for(&state, &asked).await;
+        assert_eq!(first, second);
+        assert_eq!(source.single.load(std::sync::atomic::Ordering::SeqCst), 4);
+        assert_eq!(source.batched.load(std::sync::atomic::Ordering::SeqCst), 0);
     }
 }
