@@ -5730,9 +5730,10 @@ they took 48 ms and 46 ms respectively.
 feed's orders leg and the legacy listings of both catalog versions on a
 node that walks the NFT index. It is one row per
 `OrderCreated` of the Marketplace contracts the nft walk takes in, folded
-from `shop.nft_event` by `services/catalyst/shop/src/market/legacy_orders.rs`
-in the nft fold's transaction, so it is published with the ownership it is
-read beside. The shop writes and reads it; no other area does.
+from `shop.nft_event` by `services/catalyst/shop/src/market/legacy_orders.rs`.
+Incremental writes are part of the NFT fold. A full rebuild writes a private
+book first and publishes its differences under the NFT cursor lock. Shop
+owns this projection.
 
 Invariants:
 
@@ -5797,9 +5798,10 @@ Invariants:
   verifies the opening checkpoint and moving anchor and uses the cursor's
   rewind and rebuild counters to distinguish ordinary pruning from a
   branch change.
-- A reader serves the book only while it stands and its block, written in
-  the nft fold's transaction, is the published nft fold (`folded_block`),
-  checked on the read's snapshot; otherwise the `nft-index` envelope. The
+- A reader serves the book only while it stands and its marker is the
+  published NFT fold (`folded_block`) on the read's snapshot. An active
+  private build returns the `nft-index` envelope until it publishes,
+  including a `since = -1` rebuild over a previously served book. The
   walk publishes a fold only after it commits and reads the head, so between
   the two the rows hold an unpublished fold: a read then answers the
   envelope rather than rows past the published block. A walk that advanced
@@ -5817,28 +5819,38 @@ Invariants:
   One bounded creation page uses indexed next-creation and latest-terminal
   probes to materialize the private book. The cursors and the rows commit
   together, so even a single token can span many steps and resume after a
-  crash. Repairs behind the scanned position enter a separate, revisioned
-  queue that a deployed writer cannot consume. A repair of one token
+  crash. If a full-budget private step times out after acquiring the
+  cursor, the lane halves its page and keeps that size across passes for
+  the current writer acquisition. Repairs behind the scanned position
+  enter a separate, revisioned queue that a deployed writer cannot consume. A repair of one token
   pages its input and output and is requeued if its revision changed.
 - The lane sets its time limits before locking the NFT cursor. The pass
   allows two minutes, normal transactions get up to 15 seconds, the
   atomic publish gets up to 90 seconds, and lock waits get at most
   10 seconds. Under the cursor lock, a drained build at the current
-  checkpoint replaces that network's visible rows and writes its marker
-  in the same transaction. That preserves the live indexes and write
-  triggers used by deployed binaries. The ordinary NFT publication
+  checkpoint deletes live keys absent from the shadow, writes inserted
+  or changed rows, and updates its marker in the same transaction. A timeout
+  rolls that transaction back and records a retry delay that starts at 30
+  seconds and grows to 10 minutes. NFT passes continue during that delay.
+  The live indexes and the projection triggers stay attached. The ordinary NFT publication
   acknowledges the new visible rows, including at the same height.
   A complete newer publication by a deployed writer can retire a
   redundant build. Private cleanup runs in bounded steps after publish.
   The schema object pass creates the new objects without reading the log.
 
-On a local PostgreSQL 17.6 synthetic run with 1M Matic shadow rows, 1,000
+For the earlier full-replacement baseline on local PostgreSQL 17.6 with
+1M synthetic Matic shadow rows, 1,000
 Ethereum rows and the existing live indexes and projection write triggers,
 the cursor-locked publication transaction took **39.05 s** on an empty
 Matic book and **56.11 s** when replacing 1M visible Matic rows. The
 replacement insert took 53.56 s. Each transaction preserved the Ethereum
 rows and published exactly 1M Matic rows. This is one local measurement
 per case, without concurrent writer load.
+The differential publish took **40.71 s** on an empty Matic book and
+**4.79 s** on a successor with 10,000 changed rows, including 1,000
+replaced keys, with the same row counts. Both runs preserved the 1,000
+Ethereum rows. These are single local measurements without a competing
+writer.
 
 The page, count and readiness checks share a `REPEATABLE READ, READ ONLY`
 snapshot. An explicit network or chain-bound contract can narrow the NFT

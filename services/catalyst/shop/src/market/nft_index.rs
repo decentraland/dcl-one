@@ -824,6 +824,7 @@ pub struct NftIndex {
     /// The cursor's start: nothing before it is the walk's (a bounded
     /// window's history, or none at all for a full one).
     walk_start: Mutex<Option<u64>>,
+    legacy_book_lane: super::legacy_orders::RebuildLane,
 }
 
 impl NftIndex {
@@ -847,6 +848,7 @@ impl NftIndex {
             collections: Mutex::new(None),
             walked: Mutex::new(None),
             walk_start: Mutex::new(None),
+            legacy_book_lane: super::legacy_orders::RebuildLane::default(),
         }
     }
 
@@ -1259,7 +1261,14 @@ impl ChainIndex for NftIndex {
         // The private legacy order build spends a bounded share of this
         // pass. A restart resumes at the last committed step.
         let deadline = std::time::Instant::now() + LEGACY_BOOK_REBUILD_PER_PASS;
-        if let Err(error) = super::legacy_orders::run_rebuild(pool, self.net, owner, deadline).await
+        if let Err(error) = super::legacy_orders::run_rebuild(
+            pool,
+            self.net,
+            owner,
+            deadline,
+            &self.legacy_book_lane,
+        )
+        .await
         {
             tracing::warn!(network = self.net.db_name(), %error, "legacy order book: rebuild batch deferred");
         }

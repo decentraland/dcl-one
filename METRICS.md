@@ -8,6 +8,27 @@ A local Polygon refold fixture replayed 288 legacy sales in 288 distinct blocks 
 
 The index process increments `catalyst_index_sales_repair_failures_total` by indexer and network when a historical sales repair fails. The error log includes the starting block and requests spent. The cursor keeps its last verified boundary.
 
+## Marketplace legacy book publication
+
+Local PostgreSQL 17.6 held 1M synthetic Matic shadow rows and 1,000
+visible Ethereum rows. With the existing live indexes and projection
+write triggers, the cursor-locked full replacement baseline published
+an empty Matic book in 39.05 s and replaced 1M existing Matic rows in
+56.11 s. The replacement insert took 53.56 s. Each case ran once without
+a competing writer and preserved all 1,000 Ethereum rows.
+
+On the current differential path, the same row counts took 40.71 s for
+initial publication and 4.79 s to publish a successor with 10,000 changed
+rows, including 1,000 replaced keys. PostgreSQL deleted 1,000 rows and
+inserted or updated 10,000. Each case ran once locally without a competing
+writer and kept the Ethereum rows. The transaction still scans the
+network's visible and shadow rows.
+
+The lane increments `catalyst_legacy_order_publish_timeouts_total` when it
+records a publication cooldown and `catalyst_legacy_order_rebuild_restarts_total`
+when it discards a build on a changed checkpoint. Both counters carry
+the network.
+
 ## Marketplace order book reads
 
 PostgreSQL 17.6 on Apple Silicon held one million legacy orders (700,000

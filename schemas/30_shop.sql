@@ -783,6 +783,8 @@ CREATE TABLE shop.legacy_order_rebuild (
     repair_contract varchar(42),
     repair_token numeric(78,0),
     repair_revision bigint,
+    publish_failures integer NOT NULL DEFAULT 0,
+    publish_after timestamp without time zone,
     progressed_at timestamp without time zone NOT NULL DEFAULT timezone('UTC', now()),
     CONSTRAINT legacy_order_rebuild_network_known CHECK (network IN ('ethereum', 'matic'))
 );
