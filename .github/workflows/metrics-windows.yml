@@ -5,6 +5,7 @@ on:
   push:
     branches: [main]
     paths:
+      - '.cargo/config.toml'
       - 'library/dcl-metrics/**'
       - 'services/catalyst/Cargo.lock'
       - 'services/catalyst/Cargo.toml'
@@ -13,6 +14,7 @@ on:
       - '.github/workflows/metrics-windows.yml'
   pull_request:
     paths:
+      - '.cargo/config.toml'
       - 'library/dcl-metrics/**'
       - 'services/catalyst/Cargo.lock'
       - 'services/catalyst/Cargo.toml'

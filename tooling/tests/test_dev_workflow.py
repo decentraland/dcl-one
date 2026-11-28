@@ -676,7 +676,7 @@ class WindowsMetricsWorkflowTest(unittest.TestCase):
     FLOW = WORKFLOW.with_name('metrics-windows.yml')
 
     def test_runs_when_the_crate_or_the_workspace_build_inputs_change(self):
-        inputs = ['library/dcl-metrics/**', 'services/catalyst/Cargo.lock', 'services/catalyst/Cargo.toml',
+        inputs = ['.cargo/config.toml', 'library/dcl-metrics/**', 'services/catalyst/Cargo.lock', 'services/catalyst/Cargo.toml',
                   'services/catalyst/clippy.toml', 'services/catalyst/rust-toolchain.toml',
                   '.github/workflows/metrics-windows.yml']
         local = runpy.run_path(str(WORKFLOW.parents[2] / 'tooling/ci-local.py'))
@@ -691,6 +691,8 @@ class WindowsMetricsWorkflowTest(unittest.TestCase):
         self.assertIn(f'cargo +{channel} clippy --manifest-path services/catalyst/Cargo.toml --locked '
                       '-p dcl-metrics --lib -- -D warnings', text)
         self.assertIn('    runs-on: windows-', text)
+        self.assertIn('          components: clippy\n', text)
+        self.assertIn('      AWS_LC_SYS_PREBUILT_NASM: 1\n', text)
         self.assertIn('\npermissions:\n  contents: read\nconcurrency:', text)
         self.assertNotRegex(text, r':\s*write\b|secrets\.')
         for action in re.findall(r'uses: (\S+)', text):

@@ -532,24 +532,27 @@ fn capitalize(s: &str) -> String {
     }
 }
 
-fn parcels_of(v: Option<&Value>) -> Vec<EstateParcel> {
-    v.and_then(Value::as_array)
-        .map(|a| {
-            a.iter()
-                // A parcel outside the `integer` range is not a parcel.
-                .filter_map(|p| {
-                    let (x, y) = (readers::int_of(p, "x"), readers::int_of(p, "y"));
-                    match (i32::try_from(x), i32::try_from(y)) {
-                        (Ok(x), Ok(y)) => Some(EstateParcel { x, y }),
-                        _ => {
-                            tracing::warn!(x, y, "/v1/nfts: dropped an out-of-range estate parcel");
-                            None
-                        }
-                    }
-                })
-                .collect()
+fn parcels_of(v: Option<&Value>, contract: &str, token_id: &str) -> Vec<EstateParcel> {
+    let all = v.and_then(Value::as_array).map_or(&[][..], Vec::as_slice);
+    // A parcel with a missing, unparseable or out-of-range coordinate is not a parcel.
+    let parcels: Vec<EstateParcel> = all
+        .iter()
+        .filter_map(|p| {
+            let x = i32::try_from(readers::opt_int_of(p, "x")?).ok()?;
+            let y = i32::try_from(readers::opt_int_of(p, "y")?).ok()?;
+            Some(EstateParcel { x, y })
         })
-        .unwrap_or_default()
+        .collect();
+    let dropped = all.len() - parcels.len();
+    if dropped > 0 {
+        tracing::warn!(
+            contract,
+            token_id,
+            dropped,
+            "/v1/nfts: dropped estate parcels without valid coordinates"
+        );
+    }
+    parcels
 }
 
 /// A subgraph nft row as the wire result, with its live legacy order.
@@ -617,7 +620,7 @@ pub fn nft_from_graph(n: &Value, network: Network, now_ms: i64) -> NftResult {
                     .unwrap_or(0),
                 description: readers::at(n, "estate/data/description")
                     .and_then(|v| v.as_str().map(str::to_string)),
-                parcels: parcels_of(readers::at(n, "estate/parcels")),
+                parcels: parcels_of(readers::at(n, "estate/parcels"), &contract, &token_id),
             },
         },
         _ => NftData::Emote {
@@ -1112,6 +1115,24 @@ pub async fn get_nfts(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn estate_parcels_without_valid_coordinates_are_dropped() {
+        let parcels = json!([
+            {"x": "-150", "y": 150},
+            {"x": 2_147_483_648_i64, "y": 0},
+            {"x": 0, "y": "-2147483649"},
+            {"x": "abc", "y": 1},
+            {"y": 2},
+            {"x": 3, "y": "4"}
+        ]);
+        let kept: Vec<(i32, i32)> = parcels_of(Some(&parcels), "0xestate", "7")
+            .into_iter()
+            .map(|p| (p.x, p.y))
+            .collect();
+        assert_eq!(kept, [(-150, 150), (3, 4)]);
+        assert!(parcels_of(None, "0xestate", "7").is_empty());
+    }
 
     fn pairs(list: &[(&str, &str)]) -> Vec<(String, String)> {
         list.iter()

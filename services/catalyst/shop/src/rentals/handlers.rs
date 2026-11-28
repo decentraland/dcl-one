@@ -271,7 +271,7 @@ pub async fn create_rentals_listing(
     }
     if !period_days_fit(&body.periods) {
         return Err(ApiError::bad_request(
-            "minDays and maxDays must fit a 32-bit integer",
+            "minDays and maxDays must be between 0 and 2147483647",
         ));
     }
 
@@ -543,11 +543,10 @@ pub async fn get_rentals_index(State(state): State<SharedState>) -> Response {
     Ok2(StatusCode::OK, super::index::status(state.db.pool()).await).into_response()
 }
 
-/// Whether every period's day bounds fit their `integer` columns.
+/// Whether every period's day bounds are non-negative and fit their `integer` columns.
 fn period_days_fit(periods: &[RentalListingPeriodInput]) -> bool {
-    periods
-        .iter()
-        .all(|p| i32::try_from(p.min_days).is_ok() && i32::try_from(p.max_days).is_ok())
+    let fits = |days: i64| (0..=i64::from(i32::MAX)).contains(&days);
+    periods.iter().all(|p| fits(p.min_days) && fits(p.max_days))
 }
 
 #[cfg(test)]
@@ -565,7 +564,7 @@ mod tests {
     }
 
     #[test]
-    fn period_days_beyond_the_integer_columns_do_not_fit() {
+    fn period_days_outside_zero_to_the_integer_max_do_not_fit() {
         let period = |min_days, max_days| RentalListingPeriodInput {
             min_days,
             max_days,
@@ -577,6 +576,8 @@ mod tests {
             period(1, i64::from(i32::MAX) + 1)
         ]));
         assert!(!period_days_fit(&[period(i64::from(i32::MIN) - 1, 1)]));
+        assert!(!period_days_fit(&[period(-1, 1)]));
+        assert!(period_days_fit(&[period(0, i64::from(i32::MAX))]));
     }
 
     #[test]
