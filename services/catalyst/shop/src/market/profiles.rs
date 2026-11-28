@@ -1356,22 +1356,27 @@ mod tests {
     }
 
     /// A state whose content reads go to a peer that holds nothing and
-    /// answers each `/entities/active` after `delay`, with a face hook that
-    /// counts the profile reads; `None` without a test database.
-    async fn slow_read_through_state(
-        delay: std::time::Duration,
-    ) -> Option<(
+    /// answers each `/entities/active` once the returned gate opens, with a
+    /// face hook that counts the profile reads; `None` without a test
+    /// database.
+    async fn gated_read_through_state() -> Option<(
         Arc<MarketplaceState>,
         Arc<std::sync::atomic::AtomicUsize>,
+        Arc<tokio::sync::Semaphore>,
         std::path::PathBuf,
     )> {
         use axum::routing::post;
         let pool = crate::db::scratch::pool(8).await?;
+        let gate = Arc::new(tokio::sync::Semaphore::new(0));
+        let held = gate.clone();
         let app = axum::Router::new().route(
             "/content/entities/active",
-            post(move || async move {
-                tokio::time::sleep(delay).await;
-                Json(json!([]))
+            post(move || {
+                let held = held.clone();
+                async move {
+                    let _ = held.acquire().await;
+                    Json(json!([]))
+                }
             }),
         );
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -1405,17 +1410,15 @@ mod tests {
                 .set(Arc::new(CountingFaces(reads.clone())))
                 .is_ok()
         );
-        Some((Arc::new(state), reads, tmp))
+        Some((Arc::new(state), reads, gate, tmp))
     }
 
     /// Concurrent misses of one profile under one publication share one read
-    /// (#2219): eight requests while the content read is slow make one
+    /// (#2219): eight requests while the content read is held make one
     /// profile read, and the filed miss then answers a later request.
     #[tokio::test]
     async fn concurrent_profile_misses_share_one_read() {
-        let Some((state, reads, tmp)) =
-            slow_read_through_state(std::time::Duration::from_millis(200)).await
-        else {
+        let Some((state, reads, gate, tmp)) = gated_read_through_state().await else {
             eprintln!("skipping: CATALYST_TEST_DATABASE_URL not set");
             return;
         };
@@ -1430,6 +1433,12 @@ mod tests {
                 })
             })
             .collect();
+        // Every other request joins the read before the content answers it.
+        state
+            .profile_flights
+            .until_within(std::time::Duration::from_secs(10), |c| c.joins() == 7)
+            .await;
+        gate.add_permits(tokio::sync::Semaphore::MAX_PERMITS);
         for request in requests {
             assert_eq!(request.await.unwrap(), Ok(None));
         }
@@ -1454,9 +1463,7 @@ mod tests {
     /// Concurrent misses of one address's outfits share one read too.
     #[tokio::test]
     async fn concurrent_outfits_misses_share_one_read() {
-        let Some((state, _, tmp)) =
-            slow_read_through_state(std::time::Duration::from_millis(200)).await
-        else {
+        let Some((state, _, gate, tmp)) = gated_read_through_state().await else {
             eprintln!("skipping: CATALYST_TEST_DATABASE_URL not set");
             return;
         };
@@ -1471,6 +1478,12 @@ mod tests {
                 })
             })
             .collect();
+        state
+            .lambdas
+            .outfit_flights
+            .until_within(std::time::Duration::from_secs(10), |c| c.joins() == 7)
+            .await;
+        gate.add_permits(tokio::sync::Semaphore::MAX_PERMITS);
         for request in requests {
             assert_eq!(request.await.unwrap(), StatusCode::NOT_FOUND);
         }

@@ -3100,20 +3100,6 @@ mod tests {
         assert_eq!(leader.await.unwrap().unwrap(), Some(b));
     }
 
-    /// Resolves once `coalesce` has seen `n` joins, or fails the test.
-    async fn joined<K, O>(coalesce: &crate::shared::cache::Coalesce<K, O>, n: u64)
-    where
-        K: Eq + std::hash::Hash + Clone,
-        O: Clone,
-    {
-        tokio::time::timeout(
-            std::time::Duration::from_secs(10),
-            coalesce.until(|c| c.joins() >= n),
-        )
-        .await
-        .expect("the callers joined the read in flight");
-    }
-
     /// A failed re-read is not spread to the admissions that joined it: the
     /// source goes down during the re-read, its own caller gets the fault,
     /// and a joiner reads again and is answered the new holder.
@@ -3141,7 +3127,9 @@ mod tests {
             let (p, world) = (p.clone(), world.clone());
             async move { p.world_owner(&world).await }
         });
-        joined(&p.admission_refreshes, 1).await;
+        p.admission_refreshes
+            .until_within(std::time::Duration::from_secs(10), |c| c.joins() >= 1)
+            .await;
         *indexed.pause.lock().unwrap() = None;
         pause.notify_waiters();
         assert!(leader.await.unwrap().is_err(), "the re-read's own caller");
@@ -3173,7 +3161,9 @@ mod tests {
             })
             .collect();
         indexed.entered.notified().await;
-        joined(&p.admission_refreshes, 7).await;
+        p.admission_refreshes
+            .until_within(std::time::Duration::from_secs(10), |c| c.joins() >= 7)
+            .await;
         *indexed.pause.lock().unwrap() = None;
         pause.notify_waiters();
         for admission in admissions {
@@ -3211,7 +3201,9 @@ mod tests {
             let (p, world) = (p.clone(), world.clone());
             async move { p.world_owner(&world).await }
         });
-        joined(&p.admission_refreshes, 1).await;
+        p.admission_refreshes
+            .until_within(std::time::Duration::from_secs(10), |c| c.joins() >= 1)
+            .await;
         *indexed.pause.lock().unwrap() = None;
         pause.notify_waiters();
         assert_eq!(leader.await.unwrap().unwrap(), Some(b));
@@ -3240,7 +3232,9 @@ mod tests {
             })
             .collect();
         indexed.check_entered.notified().await;
-        joined(&p.admission_checks, 7).await;
+        p.admission_checks
+            .until_within(std::time::Duration::from_secs(10), |c| c.joins() >= 7)
+            .await;
         *indexed.check_pause.lock().unwrap() = None;
         pause.notify_waiters();
         for hit in hits {
