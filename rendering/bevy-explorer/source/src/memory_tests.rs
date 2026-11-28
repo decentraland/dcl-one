@@ -43,10 +43,11 @@ fn web_reading_falls_after_an_engine_allocation_is_freed() {
 #[cfg(not(target_arch = "wasm32"))]
 #[test]
 fn client_plugin_publishes_a_native_process_sample() {
+    use bevy::time::TimePlugin;
     use std::time::{Duration, Instant};
 
     let mut app = App::new();
-    app.add_plugins(MemoryStatusPlugin);
+    app.add_plugins((TimePlugin, MemoryStatusPlugin));
     let deadline = Instant::now() + Duration::from_secs(5);
     loop {
         app.update();

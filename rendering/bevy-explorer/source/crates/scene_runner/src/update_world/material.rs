@@ -18,7 +18,7 @@ use bevy::{
     render::primitives::Aabb,
 };
 use common::{structs::AppConfig, util::AsH160};
-use comms::profile::ProfileManager;
+use comms::profile::{ProfileImageOwner, ProfileManager};
 use ipfs::{ipfs_path::IpfsPath, IpfsAssetServer};
 
 use crate::{
@@ -446,7 +446,7 @@ impl TextureResolver<'_, '_> {
                     .ok_or(TextureResolveError::AvatarNotFound)?;
                 let image = self
                     .profiles
-                    .get_image(h160)
+                    .get_image(h160, ProfileImageOwner::Scene(&scene.hash))
                     .map_err(|_| TextureResolveError::AvatarNotFound)?
                     .ok_or(TextureResolveError::SourceNotReady)?;
 

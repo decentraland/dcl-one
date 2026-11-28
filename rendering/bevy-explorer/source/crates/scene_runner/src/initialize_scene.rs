@@ -15,6 +15,7 @@ use bevy::{
 };
 
 use common::{
+    memory::EngineMemoryPressureMode,
     partition::{scene_partition, Tier},
     sets::{PostUpdateSets, RealmLifecycle},
     structs::{
@@ -96,6 +97,8 @@ pub struct SceneLifecyclePlugin;
 impl Plugin for SceneLifecyclePlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<CurrentImposterScene>();
+        app.init_resource::<RefusedScenes>();
+        app.init_resource::<EngineMemoryPressureMode>();
         app.init_resource::<CurrentSceneLoading>();
         app.init_resource::<LiveScenes>();
         app.init_resource::<ScenePointers>();
@@ -417,7 +420,7 @@ pub(crate) fn load_scene_javascript(
         } else {
             // deliberately not base_domain-derived: renderer-artifacts is only deployed
             // on decentraland.org (no zone or custom-domain equivalents)
-            ipfas.load_url_uncached(
+            ipfas.load_scene_runtime_url(
                 "https://renderer-artifacts.decentraland.org/sdk6-adaption-layer/main/index.min.js",
             )
         };
@@ -1943,6 +1946,11 @@ fn load_active_entities(
     }
 }
 
+/// How many scenes in range the lifecycle did not spawn on its last frame because engine memory
+/// is full ([`EngineMemoryPressureMode::RefusalDueFull`]); zero while loads are admitted.
+#[derive(Resource, Default)]
+pub struct RefusedScenes(pub usize);
+
 #[derive(Resource, Default)]
 pub struct CurrentImposterScene(pub Option<(PointerResult, bool)>);
 
@@ -1998,9 +2006,16 @@ pub fn process_scene_lifecycle(
     mut current_scene_loading_res: ResMut<CurrentSceneLoading>,
     startup_scenes: Option<Res<StartupScenes>>,
     bans: SceneBanGate,
-    time: Res<Time>,
+    (time, memory_pressure_mode, mut refused_scenes): (
+        Res<Time>,
+        Res<EngineMemoryPressureMode>,
+        ResMut<RefusedScenes>,
+    ),
     config: Res<AppConfig>,
 ) {
+    // counted afresh each frame, also on a frame that returns early, into its own resource:
+    // the mode is only read here, so this system never writes it
+    refused_scenes.0 = 0;
     let rings = Rings::from_config(&config);
     let mut required_scene_ids: HashMap<(String, Option<String>), bool> = HashMap::new();
 
@@ -2221,6 +2236,20 @@ pub fn process_scene_lifecycle(
     // publish for imposter loading: defer while the current scene is loading
     // (same condition the lifecycle uses above) or while the startup set is
     current_scene_loading_res.0 = defer_to_current_scene || startup_loading;
+
+    // while engine memory is full no new world scene spawns: the player's own scene, portables
+    // and system scenes still do. Spawned scenes are kept; an imposter bake's scene waits too
+    if memory_pressure_mode.is_refusing() {
+        required_scene_ids.retain(|scene, super_user| {
+            let admitted = *super_user
+                || current_scene.as_ref() == Some(scene)
+                || portable_ids.contains(scene);
+            if !admitted && !existing_ids.contains(&scene.0) {
+                refused_scenes.0 += 1;
+            }
+            admitted
+        });
+    }
 
     if live_scenes.block_new_scenes {
         return;

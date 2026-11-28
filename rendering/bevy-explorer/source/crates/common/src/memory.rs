@@ -1,6 +1,6 @@
 //! Client memory as observed by the engine. All consumers read the same sample.
 
-use std::num::NonZeroU64;
+use std::{num::NonZeroU64, time::Duration};
 
 use bevy::prelude::{DetectChangesMut, Mut, Resource};
 
@@ -123,5 +123,41 @@ impl MemoryStatus {
                 .limit_mib
                 .map_or(capacity_mib, |limit| capacity_mib.min(limit.get())),
         })
+    }
+}
+
+/// Whether new loads wait because engine memory is full.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Resource)]
+pub enum EngineMemoryPressureMode {
+    /// Loads are admitted.
+    #[default]
+    Normal,
+    /// New loads wait.
+    RefusalDueFull {
+        /// When the reading was last `Full`, on the clock `next` is given.
+        full_at: Duration,
+    },
+}
+
+impl EngineMemoryPressureMode {
+    /// How long a refusal outlasts the last `Full` reading while the reading stays in `Warning`.
+    pub const WARNING_HOLD: Duration = Duration::from_secs(30);
+
+    pub fn is_refusing(self) -> bool {
+        matches!(self, Self::RefusalDueFull { .. })
+    }
+
+    /// Refusing at `Full`; held through `Warning` for up to [`Self::WARNING_HOLD`] after the last
+    /// `Full` reading; `Normal` at `Normal`, `Abundance` or with no reading.
+    pub fn next(self, reading: Option<MemoryReading>, now: Duration) -> Self {
+        match (self, reading.map(|reading| reading.pressure())) {
+            (_, Some(MemoryPressure::Full)) => Self::RefusalDueFull { full_at: now },
+            (Self::RefusalDueFull { full_at }, Some(MemoryPressure::Warning))
+                if now.saturating_sub(full_at) < Self::WARNING_HOLD =>
+            {
+                self
+            }
+            _ => Self::Normal,
+        }
     }
 }

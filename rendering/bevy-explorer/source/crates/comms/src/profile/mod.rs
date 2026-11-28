@@ -494,6 +494,17 @@ impl ProfileCache {
     }
 }
 
+/// Whose download a profile picture is: the request-slot owner its load is tagged with.
+#[derive(Clone, Copy, Debug)]
+pub enum ProfileImageOwner<'a> {
+    /// UI the player opens: ranks with the player's loads.
+    Player,
+    /// A scene's texture: ranks with that scene's hash.
+    Scene(&'a str),
+    /// Anything else: ranks with the requests no scene or avatar owns.
+    Unowned,
+}
+
 #[derive(SystemParam)]
 pub struct ProfileManager<'w, 's> {
     cache: ResMut<'w, ProfileCache>,
@@ -540,6 +551,7 @@ impl ProfileManager<'_, '_> {
     pub fn get_image(
         &mut self,
         address: Address,
+        owner: ProfileImageOwner,
     ) -> Result<Option<Handle<Image>>, ProfileMissingError> {
         let Some(profile) = self.get_compact(address)? else {
             return Ok(None);
@@ -550,6 +562,11 @@ impl ProfileManager<'_, '_> {
         // through the deployment's gateway when one serves profile images
         let url = common::base_domain::profile_image(&profile.thumbnail_url);
         let ipfs_path = IpfsPath::new_from_url(&url, "png");
+        let ipfs_path = match owner {
+            ProfileImageOwner::Player => ipfs_path.with_player_slot_owner(),
+            ProfileImageOwner::Scene(hash) => ipfs_path.with_slot_owner(hash),
+            ProfileImageOwner::Unowned => ipfs_path,
+        };
         Ok(Some(
             self.ipfs.asset_server().load(PathBuf::from(&ipfs_path)),
         ))

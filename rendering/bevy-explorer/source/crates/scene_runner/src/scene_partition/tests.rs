@@ -746,3 +746,45 @@ fn overhead_of_publishing_at_a_busy_plaza() {
         "publisher: 20 live scenes + 50 avatars x 10 wearables: {busy:?} per frame with a download waiting (partitions, keys written in place); {idle:?} with none (partitions only)"
     );
 }
+
+#[test]
+fn a_hold_publishes_only_when_the_players_scenes_change() {
+    let mut world = world_with_player(None);
+    insert_ipfs(&mut world, 1);
+    world.init_resource::<ScenePointers>();
+    world.init_resource::<PortableScenes>();
+    world.init_resource::<LiveScenes>();
+    let near = PartitionData {
+        sqr_distance: 100.0,
+        parcel_distance: 1,
+        is_behind: false,
+    };
+    let avatar = world
+        .spawn((
+            PartitionedDownloads(vec!["worn".to_owned()]),
+            Partition(near),
+        ))
+        .id();
+    let _waiting = hold_a_waiting_download(world.resource::<IpfsResource>(), 1);
+    let publish = world.register_system(publish_download_priorities);
+    world.run_system(publish).unwrap();
+    let priority = |world: &World| world.resource::<IpfsResource>().scene_priority("worn");
+    assert_eq!(priority(&world), Some(near.load_priority(Tier::Avatar)));
+
+    // under a hold, another avatar moving reorders only held requests: nothing is published
+    world
+        .resource::<IpfsResource>()
+        .hold_downloads_from(Some(Tier::Avatar));
+    let farther = PartitionData {
+        parcel_distance: 2,
+        ..near
+    };
+    world.get_mut::<Partition>(avatar).unwrap().0 = farther;
+    world.run_system(publish).unwrap();
+    assert_eq!(priority(&world), Some(near.load_priority(Tier::Avatar)));
+
+    // once the hold lifts, the next frame publishes again
+    world.resource::<IpfsResource>().hold_downloads_from(None);
+    world.run_system(publish).unwrap();
+    assert_eq!(priority(&world), Some(farther.load_priority(Tier::Avatar)));
+}

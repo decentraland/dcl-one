@@ -1,6 +1,8 @@
-use std::num::NonZeroU64;
+use std::{num::NonZeroU64, time::Duration};
 
-use crate::memory::{MemoryPressure, MemorySample, MemoryStatus, MemoryThresholds};
+use crate::memory::{
+    EngineMemoryPressureMode, MemoryPressure, MemorySample, MemoryStatus, MemoryThresholds,
+};
 use bevy::prelude::*;
 
 const MIB: u64 = 1 << 20;
@@ -104,4 +106,46 @@ fn unavailable_measurements_do_not_report_a_pressure_tier() {
         MemoryPressure::Abundance
     );
     assert!(record(&mut world, None).reading().is_none());
+}
+
+#[test]
+fn load_refusal_starts_at_full_and_ends_below_warning() {
+    let mut world = World::new();
+    let mut mode = EngineMemoryPressureMode::Normal;
+    let now = Duration::from_secs(100);
+    // cap 1000 MiB: warning above 700, full above 750
+    for (used_mib, refusing) in [
+        (720, false),
+        (760, true),
+        (720, true),
+        (700, false),
+        (720, false),
+    ] {
+        let reading = record(&mut world, sample(used_mib * MIB, 1_000 * MIB)).reading();
+        mode = mode.next(reading, now);
+        assert_eq!(mode.is_refusing(), refusing, "at {used_mib} MiB");
+    }
+    mode = mode.next(
+        record(&mut world, sample(760 * MIB, 1_000 * MIB)).reading(),
+        now,
+    );
+    assert!(mode.is_refusing());
+    assert!(!mode.next(None, now).is_refusing());
+}
+
+#[test]
+fn load_refusal_ends_after_warning_outlasts_the_hold() {
+    let mut world = World::new();
+    let full = record(&mut world, sample(760 * MIB, 1_000 * MIB)).reading();
+    let mode = EngineMemoryPressureMode::Normal.next(full, Duration::from_secs(10));
+    let warning = record(&mut world, sample(720 * MIB, 1_000 * MIB)).reading();
+
+    let held =
+        Duration::from_secs(10) + EngineMemoryPressureMode::WARNING_HOLD - Duration::from_millis(1);
+    assert!(mode.next(warning, held).is_refusing());
+    let past = Duration::from_secs(10) + EngineMemoryPressureMode::WARNING_HOLD;
+    let ended = mode.next(warning, past);
+    assert!(!ended.is_refusing());
+    // a later full reading starts it again
+    assert!(ended.next(full, past).is_refusing());
 }

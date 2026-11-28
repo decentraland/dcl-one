@@ -15,6 +15,8 @@ fn setup_lifecycle(world: &mut World) {
     world.init_resource::<LiveScenes>();
     world.init_resource::<Events<LoadSceneEvent>>();
     world.init_resource::<CurrentImposterScene>();
+    world.init_resource::<RefusedScenes>();
+    world.init_resource::<EngineMemoryPressureMode>();
     world.init_resource::<PreviewMode>();
     world.init_resource::<CurrentSceneLoading>();
     world.init_resource::<CurrentRealm>();
@@ -143,6 +145,38 @@ fn live_scene_is_kept_through_the_unload_margin() {
         .resource::<LiveScenes>()
         .scenes
         .contains_key("neighbour"));
+}
+
+#[test]
+fn full_memory_spawns_no_new_neighbour_until_it_ends() {
+    let mut world = lifecycle_world();
+    spawn_current_scene(&mut world, SceneLoading::Failed);
+    world.insert_resource(EngineMemoryPressureMode::RefusalDueFull {
+        full_at: Duration::ZERO,
+    });
+
+    world.run_system_once(process_scene_lifecycle).unwrap();
+    assert!(spawned_hashes(&world).is_empty());
+    assert_eq!(world.resource::<RefusedScenes>().0, 1);
+
+    world.insert_resource(EngineMemoryPressureMode::Normal);
+    world.run_system_once(process_scene_lifecycle).unwrap();
+    assert_eq!(spawned_hashes(&world), vec!["neighbour".to_owned()]);
+    assert_eq!(world.resource::<RefusedScenes>().0, 0);
+}
+
+#[test]
+fn full_memory_spawns_the_players_scene_and_keeps_a_spawned_neighbour() {
+    let mut world = lifecycle_world();
+    let neighbour = spawn_live_neighbour(&mut world);
+    world.insert_resource(EngineMemoryPressureMode::RefusalDueFull {
+        full_at: Duration::ZERO,
+    });
+
+    world.run_system_once(process_scene_lifecycle).unwrap();
+    assert_eq!(spawned_hashes(&world), vec!["current".to_owned()]);
+    assert!(world.get_entity(neighbour).is_ok());
+    assert_eq!(world.resource::<RefusedScenes>().0, 0);
 }
 
 #[test]
@@ -430,6 +464,43 @@ fn a_smart_wearable_loads_from_its_content_file_while_the_current_scene_loads() 
         .resource::<LiveScenes>()
         .scenes
         .contains_key("wearable-sw-male"));
+}
+
+#[test]
+fn full_memory_still_spawns_a_portable() {
+    let mut world = lifecycle_world();
+    spawn_current_scene(&mut world, SceneLoading::Failed);
+    let location = SceneIpfsLocation::ContentFile {
+        hash: "wearable".to_owned(),
+        file: "male.smart_wearable".to_owned(),
+    };
+    world.resource_mut::<PortableScenes>().insert(
+        "wearable-sw-male".to_owned(),
+        PortableSource {
+            pid: "urn:decentraland:matic:collections-v2:0xabc:0".to_owned(),
+            parent_scene: None,
+            ens: None,
+            super_user: false,
+            kind: PortableKind::SmartWearable {
+                name: "wearable".to_owned(),
+                location: location.clone(),
+            },
+        },
+    );
+    world.insert_resource(EngineMemoryPressureMode::RefusalDueFull {
+        full_at: Duration::ZERO,
+    });
+
+    world.run_system_once(process_scene_lifecycle).unwrap();
+
+    // the portable spawns; the neighbour is held back
+    let events = world.resource::<Events<LoadSceneEvent>>();
+    let locations = events
+        .iter_current_update_events()
+        .map(|ev| &ev.location)
+        .collect::<Vec<_>>();
+    assert_eq!(locations, [&location]);
+    assert_eq!(world.resource::<RefusedScenes>().0, 1);
 }
 
 #[test]

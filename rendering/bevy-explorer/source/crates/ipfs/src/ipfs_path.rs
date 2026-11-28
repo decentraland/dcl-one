@@ -437,7 +437,14 @@ pub enum IpfsKey {
     /// resolves, downloads and caches as without it; only the asset path differs, so the part
     /// loads with its own settings beside the whole file's asset.
     Part,
+    /// The request-slot owner of a load whose path names no scene: its downloads rank under
+    /// this hash instead of with the ownerless requests.
+    SlotOwner,
 }
+
+/// The request-slot owner of the player's loads that name no scene, registered for the session
+/// with the player's scenes' rank. The `&` keeps it apart from every content hash.
+pub(crate) const PLAYER_SLOT_OWNER: &str = "&player";
 
 /// The [`IpfsKey::Part`] of a glTF loaded for its colliders only (`scene_lod`).
 pub const COLLIDERS_PART: &str = "colliders";
@@ -466,6 +473,7 @@ impl AsRef<Path> for IpfsKey {
         match self {
             IpfsKey::BaseUrl => Path::new("&baseUrl"),
             IpfsKey::Part => Path::new("&part"),
+            IpfsKey::SlotOwner => Path::new("&slotOwner"),
         }
     }
 }
@@ -477,6 +485,7 @@ impl TryFrom<&str> for IpfsKey {
         match key {
             "&baseUrl" => Ok(Self::BaseUrl),
             "&part" => Ok(Self::Part),
+            "&slotOwner" => Ok(Self::SlotOwner),
             other => anyhow::bail!("unrecognised ipfs key `{other}`"),
         }
     }
@@ -610,6 +619,17 @@ impl IpfsPath {
         self
     }
 
+    /// Rank this load's requests under `owner` (a scene hash) in the request slots.
+    pub fn with_slot_owner(self, owner: &str) -> Self {
+        self.with_keyvalue(IpfsKey::SlotOwner, owner.to_owned())
+    }
+
+    /// Rank this load's requests with the player's own, under the one session-wide player owner.
+    /// Every such load of a url shares one asset path.
+    pub fn with_player_slot_owner(self) -> Self {
+        self.with_slot_owner(PLAYER_SLOT_OWNER)
+    }
+
     pub fn to_indexdb(&self) -> Option<String> {
         match &self.ipfs_type {
             IpfsType::IndexDb { file_path } => Some(file_path.clone()),
@@ -701,6 +721,12 @@ impl IpfsPath {
             | IpfsType::UrlUncached { .. }
             | IpfsType::IndexDb { .. } => None,
         }
+    }
+
+    /// The hash the file's requests rank under in the request slots: its [`IpfsKey::SlotOwner`],
+    /// else its scene.
+    pub(crate) fn slot_owner(&self) -> Option<&str> {
+        self.get(&IpfsKey::SlotOwner).or_else(|| self.scene_hash())
     }
 
     pub fn content_path(&self) -> Option<&str> {
@@ -900,7 +926,7 @@ mod tests {
 
     use super::{
         content_file_path, is_http_url, resolve_content_uri, CacheKey, ContentPathExt, IpfsKey,
-        IpfsPath, IpfsType, COLLIDERS_PART,
+        IpfsPath, IpfsType, COLLIDERS_PART, PLAYER_SLOT_OWNER,
     };
     use crate::{ContentMap, IpfsContext, IpfsEntity};
 
@@ -1313,5 +1339,28 @@ mod tests {
 
         let by_url = IpfsPath::new_from_url("https://example.com/a.png", "png");
         assert!(matches!(by_url.cache_key(&context), Some(CacheKey::Url(_))));
+    }
+    #[test]
+    fn a_slot_owner_survives_the_asset_path_and_names_the_requests_owner() {
+        let by_url = IpfsPath::new_from_url("https://example.com/a.png", "png");
+        assert_eq!(by_url.slot_owner(), None);
+
+        let owned = by_url.with_slot_owner("bafyscene");
+        let parsed = IpfsPath::new_from_path(&PathBuf::from(&owned))
+            .unwrap()
+            .unwrap();
+        assert_eq!(parsed.slot_owner(), Some("bafyscene"));
+
+        let content = IpfsPath::new(IpfsType::new_content_file(
+            "bafyscene".to_owned(),
+            "a.glb".to_owned(),
+        ));
+        assert_eq!(content.slot_owner(), Some("bafyscene"));
+        assert_eq!(
+            IpfsPath::new_from_url("https://example.com/b.png", "png")
+                .with_player_slot_owner()
+                .slot_owner(),
+            Some(PLAYER_SLOT_OWNER)
+        );
     }
 }

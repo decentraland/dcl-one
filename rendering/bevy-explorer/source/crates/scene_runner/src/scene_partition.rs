@@ -14,6 +14,7 @@ use crate::{
     ContainingScene,
 };
 
+use ipfs::partition::RankedAsOwnAvatar;
 use ipfs::partition::{avatar_key, keyed};
 pub use ipfs::partition::{Partition, PartitionedDownloads, PartitionedEmoteDownloads};
 
@@ -136,13 +137,21 @@ pub fn update_scene_partitions(
 /// only on a frame in which a download waits for or holds a slot: a grant that chooses between
 /// downloads happens at an enqueue while others wait or at a release, so it reads this frame's
 /// keys unless the gate was idle when the frame began, and the steady state costs nothing.
+/// While downloads are held, it publishes only when a scene's key disagrees with whether the
+/// scene is one of the player's scenes.
 pub fn publish_download_priorities(
     scenes: Query<(Entity, &SceneHash, Option<&Partition>)>,
-    partitioned: Query<(Option<&Partition>, &PartitionedDownloads, Has<PrimaryUser>)>,
+    partitioned: Query<(
+        Option<&Partition>,
+        &PartitionedDownloads,
+        Has<PrimaryUser>,
+        Has<RankedAsOwnAvatar>,
+    )>,
     partitioned_emotes: Query<(
         Option<&Partition>,
         &PartitionedEmoteDownloads,
         Has<PrimaryUser>,
+        Has<RankedAsOwnAvatar>,
     )>,
     lods: Query<(&Partition, &SceneLod)>,
     player: Query<Entity, With<PrimaryUser>>,
@@ -156,6 +165,15 @@ pub fn publish_download_priorities(
         .single()
         .map(|player| containing_scene.get_oow(player))
         .unwrap_or_default();
+    // under a hold, publish only when a scene's place among the player's scenes differs from
+    // the key the gate holds for it
+    if ipfs.downloads_held_and_current(
+        scenes
+            .iter()
+            .map(|(entity, hash, _)| (hash.0.as_str(), active.contains(&entity))),
+    ) {
+        return;
+    }
     let scene_keys = scenes.iter().map(|(entity, hash, partition)| {
         let key = if active.contains(&entity) {
             LoadPriority::TOP
@@ -166,16 +184,23 @@ pub fn publish_download_priorities(
         };
         (hash.0.as_str(), key)
     });
-    let wearable_keys = partitioned
-        .iter()
-        .flat_map(|(partition, downloads, is_player)| {
-            keyed(avatar_key(is_player, partition), &downloads.0)
-        });
-    let emote_keys = partitioned_emotes
-        .iter()
-        .flat_map(|(partition, downloads, is_player)| {
-            keyed(avatar_key(is_player, partition), &downloads.0)
-        });
+    let wearable_keys =
+        partitioned
+            .iter()
+            .flat_map(|(partition, downloads, is_player, player_downloads)| {
+                keyed(
+                    avatar_key(is_player || player_downloads, partition),
+                    &downloads.0,
+                )
+            });
+    let emote_keys = partitioned_emotes.iter().flat_map(
+        |(partition, downloads, is_player, player_downloads)| {
+            keyed(
+                avatar_key(is_player || player_downloads, partition),
+                &downloads.0,
+            )
+        },
+    );
     let lod_keys = lods
         .iter()
         .map(|(partition, lod)| (lod.hash.as_str(), partition.0.load_priority(Tier::Lod)));

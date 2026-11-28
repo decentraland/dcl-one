@@ -269,6 +269,14 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   [ADR](../../../../docs/adr/2026-11-02-explorer-nearest-first-priority.md).
   The same key orders scene spawns, which come in loading waves of at most six
   ([ADR](../../../../docs/adr/2026-11-09-explorer-scene-streaming.md)).
+- **Loads wait while engine memory is full.** From Full until the reading is back under the
+  warning threshold, or has stayed under Full for 30 s, no new world scene spawns except the
+  player's own, portables and system scenes, and the request slots grant only the player's
+  loads: its avatar and the previews system scenes show, its scenes, the SDK6 adaption layer,
+  fonts and profile pictures. Other avatars, other scenes and other URL requests wait in place;
+  idle collectible metadata is released. Nothing in use is unloaded; the headless scene server
+  does not refuse. See the
+  [ADR](../../../../docs/adr/2026-11-24-explorer-loads-wait-under-memory-pressure.md).
 - **Voice chat (private calls and community streams)** keeps the call statuses and guards, the
   3 × 2000 ms re-dial budget, the 1 s hang-up-before-join delay and the server's 60 s ring.
   - The `Microphone` key is `T`, Unity's `Talk` key. The chat opens with `Enter`, so the chat

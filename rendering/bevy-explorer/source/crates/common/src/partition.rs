@@ -48,7 +48,8 @@ pub enum Tier {
     /// the player's own body, wearables and the emotes they play: few, small, and what the
     /// player is waiting on, so ahead of the scenes they stand in
     OwnAvatar,
-    /// the scenes the player stands in, portables and global scenes
+    /// the scenes the player stands in, portables and global scenes, and url loads tagged as the
+    /// player's (shared fonts, the SDK6 adaption layer, profile pictures in the player's UI)
     Active,
     /// the other avatars' bodies, wearables and emotes: all before any other scene, nearest
     /// avatar first
@@ -58,7 +59,7 @@ pub enum Tier {
     /// a scene's stand-in: the scene's files while no live scene holds its hash, after every
     /// live scene's
     Lod,
-    /// no scene's and no avatar's: NFT images, URL-form fonts, imposter archives
+    /// no scene's and no avatar's: imposter archives, other players' profile pictures
     Other,
     /// a scene that has left while its downloads wait
     Departed,

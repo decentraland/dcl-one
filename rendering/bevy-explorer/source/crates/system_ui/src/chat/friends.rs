@@ -5,7 +5,7 @@ use common::{
     structs::SystemAudio,
     util::{format_address, TryPushChildrenEx},
 };
-use comms::profile::ProfileManager;
+use comms::profile::{ProfileImageOwner, ProfileManager};
 use social::{DirectChatMessage, FriendshipEvent, SocialClient};
 use tokio::sync::mpsc::Receiver;
 use ui_core::{
@@ -80,7 +80,7 @@ pub fn update_profile_images(
     mut q: Query<(Entity, &PendingProfileUiImage, &mut ImageNode)>,
 ) {
     for (ent, pending, mut ui_image) in q.iter_mut() {
-        match cache.get_image(pending.0) {
+        match cache.get_image(pending.0, ProfileImageOwner::Player) {
             Err(_) => {
                 commands.entity(ent).remove::<PendingProfileUiImage>();
             }

@@ -448,9 +448,11 @@ impl IpfsAssetServer<'_, '_> {
         Ok(self.server.load(path))
     }
 
-    pub fn load_url_uncached<T: IpfsAsset>(&self, url: &str) -> Handle<T> {
+    /// Loads an uncached url whose requests rank with the player's loads. The path names no
+    /// scene, so every load of the url shares one asset.
+    pub fn load_scene_runtime_url<T: IpfsAsset>(&self, url: &str) -> Handle<T> {
         let ext = T::ext();
-        let ipfs_path = IpfsPath::new_from_url_uncached(url, ext);
+        let ipfs_path = IpfsPath::new_from_url_uncached(url, ext).with_player_slot_owner();
         self.server.load(PathBuf::from(&ipfs_path))
     }
 
@@ -1173,6 +1175,8 @@ impl IpfsIo {
         >,
     ) -> Self {
         let (sender, receiver) = tokio::sync::watch::channel(None);
+        let request_slots = PriorityGate::new(num_slots);
+        request_slots.register(ipfs_path::PLAYER_SLOT_OWNER, LoadPriority::TOP);
 
         Self {
             is_preview,
@@ -1185,7 +1189,7 @@ impl IpfsIo {
                 num_slots,
                 ..Default::default()
             }),
-            request_slots: PriorityGate::new(num_slots),
+            request_slots,
             request_metrics: RequestMetrics::default(),
             preview_delay_ms: AtomicU32::new(0),
             reqno: default(),
@@ -1287,6 +1291,25 @@ impl IpfsIo {
         keys: impl IntoIterator<Item = (&'a str, LoadPriority)>,
     ) {
         self.request_slots.publish(keys);
+    }
+
+    /// Hold downloads ranked in `tier` or later (`None` lifts the hold): they keep their place
+    /// but get no request slot until the hold is lifted.
+    pub fn hold_downloads_from(&self, tier: Option<common::partition::Tier>) {
+        self.request_slots.hold_from(tier);
+    }
+
+    pub fn downloads_held_from(&self) -> Option<common::partition::Tier> {
+        self.request_slots.held_from()
+    }
+
+    /// Whether downloads are held and each `(scene hash, is_player_scene)` already ranks as it
+    /// should.
+    pub fn downloads_held_and_current<'a>(
+        &self,
+        scenes: impl IntoIterator<Item = (&'a str, bool)>,
+    ) -> bool {
+        self.request_slots.held_and_current(scenes)
     }
 
     pub fn scene_priority(&self, scene: &str) -> Option<LoadPriority> {
@@ -2369,8 +2392,9 @@ impl IpfsIo {
                 ))));
             }
 
-            // the scene the file belongs to decides its place in the request slot queue
-            let scene = ipfs_path.scene_hash().map(str::to_owned);
+            // the scene the file belongs to, or the owner its path names, decides its place in
+            // the request slot queue
+            let scene = ipfs_path.slot_owner().map(str::to_owned);
 
             // nothing to share an uncacheable download under
             let Some(key) = cache_key else {

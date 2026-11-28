@@ -23,7 +23,7 @@ fn scene(name: &str) -> Option<String> {
 }
 
 /// Register each hash once, as its scene root or avatar would.
-fn register(gate: &PriorityGate, entries: &[(&str, LoadPriority)]) {
+fn register(gate: &Arc<PriorityGate>, entries: &[(&str, LoadPriority)]) {
     for (name, key) in entries {
         gate.register(name, *key);
     }
@@ -669,4 +669,160 @@ async fn a_queue_entry_without_its_ticket_is_skipped_inside_a_release() {
     let permit = gate.acquire(ticket).await.unwrap();
     assert_eq!(gate.waiting(), 0);
     drop(permit);
+}
+
+/// The slot granted to `ticket`, if it has been: holding it keeps the slot in use.
+fn granted(ticket: &Ticket) -> Option<Permit> {
+    ticket
+        .slot
+        .lock_ignore_poison()
+        .as_mut()
+        .and_then(|slot| slot.try_recv().ok())
+}
+
+fn avatar(parcel_distance: u16) -> LoadPriority {
+    LoadPriority {
+        tier: Tier::Avatar,
+        ..key(parcel_distance, false, 0.0)
+    }
+}
+
+#[test]
+fn a_hold_grants_only_the_earlier_tiers_and_lifting_it_grants_the_rest() {
+    let gate = PriorityGate::new(4);
+    register(
+        &gate,
+        &[
+            ("own", LoadPriority::OWN_AVATAR),
+            ("player-scene", LoadPriority::TOP),
+            ("other-avatar", avatar(1)),
+            ("neighbour", key(1, false, 100.0)),
+        ],
+    );
+    gate.hold_from(Some(Tier::Avatar));
+    assert_eq!(gate.held_from(), Some(Tier::Avatar));
+    let neighbour = gate.ticket(scene("neighbour"));
+    let other_avatar = gate.ticket(scene("other-avatar"));
+    let url = gate.ticket(None);
+    let own = gate.ticket(scene("own"));
+    let player_scene = gate.ticket(scene("player-scene"));
+
+    let own = granted(&own).expect("the player's avatar is not held");
+    let player_scene = granted(&player_scene).expect("the player's scene is not held");
+    assert!(granted(&neighbour).is_none());
+    assert!(granted(&other_avatar).is_none());
+    assert!(granted(&url).is_none());
+    assert_eq!(gate.waiting(), 3);
+
+    gate.hold_from(None);
+    // two slots were left: the avatar tier first, then the nearer of the rest
+    let other_avatar = granted(&other_avatar).expect("granted once the hold is lifted");
+    let neighbour = granted(&neighbour).expect("granted once the hold is lifted");
+    assert!(granted(&url).is_none());
+    assert_eq!(gate.waiting(), 1);
+    drop((own, player_scene, other_avatar, neighbour));
+}
+
+#[test]
+fn a_held_request_is_granted_once_a_publish_raises_it_to_the_players_tier() {
+    let gate = PriorityGate::new(1);
+    register(&gate, &[("neighbour", key(1, false, 100.0))]);
+    gate.hold_from(Some(Tier::Avatar));
+    let ticket = gate.ticket(scene("neighbour"));
+    assert!(granted(&ticket).is_none());
+
+    // the player walks into the neighbour
+    gate.publish([("neighbour", LoadPriority::TOP)]);
+    assert!(granted(&ticket).is_some());
+}
+
+#[test]
+fn a_held_request_is_granted_once_its_hash_is_registered_for_the_player() {
+    let gate = PriorityGate::new(1);
+    gate.hold_from(Some(Tier::Avatar));
+    // a wearable hash nobody holds yet ranks with the unregistered requests, which are held
+    let ticket = gate.ticket(scene("wearable"));
+    assert!(granted(&ticket).is_none());
+
+    gate.register("wearable", LoadPriority::OWN_AVATAR);
+    assert!(granted(&ticket).is_some());
+}
+
+#[test]
+fn a_ticket_shared_with_a_player_scene_is_granted_through_it() {
+    let gate = PriorityGate::new(1);
+    register(
+        &gate,
+        &[
+            ("neighbour", key(1, false, 100.0)),
+            ("player-scene", LoadPriority::TOP),
+        ],
+    );
+    gate.hold_from(Some(Tier::Avatar));
+    let ticket = gate.ticket(scene("neighbour"));
+    assert!(granted(&ticket).is_none());
+
+    gate.join(&ticket, scene("player-scene"));
+    assert!(granted(&ticket).is_some());
+}
+
+#[test]
+fn a_released_slot_passes_held_tickets_for_a_later_unheld_one() {
+    let gate = PriorityGate::new(1);
+    register(
+        &gate,
+        &[
+            ("neighbour", key(1, false, 100.0)),
+            ("player-scene", LoadPriority::TOP),
+        ],
+    );
+    let holder = gate.try_acquire().unwrap();
+    let neighbour = gate.ticket(scene("neighbour"));
+    let player_scene = gate.ticket(scene("player-scene"));
+    gate.hold_from(Some(Tier::Avatar));
+
+    drop(holder);
+    assert!(granted(&neighbour).is_none());
+    assert!(granted(&player_scene).is_some());
+}
+
+#[test]
+fn a_reader_from_the_players_scene_lifts_a_held_download() {
+    let gate = PriorityGate::new(1);
+    register(
+        &gate,
+        &[
+            ("neighbour", key(1, false, 100.0)),
+            ("player-scene", LoadPriority::TOP),
+        ],
+    );
+    gate.hold_from(Some(Tier::Avatar));
+    let (registration, attempts) = DownloadReaders::first(&gate, scene("neighbour"), None, None);
+    let ticket = attempts.first.as_ref().unwrap();
+    assert!(granted(ticket).is_none());
+
+    let _player = registration
+        .readers
+        .try_register(scene("player-scene"))
+        .unwrap();
+    assert!(granted(ticket).is_some());
+}
+
+#[test]
+fn held_and_current_holds_only_while_every_scene_ranks_as_given() {
+    let gate = PriorityGate::new(1);
+    register(
+        &gate,
+        &[
+            ("player-scene", LoadPriority::TOP),
+            ("neighbour", key(1, false, 100.0)),
+        ],
+    );
+    let scenes = [("player-scene", true), ("neighbour", false)];
+    assert!(!gate.held_and_current(scenes));
+
+    gate.hold_from(Some(Tier::Avatar));
+    assert!(gate.held_and_current(scenes));
+    // the player walks into the neighbour: its key is stale until the next publish
+    assert!(!gate.held_and_current([("player-scene", false), ("neighbour", true)]));
 }

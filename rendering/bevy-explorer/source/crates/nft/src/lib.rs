@@ -278,18 +278,15 @@ fn load_nft(
             continue;
         };
 
-        // get image
-        let url = &nft.image_url;
-        let ipfs_path = IpfsPath::new_from_url(url, "image");
-        let h_image = asset_server.load(PathBuf::from(&ipfs_path));
-
-        // get bounds
-        let Ok(bounds) = scenes
-            .get(scene_ent.root)
-            .map(|ctx| ctx.scene_bounds.clone())
-        else {
+        let Ok(scene) = scenes.get(scene_ent.root) else {
             continue;
         };
+        let bounds = scene.scene_bounds.clone();
+
+        // get image, downloaded with the scene's priority
+        let url = &nft.image_url;
+        let ipfs_path = IpfsPath::new_from_url(url, "image").with_slot_owner(&scene.hash);
+        let h_image = asset_server.load(PathBuf::from(&ipfs_path));
 
         commands
             .entity(ent)

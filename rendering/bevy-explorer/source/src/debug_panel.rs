@@ -3,13 +3,15 @@
 use bevy::prelude::*;
 use bevy_console::ConsoleCommand;
 use common::{
-    memory::{GpuMemoryBudget, MemoryStatus},
+    memory::{EngineMemoryPressureMode, GpuMemoryBudget, MemoryStatus},
     structs::PrimaryUser,
 };
 use console::{AddDebugSection, DebugInput, DebugInputKind, DebugSection, DoAddConsoleCommand};
+use ipfs::IpfsResource;
 use scene_material::SceneMaterial;
 use scene_runner::{
-    visible_content_bytes::scene_visible_content_bytes, ContainerEntity, ContainingScene,
+    initialize_scene::RefusedScenes, visible_content_bytes::scene_visible_content_bytes,
+    ContainerEntity, ContainingScene,
 };
 use serde_json::{json, Value};
 
@@ -42,6 +44,9 @@ impl Plugin for MemoryDebugPanelPlugin {
                     ),
                     ("Current scene textures (count / MiB)", "textures"),
                     ("Current scene meshes (count / MiB)", "meshes"),
+                    ("Loads waiting for memory", "refusing"),
+                    ("Scenes in range not spawned", "refusedScenes"),
+                    ("Downloads held from tier", "heldFrom"),
                 ],
                 actions: &[
                     ("Restore platform limit", "/debug_memory 0"),
@@ -103,6 +108,11 @@ fn debug_memory(
     meshes: Res<Assets<Mesh>>,
     materials: Res<Assets<SceneMaterial>>,
     images: Res<Assets<Image>>,
+    (memory_pressure_mode, refused_scenes, ipfs): (
+        Res<EngineMemoryPressureMode>,
+        Res<RefusedScenes>,
+        Res<IpfsResource>,
+    ),
 ) {
     let Some(Ok(args)) = cmd.take() else { return };
     if let Some(simulate) = args.simulate {
@@ -190,6 +200,9 @@ fn debug_memory(
         ])),
         "textures": current_scene_content.map(|c| count_and_mib(c.texture_count, c.texture_bytes_sum)),
         "meshes": current_scene_content.map(|c| count_and_mib(c.mesh_count, c.mesh_bytes_sum)),
+        "refusing": memory_pressure_mode.is_refusing(),
+        "refusedScenes": refused_scenes.0,
+        "heldFrom": ipfs.downloads_held_from().map_or("none".to_owned(), |tier| format!("{tier:?}")),
         "unavailable": {
             "used":ram_reason, "capacity":ram_reason, "cap":ram_reason,
             "usedPeakMiBInSample": if reading.is_some() { "Waiting for the first sampled frame." } else { ram_reason },
