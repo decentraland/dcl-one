@@ -150,6 +150,59 @@ and a maximum of 399 ms. These are local SQL timings.
 
 On 2026-11-26 the Ethereum `collections` walk (`shop::market::collections_v1`) ran its first history over `rpc.decentraland.org/mainnet`, which takes at most 10,000 blocks per `eth_getLogs`, with the default settings (10,000-block windows, a budget of 100 `eth_getLogs` per pass) and an empty scratch database. It walked from block 8,828,687 to the head, 17,671,095 blocks, in 18 passes run back to back, with 7,108 HTTP requests in all: `eth_getLogs` plus the headers of each window's bracket and of the blocks holding logs. That run recorded only the total. A two-pass rerun over the same start counted the requests by kind. Each pass spent its 100-request budget on `eth_getLogs`, about one per 10,000-block window: 989,704 and 1,000,000 blocks. Each pass also sent about 300 other requests, for the chain, the head, each window's bracket and the blocks holding logs: 299 and 302. So the full walk's `eth_getLogs` came to about 1,770, one per window, and the rest were headers. It took 2,198 s, plus the pause between passes a job adds (`MARKETPLACE_INDEX_INTERVAL_SECS`, 5 s, or 30 s under the mirror posture). It kept 438 `add_item`, 73,506 `issue` and 52 `ownership_transferred` rows. The 438 items and the 73,506 mints equal the collections subgraph's v1 items and their total supply at block 26,499,473. After the catch-up, each pass reads the same 42-address filter over the new blocks only. The command is in the `measure_the_first_walk` test, which prints each pass's `eth_getLogs` and other requests (`COLLECTIONS_V1_MEASURE_PASSES` stops it early).
 
+## Mainnet first catalogue projection
+
+On 2026-11-27, a release build timed
+`chain_walk::mark_folded` through commit, including the production
+`ChainIndex::publish` hook and catalogue writes. PostgreSQL 17.6 ran on an
+Apple M5 Pro with 48 GiB RAM, `fsync=on`, 128 MiB shared buffers, 4 MiB
+`work_mem` and the application's 60-second statement timeout.
+[Measured revision](https://github.com/decentraland/dcl-one/pull/2603/commits/88f590015d899d3401f6951a4d6bdd27cdd4c027)
+
+The synthetic event log used the public collections subgraphs' fixed-block
+catalogue captures on Polygon at 98,002,177 and Ethereum at 26,499,473. It
+preserved contract and item counts, the mint-count distribution per item,
+metadata, and current roles. Event positions and historical changes were
+generated. Polygon had 6,196 collections, 11,986 items, 5,281,272 Issue rows
+and 62,188 other events, including grants for all 182 observed item minter
+pairs. Ethereum had 42 collections, 438 AddWearable rows, 73,506 Issue rows
+and 52 ownership events. The shared event table and indexes occupied about
+1.5 GiB. Each successful publication produced the expected row counts and
+total supplies with zero pending collections.
+
+| Network and starting copy | Publish wall time | Same cursor row probe waited | Shared catalogue lock probe waited |
+| --- | ---: | ---: | ---: |
+| Polygon, empty output tables for this network | 1.262 s | 1.259 s | 1.259 s |
+| Polygon, replace a mirror-sized copy, three runs | 1.270–1.314 s | 1.267–1.311 s | 1.267–1.310 s |
+| Ethereum, empty output tables for this network | 50.6 ms | 41.2 ms | 41.1 ms |
+| Ethereum, replace a mirror-sized copy, three runs | 22.4–25.0 ms | 18.4–21.2 ms | 18.3–21.1 ms |
+| Polygon, larger edit and minter history, three runs | 2.180–3.261 s | 2.175–3.257 s | 2.175–3.257 s |
+
+The heavier Polygon fixture kept the same mint and output counts. It added
+20 metadata edits per item and 500 former finite item minters, bringing it
+to 302,908 non-Issue events. The allowance replay matched 451,844 more
+of the existing Issue rows. In the ordinary Polygon replacement runs, the observed
+`RowExclusiveLock` holds on `shop.collections` and `shop.items` were
+0.39–0.57 s and 0.40–0.57 s. For Ethereum they were 7–8 ms and 8–11 ms.
+`pg_locks` was sampled every 2 ms plus query time. Competing same-row and
+shared advisory lock probes started after the exclusive catalogue lock was
+observed. The writer already held the collection cursor row then.
+
+An independent `/v1/collections` request and the NFT and sales address
+readiness query finished while the publishing transaction was open. A
+proven mirror copy served 200 and admitted the walks. The cold copy served
+`503 collections-index` and the walks waited for a collections source.
+Both checks passed after publication. Terminating the heavier Polygon run
+after it had deleted old item rows rolled the transaction back. The old
+mirror copy and published cursor stayed visible, the committed log and
+`fold_through` survived, and a new owner projected again in 2.167 s. A
+fresh Ethereum publisher on an already-owned copy rebuilt it in 21.9 ms.
+
+These timings cover local publication with a committed log and resolved
+creation reads. Deployment contention, provider catch-up and the job's
+pass and retry intervals can extend the cutover. The historical RPC
+walk is measured separately in [Ethereum collections-v1 first walk](#ethereum-collections-v1-first-walk).
+
 ## Marketplace catalogue mirror proof
 
 `catalyst_catalogue_mirror_proof_outcomes_total` counts mainnet proof
