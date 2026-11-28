@@ -13,10 +13,12 @@
 //! gets the keys [`PUBLIC_DETAIL`] names; the public listing, those
 //! [`PUBLIC_LISTING`] names. A key not named there is never answered to them.
 
+pub mod approval;
 pub mod contract;
 pub mod deployment;
 pub mod lifecycle;
 pub mod listing;
+pub mod publish_third_party;
 pub mod save;
 
 use chrono::{DateTime, NaiveDateTime, Utc};

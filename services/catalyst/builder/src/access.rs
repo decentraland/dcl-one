@@ -163,6 +163,44 @@ pub struct FileRead {
     public: bool,
 }
 
+/// May lock the collection, at `at`.
+#[derive(Debug)]
+pub struct CollectionLock {
+    id: Uuid,
+    signer: String,
+    at: DateTime<Utc>,
+}
+
+/// May delete the collection or accept its terms of service.
+#[derive(Debug)]
+pub struct CollectionManage {
+    id: Uuid,
+    signer: String,
+    at: DateTime<Utc>,
+    registry: Option<Registry>,
+}
+
+/// May publish the collection's standard deployment or sync its owner;
+/// `committee` when the current committee admitted the signer.
+#[derive(Debug)]
+pub struct CollectionSync {
+    id: Uuid,
+    signer: String,
+    committee: bool,
+    provider: Option<String>,
+    registry: Option<Registry>,
+}
+
+/// May submit the third-party collection's items for curation with a slot
+/// cheque: a manager of its provider, by the registry the decision read.
+#[derive(Debug)]
+pub struct ThirdPartyPublish {
+    id: Uuid,
+    signer: String,
+    provider: String,
+    registry: Registry,
+}
+
 impl FileRead {
     pub fn hash(&self) -> &str {
         &self.hash
@@ -213,6 +251,9 @@ mod sealed {
     pub trait Sealed {}
     impl Sealed for super::CollectionRead {}
     impl Sealed for super::CollectionEdit {}
+    impl Sealed for super::CollectionSync {}
+    impl Sealed for super::CollectionManage {}
+    impl Sealed for super::ThirdPartyPublish {}
 }
 
 /// A grant over one collection, for the reads that answer its row; only
@@ -229,6 +270,30 @@ impl CollectionGrant for CollectionRead {
 
 impl CollectionGrant for CollectionEdit {
     fn collection(&self) -> Uuid {
+        self.id
+    }
+}
+
+impl CollectionGrant for CollectionSync {
+    fn collection(&self) -> Uuid {
+        self.id
+    }
+}
+
+/// A grant to record a review of one collection: a curation of it or of its
+/// items ([`crate::curation`]); only this module's write grants implement it.
+pub trait CurationGrant: sealed::Sealed {
+    fn curated(&self) -> Uuid;
+}
+
+impl CurationGrant for CollectionManage {
+    fn curated(&self) -> Uuid {
+        self.id
+    }
+}
+
+impl CurationGrant for ThirdPartyPublish {
+    fn curated(&self) -> Uuid {
         self.id
     }
 }
@@ -281,6 +346,44 @@ impl Publisher {
     }
 }
 
+impl CollectionLock {
+    pub fn id(&self) -> Uuid {
+        self.id
+    }
+    pub fn at(&self) -> DateTime<Utc> {
+        self.at
+    }
+}
+
+impl CollectionManage {
+    pub fn id(&self) -> Uuid {
+        self.id
+    }
+    pub fn signer(&self) -> &str {
+        &self.signer
+    }
+}
+
+impl CollectionSync {
+    pub fn id(&self) -> Uuid {
+        self.id
+    }
+    pub fn signer(&self) -> &str {
+        &self.signer
+    }
+    pub fn third_party(&self) -> bool {
+        self.provider.is_some()
+    }
+    /// The full read this grant opens: the body and every item.
+    pub fn full_read(&self) -> CollectionRead {
+        CollectionRead {
+            id: self.id,
+            full: true,
+            programmatic: false,
+        }
+    }
+}
+
 const COLLECTIONS: &str = "collections";
 const ITEMS: &str = "items";
 const UPSERT: &str = "inserted or updated";
@@ -310,6 +413,7 @@ fn parse(raw: &str) -> Result<Uuid, ApiError> {
 struct Collection {
     stored_owner: String,
     contract: Option<String>,
+    provider: Option<String>,
     third_party: bool,
     provider_managers: Vec<String>,
     programmatic: bool,
@@ -497,6 +601,7 @@ async fn collection(
     Ok(Some(Collection {
         stored_owner,
         contract,
+        provider,
         third_party,
         provider_managers,
         programmatic,
@@ -1449,6 +1554,299 @@ pub(crate) async fn confirm_item_change(
     })
 }
 
+/// May read the data the committee's registry transaction needs to approve
+/// the collection.
+#[derive(Debug)]
+pub struct ApprovalRead {
+    id: Uuid,
+}
+
+impl ApprovalRead {
+    pub fn id(&self) -> Uuid {
+        self.id
+    }
+}
+
+/// `GET /v1/collections/:id/approvalData`: the collection must exist (400,
+/// 404), then the signer must be a current committee member (401; 503
+/// while the committee can't be read).
+pub async fn read_approval(
+    state: &SharedState,
+    signer: &Signer,
+    raw: &str,
+) -> Result<ApprovalRead, ApiError> {
+    let id = parse(raw)?;
+    let exists: bool =
+        sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM builder.collections WHERE id = $1)")
+            .bind(id)
+            .fetch_one(state.items.pool())
+            .await?;
+    if !exists {
+        return Err(not_found(id, COLLECTIONS));
+    }
+    committee(state, signer).await?;
+    Ok(ApprovalRead { id })
+}
+
+/// `POST /v1/collections/:id/lock`: only the owner of a standard collection.
+pub async fn lock_collection(
+    state: &SharedState,
+    signer: &Signer,
+    raw: &str,
+) -> Result<CollectionLock, ApiError> {
+    let lock = CollectionLock {
+        id: parse(raw)?,
+        signer: signer.as_str().to_string(),
+        at: (state.now)(),
+    };
+    let (mut conn, view) = decision(state).await?;
+    confirm_collection_lock(&mut conn, &view, &lock).await?;
+    Ok(lock)
+}
+
+/// [`lock_collection`]'s decision again, inside the write's transaction.
+pub(crate) async fn confirm_collection_lock(
+    conn: &mut PgConnection,
+    view: &DecisionView,
+    lock: &CollectionLock,
+) -> Result<(), ApiError> {
+    let c = collection(conn, view, lock.id, None)
+        .await?
+        .ok_or_else(|| not_found(lock.id, COLLECTIONS))?;
+    if !c.owner(&lock.signer) {
+        return Err(unauthorized_user(&lock.signer, COLLECTIONS, lock.id));
+    }
+    Ok(())
+}
+
+/// `DELETE /v1/collections/:id` and `POST /v1/collections/:id/tos`: the
+/// collection's owner, its on-chain manager or its provider's manager.
+pub async fn manage_collection(
+    state: &SharedState,
+    signer: &Signer,
+    raw: &str,
+) -> Result<CollectionManage, ApiError> {
+    let id = parse(raw)?;
+    let manage = CollectionManage {
+        id,
+        signer: signer.as_str().to_string(),
+        at: (state.now)(),
+        registry: registry_for(state, Since::write(), &[id], &[]).await?,
+    };
+    let (mut conn, view) = decision(state).await?;
+    confirm_collection_manage(&mut conn, &view, &manage).await?;
+    Ok(manage)
+}
+
+/// The state of the collection a manage grant was confirmed for, which a
+/// delete's own rules read.
+#[derive(Debug, Default)]
+pub struct ManageState {
+    pub third_party: bool,
+    pub published: bool,
+    pub pending: bool,
+    pub locked: bool,
+    pub contract: Option<String>,
+    /// A standard collection's owner; none for a third-party one.
+    pub owner: Option<String>,
+}
+
+/// [`manage_collection`]'s decision again, inside the write's transaction.
+pub(crate) async fn confirm_collection_manage(
+    conn: &mut PgConnection,
+    view: &DecisionView,
+    manage: &CollectionManage,
+) -> Result<ManageState, ApiError> {
+    let c = collection(conn, view, manage.id, providers(&manage.registry))
+        .await?
+        .ok_or_else(|| not_found(manage.id, COLLECTIONS))?;
+    if !c.role(&manage.signer) {
+        return Err(unauthorized_user(&manage.signer, COLLECTIONS, manage.id));
+    }
+    let owner = (!c.third_party).then(|| c.creator.clone().unwrap_or(c.stored_owner.clone()));
+    Ok(ManageState {
+        third_party: c.third_party,
+        published: c.published,
+        pending: c.pending,
+        locked: c.locked(manage.at),
+        contract: c.contract,
+        owner,
+    })
+}
+
+/// What a committed publish opens the topic of the collection `id` with:
+/// whether it is published, its contract and its standard owner; `None`
+/// when the collection is gone. No role is asked: the publish decided it.
+pub(crate) async fn topic_state(
+    conn: &mut PgConnection,
+    view: &DecisionView,
+    id: Uuid,
+) -> Result<Option<(bool, Option<String>, Option<String>)>, ApiError> {
+    Ok(collection(conn, view, id, None).await?.map(|c| {
+        let owner = (!c.third_party).then(|| c.creator.clone().unwrap_or(c.stored_owner.clone()));
+        (c.published, c.contract, owner)
+    }))
+}
+
+/// May reply in the forum topic of a collection: a current committee
+/// member.
+#[derive(Debug)]
+pub struct ForumReply {
+    collection: Uuid,
+    member: String,
+}
+
+impl ForumReply {
+    pub fn collection(&self) -> Uuid {
+        self.collection
+    }
+    pub fn member(&self) -> &str {
+        &self.member
+    }
+}
+
+/// `POST /v1/collections/:id/curation/post`: a current committee member
+/// (401, or 503 while the committee can't be read), then the collection
+/// must exist (404).
+pub async fn reply_on_forum(
+    state: &SharedState,
+    signer: &Signer,
+    raw: &str,
+) -> Result<ForumReply, ApiError> {
+    let s = signer.as_str();
+    if !on_committee(state, Since::write(), s).await? {
+        return Err(
+            ApiError::unauthorized("Unauthorized").with_data(json!({ "id": raw, "ethAddress": s }))
+        );
+    }
+    let id = parse(raw)?;
+    let exists: bool =
+        sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM builder.collections WHERE id = $1)")
+            .bind(id)
+            .fetch_one(state.items.pool())
+            .await?;
+    if !exists {
+        return Err(ApiError::not_found("Collection not found").with_data(json!({ "id": id })));
+    }
+    Ok(ForumReply {
+        collection: id,
+        member: s.to_string(),
+    })
+}
+
+/// `POST /v1/collections/:id/publish` and `/owner/sync`: the collection's
+/// owner, its on-chain manager or a current committee member; a
+/// third-party collection's provider manager alone.
+pub async fn sync_collection(
+    state: &SharedState,
+    signer: &Signer,
+    raw: &str,
+) -> Result<CollectionSync, ApiError> {
+    let id = parse(raw)?;
+    let registry = registry_for(state, Since::write(), &[id], &[]).await?;
+    let (mut conn, view) = decision(state).await?;
+    let c = collection(&mut conn, &view, id, providers(&registry))
+        .await?
+        .ok_or_else(|| not_found(id, COLLECTIONS))?;
+    drop(conn);
+    let s = signer.as_str();
+    let committee = !c.role(s);
+    if committee && (c.third_party || !on_committee(state, Since::write(), s).await?) {
+        return Err(unauthorized_user(s, COLLECTIONS, id));
+    }
+    Ok(CollectionSync {
+        id,
+        signer: s.to_string(),
+        committee,
+        provider: c.provider,
+        registry,
+    })
+}
+
+/// The third-party side of [`sync_collection`]'s grant: the publish of a
+/// third-party collection; a standard collection's grant comes back.
+pub fn publish_third_party(sync: CollectionSync) -> Result<ThirdPartyPublish, CollectionSync> {
+    match (sync.provider, sync.registry) {
+        (Some(provider), Some(registry)) if !sync.committee => Ok(ThirdPartyPublish {
+            id: sync.id,
+            signer: sync.signer,
+            provider,
+            registry,
+        }),
+        (provider, registry) => Err(CollectionSync {
+            provider,
+            registry,
+            ..sync
+        }),
+    }
+}
+
+impl ThirdPartyPublish {
+    pub fn id(&self) -> Uuid {
+        self.id
+    }
+
+    pub fn signer(&self) -> &str {
+        &self.signer
+    }
+
+    pub fn provider(&self) -> &str {
+        &self.provider
+    }
+
+    pub fn registry(&self) -> &[Provider] {
+        &self.registry
+    }
+
+    /// The full read of the collection it publishes.
+    pub fn full_read(&self) -> CollectionRead {
+        CollectionRead {
+            id: self.id,
+            full: true,
+            programmatic: third_parties::provider(&self.registry, &self.provider)
+                .is_some_and(|p| p.is_programmatic),
+        }
+    }
+}
+
+/// [`publish_third_party`]'s decision again, inside the publish's
+/// transaction: the collection still of the provider, the signer still its
+/// manager.
+pub(crate) async fn confirm_third_party_publish(
+    conn: &mut PgConnection,
+    view: &DecisionView,
+    grant: &ThirdPartyPublish,
+) -> Result<(), ApiError> {
+    let c = collection(conn, view, grant.id, Some(&grant.registry)).await?;
+    if c.is_none_or(|c| {
+        c.provider.as_deref() != Some(grant.provider.as_str()) || !c.provider_manager(&grant.signer)
+    }) {
+        return Err(ApiError::unauthorized("Unauthorized to upsert collection")
+            .with_data(json!({ "id": grant.id, "eth_address": grant.signer })));
+    }
+    Ok(())
+}
+
+/// [`sync_collection`]'s decision again, inside the write's transaction: a
+/// role the rows decide, else a committee read that started after the
+/// decision.
+pub(crate) async fn confirm_collection_sync(
+    conn: &mut PgConnection,
+    view: &DecisionView,
+    state: &State,
+    sync: &CollectionSync,
+) -> Result<(), ApiError> {
+    let c = collection(conn, view, sync.id, providers(&sync.registry))
+        .await?
+        .ok_or_else(|| not_found(sync.id, COLLECTIONS))?;
+    if !c.role(&sync.signer)
+        && !(sync.committee && on_committee(state, Since::write(), &sync.signer).await?)
+    {
+        return Err(unauthorized_user(&sync.signer, COLLECTIONS, sync.id));
+    }
+    Ok(())
+}
+
 /// The node's own standard publication routes: the stored owner of a
 /// standard collection.
 pub async fn publisher(
@@ -1867,6 +2265,15 @@ pub(crate) mod granted {
             signer: signer.to_string(),
             at: Utc::now(),
             registry: no_registry(),
+        }
+    }
+
+    pub fn third_party_publish(signer: &str, id: Uuid, provider: &str) -> ThirdPartyPublish {
+        ThirdPartyPublish {
+            id,
+            signer: signer.to_string(),
+            provider: provider.to_string(),
+            registry: Registry::default(),
         }
     }
 

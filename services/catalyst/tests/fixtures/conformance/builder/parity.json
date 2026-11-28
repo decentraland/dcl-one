@@ -376,7 +376,7 @@
       "anchors": []
     },
     "third-party-publish-forum-after-commit": {
-      "text": "POST /v1/collections/:id/publish of a third-party collection: when the forum call after the submission fails or takes longer than 45 seconds, the node answers the committed publish as a success and logs the failure, and the next publish or POST /v1/collections/:id/post makes the topic; upstream answers HTTP 200 {ok:false} with the forum's error although the submission is stored.",
+      "text": "POST /v1/collections/:id/publish: the node opens the collection's forum topic itself once the publish commits, in the background: a standard collection's when the publish gives its items their on-chain ids, a third-party collection's after its submission, which also adds the newly submitted items to a topic it already has. The publish answers without waiting for the forum; a failure, or a forum that takes longer than 45 seconds, is logged, and the manager's client may ask again with POST /v1/collections/:id/post. Upstream opens a standard collection's topic only when its client posts it, and answers a third-party publish HTTP 200 {ok:false} with the forum's error although the submission is stored.",
       "captures": [],
       "anchors": []
     },
@@ -596,6 +596,11 @@
     },
     "wallet-draft-bounds": {
       "text": "PUT /v1/items/:idOrURN and PUT /v1/collections/:id: a wallet holds at most 25,000 items that no publication names (a standard item until its collection is published, a third-party item until it has an item curation, an item with no collection), 5,000 unpublished collections and 256 MiB of those items' stored documents. A save that would pass one, a new item or collection or an item's documents, answers 413 {ok:false, data:{maxItems}, {maxCollections} or {maxBytes}, error:\"The wallet's unpublished drafts reached their limit\"} and stores nothing; a wallet at its item bound still saves the items it holds. Upstream bounds none. The busiest wallet in the reference data holds 12,669 items and 1,542 collections.",
+      "captures": [],
+      "anchors": []
+    },
+    "collection-post-retry": {
+      "text": "POST /v1/collections/:id/post asks again for the topic the publish opens: a third-party collection, like a standard one, must be published (an item of it submitted for curation) or the node answers 409 {ok:false, data:{id}, error:'The collection is not published'} and calls no forum. A collection that stores its topic answers HTTP 200 {ok:true, data:<link>} without calling the forum, so no request changes a topic's post. When the forum holds a topic the node made under the collection's title whose link was never stored, the node keeps that topic, found among its account's newest topics in the category, when its first post names the collection. Upstream also posts a third-party collection none of whose items was submitted, answers 409 'Forum post already exists' for a stored topic, and refuses a taken title.",
       "captures": [],
       "anchors": []
     },
@@ -5541,7 +5546,7 @@
       "id": "api_http:POST:/v1/collections/:id/post",
       "owner": "forum",
       "status": "reviewed",
-      "result": "The collection's owner, on-chain manager, chain creator and third-party provider manager create its forum topic, a third-party collection also before any of its items was submitted; a second post returns its existing link. Anonymous, unrelated, committee-only, missing-collection and unpublished-standard requests were compared, including the generated title, body, category and API account.",
+      "result": "The collection's owner, on-chain manager, chain creator and third-party provider manager create its forum topic; a third-party collection none of whose items was submitted is refused and a second post answers its existing link, deliberate gaps. Anonymous, unrelated, committee-only, missing-collection and unpublished-standard requests were compared, including the generated title, body, category and API account.",
       "evidence": [
         {
           "path": "services/catalyst/tests/fixtures/conformance/builder/source/431-collection-post-unsigned.json",
@@ -5616,9 +5621,10 @@
       ],
       "gaps": [
         "deliberate:unauthenticated-message",
-        "deliberate:create-writes-switch"
+        "deliberate:create-writes-switch",
+        "deliberate:collection-post-retry"
       ],
-      "remaining_verification": "Production forum capability and API credentials remain unverified. Concurrent claims, a topic the forum made whose link was not stored (made again after the claim lapses: a standard collection's under a title naming its contract, a third-party collection's refused by its taken title), bounded replies, and upstream failures are covered by node tests rather than captures."
+      "remaining_verification": "Production forum capability and API credentials remain unverified. Concurrent claims, a topic the forum made whose link was not stored (kept after the claim lapses when the node's account made it under the collection's title and its first post names the collection; else a standard collection's is made under a title naming its contract and a third-party collection's refused), bounded replies, and upstream failures are covered by node tests rather than captures."
     },
     {
       "id": "api_http:GET:/v1/storage/contents/:filename",

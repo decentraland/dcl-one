@@ -398,6 +398,25 @@ pub async fn signed_map(
     map
 }
 
+/// The signer `key` as a signed `PATCH` of `path` proves it.
+pub async fn signer_of(key: &str, path: &str) -> crate::shared::signed_fetch::Signer {
+    let mut headers = axum::http::HeaderMap::new();
+    for (name, value) in signed_map(key, "patch", path, "{}", false).await {
+        headers.insert(
+            axum::http::HeaderName::from_bytes(name.as_bytes()).unwrap(),
+            value.parse().unwrap(),
+        );
+    }
+    crate::auth::require_signer(
+        &headers,
+        "patch",
+        &crate::auth::SignedPath::local(path.to_string()),
+        None,
+    )
+    .await
+    .unwrap()
+}
+
 pub(crate) fn lazy_pool() -> sqlx::PgPool {
     sqlx::postgres::PgPoolOptions::new()
         .acquire_timeout(std::time::Duration::from_millis(250))
@@ -599,6 +618,18 @@ impl FakeRegistry {
         }
     }
 
+    /// Holds the receipt `id`: the registry consumed that cheque.
+    pub fn consume(&self, id: &str) {
+        self.receipts.lock().unwrap().insert(id.to_string());
+    }
+
+    /// Answers a query of receipts with a GraphQL error (`true`) while the
+    /// providers still answer.
+    pub fn fail_receipts(&self, down: bool) {
+        self.receipts_down
+            .store(down, std::sync::atomic::Ordering::SeqCst);
+    }
+
     async fn answer(
         axum::extract::State(fake): axum::extract::State<Self>,
         axum::Json(body): axum::Json<serde_json::Value>,
@@ -713,6 +744,7 @@ pub struct FakeOracle {
     asked: Arc<std::sync::Mutex<Vec<String>>>,
     deployed: Arc<std::sync::Mutex<BTreeMap<String, u64>>>,
     code_reads: Arc<std::sync::atomic::AtomicUsize>,
+    code_gate: Arc<std::sync::Mutex<Option<Arc<tokio::sync::Semaphore>>>>,
     down: Arc<std::sync::atomic::AtomicBool>,
     other_chain: Arc<std::sync::atomic::AtomicBool>,
     rarity_calls: Arc<RarityCalls>,
@@ -761,6 +793,32 @@ impl FakeOracle {
         self.asked.lock().unwrap().clone()
     }
 
+    /// A collection contract at `contract` holding `items` items: its code
+    /// answers `eth_getCode` and its `itemsCount()` answers `items`.
+    pub fn deploy(&self, contract: &str, items: u64) {
+        self.deployed
+            .lock()
+            .unwrap()
+            .insert(contract.to_ascii_lowercase(), items);
+    }
+
+    /// Holds every `eth_getCode` answer until [`Self::release_code`].
+    pub fn hold_code(&self) {
+        *self.code_gate.lock().unwrap() = Some(Arc::new(tokio::sync::Semaphore::new(0)));
+    }
+
+    /// Lets held and later `eth_getCode` answers through.
+    pub fn release_code(&self) {
+        if let Some(gate) = self.code_gate.lock().unwrap().take() {
+            gate.add_permits(1_000);
+        }
+    }
+
+    /// Every request answers HTTP 502 while `down`.
+    pub fn set_down(&self, down: bool) {
+        self.down.store(down, std::sync::atomic::Ordering::SeqCst);
+    }
+
     /// The fake of `network`'s chain, its chain id and oracle.
     pub fn on(mut self, network: crate::network::Network) -> Self {
         self.network = network;
@@ -771,6 +829,11 @@ impl FakeOracle {
     pub fn set_other_chain(&self, other: bool) {
         self.other_chain
             .store(other, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    /// How many `eth_getCode` reads the fake answered.
+    pub fn code_reads(&self) -> usize {
+        self.code_reads.load(std::sync::atomic::Ordering::SeqCst)
     }
 
     async fn answer(
@@ -803,6 +866,10 @@ impl FakeOracle {
             "eth_getCode" => {
                 fake.code_reads
                     .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                let gate = fake.code_gate.lock().unwrap().clone();
+                if let Some(gate) = gate {
+                    let _ = gate.acquire().await;
+                }
                 let code = match deployed(body["params"][0].as_str().map(str::to_ascii_lowercase)) {
                     Some(_) => "0x6080",
                     None => "0x",

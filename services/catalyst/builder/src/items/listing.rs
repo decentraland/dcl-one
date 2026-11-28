@@ -98,6 +98,29 @@ pub(crate) fn list_statement(view: &chain_state::ReadView) -> String {
     )
 }
 
+/// The bodies of `ids`, in that order, read in one read-only transaction
+/// without JIT (a page's bodies are a few thousand rows at most), once
+/// `listing`, if any, admits their documents' size.
+pub(crate) async fn bodies(
+    store: &ItemsComponent,
+    ids: &[Uuid],
+    reached: Reached,
+    full: bool,
+    listing: Option<&Listing<'_>>,
+) -> Result<Vec<FullItemOut>, ApiError> {
+    if ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    let mut tx = store.pool.begin().await?;
+    sqlx::query("SET TRANSACTION READ ONLY")
+        .execute(&mut *tx)
+        .await?;
+    sqlx::query("SET LOCAL jit = off").execute(&mut *tx).await?;
+    let out = bodies_in(&mut tx, store, ids, reached, full, listing).await?;
+    tx.commit().await?;
+    Ok(out)
+}
+
 async fn bodies_in(
     conn: &mut PgConnection,
     store: &ItemsComponent,

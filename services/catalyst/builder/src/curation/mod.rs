@@ -3,6 +3,24 @@
 //! collection's review events and a third-party publication's slot cheques.
 //! A row's state is the row itself: an item's curation status is its newest
 //! item curation's, read where it is needed, never copied onto the item.
+//!
+//! Every insert of a curation goes through [`record_item_curations`] or
+//! [`record_collection_curation`]: each locks the collection until the
+//! caller's transaction ends and stamps the row after the newest one, so the
+//! newest row by `created_at` is always the last written and no two rows of
+//! one item or collection share an instant.
+
+use sqlx::PgConnection;
+use uuid::Uuid;
+
+use crate::access::CurationGrant;
+use crate::http::ApiError;
+
+pub mod forum;
+pub mod forum_posts;
+pub mod forum_text;
+pub mod rows;
+pub mod slack;
 
 /// A boolean over an item aliased `i`: the item was submitted for curation.
 /// A third-party item is published once this holds.
@@ -30,4 +48,91 @@ pub fn first_curated_item_curation(collection: &str, column: &str) -> String {
          ORDER BY ki.id LIMIT 1)",
         newest_item_curation("ki.id", column)
     )
+}
+
+/// Whether `hash` is an item curation's content hash: the keccak-256 digest
+/// of the item, 64 lowercase hex digits.
+pub fn content_hash(hash: &str) -> bool {
+    hash.len() == 64 && hash.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
+}
+
+/// `created_at` for a new row of `table` whose `key` is `$2`: now, or just
+/// after the newest row of that key when that one is later, so the newest
+/// row is always the last written and two rows never share an instant.
+fn stamp_after(table: &str, key: &str) -> String {
+    format!(
+        "GREATEST(timezone('UTC', clock_timestamp()), \
+         (SELECT max(created_at) + interval '1 microsecond' FROM builder.{table} WHERE {key} = $2))"
+    )
+}
+
+/// Locks the collection row `$1` until the caller's transaction ends.
+const LOCK_COLLECTION: &str = "SELECT 1 FROM builder.collections WHERE id = $1 FOR UPDATE";
+
+/// Submits each of `items` (its id, content hash and whether its mapping is
+/// complete), all of the collection `grant` names, for curation as its
+/// newest with `status`, in one statement inside the caller's transaction,
+/// with the collection locked until it ends; the curations written.
+pub async fn record_item_curations(
+    conn: &mut PgConnection,
+    grant: &impl CurationGrant,
+    items: &[(Uuid, String, bool)],
+    status: &str,
+) -> Result<Vec<rows::ItemCurationOut>, ApiError> {
+    sqlx::query(LOCK_COLLECTION)
+        .bind(grant.curated())
+        .execute(&mut *conn)
+        .await?;
+    let ids: Vec<Uuid> = items.iter().map(|_| Uuid::new_v4()).collect();
+    let (item_ids, rest): (Vec<Uuid>, Vec<(String, bool)>) = items
+        .iter()
+        .map(|(id, hash, mapped)| (*id, (hash.clone(), *mapped)))
+        .unzip();
+    let (hashes, mapped): (Vec<String>, Vec<bool>) = rest.into_iter().unzip();
+    Ok(sqlx::query_as(
+        "INSERT INTO builder.item_curations (id, item_id, status, content_hash, is_mapping_complete, created_at, updated_at) \
+         SELECT t.id, t.item, $2, t.hash, t.mapped, s.at, s.at \
+         FROM unnest($3::uuid[], $4::uuid[], $5::text[], $6::bool[]) AS t(id, item, hash, mapped) \
+         JOIN builder.items i ON i.id = t.item AND i.collection_id = $1 \
+         CROSS JOIN LATERAL (SELECT GREATEST(timezone('UTC', clock_timestamp()), \
+           (SELECT max(k.created_at) + interval '1 microsecond' FROM builder.item_curations k WHERE k.item_id = t.item)) AS at) s \
+         RETURNING id, item_id, status, created_at, updated_at, content_hash, is_mapping_complete",
+    )
+    .bind(grant.curated())
+    .bind(status)
+    .bind(&ids)
+    .bind(&item_ids)
+    .bind(&hashes)
+    .bind(&mapped)
+    .fetch_all(conn)
+    .await?)
+}
+
+/// Records a new curation of the collection `grant` names as its newest,
+/// inside the caller's transaction, with the collection locked until it
+/// ends; the curation's id.
+pub async fn record_collection_curation(
+    conn: &mut PgConnection,
+    grant: &impl CurationGrant,
+    status: &str,
+    assignee: Option<&str>,
+) -> Result<Uuid, ApiError> {
+    let id = Uuid::new_v4();
+    sqlx::query(LOCK_COLLECTION)
+        .bind(grant.curated())
+        .execute(&mut *conn)
+        .await?;
+    sqlx::query(sqlx::AssertSqlSafe(format!(
+        "INSERT INTO builder.collection_curations (id, collection_id, status, assignee, created_at, updated_at) \
+         SELECT $3, $2, $4, $5, at, at FROM (SELECT {} AS at) stamp",
+        stamp_after("collection_curations", "collection_id")
+    )))
+    .bind(grant.curated())
+    .bind(grant.curated())
+    .bind(id)
+    .bind(status)
+    .bind(assignee)
+    .execute(&mut *conn)
+    .await?;
+    Ok(id)
 }
