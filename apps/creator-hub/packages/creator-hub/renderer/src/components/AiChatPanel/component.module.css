@@ -927,3 +927,22 @@
 .hiddenMark {
   visibility: hidden;
 }
+
+/* Sign-out progress, a failed sign-out, or the terminal steps for an agent the app doesn't sign
+   in to; shown after /login or /logout, or the menu's sign-out. */
+.accountNotice {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 0 12px 8px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background-color: var(--fill-3);
+  color: var(--text-tone-secondary);
+  font-size: 0.75rem;
+}
+
+.accountBody {
+  flex: 1;
+  min-width: 0;
+}

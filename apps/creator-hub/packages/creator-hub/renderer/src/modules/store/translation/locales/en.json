@@ -179,8 +179,15 @@
         "needs_login_status": "Sign-in needed",
         "needs_login_title": "{provider} asked you to sign in",
         "needs_login_help": "Its saved sign-in may have expired, even if it showed as connected. Sign out and back in: run these in a terminal, one at a time, and finish in your browser. Then send your message again:",
-        "needs_login_managed_help": "Its saved sign-in may have expired, even if it showed as connected. In Settings → AI, click Sign out, then Sign in, then send your message again.",
+        "needs_login_managed_help": "Its saved sign-in may have expired, even if it showed as connected. Type /login to sign in again, then send your message again.",
         "api_key_alternative": "Or use an API key: set {envVar} and turn on \"{setting}\" in Settings → AI."
+      },
+      "account": {
+        "sign_out": "Sign out of {provider}",
+        "sign_out_hint": "To switch accounts, sign out, then sign in again.",
+        "signing_out": "Signing out of {provider}…",
+        "terminal": "{provider} signs in from its own terminal. To sign out or switch accounts, run these one at a time:",
+        "dismiss": "Dismiss"
       },
       "recording": {
         "chip": "Session recording · {duration} · {actions} {actions, plural, one {action} other {actions}}",
