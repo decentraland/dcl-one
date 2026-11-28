@@ -401,7 +401,7 @@ the [conventions ADR](../../../docs/adr/2026-11-17-console-command-conventions.m
   height over the ground. `/move_player_to <x> <y> <z> [duration] [--camera-target x y z]
   [--avatar-target x y z] [--wait [--timeout-seconds S]]` moves the player as a scene's
   `movePlayerTo` does, aiming the camera and turning the avatar the same way; with `--wait` it
-  replies JSON (`position`, `parcel`, `settled`, `settleMs`, `warning`) once the player is still.
+  replies JSON (`position`, `parcel`, `settled`, `settleMs`, `warning`) once the player has landed and is still.
   `/camera_mode first_person|third_person|drone` sets the zoom level, refused while photo mode or
   a scene holds the camera.
 - The preview-only commands (`/jump`, `/speed`, `/move_player_to`, the debug dumps) stay preview-only.

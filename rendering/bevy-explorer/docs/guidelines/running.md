@@ -571,10 +571,11 @@ Movement:
   without it). The first-person camera then centres the point; the third-person and drone
   cameras turn to its heading and keep their own framing of the player. Without `--wait` it
   replies `moved to (x, y, z)` or, with a duration, `arrived at (x, y, z)`. With `--wait` it
-  replies JSON once the player has moved and been still (under 0.3 m/s) for three frames:
-  `position` (Decentraland world coordinates), `parcel`, `settled`, `settleMs`; when
-  `--timeout-seconds` (10 s after the duration by default, at most 300) runs out first,
-  `settled` is `false` and `warning` names what it waited for. A move another move replaces
+  replies JSON once the player has moved, stands on the ground and has been still (under 0.3
+  m/s) for 0.25 s: `position` (Decentraland world coordinates), `parcel`, `settled`, `settleMs`.
+  A move to a point in the air has not settled until the player lands. When `--timeout-seconds`
+  runs out first, `settled` is `false` and `warning` names what it waited for: the move, the
+  landing or the stillness. It defaults to 10 s after the duration and takes at most 300. A move another move replaces
   fails with `move cancelled` either way.
 - `/camera_mode first_person|third_person|drone`: sets the player's zoom level, as zooming in or
   out does (the drone level is third person to scenes). It replies JSON at once, `before`, `after`

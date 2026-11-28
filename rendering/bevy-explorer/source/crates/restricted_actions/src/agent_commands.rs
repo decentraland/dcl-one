@@ -1,8 +1,9 @@
 use bevy::prelude::*;
 use bevy_console::ConsoleCommand;
 use common::{
+    dynamics,
     rpc::{RpcCall, RpcCallEvent, RpcResultReceiver, RpcResultSender},
-    structs::PrimaryUser,
+    structs::{AvatarDynamicState, PrimaryUser},
 };
 use console::{reply, DoAddConsoleCommand, PendingConsoleResponses};
 use dcl_component::transform_and_parent::DclTranslation;
@@ -35,13 +36,15 @@ impl Plugin for AgentCommandsPlugin {
 const DEFAULT_WAIT_SECONDS: f32 = 10.0;
 /// The speed, in metres a second, under which the player counts as still.
 const STILL_SPEED: f32 = 0.3;
-/// Frames in a row the player must be still to have settled.
-const STILL_FRAMES: u32 = 3;
+/// How long the player must be landed and still to have settled, in seconds: a span of time, not
+/// of frames, so it means the same at any frame rate.
+const STILL_SECONDS: f32 = 0.25;
 
 /// Move the player to a DCL world-space position, with optional linear interpolation, as a scene's
 /// movePlayerTo does. Coordinates are in Decentraland world space (x right, y up, z forward).
 /// --camera-target aims the camera at a point and --avatar-target turns the avatar to face one
-/// (the camera target without it). --wait replies, as JSON, once the player is still: position,
+/// (the camera target without it). --wait replies, as JSON, once the player is landed and still:
+/// position,
 /// parcel, settled, settleMs, and a warning when --timeout-seconds ran out first
 #[derive(clap::Parser, ConsoleCommand)]
 #[command(name = "/move_player_to")]
@@ -61,7 +64,7 @@ struct MovePlayerToCommand {
     /// A world point for the avatar to face, as movePlayerTo's avatarTarget.
     #[arg(long, num_args = 3, value_names = ["X", "Y", "Z"], allow_negative_numbers = true)]
     avatar_target: Option<Vec<f32>>,
-    /// Reply once the player has moved and is still.
+    /// Reply once the player has moved, landed and been still for a moment.
     #[arg(long)]
     wait: bool,
     /// How long --wait waits, from the command, in seconds: 10 after the duration by default, at
@@ -117,7 +120,8 @@ fn move_player_to_cmd(
             timeout,
             elapsed: 0.0,
             last: None,
-            still: 0,
+            still_for: 0.0,
+            landed: false,
             reply,
         });
         pending.push_receiver(rx, |reply| reply, responder);
@@ -150,8 +154,10 @@ struct MoveWait {
     elapsed: f32,
     /// Where the player was the frame before, once the move was made.
     last: Option<Vec3>,
-    /// Frames in a row the player has been still.
-    still: u32,
+    /// How long the player has been landed and still, in seconds.
+    still_for: f32,
+    /// Whether the player stood on the ground in the last frame seen.
+    landed: bool,
     reply: RpcResultSender<Result<String, String>>,
 }
 
@@ -162,21 +168,27 @@ struct MoveWaits(Vec<MoveWait>);
 fn settle_moves(
     mut waits: ResMut<MoveWaits>,
     time: Res<Time>,
-    player: Query<&Transform, With<PrimaryUser>>,
+    player: Query<(&Transform, Option<&AvatarDynamicState>), With<PrimaryUser>>,
 ) {
     if waits.0.is_empty() {
         return;
     }
     let dt = time.delta_secs();
-    let position = player.single().ok().map(|transform| transform.translation);
-    waits.0.retain_mut(|wait| wait.advance(dt, position));
+    // a player with no dynamics does not fall, so it stands where it is
+    let player = player.single().ok().map(|(transform, dynamic)| {
+        let landed = dynamic.is_none_or(|dynamic| dynamics::landed(dynamic.ground_height));
+        (transform.translation, landed)
+    });
+    waits.0.retain_mut(|wait| wait.advance(dt, player));
 }
 
 impl MoveWait {
-    /// One frame of the wait; `false` once it has replied.
-    fn advance(&mut self, dt: f32, position: Option<Vec3>) -> bool {
+    /// One frame of the wait, with where the player is and whether it is landed; `false` once it
+    /// has replied.
+    fn advance(&mut self, dt: f32, player: Option<(Vec3, bool)>) -> bool {
         self.elapsed += dt;
         let expired = self.elapsed >= self.timeout;
+        let position = player.map(|(position, _)| position);
         if let Some(moved) = &mut self.moved {
             match moved.poll_once() {
                 Ok(Some(true)) => self.moved = None,
@@ -188,24 +200,28 @@ impl MoveWait {
                 Ok(None) => return true,
             }
         }
-        let Some(position) = position else {
+        let Some((position, landed)) = player else {
             self.reply.send(Err("the player was removed".to_owned()));
             return false;
         };
-        // still is a speed, not a distance a frame, so it means the same at any frame rate; a
-        // frame that took no time says nothing
+        // a move to a point in the air holds the player there until the movement scene takes it
+        // back, so a player off the ground has not settled however still it is; still is a speed,
+        // not a distance a frame, and a frame that took no time says nothing
+        self.landed = landed;
         if let Some(last) = self.last.filter(|_| dt > 0.0) {
-            self.still = if last.distance(position) / dt < STILL_SPEED {
-                self.still + 1
-            } else {
-                0
-            };
+            let still = landed && last.distance(position) / dt < STILL_SPEED;
+            self.still_for = if still { self.still_for + dt } else { 0.0 };
         }
         self.last = Some(position);
-        if self.still >= STILL_FRAMES {
+        if self.still_for >= STILL_SECONDS {
             self.finish(Some(position), None)
         } else if expired {
-            self.finish(Some(position), Some("the player to be still"))
+            let waiting = if self.landed {
+                "the player to be still"
+            } else {
+                "the player to land"
+            };
+            self.finish(Some(position), Some(waiting))
         } else {
             true
         }
@@ -436,7 +452,8 @@ mod tests {
 
     type Answer = Arc<Mutex<Option<Result<String, String>>>>;
 
-    /// The console with `/move_player_to` alone, a player at the origin and a clock a test turns.
+    /// The console with `/move_player_to` alone, a player standing at the origin and a clock a
+    /// test turns.
     fn app() -> (App, Entity) {
         let mut app = App::new();
         app.add_plugins(ConsolePlugin {
@@ -448,10 +465,17 @@ mod tests {
         .add_systems(Update, (move_player_to_cmd, settle_moves).chain());
         let player = app
             .world_mut()
-            .spawn((PrimaryUser::default(), Transform::default()))
+            .spawn((
+                PrimaryUser::default(),
+                Transform::default(),
+                AvatarDynamicState::default(),
+            ))
             .id();
         (app, player)
     }
+
+    /// Frames, a sixtieth of a second each, the player must be landed and still to have settled.
+    const STILL_FRAMES: u32 = (STILL_SECONDS * 60.0) as u32;
 
     /// A sixtieth of a second.
     fn frame(app: &mut App) {
@@ -590,14 +614,61 @@ mod tests {
         }
         for _ in 0..STILL_FRAMES - 1 {
             frame(&mut app);
-            assert!(reply(&answer).is_none());
+            assert!(reply(&answer).is_none(), "not still for long enough");
         }
+        frame(&mut app);
         frame(&mut app);
         let report = json_reply(&mut app, &answer);
         assert_eq!(report["position"], serde_json::json!([8.0, 0.2, 8.0]));
         assert_eq!(report["parcel"], serde_json::json!([0, 0]));
         assert_eq!(report["settled"], true);
         assert!(report.get("warning").is_none());
+    }
+
+    #[test]
+    fn a_player_held_in_the_air_has_not_settled_however_still_it_is() {
+        let (mut app, player) = app();
+        // a move to a point in the air: the engine holds the player there, still, until the
+        // movement scene takes over
+        let answer = send(&mut app, "100 10 100 --wait --timeout-seconds 1");
+        answer_move(&mut app, true);
+        let mut entity = app.world_mut().entity_mut(player);
+        entity.get_mut::<Transform>().unwrap().translation = Vec3::new(100.0, 10.0, -100.0);
+        entity.get_mut::<AvatarDynamicState>().unwrap().ground_height = 10.0;
+        for _ in 0..30 {
+            frame(&mut app);
+            assert!(reply(&answer).is_none(), "held in the air");
+        }
+        // it falls and lands; the wait then counts from the landing
+        let mut entity = app.world_mut().entity_mut(player);
+        entity.get_mut::<Transform>().unwrap().translation.y = 0.0;
+        entity.get_mut::<AvatarDynamicState>().unwrap().ground_height = 0.0;
+        for _ in 0..STILL_FRAMES {
+            frame(&mut app);
+            assert!(reply(&answer).is_none(), "landed but not still for long enough");
+        }
+        frame(&mut app);
+        frame(&mut app);
+        let report = json_reply(&mut app, &answer);
+        assert_eq!(report["settled"], true);
+        assert_eq!(report["position"], serde_json::json!([100.0, 0.0, 100.0]));
+
+        // one that never lands says so
+        let answer = send(&mut app, "100 10 100 --wait --timeout-seconds 0.5");
+        answer_move(&mut app, true);
+        app.world_mut()
+            .get_mut::<AvatarDynamicState>(player)
+            .unwrap()
+            .ground_height = 10.0;
+        for _ in 0..40 {
+            frame(&mut app);
+        }
+        let report = json_reply(&mut app, &answer);
+        assert_eq!(report["settled"], false);
+        assert_eq!(
+            report["warning"],
+            "timed out after 0.5 s waiting for the player to land"
+        );
     }
 
     #[test]
@@ -650,6 +721,7 @@ mod tests {
             "8 0 8 --timeout-seconds 3",
             "8 0 8 --wait --timeout-seconds 0",
             "8 0 8 --wait --timeout-seconds 301",
+            "8 0 8 2 --timeout-seconds 3",
             "8 0 8 --camera-target 1 2",
             "8 0 NaN",
         ] {
@@ -660,5 +732,9 @@ mod tests {
             );
             assert!(moves(&mut app).is_empty(), "{line}");
         }
+        // a default past the flag's cap is not a value the caller gave
+        let answer = send(&mut app, "8 0 8 295 --wait");
+        assert!(reply(&answer).is_none(), "it waits");
+        assert_eq!(moves(&mut app).len(), 1);
     }
 }

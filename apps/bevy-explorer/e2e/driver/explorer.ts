@@ -487,8 +487,9 @@ export interface Position {
   z: number
 }
 
-/** What `/move_player_to --wait` reports once the player is still, or once `timeoutSeconds` ran
- *  out (`settled: false` and a `warning` naming what it waited for). `position` is Decentraland
+/** What `/move_player_to --wait` reports once the player has landed and been still for 0.25 s, or
+ *  once `timeoutSeconds` ran out (`settled: false` and a `warning` naming what it waited for: the
+ *  move, the landing or the stillness). `position` is Decentraland
  *  world coordinates. */
 export interface MoveReport {
   position: [number, number, number] | null
@@ -985,7 +986,7 @@ export class Explorer {
 
   /** Move straight to a world position (Decentraland coordinates) as a scene's `movePlayerTo`
    *  does: `cameraTarget` aims the camera at a point and `avatarTarget` turns the avatar to face
-   *  one (the camera target without it). Resolves once the player is still, or after
+   *  one (the camera target without it). Resolves once the player has landed and is still, or after
    *  `timeoutSeconds` (10 by default) with `settled: false`. The engine has `/move_player_to` in
    *  preview only. */
   moveTo(
