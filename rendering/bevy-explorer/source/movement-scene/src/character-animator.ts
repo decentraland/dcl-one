@@ -14,6 +14,7 @@ export const GLIDE_POSE = { forward: ANIM + 'Gliding_AvatarForwardRig.glb', idle
 const GLIDE_START = ANIM + 'Gliding_AvatarStartRig.glb';
 const GLIDE_END = ANIM + 'Gliding_AvatarEndRig.glb';
 const LONG_FALL = ANIM + 'Long_Fall_Loop.glb';
+const SLIDE = ANIM + 'Slide.glb';
 const HARD_LANDING = { enter: ANIM + 'Hard_Landing_Enter.glb', loop: ANIM + 'Hard_Landing_Loop.glb', exit: ANIM + 'Hard_Landing_Exit.glb' };
 const DOUBLE_JUMP = (t: string) => ANIM + `DoubleJump_${t}.glb`;
 const TIERS = ['Jump', 'Jog_Jump', 'Run_Jump'];
@@ -21,6 +22,13 @@ const clip = (tier: string, part: string) => ANIM + (part === 'End' && tier === 
 // The jump states' 1D trees on MovementBlend: Jump_* at 1, Jog_Jump_* at 2, Run_Jump_* at 3.
 const tierTree = (part: string, at = [1, 2, 3]): Tree =>
   ({ param: 'MovementBlend', children: TIERS.map((t, i) => ({ clip: clip(t, part), at: at[i] })) });
+// The fall states' trees on SlideBlend: the fall at 0, the slide at 1. Down's fall is the fall loops' tree on
+// MovementBlend, so its tree is a grid of SlideBlend by MovementBlend with the slide in every column at 1.
+const slideTree = (fall: Tree): Tree => ({
+  param: 'SlideBlend', param2: 'MovementBlend',
+  children: [0, 1].flatMap((slide) =>
+    fall.children.map((c) => ({ clip: slide ? SLIDE : c.clip, at: [slide, c.at as number] as [number, number] }))),
+});
 // A landing while the glider is open plays the tier's End with the glider closing embedded: the glider is part of the
 // avatar's clips, so only the landing clip can close it.
 const GLIDER_CLOSING: Record<string, string> = {
@@ -53,7 +61,7 @@ export const CHARACTER_ANIMATOR: AnimatorController = {
     [clip('Jog_Jump', 'Fall_Loop')]: looped(s(40)), [clip('Jog_Jump', 'End')]: once(s(24)),
     [clip('Run_Jump', 'Start')]: once(s(14)), [clip('Run_Jump', 'Mid')]: once(s(24)),
     [clip('Run_Jump', 'Fall_Loop')]: looped(s(40)), [clip('Run_Jump', 'End')]: once(s(22)),
-    [LONG_FALL]: looped(s(48)),
+    [LONG_FALL]: looped(s(48)), [SLIDE]: looped(s(40)),
     [GLIDER_CLOSING[clip('Jump', 'End')]]: once(s(16)),
     [GLIDER_CLOSING[clip('Jog_Jump', 'End')]]: once(s(24)),
     [GLIDER_CLOSING[clip('Run_Jump', 'End')]]: once(s(22)),
@@ -107,16 +115,19 @@ export const CHARACTER_ANIMATOR: AnimatorController = {
         tr('Down', [], 0.21651052, false, { exitTime: 0.5, interruption: DEST }),
       ],
     },
-    // The fall loops' tree, Jump_Fall_Loop at 1.7. The scene has no slide (SlideBlend 0).
+    // The fall loops' tree, Jump_Fall_Loop at 1.7, or the slide while the avatar slides on a face too steep to stand on
+    // (SlideBlend). Long Fall waits while the slide leads.
     Down: {
-      tag: 'Jumping', motion: tierTree('Fall_Loop', [1.7, 2, 3]),
+      tag: 'Jumping', motion: slideTree(tierTree('Fall_Loop', [1.7, 2, 3])),
       transitions: [
         tr('Grounded', [GROUNDED], 0.062423754, false),
         tr('Long Fall', [['IsLongFall', 'if'], ['SlideBlend', 'less', 0.5]], 0.33667788, false, { interruption: SRC }),
       ],
     },
+    // On SlideBlend as Down. It starts only while SlideBlend is below 0.5, and a tree's clip is picked when its state
+    // starts, so the long fall loop is the one that plays.
     'Long Fall': {
-      tag: 'Jumping', motion: { clip: LONG_FALL },
+      tag: 'Jumping', motion: { param: 'SlideBlend', children: [{ clip: LONG_FALL, at: 0 }, { clip: SLIDE, at: 1 }] },
       transitions: [
         tr('Hard Landing', [GROUNDED, STUNNED], 0.058513165, true),
         tr('Down', [['IsLongFall', 'ifNot'], AIRBORNE], 0.25, true),

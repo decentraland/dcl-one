@@ -1,6 +1,6 @@
 import { AssetLoad, AvatarAnimationState, AvatarMovement, AvatarMovementInfo, engine, MovementAnimation, Transform } from '@dcl/sdk/ecs'
 import { Quaternion, Vector3 } from '@dcl/sdk/math';
-import { grounded, initGroundRaycast, recordGroundForNextTick } from './ground';
+import { grounded, initGroundRaycast, recordGroundForNextTick, steepContactAngle } from './ground';
 import { gait, movementAxis, orientation, relativeDegrees, updateHorizontalVelocity } from './horizontal';
 import { GlideProp, glideProp, groundSpeed, initStepCasts, isDoubleJump, isGliding, jumpCount, jumpStartHeight, landingStuns, stunned, updateVerticalVelocity } from './vertical';
 import { initParameters } from './parameters';
@@ -69,6 +69,11 @@ const MOVE_BLEND_RATE = 5;
 const FALLING_SPEED = -3; // m/s: below it an ungrounded avatar falls
 const LONG_FALLING_SPEED = -8; // m/s: below it the fall is a long fall
 export const EMOTE_MOVE_BLEND = 0.1; // movement blend above which a requested emote waits
+// The slide blend eases toward 1 while the avatar slides, and back to 0, at SLIDE_BLEND_RATE per second. The avatar
+// slides on a face at least SLIDE_ANGLE degrees steep; it is stuck there while it moves at most STUCK_MOVE in a tick.
+const SLIDE_BLEND_RATE = 7;
+export const SLIDE_ANGLE = 80;
+const STUCK_MOVE = Math.sqrt(1e-5); // m
 
 // Every GLB clip the scene can drive, pre-loaded by a single AssetLoad entity in main(): otherwise the first use of a
 // clip hitches while its GLB streams in (most visible on the first jump/glide of a session).
@@ -180,6 +185,8 @@ var animJumps = 0;
 var jumpVariation = 0;
 // The glider prop last tick: the glide starts when the prop starts opening.
 var prevGlideProp = GlideProp.CLOSED;
+// Slide blend: 0 the fall, 1 the slide.
+var slideBlend = 0;
 
 // --- Animation state ---
 // The avatar animator's base layer (character-animator.ts), advanced once per tick from the parameters above.
@@ -265,6 +272,28 @@ export function countJumps(
   return { jumps, trigger: jumps > seen || (newJump && !isDoubleJump) };
 }
 
+// The avatar on a face too steep to stand on, from what the model already knows: the capsule rests on such a face
+// (`steepAngle`, degrees, 0 for none) while the model finds no ground to stand on and no jump rises. Where the capsule
+// grazes a steep corner but the model stands on the ground under its centre, it is not on a steep slope.
+// `moved`: the distance (m) the avatar moved over the tick.
+export function slopeContact(
+  steepAngle: number, grounded: boolean, rising: boolean, moved: number,
+): { onSteepSlope: boolean; sliding: boolean; stuck: boolean } {
+  const onSteepSlope = steepAngle > 0 && !grounded && !rising;
+  return { onSteepSlope, sliding: onSteepSlope && steepAngle >= SLIDE_ANGLE, stuck: onSteepSlope && moved <= STUCK_MOVE };
+}
+
+// The slide blend after `dt` s: toward 1 while sliding, else toward 0, at SLIDE_BLEND_RATE per second; 0.01 or less is 0.
+export function nextSlideBlend(blend: number, sliding: boolean, dt: number): number {
+  const next = moveTowards(blend, sliding ? 1 : 0, SLIDE_BLEND_RATE * dt);
+  return next > 0.01 ? next : 0;
+}
+
+// The animation's IsGrounded: on the ground and not on a steep slope, or stuck on one.
+export function animationGrounded(grounded: boolean, onSteepSlope: boolean, stuck: boolean): boolean {
+  return (grounded && !onSteepSlope) || stuck;
+}
+
 // The animation's IsGliding: the glider is open from the start of its opening until it starts closing.
 export function gliderOpen(prop: GlideProp): boolean {
   return prop === GlideProp.OPENING || prop === GlideProp.GLIDING;
@@ -302,15 +331,19 @@ function selectAnimation(): MovementAnimation {
   if (jumpTrigger && jumps > 1) jumpVariation = Math.random() < 0.5 ? 0 : 1;
   const startGliding = glideProp === GlideProp.OPENING && prevGlideProp !== GlideProp.OPENING;
   prevGlideProp = glideProp;
+  const slope = slopeContact(steepContactAngle, grounded, jumpStartHeight !== undefined, Vector3.distance(playerPosition, prevPlayerPosition));
+  slideBlend = nextSlideBlend(slideBlend, slope.sliding, tickTime);
+  const isGrounded = animationGrounded(!jumpingOrFalling, slope.onSteepSlope, slope.stuck);
 
   const pose = animator.update({
     MovementBlend: moveBlend,
     Jump: jumpTrigger,
     JumpCount: jumps,
     JumpVariation: jumpVariation,
-    IsGrounded: !jumpingOrFalling,
-    IsFalling: jumpingOrFalling && velocity.y < FALLING_SPEED,
-    IsLongFall: jumpingOrFalling && velocity.y < LONG_FALLING_SPEED,
+    IsGrounded: isGrounded,
+    IsFalling: !isGrounded && velocity.y < FALLING_SPEED,
+    IsLongFall: !isGrounded && velocity.y < LONG_FALLING_SPEED,
+    SlideBlend: slideBlend,
     // the model may count the touchdown a frame after this one: landingStuns() tells it before
     IsStunned: stunned() || landingStuns(),
     StartGliding: startGliding,
