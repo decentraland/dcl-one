@@ -132,6 +132,7 @@ pub enum SegmentEvent {
     FeatureFlagsResolved(SegmentEventFeatureFlagsResolved),
     ReactSituation(SegmentEventReactSituation),
     ReactionVisualization(SegmentEventReactionVisualization),
+    SettingsSnapshot(SegmentEventSettingsSnapshot),
     /// An event the host page reports through `/track`: its name, properties and time as sent.
     Page {
         name: String,
@@ -187,6 +188,9 @@ impl SegmentEvent {
             SegmentEvent::ReactSituation(event) => ("react_situation", serde_json::to_value(event)),
             SegmentEvent::ReactionVisualization(event) => {
                 ("reaction_visualization", serde_json::to_value(event))
+            }
+            SegmentEvent::SettingsSnapshot(event) => {
+                ("Settings Snapshot", serde_json::to_value(event))
             }
             SegmentEvent::Page { .. } => return None,
         };
@@ -284,6 +288,19 @@ pub struct SegmentEventFeatureFlagsResolved {
     pub feature_flags_override: String,
     /// `service`, `unavailable`, `ignored` or `other-domain`.
     pub feature_flags_source: String,
+}
+
+/// The player settings that differ from their defaults.
+#[derive(Serialize)]
+pub struct SegmentEventSettingsSnapshot {
+    /// `startup` for the session's first snapshot, `changed` for one sent after the settings
+    /// changed.
+    pub reason: &'static str,
+    /// The number of entries in `changed`; 0 when every setting is at its default.
+    pub changed_count: u32,
+    /// Each changed setting by its registry name: the variant's name for a named setting, else
+    /// its number.
+    pub changed: serde_json::Map<String, serde_json::Value>,
 }
 
 #[derive(Serialize)]

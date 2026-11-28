@@ -34,6 +34,7 @@ impl Plugin for MetricsPlugin {
             ReactionReportsPlugin,
             crate::page_events::PageEventsPlugin,
             crate::feature_flags::FeatureFlagsReportPlugin,
+            crate::settings_snapshot::SettingsSnapshotPlugin,
         ));
     }
 }

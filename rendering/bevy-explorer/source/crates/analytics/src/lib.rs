@@ -12,3 +12,4 @@ pub mod page_events;
 pub mod primary_player_parcel_position;
 mod reactions;
 pub mod segment_system;
+mod settings_snapshot;

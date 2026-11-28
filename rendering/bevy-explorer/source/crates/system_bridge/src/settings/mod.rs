@@ -403,6 +403,13 @@ pub struct Setting {
     is_disabled: fn(&AppConfig) -> bool,
 }
 
+impl Setting {
+    /// True when the named choices change at runtime: they are the device's, not the engine's.
+    pub fn runtime_choices(&self) -> bool {
+        self.runtime_choices
+    }
+}
+
 #[derive(Resource)]
 pub struct Settings {
     pub settings: Vec<Setting>,
@@ -663,6 +670,18 @@ pub fn record_cameras(
     }
 }
 
+/// A setting's value as an f64, from its whole step count. Settings use whole steps (including
+/// tens, tenths and twentieths), so this converts the step count to a JSON or HTML number without
+/// widening a binary f32 approximation of e.g. 0.05 or 1/10.
+pub fn step_number(value: f32, step: f32) -> f64 {
+    let steps = f64::from((value / step).round());
+    if step >= 1.0 {
+        steps * f64::from(step)
+    } else {
+        steps / f64::from(step.recip())
+    }
+}
+
 #[cfg(not(target_arch = "wasm32"))]
 #[inline(always)]
 fn is_fullscreen_available() -> bool {
@@ -865,5 +884,33 @@ mod tests {
         assert!(!world.entity(primary).contains::<NormalPrepass>());
         assert!(!world.entity(texture).contains::<DepthPrepass>());
         assert!(!world.entity(texture).contains::<NormalPrepass>());
+    }
+
+    #[test]
+    fn gameplay_numbers_use_the_player_settings_decimal_steps() {
+        let mut config = AppConfig::default();
+        config.player_settings.walk_speed = 1.3;
+        let mut settings = Settings {
+            settings: Vec::new(),
+        };
+        settings.add_int_setting::<WalkSpeedSetting>(&config);
+        let info = &settings.settings[0].info;
+        assert_eq!(step_number(info.value, info.step_size), 1.3);
+        assert_eq!(step_number(info.min_value, info.step_size), 0.1);
+        assert_eq!(step_number(1.9, 0.05), 1.9);
+        assert_eq!(step_number(0.05, 0.05), 0.05);
+    }
+
+    #[test]
+    fn render_resolution_numbers_use_whole_ten_percent_steps() {
+        let mut settings = Settings {
+            settings: Vec::new(),
+        };
+        settings.add_int_setting::<render_scale_setting::RenderScaleSetting>(&AppConfig::default());
+        let info = &settings.settings[0].info;
+        assert_eq!(step_number(info.min_value, info.step_size), 50.0);
+        assert_eq!(step_number(info.max_value, info.step_size), 100.0);
+        assert_eq!(step_number(info.step_size, info.step_size), 10.0);
+        assert_eq!(step_number(70.0, info.step_size), 70.0);
     }
 }
