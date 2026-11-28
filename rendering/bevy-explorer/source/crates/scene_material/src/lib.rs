@@ -533,7 +533,7 @@ impl MaterialExtension for SceneBound {
     fn specialize(
         _: &bevy::pbr::MaterialExtensionPipeline,
         descriptor: &mut bevy::render::render_resource::RenderPipelineDescriptor,
-        _: &bevy::render::mesh::MeshVertexBufferLayoutRef,
+        layout: &bevy::render::mesh::MeshVertexBufferLayoutRef,
         key: bevy::pbr::MaterialExtensionKey<Self>,
     ) -> Result<(), bevy::render::render_resource::SpecializedMeshPipelineError> {
         let data = key.bind_group_data;
@@ -560,6 +560,16 @@ impl MaterialExtension for SceneBound {
 
             if data.inverted_scale {
                 fragment.shader_defs.push("INVERTED_SCALE".into());
+            }
+
+            // a texture on the second UV set of a mesh without one reads the first, as bevy's
+            // main pass does; bevy's prepass alpha test and our normal map read would otherwise
+            // read the missing set
+            if !layout.0.contains(Mesh::ATTRIBUTE_UV_1) {
+                fragment.shader_defs.retain(|def| {
+                    !matches!(def, ShaderDefVal::Bool(name, _)
+                        if name.starts_with("STANDARD_MATERIAL_") && name.ends_with("_UV_B"))
+                });
             }
         }
         Ok(())

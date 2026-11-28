@@ -36,6 +36,7 @@ use serde::Serialize;
 use serde_json::{Value, json};
 
 use crate::auth::{AuthChain, AuthError, AuthLinkType, is_eth_address};
+use crate::chain_index::source::Source;
 use crate::comms::world_identity::{DCL_ETH_SUFFIX, ParcelSet, WorldName};
 use crate::content::entity::is_ipfs_v2;
 use crate::policy::Deploy;
@@ -120,12 +121,21 @@ pub(super) fn payload_too_large(message: impl Into<String>) -> Response {
     upload_limits::too_large(message).into_response()
 }
 
-/// A refused publish: its status and message.
-pub(super) struct Refusal(pub(super) StatusCode, pub(super) String);
+/// A refused publish: its status and message, and, when the refusal is a
+/// source this node reads being unavailable, that source (the shared 503
+/// envelope, with `source`, `configure` and `Retry-After`).
+pub(super) struct Refusal(
+    pub(super) StatusCode,
+    pub(super) String,
+    pub(super) Option<Source>,
+);
 
 impl IntoResponse for Refusal {
     fn into_response(self) -> Response {
-        rejection(self.0, self.1)
+        match self.2 {
+            Some(source) => crate::chain_index::source::unavailable(source, &self.1),
+            None => rejection(self.0, self.1),
+        }
     }
 }
 
@@ -134,19 +144,115 @@ pub(super) fn failed(message: impl std::fmt::Display) -> Refusal {
     Refusal(
         StatusCode::BAD_REQUEST,
         format!("Deployment failed: {message}"),
+        None,
     )
 }
 
 pub(super) fn forbidden(message: impl Into<String>) -> Refusal {
-    Refusal(StatusCode::FORBIDDEN, message.into())
+    Refusal(StatusCode::FORBIDDEN, message.into(), None)
 }
 
 pub(super) fn internal(message: impl Into<String>) -> Refusal {
-    Refusal(StatusCode::INTERNAL_SERVER_ERROR, message.into())
+    Refusal(StatusCode::INTERNAL_SERVER_ERROR, message.into(), None)
 }
 
 pub(super) fn unavailable(message: impl Into<String>) -> Refusal {
-    Refusal(StatusCode::SERVICE_UNAVAILABLE, message.into())
+    Refusal(StatusCode::SERVICE_UNAVAILABLE, message.into(), None)
+}
+
+/// `source` is not ready to answer the publish: a retryable 503 naming it.
+pub(super) fn source_unavailable(source: Source, message: impl Into<String>) -> Refusal {
+    Refusal(
+        StatusCode::SERVICE_UNAVAILABLE,
+        message.into(),
+        Some(source),
+    )
+}
+
+/// A publish whose authority could not be established, refused fail-closed:
+/// the names index unable to establish the NAME's holder right now (not
+/// current, or a registrar event walked past its fold) is a transient
+/// readiness condition, the retryable 503 naming it, never a denial a client
+/// would not retry; anything else, an ambiguous label included, is the 403.
+/// The permission check and a scoped grantee's owner lookup answer alike.
+fn authority_undetermined(why: &AuthorityNotEstablished) -> Refusal {
+    match crate::policy::names_not_current(why) {
+        Some(reason) => source_unavailable(Source::NftIndex, reason),
+        None => {
+            forbidden("Not authorized: could not verify deployment permissions (deploy denied)")
+        }
+    }
+}
+
+/// The refusal of a signer who neither holds `world_name`'s NAME nor was
+/// granted it, worded as the old service.
+fn no_permission(world_name: &str) -> String {
+    format!(
+        "Deployment failed: Your wallet has no permission to publish this scene because it does not have permission to deploy under \"{world_name}\". Check scene.json to select a name that either you own or you were given permission to deploy."
+    )
+}
+
+/// The NAME authorization of a publish, re-checked in its write's
+/// transaction ([`crate::policy::Policy::confirm_name_holder_on`]): the
+/// names index's publication held until that transaction ends and `holder`
+/// still its NAME's holder. Answered as the publish's own refusals: a names
+/// index that cannot establish the holder now is the retryable 503 naming
+/// it; a holder replaced since validation refuses the signer (an owner's
+/// publish) or asks a scoped grantee's to be retried against the new owner
+/// (409); anything else is the fail-closed 403.
+struct NameHolderCheck<'a> {
+    state: &'a SharedState,
+    world: &'a WorldName,
+    world_name: &'a str,
+    holder: &'a Address,
+    scoped: bool,
+}
+
+#[async_trait::async_trait]
+impl store::PublishCheck for NameHolderCheck<'_> {
+    async fn confirm_on(
+        &self,
+        conn: &mut sqlx::PgConnection,
+    ) -> Result<(), crate::comms::worlds_envelope::ApiError> {
+        use crate::comms::worlds_envelope::ApiError;
+        let Err(why) = self
+            .state
+            .policy
+            .confirm_name_holder_on(conn, self.world, self.holder)
+            .await
+        else {
+            return Ok(());
+        };
+        if let Some(reason) = crate::policy::names_not_current(&why) {
+            tracing::warn!(world = %self.world, %reason, "publish deferred at write: the names index cannot establish the NAME's holder");
+            return Err(ApiError::SourceUnavailable {
+                index: Source::NftIndex,
+                message: reason.to_string(),
+            });
+        }
+        tracing::info!(world = %self.world, error = %why, "publish refused at write: the NAME authorization no longer stands");
+        Err(match why {
+            AuthorityNotEstablished::RefusedLacksAuthority { .. } if self.scoped => {
+                ApiError::conflict(format!(
+                    "Deployment failed: the owner of \"{}\" changed during the publish; retry it.",
+                    self.world_name
+                ))
+            }
+            AuthorityNotEstablished::RefusedLacksAuthority { .. } => {
+                ApiError::bad_request(failed(no_permission(self.world_name)).1)
+            }
+            _ => ApiError::forbidden(
+                "Not authorized: could not verify deployment permissions (deploy denied)",
+            ),
+        })
+    }
+}
+
+#[cfg(test)]
+tokio::task_local! {
+    /// Tests: pauses a publish after its validation, before the transaction
+    /// that writes it begins.
+    pub(super) static BEFORE_PERSIST: (std::sync::Arc<tokio::sync::Notify>, std::sync::Arc<tokio::sync::Notify>);
 }
 
 /// Upstream's newer-scene refusal, checked before anything is stored or staged: an overlapping
@@ -608,13 +714,18 @@ async fn authenticate(
     partial: bool,
 ) -> Result<Address, Refusal> {
     let schema = |ajv: String| match partial {
-        true => Refusal(StatusCode::BAD_REQUEST, "Invalid auth chain.".to_string()),
+        true => Refusal(
+            StatusCode::BAD_REQUEST,
+            "Invalid auth chain.".to_string(),
+            None,
+        ),
         false => failed(ajv),
     };
     let refused = |reason: String| match partial {
         true => Refusal(
             StatusCode::BAD_REQUEST,
             format!("Invalid auth chain: {reason}"),
+            None,
         ),
         false => failed(reason),
     };
@@ -661,7 +772,9 @@ fn chain_refusal(
         AuthError::Eip1654ValidationFailed(e) => unavailable(format!(
             "The auth chain could not be verified right now: {e}"
         )),
-        e @ AuthError::Eip1654RateLimited => Refusal(StatusCode::TOO_MANY_REQUESTS, e.to_string()),
+        e @ AuthError::Eip1654RateLimited => {
+            Refusal(StatusCode::TOO_MANY_REQUESTS, e.to_string(), None)
+        }
         e => refused(crypto_message(chain, entity_id, &e)),
     }
 }
@@ -831,16 +944,12 @@ pub(super) async fn validate(
                 return Err(if detail.starts_with("Not authorized:") {
                     failed(detail)
                 } else {
-                    failed(format!(
-                        "Deployment failed: Your wallet has no permission to publish this scene because it does not have permission to deploy under \"{world_name}\". Check scene.json to select a name that either you own or you were given permission to deploy."
-                    ))
+                    failed(no_permission(world_name))
                 });
             }
             Err(undetermined) => {
-                tracing::warn!(world = %world, signer = %signer.as_str(), error = %undetermined, "deploy denied: authority undetermined (fail-closed)");
-                return Err(forbidden(
-                    "Not authorized: could not verify deployment permissions (deploy denied)",
-                ));
+                tracing::warn!(world = %world, signer = %signer.as_str(), error = %undetermined, "deploy refused: authority undetermined (fail-closed)");
+                return Err(authority_undetermined(&undetermined));
             }
         }
     } else {
@@ -876,13 +985,13 @@ pub(super) async fn validate(
                         "Cannot deploy scene \"{entity_id}\" to world \"{}\": owner address could not be resolved.",
                         world.display()
                     ),
+                    None,
                 ));
             }
             Err(e) => {
-                tracing::warn!(world = %world, error = %e, "deploy denied: NAME owner undetermined");
-                return Err(unavailable(
-                    "Deployment failed: the world's owner could not be resolved right now",
-                ));
+                tracing::warn!(world = %world, error = %e, "deploy refused: NAME owner undetermined (fail-closed)");
+                // A grantee's lookup is answered as the permission check's.
+                return Err(authority_undetermined(&e));
             }
         },
     };
@@ -942,7 +1051,9 @@ pub(super) async fn validate(
         return Err(failed(file_errors.join(", ")));
     }
     let size: i64 = sizes.values().copied().fold(0, i64::saturating_add);
-    // A staging batch that skipped the permission resolves the owner here; it is refused alike.
+    // A staging batch that skipped the permission resolves the owner here, and
+    // every publish reads the NAMEs its owner holds: a NAME authority that cannot
+    // answer is refused as the permission check refuses it.
     let cap = match conn {
         Some(conn) => {
             state
@@ -968,7 +1079,12 @@ pub(super) async fn validate(
     }
     .map_err(|e| {
         tracing::warn!(world = %world, error = ?e, "deploy denied: storage allowance undetermined");
-        unavailable("Deployment failed: the storage allowance could not be determined right now")
+        match e {
+            super::quota::CapError::Authority(why) => authority_undetermined(&why),
+            _ => unavailable(
+                "Deployment failed: the storage allowance could not be determined right now",
+            ),
+        }
     })?;
     if size > cap.max {
         return Err(failed(super::quota::too_big(cap.max, size)));
@@ -1059,6 +1175,18 @@ pub(super) async fn persist_publish_on(
     let (Some(replacement), Some(name_owner)) = (replacement, name_owner) else {
         return Err(internal("Publish without a deploy authorization").into_response());
     };
+    #[cfg(test)]
+    if let Ok((reached, resume)) = BEFORE_PERSIST.try_with(Clone::clone) {
+        reached.notify_one();
+        resume.notified().await;
+    }
+    let name_check = NameHolderCheck {
+        state,
+        world,
+        world_name: &validated.world_name,
+        holder: name_owner,
+        scoped: matches!(replacement, Deploy::Scoped(_)),
+    };
 
     let persisted = store::deploy_scene_with_on(
         &mut *conn,
@@ -1075,12 +1203,16 @@ pub(super) async fn persist_publish_on(
             replacement,
             forward_to: state.forwarder.as_deref().map(|f| f.target()),
             quota: charge.as_ref(),
+            name_check: Some(&name_check),
         },
         completion,
     )
     .await;
     let deployed = match persisted {
         Ok(deployed) => deployed,
+        Err(crate::comms::worlds_envelope::ApiError::SourceUnavailable { index, message }) => {
+            return Err(source_unavailable(index, message).into_response());
+        }
         Err(e) => {
             let reason = e.public_message();
             if e.is_conflict() {
@@ -1315,7 +1447,7 @@ mod tests {
     #[test]
     fn a_chain_refusal_keeps_unverifiable_and_rate_limited_apart() {
         let refusal = |err: AuthError| {
-            let Refusal(status, message) = chain_refusal(err, &AuthChain::new(), "bafy", failed);
+            let Refusal(status, message, _) = chain_refusal(err, &AuthChain::new(), "bafy", failed);
             (status, message)
         };
         assert_eq!(
