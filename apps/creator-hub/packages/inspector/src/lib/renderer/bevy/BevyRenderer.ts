@@ -132,6 +132,7 @@ export class BevyRenderer implements IRenderer {
   #sceneRunning = false;
   #postSceneRunning: ((running: boolean) => void) | null = null;
   #sceneRunHandlers = new Set<(running: boolean) => void>();
+  #sceneStopHandlers = new Set<() => void>();
   // Viewport editing (click-to-select + gizmo). Default ENABLED; the "Interact"
   // toolbar toggle disables it so clicks reach the running scene (#1458). The
   // poster (injected by `register`) forwards the intent to the agent.
@@ -486,6 +487,10 @@ export class BevyRenderer implements IRenderer {
         this.#sceneRunHandlers.add(cb);
         return () => this.#sceneRunHandlers.delete(cb);
       },
+      onStop: (cb: () => void): Unsubscribe => {
+        this.#sceneStopHandlers.add(cb);
+        return () => this.#sceneStopHandlers.delete(cb);
+      },
       reset: async (): Promise<void> => {
         // Reboot the engine to the scene's authored initial state, then land on
         // frozen (static) — the editor's default — regardless of the prior
@@ -551,9 +556,15 @@ export class BevyRenderer implements IRenderer {
     this.#resetting = false;
     if (this.#pendingRun) {
       this.#pendingRun = false;
-      // Apply the deferred Play now that the scene is pinned.
       this.sceneRun.setRunning(true);
+    } else {
+      this.notifyStopped();
     }
+  }
+
+  /** Tells stop subscribers the scene landed stopped without a Pause. */
+  notifyStopped(): void {
+    for (const cb of this.#sceneStopHandlers) cb();
   }
 
   async getPointerWorldPoint(ndc?: { x: number; y: number }): Promise<Vector3 | null> {

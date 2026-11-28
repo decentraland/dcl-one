@@ -173,6 +173,47 @@ describe('BevyRenderer scene run/freeze', () => {
     await expect(renderer.sceneRun.reset()).resolves.toBeUndefined();
     expect(renderer.sceneRun.isRunning()).toBe(false);
   });
+
+  describe('when a reset completes with no Play waiting', () => {
+    it('should notify stop subscribers', async () => {
+      renderer.setSceneResetter(async () => {});
+      const onStop = vi.fn();
+      renderer.sceneRun.onStop(onStop);
+
+      await renderer.sceneRun.reset();
+      renderer.notifyResetComplete();
+
+      expect(onStop).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe('when a reset completes with a Play waiting', () => {
+    it('should run the scene without notifying a stop', async () => {
+      renderer.setSceneResetter(async () => {});
+      const onStop = vi.fn();
+      renderer.sceneRun.onStop(onStop);
+
+      await renderer.sceneRun.reset();
+      renderer.sceneRun.setRunning(true);
+      renderer.notifyResetComplete();
+
+      expect(renderer.sceneRun.isRunning()).toBe(true);
+      expect(onStop).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('when the scene stops itself', () => {
+    it('should notify stop subscribers until they unsubscribe', () => {
+      const onStop = vi.fn();
+      const off = renderer.sceneRun.onStop(onStop);
+
+      renderer.notifyStopped();
+      off();
+      renderer.notifyStopped();
+
+      expect(onStop).toHaveBeenCalledTimes(1);
+    });
+  });
 });
 
 describe('BevyRenderer audio mute (#1569)', () => {

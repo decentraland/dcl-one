@@ -515,8 +515,8 @@ export function registerBevyRenderer(): void {
               duration: 0,
             });
           }
-          // Land in the stopped/frozen state (button reads Play), without a reload.
           if (bevy.sceneRun.isRunning()) bevy.sceneRun.setRunning(false);
+          bevy.notifyStopped();
         },
       });
       // Hot-reload on code changes (#1419) — decided from the bundler's own per-file
@@ -614,9 +614,9 @@ export function registerBevyRenderer(): void {
         context: bevy.context,
         reboot: rebootEngine,
         onReloaded: () => {
-          // The reboot restarted the scene from its initial state.
           sceneRunBridge.markRestarted();
           sceneRunBridge.setRunning(sceneRunBridge.isRunning());
+          if (!sceneRunBridge.isRunning()) bevy.notifyStopped();
         },
       });
 

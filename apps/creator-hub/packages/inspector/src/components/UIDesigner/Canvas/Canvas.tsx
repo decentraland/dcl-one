@@ -31,7 +31,7 @@ import {
   setPlatform,
   toggleNodeSelection,
 } from '../../../redux/ui-designer';
-import { getUIDesignerSnapEnabled, getUIDesignerTool } from '../../../redux/ui';
+import { getUIDesignerTool } from '../../../redux/ui';
 import { UIDesignerTool } from '../../../redux/ui/types';
 import { Button } from '../../Button';
 import { YGPT_ABSOLUTE, YGPT_RELATIVE } from '../../../lib/sdk/ui-transform-constants';
@@ -254,11 +254,6 @@ const CanvasNode: React.FC<CanvasNodeProps> = ({ node, hidden }) => {
   useEffect(() => {
     aspectLockedRef.current = aspectLocked;
   }, [aspectLocked]);
-  const snapEnabled = useAppSelector(getUIDesignerSnapEnabled);
-  const snapEnabledRef = useRef(snapEnabled);
-  useEffect(() => {
-    snapEnabledRef.current = snapEnabled;
-  }, [snapEnabled]);
 
   const [canvasHovered, setCanvasHovered] = useState(false);
   const panelLayer = useAppSelector(getInteractionLayer);
@@ -526,7 +521,7 @@ const CanvasNode: React.FC<CanvasNodeProps> = ({ node, hidden }) => {
       if (!origin) return;
       let dxLogical = (e.clientX - origin.mouseX) / getCanvasScale();
       let dyLogical = (e.clientY - origin.mouseY) / getCanvasScale();
-      if (snapEnabledRef.current && !e.shiftKey) {
+      if (!e.shiftKey) {
         const snappedLeft =
           Math.round((origin.startLeft + dxLogical) / DRAG_SNAP_GRID) * DRAG_SNAP_GRID;
         const snappedTop =
@@ -579,7 +574,7 @@ const CanvasNode: React.FC<CanvasNodeProps> = ({ node, hidden }) => {
       armGroupClickSuppression();
       let dx = (e.clientX - origin.mouseX) / getCanvasScale();
       let dy = (e.clientY - origin.mouseY) / getCanvasScale();
-      if (snapEnabledRef.current && !e.shiftKey) {
+      if (!e.shiftKey) {
         const snappedLeft = Math.round((origin.startLeft + dx) / DRAG_SNAP_GRID) * DRAG_SNAP_GRID;
         const snappedTop = Math.round((origin.startTop + dy) / DRAG_SNAP_GRID) * DRAG_SNAP_GRID;
         dx = snappedLeft - origin.startLeft;
@@ -726,7 +721,7 @@ const CanvasNode: React.FC<CanvasNodeProps> = ({ node, hidden }) => {
       const axes = HANDLE_AXES[origin.dir];
 
       const snap = (v: number) => Math.round(v / DRAG_SNAP_GRID) * DRAG_SNAP_GRID;
-      const doSnap = snapEnabledRef.current && !e.shiftKey;
+      const doSnap = !e.shiftKey;
 
       let nextW = origin.startW + dxRaw * axes.dw;
       let nextH = origin.startH + dyRaw * axes.dh;

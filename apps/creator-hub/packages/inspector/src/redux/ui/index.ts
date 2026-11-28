@@ -16,9 +16,9 @@ export interface UiState {
   debugConsoleDetached: boolean;
   mobileDebugSessionEnabled: boolean;
   uiDesignerTool: UIDesignerTool;
-  uiDesignerSnapEnabled: boolean;
   sceneRunIntent: boolean;
   assetExplorerActive: boolean;
+  sceneRunStarted: boolean;
 }
 
 export const initialState: UiState = {
@@ -33,9 +33,9 @@ export const initialState: UiState = {
   debugConsoleDetached: false,
   mobileDebugSessionEnabled: false,
   uiDesignerTool: UIDesignerTool.FREE,
-  uiDesignerSnapEnabled: true,
   sceneRunIntent: false,
   assetExplorerActive: false,
+  sceneRunStarted: false,
 };
 
 export const appState = createSlice({
@@ -90,11 +90,13 @@ export const appState = createSlice({
     setUIDesignerTool: (state, { payload }: PayloadAction<{ tool: UIDesignerTool }>) => {
       state.uiDesignerTool = payload.tool;
     },
-    setUIDesignerSnap: (state, { payload }: PayloadAction<{ enabled: boolean }>) => {
-      state.uiDesignerSnapEnabled = payload.enabled;
-    },
-    setSceneRunIntent: (state, { payload }: PayloadAction<{ running: boolean }>) => {
+    setSceneRunIntent: (
+      state,
+      { payload }: PayloadAction<{ running: boolean; reset?: boolean }>,
+    ) => {
       state.sceneRunIntent = payload.running;
+      if (payload.running) state.sceneRunStarted = true;
+      if (payload.reset) state.sceneRunStarted = false;
     },
     setAssetExplorerActive: (state, { payload }: PayloadAction<{ active: boolean }>) => {
       state.assetExplorerActive = payload.active;
@@ -115,7 +117,6 @@ export const {
   setDebugConsoleDetached,
   setMobileDebugSessionEnabled,
   setUIDesignerTool,
-  setUIDesignerSnap,
   setSceneRunIntent,
   setAssetExplorerActive,
 } = appState.actions;
@@ -136,10 +137,9 @@ export const getDebugConsoleDetached = (state: RootState) => state.ui.debugConso
 export const getMobileDebugSessionEnabled = (state: RootState) =>
   state.ui.mobileDebugSessionEnabled;
 export const getUIDesignerTool = (state: RootState): UIDesignerTool => state.ui.uiDesignerTool;
-export const getUIDesignerSnapEnabled = (state: RootState): boolean =>
-  state.ui.uiDesignerSnapEnabled;
 export const getSceneRunIntent = (state: RootState): boolean => state.ui.sceneRunIntent;
 export const isAssetExplorerActive = (state: RootState): boolean => state.ui.assetExplorerActive;
+export const getSceneRunStarted = (state: RootState): boolean => state.ui.sceneRunStarted;
 
 // Reducer
 export default appState.reducer;

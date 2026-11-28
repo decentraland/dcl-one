@@ -27,6 +27,7 @@ const Option: React.FC<ListOptionProps> = props => {
     rightIcon,
     secondaryText,
     selected,
+    checked,
     value,
     isField,
     onClick,
@@ -112,6 +113,7 @@ const Option: React.FC<ListOptionProps> = props => {
             id,
             role: 'option',
             'aria-selected': !!selected,
+            'aria-checked': checked,
             'aria-disabled': disabled || undefined,
           }
         : {})}

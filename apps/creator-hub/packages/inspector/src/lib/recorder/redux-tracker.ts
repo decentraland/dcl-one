@@ -123,10 +123,6 @@ const WATCHERS: Watcher<unknown>[] = [
     }),
   }),
   watch({
-    select: s => s.ui.uiDesignerSnapEnabled,
-    describe: next => ({ kind: 'mode', text: `Turned ${onOff(next)} snapping in the UI Designer` }),
-  }),
-  watch({
     select: s => s.uiDesigner.platform,
     describe: next => ({ kind: 'mode', text: `Switched the UI Designer preview to ${next}` }),
   }),

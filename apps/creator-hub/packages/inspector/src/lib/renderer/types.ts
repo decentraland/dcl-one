@@ -343,6 +343,8 @@ export interface RendererSceneRun {
   setRunning(running: boolean): void;
   /** Notify on run/freeze change (so a toolbar toggle reflects the state). */
   onRunChange(cb: (running: boolean) => void): Unsubscribe;
+  /** Notify when the scene lands stopped without a Pause: a finished reset, a runtime error or a reboot. */
+  onStop(cb: () => void): Unsubscribe;
   /**
    * Stop: reset the scene to its initial state and freeze it. Play/Pause only
    * run/halt the scene where it is — there's no way back to the start (e.g. a

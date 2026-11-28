@@ -9,6 +9,7 @@ export type Props = {
   description?: string;
   error?: boolean;
   selected?: boolean;
+  checked?: boolean;
   disabled?: boolean;
   className?: string;
   header?: string;
