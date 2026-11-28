@@ -33,6 +33,17 @@ export interface PhotoModeState {
   unavailable?: Record<string, string>
 }
 
+/** What `/photo_mode` with a pose flag reports once the photo camera is placed: the state, with
+ *  `placed` (Decentraland world coordinates, where `position` is the engine's). `settled` is false,
+ *  with a `warning`, when photo mode did not open within `timeoutSeconds`, or a later request
+ *  closed it first. */
+export interface PhotoPoseState extends PhotoModeState {
+  placed: [number, number, number] | null
+  settled: boolean
+  settleMs: number
+  warning?: string
+}
+
 export interface WorldState {
   inWorld: boolean
   arrivals: number
@@ -477,6 +488,28 @@ export interface Position {
   z: number
 }
 
+/** What `/move_player_to --wait` reports once the player has landed and been still for 0.25 s, or
+ *  once `timeoutSeconds` ran out (`settled: false` and a `warning` naming what it waited for: the
+ *  move, the landing or the stillness). `position` is Decentraland
+ *  world coordinates. */
+export interface MoveReport {
+  position: [number, number, number] | null
+  parcel: [number, number] | null
+  settled: boolean
+  settleMs: number
+  warning?: string
+}
+
+/** The player camera's zoom level, as `/camera_mode` sets it. */
+export type CameraLevel = 'first_person' | 'third_person' | 'drone'
+
+/** What `/camera_mode` reports: the level before and after, and whether it changed. */
+export interface CameraModeChange {
+  before: CameraLevel
+  after: CameraLevel
+  changed: boolean
+}
+
 export interface LiveScene {
   title: string
   hash: string
@@ -839,6 +872,25 @@ export class Explorer {
     return this.json<PhotoModeState>(state ? `/photo_mode ${state}` : '/photo_mode')
   }
 
+  /** Places the photo camera (opening photo mode when it is closed): `position` and `lookAt` are
+   *  Decentraland world coordinates, `position` within 50 m of the player, `fov` vertical degrees
+   *  (10 to 120). Resolves once it is there, or after `timeoutSeconds` (5 by default) with
+   *  `settled: false`. A pose photo mode cannot take rejects with `{"refused", "cause"}` as the
+   *  error's output. */
+  placePhotoCamera(pose: {
+    position?: [number, number, number]
+    lookAt?: [number, number, number]
+    fov?: number
+    timeoutSeconds?: number
+  }): Promise<PhotoPoseState> {
+    let line = '/photo_mode'
+    if (pose.position) line += ` --position ${pose.position.join(' ')}`
+    if (pose.lookAt) line += ` --look-at ${pose.lookAt.join(' ')}`
+    if (pose.fov !== undefined) line += ` --fov ${pose.fov}`
+    if (pose.timeoutSeconds !== undefined) line += ` --timeout-seconds ${pose.timeoutSeconds}`
+    return this.json<PhotoPoseState>(line)
+  }
+
   waitPhotoMode(active: boolean, timeoutMs = 5000): Promise<PhotoModeState> {
     return until(() => this.photoMode(), (state) => state.active === active, {
       timeoutMs,
@@ -931,6 +983,32 @@ export class Explorer {
   /** Walk to a world position through the movement controller; resolves on arrival (0.5 m). */
   async walkTo(x: number, y: number, z: number, timeoutS = 20): Promise<void> {
     await this.run(`/walk_player_to ${x} ${y} ${z} ${timeoutS}`)
+  }
+
+  /** Move straight to a world position (Decentraland coordinates) as a scene's `movePlayerTo`
+   *  does: `cameraTarget` turns the camera along the line from the new position (the feet) to a
+   *  point and `avatarTarget` turns the avatar to face one (the camera target without it). Resolves once the player has landed and is still, or after
+   *  `timeoutSeconds` (10 by default) with `settled: false`. The engine has `/move_player_to` in
+   *  preview only. */
+  moveTo(
+    x: number,
+    y: number,
+    z: number,
+    options: { cameraTarget?: [number, number, number]; avatarTarget?: [number, number, number]; timeoutSeconds?: number } = {}
+  ): Promise<MoveReport> {
+    let line = `/move_player_to ${x} ${y} ${z}`
+    if (options.cameraTarget) line += ` --camera-target ${options.cameraTarget.join(' ')}`
+    if (options.avatarTarget) line += ` --avatar-target ${options.avatarTarget.join(' ')}`
+    line += ' --wait'
+    if (options.timeoutSeconds !== undefined) line += ` --timeout-seconds ${options.timeoutSeconds}`
+    return this.json<MoveReport>(line)
+  }
+
+  /** Sets the player's zoom level, as zooming does; the camera then blends to it. Rejects with
+   *  `{"refused", "cause"}` as the error's output while photo mode (`cause.holder` `photo_mode`)
+   *  or a scene (`cause.holder` `scene`) holds the camera. */
+  setCameraMode(level: CameraLevel): Promise<CameraModeChange> {
+    return this.json<CameraModeChange>(`/camera_mode ${level}`)
   }
 
   /** `/player_position`, parsed: DCL axes, so the parcel is `floor(x / 16), floor(z / 16)`. */

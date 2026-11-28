@@ -509,6 +509,17 @@ State, in every build:
   controls the camera). With `on` or `off` it opens or closes the mode, which lands a frame
   later; the second word is the source the analytics record, `console` by default (the HUD's
   buttons pass `button`). The debug panel's "Photo mode" section binds it.
+  `--position x y z`, `--look-at x y z` and `--fov F` (Decentraland world coordinates, degrees
+  from 10 to 120) place the photo camera, opening photo mode first when it is closed (with `on`
+  or no state; not with `off`), and reply the same state once the camera is there, with `placed`
+  (where it landed, Decentraland world coordinates, where `position` is the engine's), `settled`
+  and `settleMs`. A part not given stays as it is; aiming levels the roll. `--timeout-seconds S`
+  (5 by default, at most 300, only with a pose flag) bounds the landing: when photo mode has not
+  opened by then, a scene camera or leaving the world keeps it closed, or a later request closes
+  it first (`/photo_mode off`, the photo mode key), `settled` is `false` and `warning` says why. Refused, `{"refused", "cause"}`, before anything opens: a position
+  more than 50 m from the player (`cause.limit` `reach`), a scene holding the camera
+  (`cause.holder` `scene`), the player out of the world, or another pose still landing
+  (`cause.holder` `photo_mode --position`).
 - `/take_photo [button|shortcut|console]`: a photo in photo mode, captured from the window, cut to
   the photo frame, encoded and uploaded to the camera-reel service; the reply is the same state,
   and a refusal names why (mode off, a photo in flight, the storage unknown or full, the capture
@@ -552,6 +563,27 @@ Movement:
 - `/movement_state`: the active locomotion settings, the last completed movement step's
   `requested`, `actual` and `external` velocities in SDK axes, whether the player is on the ground
   and its height over it (the debug panel's Locomotion section).
+- `/move_player_to <x> <y> <z> [duration] [--camera-target x y z] [--avatar-target x y z] [--wait
+  [--timeout-seconds S]]` (preview only): moves the player to a Decentraland world point, over
+  `duration` seconds or at once, as a scene's `movePlayerTo` does and through the same mapping
+  (`RpcCall::move_player`): `--camera-target` turns the camera along the line from the new position
+  (the feet) to a point, and `--avatar-target` turns the avatar to face one (the camera target
+  without it). The camera takes that direction in every mode, so the point is not centred from the
+  eyes or from an orbiting camera. Without `--wait` it replies `moved to (x, y, z)` or, with a
+  duration, `arrived at (x, y, z)`. With `--wait` it replies JSON once the player has moved, stands
+  on the ground and has been still (under 0.3 m/s) for 0.25 s: `position` (Decentraland world
+  coordinates), `parcel`, `settled`, `settleMs`. A move to a point in the air has not settled until
+  the player lands. When `--timeout-seconds` runs out first, `settled` is `false` and `warning`
+  names what it waited for: the move, the landing or the stillness. It defaults to 10 s after the
+  duration and takes at most 300. A move another move replaces fails with `move cancelled` either
+  way.
+- `/camera_mode first_person|third_person|drone`: sets the player's zoom level, as zooming in or
+  out does (the drone level is third person to scenes). It replies JSON at once, `before`, `after`
+  and `changed`; the camera then blends to the level as it does after a zoom (`/camera_state`
+  `blending`, with `level` and `levelInEffect` named the same way). It is refused, `{"refused", "cause"}`, while photo mode holds the camera
+  (`cause.holder` `photo_mode`) and while a scene's camera mode area or virtual camera does
+  (`cause.holder` `scene`, with the scene's `scene` title, `sceneHash` and the `mode` it holds:
+  a level or `cinematic`).
 
 Scene animations:
 

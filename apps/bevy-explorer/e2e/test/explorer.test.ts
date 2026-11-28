@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { describe, test } from 'node:test'
 import { ConsoleError, FakeConsole, commandOf, redactLine } from '../driver/console.ts'
-import { type CaptureSequence, type CommandRecord, Explorer, parseLiveScenes, parsePortables, parseSmartWearables, saveCaptureFrames, type WorldState } from '../driver/explorer.ts'
+import { type CameraModeChange, type CaptureSequence, type CommandRecord, Explorer, type MoveReport, parseLiveScenes, type PhotoPoseState, parsePortables, parseSmartWearables, saveCaptureFrames, type WorldState } from '../driver/explorer.ts'
 import { enterWorld } from '../driver/session.ts'
 
 function world(overrides: Partial<WorldState> = {}): string {
@@ -262,6 +262,25 @@ describe('Explorer', () => {
     assert.deepEqual(await explorer.position(), { x: 8, y: 0.5, z: -3 })
   })
 
+  test('moveTo sends the waiting move with its targets and parses the report', async () => {
+    const moved: MoveReport = { position: [2400, 0, 2400], parcel: [150, 150], settled: true, settleMs: 83 }
+    const fake = new FakeConsole({ move_player_to: JSON.stringify(moved) })
+    const explorer = new Explorer(fake)
+    assert.deepEqual(await explorer.moveTo(2400, 0, 2400, { cameraTarget: [2388, 1.75, 2400], avatarTarget: [2388, 0, 2410] }), moved)
+    await explorer.moveTo(-1.5, 0, 2, { timeoutSeconds: 4 })
+    assert.deepEqual(fake.lines, [
+      '/move_player_to 2400 0 2400 --camera-target 2388 1.75 2400 --avatar-target 2388 0 2410 --wait',
+      '/move_player_to -1.5 0 2 --wait --timeout-seconds 4'
+    ])
+  })
+
+  test('setCameraMode sends the level and parses the change', async () => {
+    const switched: CameraModeChange = { before: 'third_person', after: 'first_person', changed: true }
+    const fake = new FakeConsole({ camera_mode: JSON.stringify(switched) })
+    assert.deepEqual(await new Explorer(fake).setCameraMode('first_person'), switched)
+    assert.deepEqual(fake.lines, ['/camera_mode first_person'])
+  })
+
   test('the voice chat actions compose their lines', async () => {
     const fake = new FakeConsole({ voice: 'queued' })
     const explorer = new Explorer(fake)
@@ -341,6 +360,18 @@ describe('Explorer', () => {
     assert.equal((await explorer.takePhoto()).captures, 1)
     await explorer.photoMode('off')
     assert.equal((await explorer.waitPhotoMode(false, 1000)).active, false)
+  })
+
+  test('placePhotoCamera sends the pose flags and parses the placed state', async () => {
+    const placed: PhotoPoseState = {
+      active: true, requested: true, position: [8, 4, -8], storage: [0, 500], storageLoaded: true, phase: 'idle', captures: 0, uploaded: 0, failed: 0, lastPhotoId: null, lastError: null,
+      fov: 40, placed: [8, 4, 8], settled: true, settleMs: 17
+    }
+    const fake = new FakeConsole({ photo_mode: JSON.stringify(placed) })
+    const explorer = new Explorer(fake)
+    assert.deepEqual(await explorer.placePhotoCamera({ position: [8, 4, 8], lookAt: [8, 1, 16], fov: 40 }), placed)
+    await explorer.placePhotoCamera({ lookAt: [-1, 0, 2], timeoutSeconds: 2 })
+    assert.deepEqual(fake.lines, ['/photo_mode --position 8 4 8 --look-at 8 1 16 --fov 40', '/photo_mode --look-at -1 0 2 --timeout-seconds 2'])
   })
 
   test('connectedPlayers is empty on the no-players text', async () => {

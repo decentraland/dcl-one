@@ -76,6 +76,32 @@ impl Default for PhotoCameraSettings {
     }
 }
 
+impl PhotoCameraSettings {
+    /// `position` kept within `max_distance_from_player` of the player: itself when it is in
+    /// reach, else the nearest point that is.
+    pub(crate) fn within_reach(&self, position: Vec3, player_position: Vec3) -> Vec3 {
+        if position.distance(player_position) > self.max_distance_from_player {
+            let direction = (position - player_position).normalize_or_zero();
+            player_position + direction * self.max_distance_from_player
+        } else {
+            position
+        }
+    }
+}
+
+/// A pose to put the photo camera in at once, as the console's `/photo_mode --position` asks for
+/// one.
+/// A part left `None` stays as it is.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub(crate) struct PhotoPose {
+    /// Where the camera goes, in bevy's world.
+    pub(crate) position: Option<Vec3>,
+    /// A point to aim it at, in bevy's world; aiming also levels the roll.
+    pub(crate) look_at: Option<Vec3>,
+    /// The vertical field of view, in degrees.
+    pub(crate) fov: Option<f32>,
+}
+
 /// One frame of player input for the photo camera.
 #[derive(Default, Clone, Copy, Debug, PartialEq)]
 pub struct PhotoCameraInput {
@@ -244,12 +270,58 @@ impl PhotoCamera {
             movement.y = 0.0;
         }
         let desired = self.target.translation + movement;
-        if desired.distance(player_position) > settings.max_distance_from_player {
-            let direction = (desired - player_position).normalize_or_zero();
-            let clamped = player_position + direction * settings.max_distance_from_player;
-            movement = clamped - self.target.translation;
+        let reachable = settings.within_reach(desired, player_position);
+        if reachable != desired {
+            movement = reachable - self.target.translation;
         }
         movement
+    }
+
+    /// Puts the camera in `pose` at once and returns the follow target, which the caller writes
+    /// to the rendered camera so that nothing is left to ease. The position is kept within reach
+    /// of the player, as a flown camera's is, and the field of view within the settings' bounds.
+    /// A point straight above or below the camera has no heading, so aiming at one keeps the yaw.
+    pub(crate) fn place(
+        &mut self,
+        pose: &PhotoPose,
+        settings: &PhotoCameraSettings,
+        player_position: Option<Vec3>,
+    ) -> Transform {
+        let mut position = pose.position.unwrap_or(self.target.translation);
+        if let Some(player_position) = player_position {
+            position = settings.within_reach(position, player_position);
+        }
+        if let Some(point) = pose.look_at {
+            let to_point = point - position;
+            let horizontal = Vec2::new(to_point.x, to_point.z).length();
+            if horizontal > 1e-4 {
+                self.yaw = (-to_point.x).atan2(-to_point.z).to_degrees();
+            }
+            self.pitch = to_point
+                .y
+                .atan2(horizontal)
+                .to_degrees()
+                .clamp(settings.min_vertical_angle, settings.max_vertical_angle);
+            self.roll = 0.0;
+            self.tilt = Damped::default();
+        }
+        if let Some(fov) = pose.fov {
+            self.fov = Damped::at(fov.clamp(settings.min_fov, settings.max_fov));
+        }
+        // a look still running out would turn the camera off the pose
+        self.look_smoothed = Vec2::ZERO;
+        self.target = Transform {
+            translation: position,
+            rotation: Quat::from_euler(
+                EulerRot::YXZ,
+                self.yaw.to_radians(),
+                self.pitch.to_radians(),
+                self.roll.to_radians(),
+            ),
+            scale: Vec3::ONE,
+        };
+        self.following = true;
+        self.target
     }
 
     pub fn apply_move(&mut self, movement: Vec3) {
@@ -409,6 +481,122 @@ mod tests {
         let movement = cam.requested_move(&right, &settings, 1.0, Vec3::ZERO);
         let landed = cam.target.translation + movement;
         assert!((landed.length() - 50.0).abs() < 1e-3, "{landed}");
+    }
+
+    /// The angle, in degrees, between where the camera looks and the way to `point`.
+    fn off_aim(camera: &Transform, point: Vec3) -> f32 {
+        camera
+            .forward()
+            .angle_between(point - camera.translation)
+            .to_degrees()
+    }
+
+    #[test]
+    fn a_placed_camera_lands_aimed_with_nothing_left_to_ease() {
+        let settings = PhotoCameraSettings::default();
+        let mut cam = camera();
+        cam.roll = 15.0;
+        cam.tilt = Damped {
+            current: 4.0,
+            target: 30.0,
+            velocity: 2.0,
+        };
+        cam.look_smoothed = Vec2::new(40.0, -10.0);
+        let position = Vec3::new(10.0, 5.0, -10.0);
+        let point = Vec3::new(10.0, 1.0, -20.0);
+        let pose = PhotoPose {
+            position: Some(position),
+            look_at: Some(point),
+            fov: Some(40.0),
+        };
+        let placed = cam.place(&pose, &settings, Some(Vec3::ZERO));
+        assert_eq!(placed.translation, position);
+        assert_eq!(placed, cam.target);
+        assert!(cam.following);
+        assert!(off_aim(&placed, point) < 0.01);
+        assert!((cam.pitch + 21.8014).abs() < 1e-3, "{}", cam.pitch);
+        assert_eq!((cam.roll, cam.tilt), (0.0, Damped::default()));
+        assert_eq!(cam.fov, Damped::at(40.0));
+        // a frame without input leaves it there
+        let still = PhotoCameraInput {
+            cursor_locked: true,
+            ..Default::default()
+        };
+        assert_eq!(
+            cam.requested_move(&still, &settings, DT, Vec3::ZERO),
+            Vec3::ZERO
+        );
+        cam.steer(&still, &settings, &LOOK, DT);
+        assert!(off_aim(&cam.target, point) < 0.01);
+        assert_eq!(cam.fov.current, 40.0);
+    }
+
+    #[test]
+    fn a_pose_keeps_the_parts_it_does_not_give() {
+        let settings = PhotoCameraSettings::default();
+        let start = Transform::from_xyz(1.0, 2.0, 3.0).with_rotation(Quat::from_rotation_y(1.0));
+        let mut cam = PhotoCamera::new(start, 60.0, PhotoModeSource::Console);
+        cam.roll = 15.0;
+
+        // a position alone: the orientation, the roll and the field of view stay
+        let moved = PhotoPose {
+            position: Some(Vec3::ONE),
+            ..Default::default()
+        };
+        let placed = cam.place(&moved, &settings, None);
+        assert_eq!(placed.translation, Vec3::ONE);
+        assert!((cam.yaw - 1f32.to_degrees()).abs() < 1e-3);
+        assert_eq!((cam.roll, cam.fov.current), (15.0, 60.0));
+
+        // a field of view alone, held to the settings' bounds
+        let wide = PhotoPose {
+            fov: Some(500.0),
+            ..Default::default()
+        };
+        assert_eq!(cam.place(&wide, &settings, None).translation, Vec3::ONE);
+        assert_eq!(cam.fov, Damped::at(settings.max_fov));
+
+        // a point straight below has no heading: the yaw stays, and the camera looks down
+        let down = PhotoPose {
+            look_at: Some(Vec3::new(1.0, -9.0, 1.0)),
+            ..Default::default()
+        };
+        cam.place(&down, &settings, None);
+        assert!((cam.yaw - 1f32.to_degrees()).abs() < 1e-3);
+        assert!((cam.pitch + 90.0).abs() < 1e-3, "{}", cam.pitch);
+    }
+
+    #[test]
+    fn a_pose_out_of_reach_of_the_player_lands_at_the_nearest_point_in_reach() {
+        let settings = PhotoCameraSettings::default();
+        let player = Vec3::new(100.0, 0.0, 0.0);
+        let mut cam = camera();
+        let far = PhotoPose {
+            position: Some(player + Vec3::X * 80.0),
+            ..Default::default()
+        };
+        let placed = cam.place(&far, &settings, Some(player));
+        assert!(
+            (placed.translation - (player + Vec3::X * 50.0)).length() < 1e-3,
+            "{placed:?}"
+        );
+        // where a flown camera would be held too: the next frame does not move it
+        let still = PhotoCameraInput::default();
+        let pulled = cam.requested_move(&still, &settings, DT, player);
+        assert!(pulled.length() < 1e-3, "{pulled}");
+        // in reach, and with no player to measure from, the point is taken as given
+        let near = PhotoPose {
+            position: Some(player + Vec3::X * 49.0),
+            ..Default::default()
+        };
+        assert_eq!(
+            cam.place(&near, &settings, Some(player)).translation,
+            player + Vec3::X * 49.0
+        );
+        assert_eq!(
+            cam.place(&far, &settings, None).translation,
+            player + Vec3::X * 80.0
+        );
     }
 
     #[test]

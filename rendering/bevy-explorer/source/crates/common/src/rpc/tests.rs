@@ -296,3 +296,92 @@ fn sign_request_body_hash_crosses_messagepack_bridge() {
         assert_eq!(rx.try_recv().unwrap().unwrap()[0].1, "MixedCase");
     }
 }
+
+/// The parts of a `MovePlayer` the mapping sets.
+fn move_parts(call: RpcCall) -> (Vec3, Option<Vec3>, Option<f32>, Option<Quat>) {
+    match call {
+        RpcCall::MovePlayer {
+            to,
+            looking_at,
+            duration,
+            camera_rotation,
+            ..
+        } => (to, looking_at, duration, camera_rotation),
+        _ => panic!("a move"),
+    }
+}
+
+/// Where a camera rotation looks.
+fn forward(rotation: Option<Quat>) -> Vec3 {
+    rotation.expect("an aim") * Vec3::NEG_Z
+}
+
+#[test]
+fn move_player_faces_the_avatar_target_and_aims_the_camera_from_the_new_position() {
+    // Decentraland's z is bevy's -z
+    let (to, looking_at, duration, camera_rotation) = move_parts(RpcCall::move_player(
+        [8.0, 0.0, 8.0],
+        None,
+        None,
+        Some(2.5),
+        None,
+    ));
+    assert_eq!(to, Vec3::new(8.0, 0.0, -8.0));
+    assert_eq!(
+        (looking_at, duration, camera_rotation),
+        (None, Some(2.5), None)
+    );
+
+    // a camera target alone also turns the avatar; the camera turns along the line from the new
+    // position to it, so a point level with the feet ahead is straight ahead
+    let (_, looking_at, _, camera_rotation) = move_parts(RpcCall::move_player(
+        [8.0, 0.0, 8.0],
+        Some([8.0, 0.0, 18.0]),
+        None,
+        None,
+        None,
+    ));
+    assert_eq!(looking_at, Some(Vec3::new(8.0, 0.0, -18.0)));
+    let ahead = forward(camera_rotation);
+    assert!(ahead.distance(Vec3::NEG_Z) < 1e-5, "{ahead}");
+
+    // an avatar target wins for the avatar, and the camera still turns to its own target
+    let (_, looking_at, _, camera_rotation) = move_parts(RpcCall::move_player(
+        [8.0, 0.0, 8.0],
+        Some([8.0, 10.0, 18.0]),
+        Some([18.0, 0.0, 8.0]),
+        None,
+        None,
+    ));
+    assert_eq!(looking_at, Some(Vec3::new(18.0, 0.0, -8.0)));
+    let up_and_ahead = forward(camera_rotation);
+    let expected = Vec3::new(0.0, 1.0, -1.0).normalize();
+    assert!(up_and_ahead.distance(expected) < 1e-5, "{up_and_ahead}");
+}
+
+#[test]
+fn move_player_aims_at_a_target_on_the_position_or_straight_above_it_without_nan() {
+    for (target, looks) in [
+        // no direction: the camera keeps a default facing
+        ([8.0, 0.0, 8.0], None),
+        // straight up: the camera looks up
+        ([8.0, 10.0, 8.0], Some(Vec3::Y)),
+    ] {
+        let (_, _, _, camera_rotation) = move_parts(RpcCall::move_player(
+            [8.0, 0.0, 8.0],
+            Some(target),
+            None,
+            None,
+            None,
+        ));
+        let rotation = camera_rotation.expect("an aim");
+        assert!(
+            rotation.is_finite() && rotation.is_normalized(),
+            "{rotation}"
+        );
+        if let Some(looks) = looks {
+            let towards = forward(camera_rotation);
+            assert!(towards.distance(looks) < 1e-5, "{towards}");
+        }
+    }
+}

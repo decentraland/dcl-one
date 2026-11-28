@@ -2,10 +2,15 @@ use bevy::prelude::*;
 use bevy_console::ConsoleCommand;
 use common::{
     dynamics::landed,
-    structs::{AvatarDynamicState, PrimaryCamera, PrimaryUser},
+    structs::{
+        AvatarDynamicState, CameraOverride, CameraZoomLevel, PhotoMode, PrimaryCamera, PrimaryUser,
+    },
 };
-use console::{AddDebugSection, DebugInput, DebugInputKind, DebugSection, DoAddConsoleCommand};
+use console::{
+    reply::refusal, AddDebugSection, DebugInput, DebugInputKind, DebugSection, DoAddConsoleCommand,
+};
 use dcl_component::proto_components::common::Vector3;
+use scene_runner::renderer_context::RendererSceneContext;
 use serde_json::json;
 
 use crate::{
@@ -21,6 +26,7 @@ pub(super) struct InputDebugPanelPlugin;
 impl Plugin for InputDebugPanelPlugin {
     fn build(&self, app: &mut App) {
         app.add_console_command::<CameraState, _>(camera_state)
+            .add_console_command::<CameraMode, _>(camera_mode)
             .add_console_command::<MovementState, _>(movement_state)
             .add_preview_console_command::<CameraSensitivity, _>(camera_sensitivity)
             .add_preview_console_command::<CameraCollisions, _>(camera_collisions)
@@ -89,6 +95,85 @@ impl Plugin for InputDebugPanelPlugin {
 #[command(name = "/camera_state")]
 struct CameraState;
 
+/// Switch the player's camera to first_person, third_person or drone, the levels zooming steps
+/// between. Replies JSON: before, after, changed. Refused while photo mode or a scene holds the
+/// camera, naming which.
+#[derive(clap::Parser, ConsoleCommand)]
+#[command(name = "/camera_mode")]
+struct CameraMode {
+    level: String,
+}
+
+fn level_name(level: CameraZoomLevel) -> &'static str {
+    match level {
+        CameraZoomLevel::FirstPerson => "first_person",
+        CameraZoomLevel::ThirdPerson => "third_person",
+        CameraZoomLevel::Drone => "drone",
+    }
+}
+
+fn camera_mode(
+    mut cmd: ConsoleCommand<CameraMode>,
+    mut camera: Query<(&mut PrimaryCamera, Has<PhotoMode>)>,
+    scenes: Query<&RendererSceneContext>,
+) {
+    let Some(Ok(args)) = cmd.take() else { return };
+    let level = match args.level.as_str() {
+        "first_person" => CameraZoomLevel::FirstPerson,
+        "third_person" => CameraZoomLevel::ThirdPerson,
+        "drone" => CameraZoomLevel::Drone,
+        other => {
+            cmd.reply_failed(format!(
+                "expected first_person, third_person or drone, got {other}"
+            ));
+            return;
+        }
+    };
+    let Ok((mut camera, photo)) = camera.single_mut() else {
+        cmd.reply_failed(refusal("no player camera", None));
+        return;
+    };
+    if photo {
+        cmd.reply_failed(refusal(
+            "photo mode holds the camera; /photo_mode off closes it",
+            Some(json!({ "holder": "photo_mode" })),
+        ));
+        return;
+    }
+    if let Some(held) = &camera.scene_override {
+        // the scene that set the override, as `scene_override_owner` keeps it
+        let scene = camera
+            .scene_override_owner
+            .and_then(|owner| scenes.get(owner).ok());
+        let mode = match held {
+            CameraOverride::Level(level) => level_name(*level),
+            CameraOverride::Cinematic(_) => "cinematic",
+        };
+        cmd.reply_failed(refusal(
+            "a scene holds the camera",
+            Some(json!({
+                "holder": "scene",
+                "scene": scene.map(|scene| scene.title.as_str()),
+                "sceneHash": scene.map(|scene| scene.hash.as_ref()),
+                "mode": mode,
+            })),
+        ));
+        return;
+    }
+    let before = camera.level;
+    if before != level {
+        camera.level = level;
+    }
+    cmd.reply_ok(
+        json!({
+            "before": level_name(before),
+            "after": level_name(level),
+            "changed": before != level,
+        })
+        .to_string(),
+    );
+}
+
 /// Set look sensitivity for the player's camera in preview.
 #[derive(clap::Parser, ConsoleCommand)]
 #[command(name = "/camera_sensitivity")]
@@ -153,7 +238,6 @@ fn camera_state(
         Projection::Perspective(p) => (Some(p.far), Some(p.fov.to_degrees())),
         _ => (None, None),
     };
-    let level_name = |level| format!("{level:?}");
     let shoulder_offset = zoom
         .level()
         .map(|level| zoom.shoulder_offset(level).to_array());
@@ -264,6 +348,86 @@ mod tests {
         assert_eq!(report["requested"], json!([0.0, 0.0, 0.0]));
         assert_eq!(report["actual"], json!([0.0, 0.0, 0.0]));
         assert!(report["external"].is_null());
+    }
+
+    /// Sends `/camera_mode <level>` and returns its reply.
+    fn set_mode(app: &mut App, level: &str) -> Result<String, String> {
+        let (tx, rx) = mpsc::channel();
+        app.world_mut().send_event(ConsoleCommandEntered {
+            command_name: "/camera_mode".into(),
+            args: vec![level.into()],
+            responder: Some(Arc::new(move |result| tx.send(result).unwrap())),
+        });
+        app.update();
+        rx.try_recv().unwrap()
+    }
+
+    fn json_of(reply: &str) -> serde_json::Value {
+        serde_json::from_str(reply).unwrap()
+    }
+
+    #[test]
+    fn the_camera_mode_sets_the_zoom_level_unless_photo_mode_or_a_scene_holds_the_camera() {
+        let mut app = App::new();
+        app.add_event::<ConsoleCommandEntered>()
+            .add_event::<PrintConsoleLine>()
+            .add_systems(Update, camera_mode);
+        let camera = app.world_mut().spawn(PrimaryCamera::default()).id();
+        let level = |app: &App| app.world().get::<PrimaryCamera>(camera).unwrap().level;
+
+        let reply = json_of(&set_mode(&mut app, "first_person").unwrap());
+        assert_eq!(
+            reply,
+            json!({"before": "third_person", "after": "first_person", "changed": true})
+        );
+        assert_eq!(level(&app), CameraZoomLevel::FirstPerson);
+        let reply = json_of(&set_mode(&mut app, "first_person").unwrap());
+        assert_eq!(reply["changed"], false);
+        set_mode(&mut app, "drone").unwrap();
+        assert_eq!(level(&app), CameraZoomLevel::Drone);
+        assert!(set_mode(&mut app, "free").is_err());
+
+        // photo mode holds it
+        app.world_mut().entity_mut(camera).insert(PhotoMode);
+        let refused = json_of(&set_mode(&mut app, "third_person").unwrap_err());
+        assert_eq!(refused["cause"]["holder"], "photo_mode");
+        app.world_mut().entity_mut(camera).remove::<PhotoMode>();
+
+        // a scene's camera mode area holds it: the refusal names the scene
+        let scene = app
+            .world_mut()
+            .spawn(RendererSceneContext::new(
+                dcl_types::SceneId::DUMMY,
+                "bafkscene".to_owned(),
+                "storage_root".to_owned(),
+                false,
+                0,
+                "Plaza".to_owned(),
+                IVec2::ZERO,
+                [IVec2::ZERO].into_iter().collect(),
+                vec![],
+                Default::default(),
+                vec![],
+                Entity::PLACEHOLDER,
+                0.,
+                false,
+                "sdk_version",
+                false,
+                false,
+            ))
+            .id();
+        {
+            let mut primary = app.world_mut().get_mut::<PrimaryCamera>(camera).unwrap();
+            primary.scene_override = Some(CameraOverride::Level(CameraZoomLevel::FirstPerson));
+            primary.scene_override_owner = Some(scene);
+        }
+        let refused = json_of(&set_mode(&mut app, "third_person").unwrap_err());
+        assert_eq!(refused["refused"], "a scene holds the camera");
+        assert_eq!(
+            refused["cause"],
+            json!({"holder": "scene", "scene": "Plaza", "sceneHash": "bafkscene", "mode": "first_person"})
+        );
+        assert_eq!(level(&app), CameraZoomLevel::Drone, "unchanged");
     }
 
     #[test]

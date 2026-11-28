@@ -304,7 +304,7 @@ the [conventions ADR](../../../docs/adr/2026-11-17-console-command-conventions.m
   `/home_state` (the signed-in account's home and the home that applies at startup;
   `/home_clear` takes that account's home back), `/entity_screen_position <entity>
   [--bounds]` (pixels, `normalized` and `screen`), `/photo_mode [on|off]` (the camera reel's in-world camera: its state, or open or
-  close it) and `/take_photo` (a photo, captured and uploaded; the reply is the state, a refusal
+  close it; `--position`, `--look-at` and `--fov` place it, replying once it is there) and `/take_photo` (a photo, captured and uploaded; the reply is the state, a refusal
   names why), plus the older `/player_position`, `/get_user_data`, `/connected_players`, `/time`
   and the scene commands.
 - Frames: `/screenshot` alone replies the frame as raw base64 PNG at full size; with
@@ -398,7 +398,12 @@ the [conventions ADR](../../../docs/adr/2026-11-17-console-command-conventions.m
   parcel), `entity`, `clip`, `state`, `weight`, `speed`, `seekSeconds`, `durationSeconds` and
   `looping`).
 - Movement: `/movement_state` reads the locomotion settings, the last movement step and the
-  height over the ground.
+  height over the ground. `/move_player_to <x> <y> <z> [duration] [--camera-target x y z]
+  [--avatar-target x y z] [--wait [--timeout-seconds S]]` moves the player as a scene's
+  `movePlayerTo` does, aiming the camera and turning the avatar the same way; with `--wait` it
+  replies JSON (`position`, `parcel`, `settled`, `settleMs`, `warning`) once the player has landed and is still.
+  `/camera_mode first_person|third_person|drone` sets the zoom level, refused while photo mode or
+  a scene holds the camera.
 - The preview-only commands (`/jump`, `/speed`, `/move_player_to`, the debug dumps) stay preview-only.
 
 **The loopback console.** Every native build, the headless client mode included, carries a JSON-RPC
