@@ -880,6 +880,17 @@ pub(crate) mod test_support {
         .unwrap()
     }
 
+    /// The asset kind a sale through `execution` (`store`, `order`, `bid`,
+    /// `trade`) carries: a store sale issues the token, a bid's sells it to
+    /// the bidder, the others fill an order.
+    pub fn asset_kind(execution: &str) -> &'static str {
+        match execution {
+            "store" => "mint",
+            "bid" => "bid",
+            _ => "order",
+        }
+    }
+
     /// One priced sale of one asset, as the fold writes it.
     #[derive(Clone, Debug)]
     pub struct Sale {

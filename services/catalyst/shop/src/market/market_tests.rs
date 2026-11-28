@@ -463,11 +463,7 @@ fn signal_sale(
         ordinal: 0,
         time,
         execution,
-        kind: match execution {
-            "store" => "mint",
-            "bid" => "bid",
-            _ => "order",
-        },
+        kind: super::sale_fold::test_support::asset_kind(execution),
         contract: contract.to_string(),
         item_id: Some(item.to_string()),
         token_id: Some(block.to_string()),
@@ -8544,6 +8540,281 @@ async fn a_creators_ranking_follows_the_sales_history() {
     pool.close().await;
 }
 
+/// A ranking memoized from a later publication never answers an earlier
+/// snapshot: the memo is filed under each network's published height, so a
+/// snapshot that admits one sale ranks its own sales (below the floor) even
+/// after a request on the advanced publication filled the memo with six.
+#[tokio::test]
+async fn a_creators_ranking_never_reads_past_its_snapshots_publication() {
+    let up = FakeGraph::new();
+    let Some((pool, state, polygon)) = owned_polygon_market(&up).await else {
+        return;
+    };
+    for i in 1..=10 {
+        seed_item_row(&pool, &polygon, &i.to_string(), CREATOR).await;
+    }
+    sqlx::query("UPDATE shop.items SET search_is_collection_approved = true")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE shop.sale_publication SET block_number = 1 WHERE network = 'matic'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    let mut early = super::items::priced_preflight(&state, None).await.unwrap();
+    let published = super::trending_sales::published(&state, &mut early.tx)
+        .await
+        .unwrap();
+    assert_eq!(published.sales(&mut early.tx, 30).await.unwrap().len(), 1);
+    for block in 2..=6 {
+        let sale = signal_sale(
+            super::chain_walk::ChainNet::Matic,
+            block,
+            chrono::Utc::now().timestamp() - 60,
+            "store",
+            &polygon,
+            "1",
+            "1000000000000000000",
+        );
+        super::sale_fold::test_support::insert(&pool, &sale).await;
+    }
+    // The same generation, advanced: an append-only publication.
+    sqlx::query("UPDATE shop.sale_publication SET block_number = 6 WHERE network = 'matic'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    let (status, warm) = get(market_router(state.clone()), "/v3/catalog/creators?days=30").await;
+    assert_eq!(status, StatusCode::OK, "{warm}");
+    assert_eq!(warm["data"][0]["sales"], 6, "{warm}");
+    let mut held = Some(early);
+    let ranked = super::shop::top_creators(
+        &state,
+        &mut held,
+        None,
+        Some(30),
+        super::shop::CreatorSales::Published(&published),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    assert!(
+        ranked.is_empty(),
+        "one sale in the snapshot's publication, below the floor: {ranked:?}"
+    );
+    drop(held);
+    drop(state);
+    pool.close().await;
+}
+
+/// Sets Polygon's sales publication to expire `secs` from now, and returns
+/// a transaction holding `table` under an exclusive lock with its backend.
+async fn expiring_publication_and_lock(
+    pool: &PgPool,
+    secs: i64,
+    table: &str,
+) -> (sqlx::Transaction<'static, sqlx::Postgres>, i32) {
+    sqlx::query(
+        "UPDATE shop.sale_publication \
+         SET published_at = timezone('UTC', clock_timestamp()) - interval '30 minutes' + make_interval(secs => $1) \
+         WHERE network = 'matic'",
+    )
+    .bind(secs as f64)
+    .execute(pool)
+    .await
+    .unwrap();
+    let mut lock = pool.begin().await.unwrap();
+    sqlx::query(sqlx::AssertSqlSafe(format!(
+        "LOCK TABLE {table} IN ACCESS EXCLUSIVE MODE"
+    )))
+    .execute(&mut *lock)
+    .await
+    .unwrap();
+    let pid: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
+        .fetch_one(&mut *lock)
+        .await
+        .unwrap();
+    (lock, pid)
+}
+
+/// The query a request blocked on `holder`'s lock is running.
+async fn blocked_query(pool: &PgPool, holder: i32) -> String {
+    tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            let query: Option<String> = sqlx::query_scalar(
+                "SELECT query FROM pg_stat_activity WHERE $1 = ANY(pg_blocking_pids(pid)) LIMIT 1",
+            )
+            .bind(holder)
+            .fetch_optional(pool)
+            .await
+            .unwrap();
+            if let Some(query) = query {
+                break query;
+            }
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .expect("a request waits on the lock")
+}
+
+/// A ranking answers only while the sales history its snapshot took is
+/// published: a warm creators request whose publication expires while it
+/// waits answers `503 sales-index`, and so does a trending page, the
+/// `/v1/trendings` rail or a suggested floor whose listing read, after the
+/// signal read, waits past the deadline.
+#[tokio::test]
+async fn a_trending_answer_refuses_once_its_publication_expires() {
+    let up = FakeGraph::new();
+    let Some((pool, state, _)) = owned_polygon_market(&up).await else {
+        return;
+    };
+    let creators = "/v3/catalog/creators?days=30";
+    let (status, body) = get(market_router(state.clone()), creators).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let refused = |(status, body): (StatusCode, Value)| {
+        assert_eq!(
+            (status, body["source"].as_str()),
+            (StatusCode::SERVICE_UNAVAILABLE, Some("sales-index")),
+            "{body}"
+        );
+    };
+
+    // Warm: the request waits on the publication's own read.
+    let (lock, pid) = expiring_publication_and_lock(&pool, 2, "shop.sale_publication").await;
+    let call = tokio::spawn(get(market_router(state.clone()), creators));
+    blocked_query(&pool, pid).await;
+    tokio::time::sleep(Duration::from_millis(2100)).await;
+    lock.rollback().await.unwrap();
+    refused(call.await.unwrap());
+    refused(get(market_router(state.clone()), creators).await);
+
+    // After the signal: each page's listing read waits.
+    for page in [
+        "/v3/catalog/trending?first=3",
+        "/v1/trendings",
+        "/v3/catalog/suggested?first=2",
+    ] {
+        super::sale_fold::test_support::publish(&pool, super::chain_walk::ChainNet::Matic, 100)
+            .await;
+        let (status, body) = get(market_router(state.clone()), page).await;
+        assert_eq!(status, StatusCode::OK, "{page}: {body}");
+        let (lock, pid) = expiring_publication_and_lock(&pool, 2, "shop.trades").await;
+        let call = tokio::spawn(get(market_router(state.clone()), page));
+        let query = blocked_query(&pool, pid).await;
+        assert!(
+            !query.contains("sale_publication") && !query.contains("sale_execution"),
+            "{page}: {query}"
+        );
+        tokio::time::sleep(Duration::from_millis(2100)).await;
+        lock.rollback().await.unwrap();
+        refused(call.await.unwrap());
+    }
+    drop(state);
+    pool.close().await;
+}
+
+/// Where the node serves the mainnet sales index the trending readers take
+/// the published sales history; elsewhere (the index off, or a testnet) they
+/// keep the collections subgraphs' `sales`, which need both readers, as
+/// before. The history holds one sale of the item; each subgraph reader
+/// (both on one fake) answers three, six in all, so `trendingSales` says
+/// which signal answered.
+#[tokio::test]
+async fn the_trending_signal_is_native_only_where_the_sales_index_serves() {
+    let up = FakeGraph::new();
+    let Some((pool, native, polygon)) = owned_polygon_market(&up).await else {
+        return;
+    };
+    let now_s = chrono::Utc::now().timestamp();
+    up.set(
+        "sales",
+        (1..=3)
+            .map(|i| {
+                json!({
+                    "id": format!("sale-{i}"), "searchItemId": "0", "searchContractAddress": polygon,
+                    "price": "1000000000000000000", "timestamp": (now_s - 60 * i).to_string(),
+                    "type": "mint", "seller": CREATOR, "buyer": WALLET_A,
+                    "item": { "id": format!("{polygon}-0"), "creator": CREATOR }
+                })
+            })
+            .collect(),
+    );
+    let sales_asked = || {
+        up.requests
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|entity| entity.as_str() == "sales")
+            .count()
+    };
+    let over = |settings: Settings| {
+        let state = Arc::new(super::MarketplaceState::new(
+            pool.clone(),
+            crate::http::Outbound::for_tests(),
+            settings,
+        ));
+        state.test_allow_loopback.store(true, Ordering::Relaxed);
+        state
+    };
+    let trending_sales = |body: &Value| body["data"][0]["trendingSales"].as_i64();
+    let routes = [
+        "/v1/trendings",
+        "/v3/catalog/trending?first=3",
+        "/v3/catalog/creators",
+        "/v3/catalog/suggested?first=2",
+        "/v3/catalog/suggest?search=item",
+    ];
+
+    // A walking mainnet node: the history, no subgraph call.
+    for uri in routes {
+        let (status, body) = get(market_router(native.clone()), uri).await;
+        assert_eq!(status, StatusCode::OK, "{uri}: {body}");
+    }
+    let (_, body) = get(market_router(native.clone()), routes[1]).await;
+    assert_eq!(trending_sales(&body), Some(1), "{body}");
+    assert_eq!(sales_asked(), 0);
+
+    // The sales index off: the subgraph reader, on every route.
+    let mut off = native.settings.clone();
+    off.market.indexes.sales_enabled = false;
+    let off = over(off);
+    for uri in routes {
+        let (status, body) = get(market_router(off.clone()), uri).await;
+        assert_eq!(status, StatusCode::OK, "{uri}: {body}");
+    }
+    let (_, body) = get(market_router(off.clone()), routes[1]).await;
+    assert_eq!(trending_sales(&body), Some(6), "{body}");
+    let (_, body) = get(market_router(off.clone()), routes[0]).await;
+    assert_eq!(body["data"][0]["id"], format!("{polygon}-0"), "{body}");
+    assert!(sales_asked() > 0);
+
+    // A testnet with the index on: still the subgraph reader's signal.
+    let mut sepolia = native.settings.clone();
+    sepolia.eth_network = "sepolia".into();
+    assert!(!super::trending_sales::native(&over(sepolia)));
+
+    // Without the index and with a subgraph unset, the routes refuse as before.
+    let mut unset = off.settings.clone();
+    unset.matic_collections_subgraph_url = None;
+    let unset = over(unset);
+    for uri in [routes[0], routes[1], routes[3]] {
+        let (status, body) = get(market_router(unset.clone()), uri).await;
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{uri}: {body}");
+        assert_eq!(
+            body["source"], "collections-subgraph:matic",
+            "{uri}: {body}"
+        );
+    }
+    // The creators route's own refusal for its reader, as before.
+    let (status, body) = get(market_router(unset.clone()), routes[2]).await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body}");
+    assert_eq!(body["message"], "upstream reader unavailable", "{body}");
+    let (status, body) = get(market_router(unset.clone()), routes[4]).await;
+    assert_eq!(status, StatusCode::OK, "the tiebreak drops: {body}");
+    drop((native, off, unset));
+    pool.close().await;
+}
+
 /// The trending readers never wait on a stalled graph: their signal is the
 /// sales history. An unpublished catalogue still refuses first.
 #[tokio::test]
@@ -8820,12 +9091,25 @@ async fn a_page_is_stamped_with_the_copy_it_was_read_from() {
     held.rollback().await.unwrap();
     let (status, body) = task.await.unwrap();
     assert_eq!(status, StatusCode::OK, "{body}");
-    assert_ne!(body["data"][0]["name"], "after", "{body}");
+    let names: Vec<&Value> = body["data"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|r| &r["name"])
+        .collect();
+    assert!(!names.is_empty(), "{body}");
+    assert!(
+        names.iter().all(|n| *n == "Item"),
+        "the rows the snapshot read: {body}"
+    );
     let stamp = chrono::DateTime::parse_from_rfc3339(body["as_of"].as_str().unwrap())
         .unwrap()
         .timestamp_millis();
     assert_eq!(stamp, expected.and_utc().timestamp_millis(), "{body}");
-    assert!(expected <= old, "the page's copy is the one it read");
+    assert_eq!(
+        expected, old,
+        "Polygon's publication as the snapshot took it stamps the page"
+    );
     drop(state);
     pool.close().await;
 }

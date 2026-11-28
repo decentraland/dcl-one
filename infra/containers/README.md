@@ -281,6 +281,11 @@ lets it walk from block 15,202,000. Polygon accounts and creator rankings return
 until the collections and sales indexes publish their required history. Polygon accounts also require
 a fresh committee fold covering the published sales block. To warm the walks ahead of the API upgrade,
 enable the switches on the index worker and wait for the required publications before rolling out the sales readers.
+On a mainnet node with `MARKETPLACE_SALES_INDEX_ENABLED`, `/v1/trendings`, `/v3/catalog/trending`, `/v3/catalog/creators`
+and `/v3/catalog/suggested` take their sales signal from the sales index. They return HTTP 503 `sales-index` until both
+networks' sales publications are fresh, and whenever either goes stale; `/v3/catalog/suggest` answers without its
+collection tiebreak meanwhile. Wait for both publications before enabling the switch on the API. A node with the sales
+index off, or on Sepolia, keeps reading these routes from the collections subgraphs, as before.
 On a populated ledger, prebuild `collection_event_creatorship_position_idx` with
 `CREATE INDEX CONCURRENTLY` before running `catalyst schema migrate`. See the sales-read
 index procedure in `DATABASE.md`.

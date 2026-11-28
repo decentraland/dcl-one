@@ -232,6 +232,26 @@ pub(crate) fn enabled(state: &MarketplaceState) -> bool {
             == Some(crate::shared::network::ChainPair::Mainnet)
 }
 
+/// `503 sales-index` unless this node serves the mainnet sales index.
+pub(crate) fn require_enabled(state: &MarketplaceState) -> Result<(), Response> {
+    if enabled(state) {
+        Ok(())
+    } else {
+        Err(unavailable(
+            Source::SalesIndex,
+            "the mainnet sales index is disabled",
+        ))
+    }
+}
+
+/// The refusal of a read whose networks lack a valid, fresh publication.
+pub(crate) fn no_fresh_publication() -> Response {
+    unavailable(
+        Source::SalesIndex,
+        "the requested sales history has no fresh publication",
+    )
+}
+
 pub(crate) async fn snapshot(
     state: &MarketplaceState,
     network: Option<Network>,
@@ -241,22 +261,12 @@ pub(crate) async fn snapshot(
         Some(Network::Matic) => &[ChainNet::Matic],
         None => &ChainNet::ALL,
     };
-    if !enabled(state) {
-        return Err(unavailable(
-            Source::SalesIndex,
-            "the mainnet sales index is disabled",
-        ));
-    }
+    require_enabled(state)?;
     let now = Utc::now();
     let snap = sale_fold::snapshot(&state.pool, nets, now)
         .await
         .map_err(db_error)?
-        .ok_or_else(|| {
-            unavailable(
-                Source::SalesIndex,
-                "the requested sales history has no fresh publication",
-            )
-        })?;
+        .ok_or_else(no_fresh_publication)?;
     Ok((snap, nets))
 }
 

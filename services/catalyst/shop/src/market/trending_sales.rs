@@ -3,19 +3,35 @@
 //! `shop.sale_asset`) on the caller's own snapshot.
 //!
 //! The rows are those the collections subgraphs' `sales` held, read their
-//! way: a sale of a catalogue item (an item id: no LAND, estate or NAME) at
-//! a positive MANA price, through the CollectionStore (`mint`), a legacy
-//! marketplace order or a bid; the window starts after midnight UTC `days`
-//! ago; each network gives its newest [`TRENDING_SALES_LIMIT`], latest log
-//! first within a block, Ethereum's before Polygon's. The off-chain
-//! marketplace's trades, which those subgraphs never indexed, are left out.
+//! way: a sale of a catalogue item (no LAND, estate or NAME) at a positive
+//! MANA price, through the CollectionStore (`mint`), a legacy marketplace
+//! order or a bid; the window starts after midnight UTC `days` ago; each
+//! network gives its newest [`TRENDING_SALES_LIMIT`], latest log first
+//! within a block, Ethereum's before Polygon's. The off-chain marketplace's
+//! trades, which those subgraphs never indexed, are left out.
+//!
+//! An Ethereum v1 resale carries a token ID, not an item ID, in the ledger.
+//! Its item is the chain-1 catalogue item named by the token's latest
+//! `Issue` at or before the sale (the collection's URN and the Issue's
+//! wearable ID), as the historical holdings read it; a sale whose item
+//! that names none is not counted.
+//!
+//! A route checks the publications' deadline again when it answers
+//! ([`Published::ensure_fresh`]), after whatever it read on the signal.
+//!
+//! That is the signal of a node that serves the mainnet sales index
+//! ([`native`]). Elsewhere (a testnet, or the index off) the routes keep the
+//! collections subgraphs' `sales` ([`subgraph_sales`]: both readers needed,
+//! 10 min, the same window, cap and order), read with no connection held
+//! before their page's read, as before.
 
 use axum::response::Response;
 use chrono::{DateTime, Utc};
+use serde_json::{Value, json};
 use sqlx::PgConnection;
 
 use super::chain_walk::ChainNet;
-use super::{MarketplaceState, Source, listings, readers, sale_fold, sale_reads, unavailable};
+use super::{MarketplaceState, listings, readers, sale_fold, sale_reads};
 
 /// The rows each network gives at most, newest first.
 pub const TRENDING_SALES_LIMIT: i64 = 1000;
@@ -41,14 +57,26 @@ impl SignalSale {
     }
 }
 
-const RECENT_SALES: &str = "SELECT a.contract_address, a.item_id::text AS item_id, a.price::text AS price, i.creator \
+const RECENT_SALES: &str = "SELECT a.contract_address, coalesce(a.item_id, v1.item_id)::text AS item_id, \
+         a.price::text AS price, coalesce(i.creator, v1.creator) AS creator \
      FROM shop.sale_execution e \
      JOIN shop.sale_asset a USING (network, block_number, log_index) \
      LEFT JOIN shop.items i ON (i.network, i.contract_address, i.item_id) = (a.network, a.contract_address, a.item_id) \
        AND i.chain_id = $5 \
+     LEFT JOIN LATERAL ( \
+         SELECT issue.detail FROM shop.nft_event issue \
+         WHERE a.item_id IS NULL AND a.token_id IS NOT NULL \
+           AND (issue.network, issue.contract_address, issue.token_id) = (a.network, a.contract_address, a.token_id) \
+           AND issue.kind = 'issue_v1' AND (issue.block_number, issue.log_index) <= (a.block_number, a.log_index) \
+         ORDER BY issue.block_number DESC, issue.log_index DESC LIMIT 1 \
+     ) issue ON true \
+     LEFT JOIN shop.collections co ON issue.detail IS NOT NULL \
+       AND (co.network, co.contract_address) = (a.network, a.contract_address) AND co.chain_id = $5 \
+     LEFT JOIN shop.items v1 ON (v1.network, v1.contract_address) = (a.network, a.contract_address) \
+       AND v1.chain_id = $5 AND v1.urn = co.urn || ':' || issue.detail \
      WHERE e.network = $1 AND e.block_number <= $2 AND e.block_time > $3 \
        AND e.kind IN ('store', 'order', 'bid') \
-       AND a.item_id IS NOT NULL AND a.price > 0 AND a.currency = $4 \
+       AND coalesce(a.item_id, v1.item_id) IS NOT NULL AND a.price > 0 AND a.currency = $4 \
      ORDER BY e.block_time DESC, e.block_number DESC, e.log_index DESC, a.ordinal DESC \
      LIMIT $6";
 
@@ -60,26 +88,44 @@ pub struct Published {
 }
 
 impl Published {
-    /// The published histories' identity, for a memo of what they rank: it
-    /// holds across append-only advances and changes when history is
-    /// replaced.
+    /// The published histories as this snapshot took them, for a memo of
+    /// what they rank: each network's height and generation, so neither an
+    /// advance nor a replaced history serves a ranking of other sales.
     pub fn key(&self) -> String {
         self.nets
             .iter()
-            .map(|(net, p)| format!("{}={}", net.db_name(), p.generation))
+            .map(|(net, p)| format!("{}={}@{}", net.db_name(), p.generation, p.through))
             .collect::<Vec<_>>()
             .join(",")
     }
 
+    /// `503 sales-index` once a publication this snapshot took has expired:
+    /// a route checks it when it answers, after everything it read on the
+    /// signal, a memoized answer included.
+    pub fn ensure_fresh(&self) -> Result<(), Response> {
+        sale_reads::ensure_fresh(self.deadline)
+    }
+
     /// The sales of the last `days` (from midnight UTC) within these
-    /// publications, read on `c`, the snapshot that took them. A publication
-    /// that expires during the read answers `503 sales-index`.
+    /// publications, read on `c`, the snapshot that took them
+    /// ([`Self::sales_since`]).
     pub async fn sales(
         &self,
         c: &mut PgConnection,
         days: i64,
     ) -> Result<Vec<SignalSale>, Response> {
-        let from = super::items::midnight_days_ago(days);
+        self.sales_since(c, super::items::midnight_days_ago(days))
+            .await
+    }
+
+    /// The sales after `from` (unix seconds) within these publications, read
+    /// on `c`, the snapshot that took them. A publication that expires
+    /// during the read answers `503 sales-index`.
+    pub async fn sales_since(
+        &self,
+        c: &mut PgConnection,
+        from: i64,
+    ) -> Result<Vec<SignalSale>, Response> {
         let mut out = Vec::new();
         for (net, published) in &self.nets {
             let rows: Vec<SignalSale> = sqlx::query_as(RECENT_SALES)
@@ -94,7 +140,7 @@ impl Published {
                 .map_err(readers::index_read_error)?;
             out.extend(rows);
         }
-        sale_reads::ensure_fresh(self.deadline)?;
+        self.ensure_fresh()?;
         Ok(out)
     }
 }
@@ -106,38 +152,102 @@ pub async fn published(
     state: &MarketplaceState,
     c: &mut PgConnection,
 ) -> Result<Published, Response> {
-    if !sale_reads::enabled(state) {
-        return Err(unavailable(
-            Source::SalesIndex,
-            "the mainnet sales index is disabled",
-        ));
-    }
+    sale_reads::require_enabled(state)?;
     let now = Utc::now();
     let mut nets = Vec::with_capacity(NETWORKS.len());
     for net in NETWORKS {
         let published = sale_fold::published(c, net, now)
             .await
             .map_err(published_error)?
-            .ok_or_else(|| {
-                unavailable(
-                    Source::SalesIndex,
-                    "the requested sales history has no fresh publication",
-                )
-            })?;
+            .ok_or_else(sale_reads::no_fresh_publication)?;
         nets.push((net, published));
     }
     let deadline = nets.iter().map(|(_, p)| p.fresh_until).min().unwrap_or(now);
-    Ok(Published { nets, deadline })
+    let published = Published { nets, deadline };
+    // The clock was read before the publication's statements, which may
+    // have waited.
+    published.ensure_fresh()?;
+    Ok(published)
 }
 
-/// The signal's sales of the last `days` on `c`: [`published`], then
+/// The signal's sales of the last `days` on `c`, with the publications to
+/// check again when the route answers: [`published`], then
 /// [`Published::sales`].
 pub async fn recent(
     state: &MarketplaceState,
     c: &mut PgConnection,
     days: i64,
+) -> Result<(Published, Vec<SignalSale>), Response> {
+    let published = published(state, c).await?;
+    let sales = published.sales(c, days).await?;
+    Ok((published, sales))
+}
+
+/// Whether the signal comes from the published sales history on this node:
+/// where it serves the mainnet sales index. Elsewhere it is
+/// [`subgraph_sales`].
+pub fn native(state: &MarketplaceState) -> bool {
+    sale_reads::enabled(state)
+}
+
+/// `503 sales-index` once `published`, the native signal's publications,
+/// has expired; nothing to check for the subgraph signal.
+pub fn ensure_fresh(published: Option<&Published>) -> Result<(), Response> {
+    published.map_or(Ok(()), Published::ensure_fresh)
+}
+
+const SUBGRAPH_SALES: &str = r#"
+query recentSales($from: BigInt!, $first: Int!) {
+  sales(first: $first, orderBy: timestamp, orderDirection: desc, where: { timestamp_gt: $from }) {
+    id
+    searchItemId
+    searchContractAddress
+    price
+    timestamp
+    type
+    seller
+    buyer
+    item { id creator }
+  }
+}"#;
+
+/// The signal of a node without the mainnet sales index: the last `days`
+/// of `sales` on both collections subgraphs (each required), at most
+/// [`TRENDING_SALES_LIMIT`] per network, memoized 10 min. A row keeps an
+/// empty contract or item when the subgraph has none; the readers skip
+/// those as they did. An external call: made with no connection held.
+pub async fn subgraph_sales(
+    state: &MarketplaceState,
+    days: i64,
 ) -> Result<Vec<SignalSale>, Response> {
-    published(state, c).await?.sales(c, days).await
+    let urls = readers::require_both_collections(state)?;
+    let from = super::items::midnight_days_ago(days);
+    let mut out = Vec::new();
+    for (network, url) in urls {
+        let key = format!("sales:{}:{from}", network.db_name());
+        let data = readers::cached(state, readers::Ttl::M10, key, || async {
+            readers::query(
+                state,
+                url,
+                SUBGRAPH_SALES,
+                json!({ "from": from.to_string(), "first": TRENDING_SALES_LIMIT }),
+            )
+            .await
+        })
+        .await
+        .map_err(|e| readers::upstream_failed("/v1/trendings", &e))?;
+        out.extend(readers::rows(&data, "sales").iter().map(|sale| {
+            SignalSale {
+                contract_address: readers::str_of(sale, "searchContractAddress").to_lowercase(),
+                item_id: readers::str_of(sale, "searchItemId"),
+                price: readers::str_of(sale, "price"),
+                creator: readers::at(sale, "item/creator")
+                    .and_then(Value::as_str)
+                    .map(str::to_string),
+            }
+        }));
+    }
+    Ok(out)
 }
 
 fn published_error(error: anyhow::Error) -> Response {
@@ -152,7 +262,7 @@ fn published_error(error: anyhow::Error) -> Response {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::{BTreeMap, BTreeSet};
+    use std::collections::BTreeSet;
     use std::sync::Arc;
 
     use axum::http::StatusCode;
@@ -213,11 +323,7 @@ mod tests {
             ordinal: 0,
             time,
             execution,
-            kind: match execution {
-                "store" => "mint",
-                "bid" => "bid",
-                _ => "order",
-            },
+            kind: super::super::sale_fold::test_support::asset_kind(execution),
             contract: "0x00000000000000000000000000000000000000c1".into(),
             item_id: Some(item.into()),
             token_id: Some(format!("{block}{log}")),
@@ -228,13 +334,21 @@ mod tests {
         }
     }
 
+    /// The signal after `from`, an anchor the test computed once.
     async fn read(
         state: &MarketplaceState,
         pool: &PgPool,
-        days: i64,
+        from: i64,
     ) -> Result<Vec<SignalSale>, Response> {
         let mut c = pool.acquire().await.unwrap();
-        recent(state, &mut c, days).await
+        published(state, &mut c)
+            .await?
+            .sales_since(&mut c, from)
+            .await
+    }
+
+    fn week() -> i64 {
+        super::super::items::midnight_days_ago(7)
     }
 
     async fn refusal(r: Response) -> (StatusCode, Value) {
@@ -246,86 +360,52 @@ mod tests {
     }
 
     /// The captured `sales` of the collections subgraphs (the newest 1,000
-    /// on Polygon and 200 on Ethereum), written as the sales history holds
-    /// them, shifted so the newest is two minutes old: for each window, the
-    /// signal is the rows the subgraph query returned for it, in its order.
-    /// A sale keeps its timestamp's block; the subgraph's counter id, which
-    /// grows in log order, gives its log, so a tie on the timestamp comes
-    /// back latest log first, as the subgraph's id-descending order does.
+    /// on Polygon and 200 on Ethereum), written as the fold writes them
+    /// (`trending_parity_tests::insert_fixture_sales`: an Ethereum v1 resale
+    /// with no item ID, its token's Issue naming the item) over the seeded
+    /// catalogue: for each window, the signal is the rows the subgraph query
+    /// returned for it, in its order, a tie on the timestamp latest log first.
     #[tokio::test]
     async fn the_signal_is_the_subgraphs_sales_on_captured_fixtures() {
+        use super::super::trending_parity_tests::{
+            fixture_sales, insert_fixture_sales, seed_catalogue,
+        };
         let Some(pool) = crate::db::scratch::isolated_pool(2).await else {
             return;
         };
-        let fixtures = [
-            (
-                ChainNet::Ethereum,
-                include_str!("fixtures/trending/subgraph-sales-ethereum.json"),
-            ),
-            (
-                ChainNet::Matic,
-                include_str!("fixtures/trending/subgraph-sales-matic.json"),
-            ),
-        ]
-        .map(|(net, raw)| {
-            let v: Value = serde_json::from_str(raw).unwrap();
-            (net, v["sales"].as_array().unwrap().clone())
-        });
-        let ts = |s: &Value| s["timestamp"].as_str().unwrap().parse::<i64>().unwrap();
-        let newest = fixtures
-            .iter()
-            .flat_map(|(_, s)| s.iter().map(ts))
-            .max()
-            .unwrap();
-        let shift = Utc::now().timestamp() - 120 - newest;
-        let mut top = 0;
-        for (net, sales) in &fixtures {
-            let mut by_time: BTreeMap<i64, Vec<&Value>> = BTreeMap::new();
-            for s in sales {
-                by_time.entry(ts(s)).or_default().push(s);
-            }
-            for (block, (time, rows)) in (1i64..).zip(by_time) {
-                let mut rows = rows;
-                rows.sort_by_key(|s| s["id"].as_str().unwrap().parse::<u64>().unwrap());
-                for (log, s) in (0i32..).zip(rows) {
-                    let contract = s["searchContractAddress"].as_str().unwrap();
-                    let item = s["searchItemId"].as_str().unwrap();
-                    let execution = match s["type"].as_str().unwrap() {
-                        "mint" => "store",
-                        "bid" => "bid",
-                        _ => "order",
-                    };
-                    let mut row = sale(*net, block, log, time + shift, execution, item);
-                    row.contract = contract.into();
-                    row.price = s["price"].as_str().unwrap().into();
-                    insert(&pool, &row).await;
-                    add_item(&pool, *net, contract, item, s["creator"].as_str().unwrap()).await;
-                }
-                top = top.max(block);
-            }
-        }
+        let sales = fixture_sales();
+        seed_catalogue(&pool).await;
+        let top = insert_fixture_sales(&pool, &sales).await;
         for net in ChainNet::ALL {
             assert_eq!(publish(&pool, net, top).await, top);
         }
         let state = state(&pool, true);
         for days in [1, 7, 30, 90, 365] {
             let from = super::super::items::midnight_days_ago(days);
-            let expected: Vec<SignalSale> = fixtures
-                .iter()
-                .flat_map(|(_, sales)| {
+            let expected: Vec<SignalSale> = [ChainNet::Ethereum, ChainNet::Matic]
+                .into_iter()
+                .flat_map(|net| {
                     sales
                         .iter()
-                        .filter(|s| ts(s) + shift > from)
+                        .filter(move |s| s.net == net && s.time > from)
                         .take(1000)
                         .map(|s| SignalSale {
-                            contract_address: s["searchContractAddress"].as_str().unwrap().into(),
-                            item_id: s["searchItemId"].as_str().unwrap().into(),
-                            price: s["price"].as_str().unwrap().into(),
-                            creator: s["creator"].as_str().map(str::to_string),
+                            contract_address: s.contract.clone(),
+                            item_id: s.item.clone(),
+                            price: s.price.clone(),
+                            creator: Some(s.creator.clone()),
                         })
                 })
                 .collect();
-            let got = read(&state, &pool, days).await.unwrap();
+            if days >= 90 {
+                assert!(
+                    sales
+                        .iter()
+                        .any(|s| s.net == ChainNet::Ethereum && s.time > from),
+                    "{days} days hold Ethereum v1 resales"
+                );
+            }
+            let got = read(&state, &pool, from).await.unwrap();
             assert_eq!(got.len(), expected.len(), "{days} days");
             assert_eq!(got, expected, "{days} days");
         }
@@ -377,7 +457,7 @@ mod tests {
             publish(&pool, net, 100).await;
         }
         add_item(&pool, ChainNet::Matic, &counted[0].contract, "1", SELLER).await;
-        let got = read(&state(&pool, true), &pool, 7).await.unwrap();
+        let got = read(&state(&pool, true), &pool, from).await.unwrap();
         let items: Vec<&str> = got.iter().map(|s| s.item_id.as_str()).collect();
         assert_eq!(items, ["5", "1", "2", "3", "4"]);
         assert_eq!(
@@ -389,6 +469,87 @@ mod tests {
         pool.close().await;
     }
 
+    /// An Ethereum v1 resale counts for the chain-1 catalogue item its
+    /// token's latest Issue at or before the sale names (the collection's
+    /// URN and the Issue's wearable ID), with that item's creator. A later
+    /// Issue does not change it; an Issue naming no catalogue item, or a
+    /// token with no Issue (LAND, NAME), is not counted.
+    #[tokio::test]
+    async fn an_ethereum_v1_resale_counts_for_the_item_its_issue_names() {
+        let Some(pool) = crate::db::scratch::isolated_pool(2).await else {
+            return;
+        };
+        let contract = "0x00000000000000000000000000000000000000e1";
+        sqlx::query(
+            "INSERT INTO shop.collections (network, contract_address, chain_id, name, creator, owner, urn, is_completed, \
+                 is_approved, is_editable, minters, created_at, updated_at, reviewed_at, mirrored_at) \
+             VALUES ('ethereum', $1, 1, 'Vintage', $2, $2, 'urn:decentraland:ethereum:collections-v1:vintage', true, true, \
+                 false, ARRAY[]::text[], 1, 1, 1, timezone('UTC', now()))",
+        )
+        .bind(contract)
+        .bind(SELLER)
+        .execute(&pool)
+        .await
+        .unwrap();
+        for (item, wearable, creator) in [("7", "hat", BUYER), ("8", "cap", SELLER)] {
+            add_item(&pool, ChainNet::Ethereum, contract, item, creator).await;
+            sqlx::query(
+                "UPDATE shop.items SET item_type = 'wearable_v1', \
+                     urn = 'urn:decentraland:ethereum:collections-v1:vintage:' || $3 \
+                 WHERE network = 'ethereum' AND contract_address = $1 AND item_id = $2::text::numeric",
+            )
+            .bind(contract)
+            .bind(item)
+            .bind(wearable)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+        // Token 1 was issued as the hat; token 2 as the cap, and again as
+        // the hat after the sale; token 3 as a wearable the catalogue lacks;
+        // token 4 never.
+        for (block, token, wearable) in
+            [(1, 1, "hat"), (1, 2, "cap"), (9, 2, "hat"), (1, 3, "gone")]
+        {
+            sqlx::query(
+                "INSERT INTO shop.nft_event (network, block_number, log_index, block_time, kind, emitter, \
+                     contract_address, token_id, from_address, to_address, amount, detail, tx_hash) \
+                 VALUES ('ethereum', $1, $2, 1, 'issue_v1', $3, $3, $2, NULL, $4, $2, $5, NULL)",
+            )
+            .bind(block)
+            .bind(token)
+            .bind(contract)
+            .bind(SELLER)
+            .bind(wearable)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+        let from = week();
+        let now = Utc::now().timestamp() - 60;
+        for token in 1..=4 {
+            let mut resale = sale(ChainNet::Ethereum, 5, token, now, "order", "0");
+            resale.contract = contract.into();
+            resale.item_id = None;
+            resale.token_id = Some(token.to_string());
+            insert(&pool, &resale).await;
+        }
+        for net in ChainNet::ALL {
+            assert_eq!(publish(&pool, net, 100).await, 100);
+        }
+        let got = read(&state(&pool, true), &pool, from).await.unwrap();
+        let rows: Vec<(&str, Option<&str>)> = got
+            .iter()
+            .map(|s| (s.item_id.as_str(), s.creator.as_deref()))
+            .collect();
+        assert_eq!(
+            rows,
+            [("8", Some(SELLER)), ("7", Some(BUYER))],
+            "latest log first"
+        );
+        pool.close().await;
+    }
+
     /// Each network gives its newest 1,000, Ethereum's first; a block's
     /// sales come latest log first, a log's assets latest first.
     #[tokio::test]
@@ -396,6 +557,7 @@ mod tests {
         let Some(pool) = crate::db::scratch::isolated_pool(2).await else {
             return;
         };
+        let from = week();
         let now = Utc::now().timestamp() - 60;
         let mut rows = Vec::new();
         for i in 0..1001i64 {
@@ -423,7 +585,7 @@ mod tests {
         }
         assert_eq!(publish(&pool, ChainNet::Matic, 2000).await, 2000);
         assert_eq!(publish(&pool, ChainNet::Ethereum, 2000).await, 2000);
-        let got = read(&state(&pool, true), &pool, 7).await.unwrap();
+        let got = read(&state(&pool, true), &pool, from).await.unwrap();
         let items: Vec<&str> = got.iter().map(|s| s.item_id.as_str()).collect();
         assert_eq!(&items[..4], ["9003", "9002", "9001", "9000"]);
         assert_eq!(items.len(), 4 + 1000);
@@ -451,19 +613,19 @@ mod tests {
             body["message"].as_str().unwrap().to_string()
         };
         assert_eq!(
-            refused(read(&enabled, &pool, 7).await).await,
+            refused(read(&enabled, &pool, week()).await).await,
             "the requested sales history has no fresh publication"
         );
         publish(&pool, ChainNet::Matic, 100).await;
         assert_eq!(
-            refused(read(&enabled, &pool, 7).await).await,
+            refused(read(&enabled, &pool, week()).await).await,
             "the requested sales history has no fresh publication",
             "Polygon alone"
         );
         publish(&pool, ChainNet::Ethereum, 100).await;
-        assert_eq!(read(&enabled, &pool, 7).await.unwrap().len(), 1);
+        assert_eq!(read(&enabled, &pool, week()).await.unwrap().len(), 1);
         assert_eq!(
-            refused(read(&state(&pool, false), &pool, 7).await).await,
+            refused(read(&state(&pool, false), &pool, week()).await).await,
             "the mainnet sales index is disabled"
         );
         let mut c = pool.acquire().await.unwrap();
@@ -482,7 +644,7 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(
-            refused(read(&enabled, &pool, 7).await).await,
+            refused(read(&enabled, &pool, week()).await).await,
             "the requested sales history has no fresh publication",
             "a stale Ethereum input"
         );

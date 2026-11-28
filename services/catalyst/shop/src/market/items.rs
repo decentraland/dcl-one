@@ -8,9 +8,10 @@
 //! poller archives (`economy.price_snapshots`); without a spot younger than
 //! `price::store::SNAPSHOT_MAX_AGE` it answers the price envelope, never a
 //! price from a constant.
-//! `/v1/trendings` ranks the last week's sales, read from the published
-//! sales history on the same snapshot (`trending_sales`, at most 1,000 sales
-//! per network), and hydrates the winners through the items query.
+//! `/v1/trendings` ranks the last week's sales (`trending_sales`, at most
+//! 1,000 per network: the published sales history on the same snapshot
+//! where the node serves the mainnet sales index, else the collections
+//! subgraphs' `sales`) and hydrates the winners through the items query.
 
 use crate::types::{ASSET_TYPE_USD_PEGGED_MANA, ManaUsdRate};
 use std::collections::HashMap;
@@ -1182,23 +1183,47 @@ pub async fn get_trendings(
     let size = p.get_integer("size").unwrap_or(TRENDING_DEFAULT_SIZE);
     let include_social_emotes =
         p.get_string("includeSocialEmotes", None).as_deref() != Some("false");
+    let cache_control = [(CACHE_CONTROL, "no-cache")];
+    // Without the mainnet sales index the signal is the subgraph reader's:
+    // the gate first, on a short read, then the call with no connection
+    // held, then the read again, rechecked, for the rows.
+    let fetched = if super::trending_sales::native(&state) {
+        None
+    } else {
+        if let Err(envelope) = priced_preflight(&state, None).await {
+            return envelope;
+        }
+        if size <= 0 {
+            return (cache_control, Json(json!({ "data": [] }))).into_response();
+        }
+        match super::trending_sales::subgraph_sales(&state, TRENDING_WINDOW_DAYS).await {
+            Ok(sales) => Some(sales),
+            Err(envelope) => return envelope,
+        }
+    };
     let mut read = match priced_read(&state, None).await {
         Ok(read) => read,
         Err(envelope) => return envelope,
     };
-    let cache_control = [(CACHE_CONTROL, "no-cache")];
     if size <= 0 {
         return (cache_control, Json(json!({ "data": [] }))).into_response();
     }
-    // The sales signal, on the rows' own snapshot.
-    let sales =
-        match super::trending_sales::recent(&state, &mut read.tx, TRENDING_WINDOW_DAYS).await {
-            Ok(s) => s,
-            Err(envelope) => return envelope,
-        };
+    // The native signal, on the rows' own snapshot.
+    let (published, sales) = match fetched {
+        Some(sales) => (None, sales),
+        None => {
+            match super::trending_sales::recent(&state, &mut read.tx, TRENDING_WINDOW_DAYS).await {
+                Ok((published, sales)) => (Some(published), sales),
+                Err(envelope) => return envelope,
+            }
+        }
+    };
     let mut counts: HashMap<(String, String), i64> = HashMap::new();
     let mut order: Vec<(String, String)> = Vec::new();
     for sale in sales {
+        if sale.contract_address.is_empty() || sale.item_id.is_empty() {
+            continue;
+        }
         let key = (sale.contract_address, sale.item_id);
         if !counts.contains_key(&key) {
             order.push(key.clone());
@@ -1206,6 +1231,9 @@ pub async fn get_trendings(
         *counts.entry(key).or_insert(0) += 1;
     }
     if counts.is_empty() {
+        if let Err(envelope) = super::trending_sales::ensure_fresh(published.as_ref()) {
+            return envelope;
+        }
         return (cache_control, Json(json!({ "data": [] }))).into_response();
     }
     let filters = ItemFilters {
@@ -1224,6 +1252,10 @@ pub async fn get_trendings(
         .collect();
     let data = select_trending(&order, &counts, fetched, size);
     let _ = int_of;
+    // The page answers only while the sales it ranked are still published.
+    if let Err(envelope) = super::trending_sales::ensure_fresh(published.as_ref()) {
+        return envelope;
+    }
     (cache_control, Json(json!({ "data": data }))).into_response()
 }
 

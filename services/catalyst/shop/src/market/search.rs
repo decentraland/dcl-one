@@ -52,7 +52,7 @@ pub const CREATOR_SEARCH_MAX_LIMIT: i64 = 10;
 const CREATOR_MAX_NAMES: usize = 10;
 pub const COLLECTION_SUGGEST_DEFAULT_LIMIT: i64 = 4;
 pub const COLLECTION_SUGGEST_MAX_LIMIT: i64 = 10;
-/// The window the collections' sales tiebreak counts over (the sales reader's).
+/// The window the collections' sales tiebreak counts over.
 const COLLECTION_SALES_WINDOW_DAYS: i64 = 90;
 pub const SUGGEST_ITEMS_DEFAULT_LIMIT: i64 = 5;
 pub const SUGGEST_SECTION_MAX_LIMIT: i64 = 10;
@@ -612,25 +612,53 @@ pub async fn search_collections(
 }
 
 /// Sales per collection in the window, from the sales signal on `read`;
-/// an unavailable signal costs the tiebreak, not the answer. It reads under
-/// a savepoint, so a failed read leaves the snapshot usable.
+/// an unavailable signal costs the tiebreak, not the answer. Memoized 10
+/// minutes under the catalogue copy, as the subgraph reader's was, so a
+/// search typed key by key reads it once; a failed read is not kept. It
+/// reads under a savepoint, so a failed read leaves the snapshot usable.
 async fn collection_sales(
     state: &MarketplaceState,
     read: &mut CatalogueRead,
 ) -> HashMap<String, i64> {
+    let key = format!("suggest-collection-sales:{}", read.key());
+    if let Some(kept) = state.readers.fresh(Ttl::M10, &key)
+        && let Ok(sales) = serde_json::from_value(kept.as_ref().clone())
+    {
+        return sales;
+    }
     let mut out = HashMap::new();
     let Ok(mut savepoint) = sqlx::Connection::begin(&mut *read.tx).await else {
         return out;
     };
     match super::trending_sales::recent(state, &mut savepoint, COLLECTION_SALES_WINDOW_DAYS).await {
-        Ok(sales) => {
+        Ok((_, sales)) => {
             for sale in sales {
                 *out.entry(sale.contract_address).or_default() += 1;
             }
             let _ = savepoint.commit().await;
+            if let Ok(value) = serde_json::to_value(&out) {
+                state.readers.keep(&key, Arc::new(value));
+            }
         }
         Err(_) => {
             let _ = savepoint.rollback().await;
+        }
+    }
+    out
+}
+
+/// [`collection_sales`] on a node without the mainnet sales index: from the
+/// subgraph reader's sales, an external call made with no connection held;
+/// an unreachable reader costs the tiebreak, not the answer.
+async fn subgraph_collection_sales(state: &MarketplaceState) -> HashMap<String, i64> {
+    let mut out = HashMap::new();
+    if let Ok(sales) =
+        super::trending_sales::subgraph_sales(state, COLLECTION_SALES_WINDOW_DAYS).await
+    {
+        for sale in sales {
+            if !sale.contract_address.is_empty() {
+                *out.entry(sale.contract_address).or_default() += 1;
+            }
         }
     }
     out
@@ -678,6 +706,17 @@ pub async fn get_search_suggest(
         Ok(rate) => rate,
         Err(envelope) => return envelope,
     };
+    // Without the mainnet sales index the tiebreak is the subgraph reader's:
+    // the gate first, on a short read, so a refusal answers without waiting
+    // on the call, which runs with no connection held.
+    let fetched = if super::trending_sales::native(&state) {
+        None
+    } else {
+        if let Err(envelope) = items::priced_preflight(&state, None).await {
+            return envelope;
+        }
+        Some(subgraph_collection_sales(&state).await)
+    };
     // One snapshot answers the items and the collections (the items carry
     // prices); it is opened again, so its readiness is checked again. The
     // creator directory (a display aggregate of stated staleness, filed under
@@ -707,7 +746,10 @@ pub async fn get_search_suggest(
         break (directory, read);
     };
     read.note(&state);
-    let sales = collection_sales(&state, &mut read).await;
+    let sales = match fetched {
+        Some(sales) => sales,
+        None => collection_sales(&state, &mut read).await,
+    };
     let item_pairs = vec![
         ("search".to_string(), search.clone()),
         ("first".to_string(), items_first.to_string()),

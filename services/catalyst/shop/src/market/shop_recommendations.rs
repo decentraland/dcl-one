@@ -7,6 +7,9 @@ use crate::market::trending_sales::SignalSale;
 pub fn aggregate_sales(sales: &[SignalSale]) -> HashMap<String, SaleSignal> {
     let mut out: HashMap<String, SaleSignal> = HashMap::new();
     for sale in sales {
+        if sale.contract_address.is_empty() || sale.item_id.is_empty() {
+            continue;
+        }
         let entry = out
             .entry(format!("{}-{}", sale.contract_address, sale.item_id))
             .or_default();

@@ -13,8 +13,9 @@
 //! MANA listing uses the economy price snapshot (`items::mana_usd_rate`;
 //! the price envelope without a fresh one).
 //! `/v3/catalog/trending` and `/v3/catalog/creators` rank on the sales
-//! signal (`trending_sales`: the last days of the published sales history,
-//! at most 1000 rows per network, on the request's snapshot), so a window
+//! signal (`trending_sales`: the last days of the published sales history on
+//! the request's snapshot where the node serves the mainnet sales index, else
+//! the collections subgraphs' `sales`; at most 1000 rows per network), so a window
 //! longer than those rows cover is truncated to them, and a creator's
 //! `totalSales` is the windowed count rather than all time.
 //! `/v3/catalog/suggested` ranks the co-ownership neighbours of a wallet's
@@ -1248,30 +1249,31 @@ pub async fn trending_items(
 /// Creators ranked by windowed revenue, attributing each sale to the item's
 /// creator (the reader's `item.creator`) so primary mints count; floors keep
 /// a thin window out of a revenue ranking and a one-hit month with nothing to
-/// browse off the rail. The sales are [`trending_sales`]' over the clamped
-/// `days`, within `published` (taken on `held`), read on `held` when the
-/// ranking is not memoized.
+/// browse off the rail. The sales are the signal's over the clamped `days`
+/// ([`CreatorSales`]); the native ones are read on `held` when the ranking
+/// is not memoized.
 pub async fn top_creators(
     state: &MarketplaceState,
     held: &mut Option<CatalogueRead>,
     first: Option<i64>,
     days: Option<i64>,
-    published: &trending_sales::Published,
+    sales: CreatorSales<'_>,
 ) -> Result<Option<Vec<TopCreator>>, Response> {
     let copy = held.as_ref().expect("a request holds its read").key();
+    let published = match sales {
+        CreatorSales::Published(published) => Some(published),
+        CreatorSales::Fetched(_) => None,
+    };
     let key = top_creators_key(first, days, &copy, published);
     let first = top_creators_clamp_first(first);
     let days = top_creators_clamp_days(days);
     let min_sales = top_creators_min_sales(days);
     let value = memoized_holding(state, Ttl::M15, key, held, async move |read: &mut CatalogueRead| {
-        let sales = published.sales(&mut read.tx, days).await?;
-        let mut ranked: HashMap<String, (u128, i64)> = HashMap::new();
-        for sale in &sales {
-            let Some(creator) = sale.creator.as_deref() else { continue };
-            let entry = ranked.entry(creator.to_lowercase()).or_default();
-            entry.0 = entry.0.saturating_add(sale.wei());
-            entry.1 += 1;
-        }
+        let sales = match sales {
+            CreatorSales::Published(published) => published.sales(&mut read.tx, days).await?,
+            CreatorSales::Fetched(sales) => sales.to_vec(),
+        };
+        let ranked = creator_tally(&sales);
         let creators: Vec<String> = ranked.iter().filter(|(_, (_, sales))| *sales >= min_sales).map(|(c, _)| c.clone()).collect();
         let catalogue: Vec<(String, i64, i64)> = sqlx::query_as(
             "SELECT creator, COUNT(*)::int8 AS items, COUNT(DISTINCT contract_address)::int8 AS collections \
@@ -1305,19 +1307,45 @@ pub async fn top_creators(
     value.map(|value| creators_of(&value)).transpose()
 }
 
-/// The creators memo's key for a read of `copy` and of the `sales`
-/// histories.
+/// Windowed revenue (wei) and sale count per creator, lowercased: each sale
+/// counts for its item's creator in the catalogue; a sale of an item the
+/// catalogue lacks counts for no one.
+pub(crate) fn creator_tally(sales: &[SignalSale]) -> HashMap<String, (u128, i64)> {
+    let mut ranked: HashMap<String, (u128, i64)> = HashMap::new();
+    for sale in sales {
+        let Some(creator) = sale.creator.as_deref() else {
+            continue;
+        };
+        let entry = ranked.entry(creator.to_lowercase()).or_default();
+        entry.0 = entry.0.saturating_add(sale.wei());
+        entry.1 += 1;
+    }
+    ranked
+}
+
+/// Where a creators ranking takes its sales from.
+#[derive(Clone, Copy)]
+pub enum CreatorSales<'a> {
+    /// The native signal within these publications, read on the ranking's
+    /// own snapshot.
+    Published(&'a trending_sales::Published),
+    /// The subgraph reader's sales, fetched before the snapshot opened.
+    Fetched(&'a [SignalSale]),
+}
+
+/// The creators memo's key for a read of `copy` and, for the native
+/// signal, of the `sales` histories.
 fn top_creators_key(
     first: Option<i64>,
     days: Option<i64>,
     copy: &str,
-    sales: &trending_sales::Published,
+    sales: Option<&trending_sales::Published>,
 ) -> String {
+    let sales = sales.map(|p| format!(":{}", p.key())).unwrap_or_default();
     format!(
-        "creators:{}:{}:{copy}:{}",
+        "creators:{}:{}:{copy}{sales}",
         top_creators_clamp_first(first),
         top_creators_clamp_days(days),
-        sales.key()
     )
 }
 
@@ -1494,14 +1522,32 @@ pub async fn get_trending_catalog(
         Ok(rate) => rate,
         Err(envelope) => return envelope,
     };
+    // Without the mainnet sales index the signal is the subgraph reader's:
+    // unavailable trades refuse first, then the call runs with no
+    // connection held, and the page checks again on its own read.
+    let fetched = if trending_sales::native(&state) {
+        None
+    } else {
+        match priced_preflight(&state, None).await {
+            Ok(read) => drop(read),
+            Err(r) => return r,
+        }
+        match trending_sales::subgraph_sales(&state, days).await {
+            Ok(sales) => Some(sales),
+            Err(r) => return r,
+        }
+    };
     let mut read = match priced_read(&state, None).await {
         Ok(read) => read,
         Err(r) => return r,
     };
-    // The sales signal and the page on one snapshot.
-    let sales = match trending_sales::recent(&state, &mut read.tx, days).await {
-        Ok(sales) => sales,
-        Err(r) => return r,
+    // The native signal and the page on one snapshot.
+    let (published, sales) = match fetched {
+        Some(sales) => (None, sales),
+        None => match trending_sales::recent(&state, &mut read.tx, days).await {
+            Ok((published, sales)) => (Some(published), sales),
+            Err(r) => return r,
+        },
     };
     let data = trending_items(&state, &mut read, Some(first), &sales, &req.filters, rate).await;
     let sources = read.sources();
@@ -1513,6 +1559,10 @@ pub async fn get_trending_catalog(
         Err(e) => return e.into_response(),
     };
     let directory = directory_snapshot(&state, &sources).await;
+    // The page answers only while the sales it ranked are still published.
+    if let Err(r) = trending_sales::ensure_fresh(published.as_ref()) {
+        return r;
+    }
     with_creator_profiles(&state, body, directory.as_deref())
 }
 
@@ -1651,28 +1701,59 @@ pub async fn get_suggested_catalog(
         Ok(rows) => rows,
         Err(r) => return r,
     };
-    let personalized = !data.is_empty();
+    let mut personalized = !data.is_empty();
+    let mut signal = None;
     if data.len() < limit {
-        // The trending floor, from the sales signal on the same snapshot.
-        let sales =
+        let sales = if trending_sales::native(&state) {
+            // The trending floor, from the sales signal on the same snapshot.
             match trending_sales::recent(&state, &mut read.tx, trending_clamp_days(None)).await {
-                Ok(sales) => sales,
+                Ok((published, sales)) => {
+                    signal = Some(published);
+                    sales
+                }
+                Err(r) => return r,
+            }
+        } else {
+            // The subgraph reader's call: the read is released for it and
+            // opened again, rechecked, and the whole page, its personal rows
+            // included, is read on that one snapshot.
+            drop(read);
+            let sales =
+                match trending_sales::subgraph_sales(&state, trending_clamp_days(None)).await {
+                    Ok(sales) => sales,
+                    Err(r) => return r,
+                };
+            read = match priced_read(&state, None).await {
+                Ok(read) => read,
                 Err(r) => return r,
             };
-        let trending = match trending_items(
-            &state,
-            &mut read,
-            Some(crate::market::casts::len_i64(limit) * 2),
-            &sales,
-            &filters,
-            rate,
-        )
-        .await
-        {
-            Ok(items) => items,
-            Err(r) => return r,
+            data = match personal_on(&mut read).await {
+                Ok(rows) => rows,
+                Err(r) => return r,
+            };
+            personalized = !data.is_empty();
+            sales
         };
-        fill_with_trending(&mut data, trending, limit);
+        if data.len() < limit {
+            let trending = match trending_items(
+                &state,
+                &mut read,
+                Some(crate::market::casts::len_i64(limit) * 2),
+                &sales,
+                &filters,
+                rate,
+            )
+            .await
+            {
+                Ok(items) => items,
+                Err(r) => return r,
+            };
+            fill_with_trending(&mut data, trending, limit);
+        }
+    }
+    // A floor answers only while the sales it ranked are still published.
+    if let Err(r) = trending_sales::ensure_fresh(signal.as_ref()) {
+        return r;
     }
     // The whole page answers from this read.
     read.note(&state);
@@ -1756,16 +1837,24 @@ pub async fn get_top_creators(
     );
     // The gate, the sales publications and the ranking memo on one read: a
     // refusal or a warm ranking answers from it, and a miss ranks on it.
-    let (ranked, directory) = loop {
+    // Without the mainnet sales index a miss releases the read for the
+    // subgraph reader's call, then starts again on a new one.
+    let native = trending_sales::native(&state);
+    let mut fetched: Option<Vec<SignalSale>> = None;
+    let (ranked, directory, published) = loop {
         let mut read = match priced_preflight(&state, None).await {
             Ok(read) => read,
             Err(r) => return r,
         };
-        let published = match trending_sales::published(&state, &mut read.tx).await {
-            Ok(published) => published,
-            Err(r) => return r,
+        let published = if native {
+            match trending_sales::published(&state, &mut read.tx).await {
+                Ok(published) => Some(published),
+                Err(r) => return r,
+            }
+        } else {
+            None
         };
-        let key = top_creators_key(first, days, &read.key(), &published);
+        let key = top_creators_key(first, days, &read.key(), published.as_ref());
         let (stamp, sources) = (read.stamp(), read.sources());
         if let Some(value) = state.readers.fresh(Ttl::M15, &key) {
             // A warm ranking answers from this read's copy, so its stamp is
@@ -1775,23 +1864,52 @@ pub async fn get_top_creators(
             break (
                 creators_of(&value),
                 directory_snapshot(&state, &sources).await,
+                published,
             );
         }
+        let sales = match (&published, &fetched) {
+            (Some(published), _) => CreatorSales::Published(published),
+            (None, Some(sales)) => CreatorSales::Fetched(sales),
+            (None, None) => {
+                drop(read);
+                match trending_sales::subgraph_sales(&state, top_creators_clamp_days(days)).await {
+                    Ok(sales) => {
+                        fetched = Some(sales);
+                        continue;
+                    }
+                    Err(_) => {
+                        return readers::upstream_failed(
+                            "/v3/catalog/creators",
+                            "sales reader unavailable",
+                        );
+                    }
+                }
+            }
+        };
         // The ranking memo holds the read only in the request that fetches
         // it; one that waits drops it first, and starts again if that fetch
         // failed.
         let mut held = Some(read);
-        match top_creators(&state, &mut held, first, days, &published).await {
+        match top_creators(&state, &mut held, first, days, sales).await {
             Ok(Some(data)) => {
                 // Released before the directory, which may read the pool.
                 drop(held);
                 stamp.note(&state);
-                break (Ok(data), directory_snapshot(&state, &sources).await);
+                break (
+                    Ok(data),
+                    directory_snapshot(&state, &sources).await,
+                    published,
+                );
             }
             Ok(None) => continue,
             Err(r) => return r,
         }
     };
+    // A ranking, memoized or not, answers only while the sales history this
+    // request's snapshot took is still published.
+    if let Err(r) = trending_sales::ensure_fresh(published.as_ref()) {
+        return r;
+    }
     match ranked {
         Ok(mut data) => {
             let Some(directory) = directory.as_deref() else {

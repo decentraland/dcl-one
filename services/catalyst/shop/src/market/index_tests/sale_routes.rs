@@ -983,7 +983,8 @@ async fn sales_page_reads_one_published_network_and_refuses_a_withdrawn_warm_pag
                ('ethereum',$1,1,$2,'order_successful',$5,$3,42,$4,$6,1000,NULL,$7)",
     )
     .bind(v1_block)
-    .bind(1700000001i64)
+    // A minute ago: inside the trending signal's windows.
+    .bind(chrono::Utc::now().timestamp() - 60)
     .bind(CARL)
     .bind(ALICE)
     .bind(nft_index::deployments::Deployments::mainnet(net).markets[0].0)
@@ -1009,6 +1010,31 @@ async fn sales_page_reads_one_published_network_and_refuses_a_withdrawn_warm_pag
         "SELECT item_id::text FROM shop.sale_asset WHERE network='ethereum' AND block_number=$1 AND log_index=1"
     ).bind(v1_block).fetch_one(&db.pool).await.unwrap();
     assert_eq!(item_id, None);
+    // The trending signal follows the same Issue to the chain-1 catalogue
+    // item, and ranks the resale for it and for its creator.
+    {
+        let mut conn = db.pool.acquire().await.unwrap();
+        let (_, signal) = crate::market::trending_sales::recent(&state, &mut conn, 7)
+            .await
+            .unwrap();
+        let resale = crate::market::trending_sales::SignalSale {
+            contract_address: CARL.into(),
+            item_id: "9".into(),
+            price: "1000".into(),
+            creator: Some(CARL.into()),
+        };
+        assert!(signal.contains(&resale), "{signal:?}");
+        let trending = crate::market::shop::aggregate_sales(&signal);
+        assert_eq!(trending[&format!("{CARL}-9")].sales, 1);
+        // The creator's other sales in this fixture, and the resale on top.
+        let others: Vec<_> = signal.iter().filter(|s| **s != resale).cloned().collect();
+        let (wei, sales) = crate::market::shop::creator_tally(&others)
+            .get(CARL)
+            .copied()
+            .unwrap_or_default();
+        let creators = crate::market::shop::creator_tally(&signal);
+        assert_eq!(creators[CARL], (wei + 1000, sales + 1));
+    }
     sqlx::query("UPDATE shop.sale_payment SET settled=true WHERE network='ethereum' AND block_number=$1 AND log_index=1")
         .bind(v1_block).execute(&db.pool).await.unwrap();
     sqlx::query("INSERT INTO shop.sale_payout(network,block_number,log_index,payment_ordinal,ordinal,role,recipient,amount)

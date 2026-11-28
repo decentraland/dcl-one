@@ -2675,12 +2675,12 @@ A wallet-filtered sale with an unresolved seller withholds a response only when 
 
 The published sales readers use a 10-second PostgreSQL statement timeout. Recent unfiltered pages select asset keys in timestamp order and obtain the count from published daily rollups. Wallet lookups use indexes on the buyer, seller, payment beneficiary and collection item before enrichment. Filtered sales and proceeds pages cap the returned total at 5,000 or 25,000 for the requested page window. Sorting proceeds and checking unresolved seller evidence may still scan the seller's history. Seller summaries and store totals include the entire published history in scope.
 
-**The trending signal.** `/v1/trendings`, `/v3/catalog/trending`, `/v3/catalog/creators`, the trending floor of `/v3/catalog/suggested` and the collection tiebreak of `/v3/catalog/suggest` rank on recent sales read from the published history (`market::trending_sales`), on the route's own catalogue snapshot:
-- Both networks' sales publications must be valid and fresh. Otherwise the route answers `503 sales-index`, and it does the same when a publication expires during the read. The suggest tiebreak only drops.
+**The trending signal.** `/v1/trendings`, `/v3/catalog/trending`, `/v3/catalog/creators`, the trending floor of `/v3/catalog/suggested` and the collection tiebreak of `/v3/catalog/suggest` rank on recent sales. On a node that serves the mainnet sales index (`MARKETPLACE_SALES_INDEX_ENABLED` on a mainnet node) they read them from the published history (`market::trending_sales`), on the route's own catalogue snapshot, as below. Elsewhere (a testnet, or the index off) they keep the collections subgraphs' `sales`: both readers required, 10-minute memo, the same window, cap and order, read with no connection held before the page's read. So a mainnet node with every subgraph URL unset reads only the native index, and a testnet node is unchanged.
+- Both networks' sales publications must be valid and fresh. Otherwise the route answers `503 sales-index`. It checks the publications' deadline again when it answers, after the page read on the signal (a memoized ranking included), and answers the same once one has expired. The suggest tiebreak only drops.
 - Per network, Ethereum first, the read takes the newest 1,000 sales after midnight UTC `days` ago, within the published block, latest log first within a block.
-- A sale counts when it sold a catalogue item (an item id: no LAND, estate or NAME) at a positive price in the network's MANA, through the CollectionStore, a legacy order or a bid.
+- A sale counts when it sold a catalogue item (no LAND, estate or NAME) at a positive price in the network's MANA, through the CollectionStore, a legacy order or a bid. An Ethereum v1 resale has a token ID, not an item ID, in the ledger: its item is the chain-1 catalogue item named by the token's latest `Issue` at or before the sale (the collection's URN and the Issue's wearable ID), as the historical holdings read it.
 
-These are the rows the collections subgraphs' `sales` held, read their way. The off-chain marketplace's trades and NAME registration fees are left out. Each network's read walks `sale_execution_read_time` newest first and stops at the cap: on 300,000 synthetic executions over a year it took about 10 ms per network for a 7-, 90- or 365-day window. The creators ranking is memoized under the sales publications' generations as well as the catalogue copy, so a replaced history is ranked again; a warm ranking still checks the publications. The suggest tiebreak reads under a savepoint, so a failed read leaves the snapshot usable.
+These are the rows the collections subgraphs' `sales` held, read their way. The off-chain marketplace's trades and NAME registration fees are left out. These reads run on the catalogue read, under its statement bound, not the 10-second bound above. Each network's read walks `sale_execution_read_time` newest first, which leads with the time and so passes the other network's executions too, and stops at the cap. A network with fewer qualifying sales than the cap reads its whole window. On a production-shaped year (20,000 Polygon executions, trades included, and 6,000 Ethereum ones, mostly LAND and NAME), a read took 6 to 10 ms on Polygon and 1 to 17 ms on Ethereum, the widest being Ethereum over 365 days. The search suggest's tiebreak is memoized 10 minutes under the catalogue copy, as the subgraph reader's was. The creators ranking is memoized under each network's published height and generation as well as the catalogue copy, so neither an advance nor a replaced history serves a ranking of sales outside the request's snapshot; a warm ranking still checks the publications. The suggest tiebreak reads under a savepoint, so a failed read leaves the snapshot usable.
 
 `/v1/owners/top` ranks a creator's current holders using the NFT folds and current item and collection metadata. Both mainnet sales publications must be ready. The same snapshot supplies MANA spend from the published sales of the creator's items. Ethereum v1 Issue logs identify an item within its collection and Polygon v2 token IDs encode the item ID. The query aggregates and ranks holders before paging, within a five-second statement timeout. The 30-second page cache is keyed by both NFT publications, the sales generations and heights, and the metadata proofs, including native catalogue projection generations and heights. Every request rechecks the publications on its snapshot. One cold owner-ranking request can run concurrently on its own permit. `/v1/items` reads distinct pickers for the returned item IDs using `picks_item_idx`. Picks by the same wallet on multiple lists count once.
 
@@ -4051,13 +4051,14 @@ The transaction holds a pooled connection, so a reader never waits on
 anything else while it holds it:
 - pool work that reads no catalogue row runs before the transaction opens or
   after it is released; what does read the catalogue reuses the transaction;
-- a route with an external call (the EIP-1654 signer check) first opens a
+- a route with an external call (the EIP-1654 signer check, or, without the
+  mainnet sales index, the trending readers' subgraph query) first opens a
   short read for the gate, so a refusal answers at once. It then releases
   the read for the call, opens it again, checking readiness again, and reads
   the whole page on that read. The answer's `as_of` comes only from the read
   that supplied its rows;
-- the trending readers read their sales signal on the catalogue read itself
-  (see "The trending signal"). The creators ranking checks its gate, the
+- with the mainnet sales index, the trending readers read their sales signal
+  on the catalogue read itself (see "The trending signal"). The creators ranking checks its gate, the
   sales publications and its memo on one read, and ranks on that read on a
   miss;
 - a request never waits on another's memo fetch while it holds the
@@ -4216,7 +4217,8 @@ by default. The collections and items jobs mirror each network until the
 index publishes its ownership. A start or stop block override excludes
 that network from default ownership. An explicit list can keep either
 network mirrored. Both collections subgraph URLs also serve direct readers
-such as `/v1/owners`. They stay configured after the
+such as `/v1/owners` and, without the mainnet sales index, the trending
+readers. They stay configured after the
 projection takes over. Sepolia and Amoy keep both mirrors. Island and
 journey leave ownership empty and their mirrors off.
 

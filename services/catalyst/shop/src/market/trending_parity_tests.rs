@@ -25,7 +25,7 @@ use super::chain_walk::ChainNet;
 use super::{MarketplaceState, Settings, listings, market_router};
 
 /// The routes the goldens hold, each read once in this order.
-pub(super) const ROUTES: [&str; 8] = [
+const ROUTES: [&str; 8] = [
     "/v1/trendings",
     "/v1/trendings?size=40",
     "/v3/catalog/trending?first=50",
@@ -136,7 +136,7 @@ pub(super) async fn seed_catalogue(pool: &PgPool) {
         .bind(item)
         .bind(net.chain_id())
         .bind(if *net == ChainNet::Ethereum { "wearable_v1" } else { "wearable_v2" })
-        .bind(format!("urn:decentraland:{}:collections-v2:{contract}:{item}", net.db_name()))
+        .bind(item_urn(*net, contract, item))
         .bind(creator)
         .bind(&price)
         .bind(format!("Item {}-{item}", &contract[2..8]))
@@ -154,7 +154,7 @@ pub(super) async fn seed_catalogue(pool: &PgPool) {
         .bind(net.chain_id())
         .bind(if filler { format!("Filler {}", &contract[2..8]) } else { format!("Fixture {}", &contract[2..8]) })
         .bind(creator)
-        .bind(format!("urn:decentraland:{}:collections-v2:{contract}", net.db_name()))
+        .bind(collection_urn(*net, contract))
         .bind(store)
         .bind(v3)
         .execute(pool)
@@ -178,22 +178,107 @@ pub(super) async fn seed_catalogue(pool: &PgPool) {
     .unwrap();
 }
 
-/// A state over `pool` with `settings` that may call loopback stubs.
-pub(super) fn state_with(pool: &PgPool, settings: Settings) -> Arc<MarketplaceState> {
-    let state = Arc::new(MarketplaceState::new(
+/// A v1 collection's URN on Ethereum, a v2 one's on Polygon.
+fn collection_urn(net: ChainNet, contract: &str) -> String {
+    match net {
+        ChainNet::Ethereum => format!("urn:decentraland:ethereum:collections-v1:{contract}"),
+        ChainNet::Matic => format!("urn:decentraland:matic:collections-v2:{contract}"),
+    }
+}
+
+/// The wearable ID an Ethereum v1 item has in its collection (and its
+/// tokens' Issue names).
+fn wearable_id(item: &str) -> String {
+    format!("w{item}")
+}
+
+/// An item's URN: an Ethereum v1 item's is its collection's and its
+/// wearable ID, a Polygon one's its collection's and its item ID.
+fn item_urn(net: ChainNet, contract: &str, item: &str) -> String {
+    match net {
+        ChainNet::Ethereum => format!("{}:{}", collection_urn(net, contract), wearable_id(item)),
+        ChainNet::Matic => format!("{}:{item}", collection_urn(net, contract)),
+    }
+}
+
+/// Writes `sales` as the fold writes them and returns the highest block:
+/// each timestamp its block (from 2), the subgraph's counter id, which
+/// grows in log order, its log and its token. A Polygon sale carries its
+/// item ID; an Ethereum v1 resale only its token ID, and the token's Issue
+/// (block 1) names the item's wearable ID, as the chain does.
+pub(super) async fn insert_fixture_sales(pool: &PgPool, sales: &[FixtureSale]) -> i64 {
+    use super::sale_fold::test_support::{Sale, asset_kind, insert};
+    let mut top = 0;
+    for net in ChainNet::ALL {
+        let mut by_time: BTreeMap<i64, Vec<&FixtureSale>> = BTreeMap::new();
+        for s in sales.iter().filter(|s| s.net == net) {
+            by_time.entry(s.time).or_default().push(s);
+        }
+        let mut issued = 0i32;
+        for (block, (time, mut rows)) in (2i64..).zip(by_time) {
+            rows.sort_by_key(|s| s.id);
+            for (log, s) in (0i32..).zip(rows) {
+                let execution = match s.kind.as_str() {
+                    "mint" => "store",
+                    "bid" => "bid",
+                    _ => "order",
+                };
+                let v1 = net == ChainNet::Ethereum;
+                if v1 {
+                    sqlx::query(
+                        "INSERT INTO shop.nft_event (network, block_number, log_index, block_time, kind, emitter, \
+                             contract_address, token_id, from_address, to_address, amount, detail, tx_hash) \
+                         VALUES ('ethereum', 1, $1, 1, 'issue_v1', $2, $2, $3::text::numeric, NULL, $4, $3::text::numeric, $5, NULL)",
+                    )
+                    .bind(issued)
+                    .bind(&s.contract)
+                    .bind(s.id.to_string())
+                    .bind("0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")
+                    .bind(wearable_id(&s.item))
+                    .execute(pool)
+                    .await
+                    .unwrap();
+                    issued += 1;
+                }
+                insert(
+                    pool,
+                    &Sale {
+                        net,
+                        block,
+                        log,
+                        ordinal: 0,
+                        time,
+                        execution,
+                        kind: asset_kind(execution),
+                        contract: s.contract.clone(),
+                        item_id: (!v1).then(|| s.item.clone()),
+                        token_id: Some(s.id.to_string()),
+                        price: s.price.clone(),
+                        currency: None,
+                        buyer: "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb".into(),
+                        seller: (execution != "store")
+                            .then(|| "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".into()),
+                    },
+                )
+                .await;
+            }
+            top = top.max(block);
+        }
+    }
+    top
+}
+
+fn state_with(pool: &PgPool, settings: Settings) -> Arc<MarketplaceState> {
+    Arc::new(MarketplaceState::new(
         pool.clone(),
         crate::http::Outbound::for_tests(),
         settings,
-    ));
-    state
-        .test_allow_loopback
-        .store(true, std::sync::atomic::Ordering::Relaxed);
-    state
+    ))
 }
 
 /// Each route's status and body, with the read's stamp (`as_of`,
 /// `stale_after_secs`), which follows the clock, left out.
-pub(super) async fn answers(state: &Arc<MarketplaceState>) -> Value {
+async fn answers(state: &Arc<MarketplaceState>) -> Value {
     let mut out = serde_json::Map::new();
     for uri in ROUTES {
         let response = market_router(state.clone())
@@ -219,58 +304,40 @@ pub(super) async fn answers(state: &Arc<MarketplaceState>) -> Value {
 
 /// The routes answer from the sales history, with every subgraph URL unset
 /// and the collections index serving the catalogue, what the
-/// subgraph-backed readers answered on the same catalogue and sales.
+/// subgraph-backed readers answered on the same catalogue and sales. A run
+/// that crosses midnight UTC, which moves the fixtures' shift and the
+/// windows apart, runs again.
 #[tokio::test]
 async fn the_trending_readers_answer_the_subgraph_goldens() {
-    use super::sale_fold::test_support::{Sale, insert, publish};
-    let Some(pool) = crate::db::scratch::isolated_pool(4).await else {
+    let today = || chrono::Utc::now().timestamp().div_euclid(86_400);
+    for _ in 0..2 {
+        let day = today();
+        let Some(got) = goldens_run().await else {
+            return;
+        };
+        if today() != day {
+            continue;
+        }
+        let goldens: Value =
+            serde_json::from_str(include_str!("fixtures/trending/trending-goldens.json")).unwrap();
+        for uri in ROUTES {
+            assert_eq!(got[uri]["status"], 200, "{uri}: {}", got[uri]);
+            assert_eq!(got[uri], goldens["routes"][uri], "{uri}");
+        }
         return;
-    };
-    seed_catalogue(&pool).await;
-    // Each timestamp its block; the subgraph's counter id, which grows in
-    // log order, its log.
-    let sales = fixture_sales();
-    let mut top = 0;
-    for net in ChainNet::ALL {
-        let mut by_time: BTreeMap<i64, Vec<&FixtureSale>> = BTreeMap::new();
-        for s in sales.iter().filter(|s| s.net == net) {
-            by_time.entry(s.time).or_default().push(s);
-        }
-        for (block, (time, mut rows)) in (1i64..).zip(by_time) {
-            rows.sort_by_key(|s| s.id);
-            for (log, s) in (0i32..).zip(rows) {
-                let (execution, kind) = match s.kind.as_str() {
-                    "mint" => ("store", "mint"),
-                    "bid" => ("bid", "bid"),
-                    _ => ("order", "order"),
-                };
-                insert(
-                    &pool,
-                    &Sale {
-                        net,
-                        block,
-                        log,
-                        ordinal: 0,
-                        time,
-                        execution,
-                        kind,
-                        contract: s.contract.clone(),
-                        item_id: Some(s.item.clone()),
-                        token_id: Some(s.id.to_string()),
-                        price: s.price.clone(),
-                        currency: None,
-                        buyer: "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb".into(),
-                        seller: (execution != "store")
-                            .then(|| "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".into()),
-                    },
-                )
-                .await;
-            }
-            top = top.max(block);
-        }
     }
+    panic!("two runs crossed midnight UTC");
+}
+
+async fn goldens_run() -> Option<Value> {
+    let pool = crate::db::scratch::isolated_pool(4).await?;
+    seed_catalogue(&pool).await;
+    let top = insert_fixture_sales(&pool, &fixture_sales()).await;
     for net in ChainNet::ALL {
-        assert_eq!(publish(&pool, net, top).await, top);
+        assert_eq!(
+            super::sale_fold::test_support::publish(&pool, net, top).await,
+            top
+        );
     }
     super::trade_events::tests::publish_cursors(&pool).await;
     // With no subgraph, the collections index serves both networks'
@@ -287,11 +354,6 @@ async fn the_trending_readers_answer_the_subgraph_goldens() {
     assert!(settings.matic_collections_subgraph_url.is_none());
     assert!(settings.marketplace_subgraph_url.is_none());
     let got = answers(&state_with(&pool, settings)).await;
-    let goldens: Value =
-        serde_json::from_str(include_str!("fixtures/trending/trending-goldens.json")).unwrap();
-    for uri in ROUTES {
-        assert_eq!(got[uri]["status"], 200, "{uri}: {}", got[uri]);
-        assert_eq!(got[uri], goldens["routes"][uri], "{uri}");
-    }
     pool.close().await;
+    Some(got)
 }
