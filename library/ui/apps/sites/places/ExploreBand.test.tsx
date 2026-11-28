@@ -68,11 +68,18 @@ describe('ExploreBand', () => {
     beforeEach(() => {
       mount()
       const [select] = screen.getAllByRole('combobox', { name: 'Category' })
-      fireEvent.change(select!, { target: { value: 'music' } })
+      fireEvent.click(select!)
+      fireEvent.click(screen.getByRole('option', { name: 'Music' }))
     })
 
     it('should hand the category to the host', () => {
       expect(onCategory).toHaveBeenCalledWith('music')
+    })
+
+    it('should draw the category as the shared dark Dropdown', () => {
+      const [select] = screen.getAllByRole('combobox', { name: 'Category' })
+      expect(select!.tagName).toBe('BUTTON')
+      expect(select!.closest('[data-variant]')).toHaveAttribute('data-variant', 'dark')
     })
   })
 
@@ -129,13 +136,26 @@ describe('ExploreBand', () => {
     describe('and picks a category in it', () => {
       beforeEach(() => {
         const drawer = screen.getByRole('dialog', { name: 'Filters' })
-        fireEvent.change(within(drawer).getByRole('combobox', { name: 'Category' }), {
-          target: { value: 'music' }
-        })
+        fireEvent.click(within(drawer).getByRole('combobox', { name: 'Category' }))
+        fireEvent.click(within(drawer).getByRole('option', { name: 'Music' }))
       })
 
       it('should hand the category to the host', () => {
         expect(onCategory).toHaveBeenCalledWith('music')
+      })
+    })
+
+    describe('and presses Escape while its category list is open', () => {
+      beforeEach(() => {
+        const drawer = screen.getByRole('dialog', { name: 'Filters' })
+        fireEvent.click(within(drawer).getByRole('combobox', { name: 'Category' }))
+        fireEvent.keyDown(document.activeElement ?? document.body, { key: 'Escape' })
+      })
+
+      it('should close the list without a choice and keep the drawer open', () => {
+        expect(screen.queryByRole('listbox')).toBeNull()
+        expect(screen.getByRole('dialog', { name: 'Filters' })).toBeInTheDocument()
+        expect(onCategory).not.toHaveBeenCalled()
       })
     })
 
