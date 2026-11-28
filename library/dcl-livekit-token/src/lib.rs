@@ -3,6 +3,12 @@
 //! catalyst node (comms, worlds, social) and dcl-scene-cli's preview; neither
 //! links a LiveKit SDK for this. Which grant a caller gets is policy and stays
 //! with the caller.
+#![deny(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    clippy::cast_possible_wrap,
+    clippy::cast_precision_loss
+)]
 
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 

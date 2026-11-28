@@ -46,6 +46,12 @@
 //! points, the source-path SDK chunk (a non-prebuilt `@dcl/sdk` is refused) and
 //! the node data-layer `main.crdt` fallback (reported as
 //! [`MainCrdt::Unsupported`]).
+#![deny(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    clippy::cast_possible_wrap,
+    clippy::cast_precision_loss
+)]
 
 use anyhow::{Context, Result, anyhow, bail};
 use dcl_scene_authoring::composite_norm::CompositeNormalizer;

@@ -1,3 +1,10 @@
+#![deny(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    clippy::cast_possible_wrap,
+    clippy::cast_precision_loss
+)]
+
 pub mod config;
 /// The wire types, defined once in dcl-preview-tunnel-protocol so this relay
 /// and every agent (dcl-scene-cli included) can never drift out of sync with
