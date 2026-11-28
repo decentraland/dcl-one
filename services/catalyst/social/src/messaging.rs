@@ -576,7 +576,9 @@ fn definite_commit_rollback(error: &sqlx::Error) -> bool {
     error
         .as_database_error()
         .and_then(|db| db.code())
-        .is_some_and(|code| code.starts_with("23") || matches!(code.as_ref(), "40001" | "40P01"))
+        .is_some_and(|code| {
+            code.starts_with("23") || matches!(code.as_ref(), "40001" | "40P01" | "P0001")
+        })
 }
 
 #[cfg(test)]
@@ -607,6 +609,13 @@ async fn claim_from_stock(
     #[cfg(test)] mut probe: Option<ClaimProbe>,
 ) -> Result<Option<ClaimedPackage>, ApiError> {
     let slot = ClaimSlot::take(&owner).ok_or_else(claim_rate_limited)?;
+    // Keep the immediate refusal even when the pool is busy. The task
+    // still reserves both budgets after checkout because overflow is shared.
+    if CLAIMS_OF_OWNER.is_rate_limited(&owner)
+        || CLAIMS_OF_PAIR.is_rate_limited(&claim_pair(&claimer, &owner))
+    {
+        return Err(claim_rate_limited());
+    }
     let mut conn = pool.acquire().await?;
     #[cfg(test)]
     if let Some(ClaimProbe::BeforeTask(pause)) =
@@ -618,7 +627,7 @@ async fn claim_from_stock(
     // The checked-out connection bounds the number of tasks. A cancelled
     // HTTP request drops only the join handle, so the task still owns the
     // slot and reservations until the database operation finishes.
-    tokio::spawn(async move {
+    crate::shared::task::spawn_with(async move {
         let _slot = slot;
         let charge = ClaimBudget::reserve(&claimer, &owner)?;
         let mut tx = match conn.begin().await {
@@ -653,9 +662,10 @@ async fn claim_from_stock(
                 return Ok(None);
             }
             Err(error) => {
-                if tx.rollback().await.is_ok() {
-                    charge.refund();
-                }
+                // No COMMIT was sent. Even if the connection disappeared,
+                // the explicit transaction cannot consume the package.
+                let _ = tx.rollback().await;
+                charge.refund();
                 return Err(error.into());
             }
         };
@@ -1494,15 +1504,33 @@ mod tests {
         let (claimer, owner) = claim_fixture(&pool).await;
         sqlx::raw_sql(
             "CREATE FUNCTION social.test_reject_claim() RETURNS trigger LANGUAGE plpgsql AS $$
-                 BEGIN RAISE EXCEPTION 'forced rollback' USING ERRCODE = '23514'; END;
+                 BEGIN
+                     IF NEW.ciphersuite = 1 THEN
+                         RAISE EXCEPTION 'forced constraint rejection' USING ERRCODE = '23514';
+                     END IF;
+                     RAISE EXCEPTION 'forced procedural rejection';
+                 END;
              $$;
              CREATE CONSTRAINT TRIGGER test_reject_claim AFTER UPDATE
                  ON social.mls_key_packages DEFERRABLE INITIALLY DEFERRED
-                 FOR EACH ROW EXECUTE FUNCTION social.test_reject_claim();",
+                 FOR EACH ROW WHEN (NEW.consumed_at IS NOT NULL)
+                 EXECUTE FUNCTION social.test_reject_claim();",
         )
         .execute(&pool)
         .await
         .unwrap();
+        assert!(
+            claim_from_stock(&pool, claimer.clone(), owner.clone(), None)
+                .await
+                .is_err()
+        );
+        assert_claim(&pool, &claimer, &owner, 1, false).await;
+
+        sqlx::query("UPDATE social.mls_key_packages SET ciphersuite = 2 WHERE owner = $1")
+            .bind(&owner)
+            .execute(&pool)
+            .await
+            .unwrap();
         assert!(
             claim_from_stock(&pool, claimer.clone(), owner.clone(), None)
                 .await
@@ -1540,6 +1568,75 @@ mod tests {
                 .is_none()
         );
         assert_claim(&pool, &claimer, &owner, 0, false).await;
+    }
+
+    #[tokio::test]
+    async fn losing_the_connection_during_update_refunds_the_claim() {
+        let Some(pool) = crate::db::scratch::isolated_pool(4).await else {
+            eprintln!("SKIP: MLS connection loss needs CATALYST_TEST_DATABASE_URL");
+            return;
+        };
+        let (claimer, owner) = claim_fixture(&pool).await;
+        let mut blocker = pool.begin().await.unwrap();
+        sqlx::query("LOCK TABLE social.mls_key_packages IN ACCESS EXCLUSIVE MODE")
+            .execute(&mut *blocker)
+            .await
+            .unwrap();
+        let claim = tokio::spawn({
+            let (pool, claimer, owner) = (pool.clone(), claimer.clone(), owner.clone());
+            async move { claim_from_stock(&pool, claimer, owner, None).await }
+        });
+        let backend = tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                let waiting: Option<i32> = sqlx::query_scalar(
+                    "SELECT pid FROM pg_stat_activity \
+                     WHERE datname = current_database() AND wait_event_type = 'Lock' \
+                       AND query LIKE 'UPDATE social.mls_key_packages SET consumed_at%'",
+                )
+                .fetch_optional(&pool)
+                .await
+                .unwrap();
+                if let Some(pid) = waiting {
+                    break pid;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("claim reached UPDATE");
+        let terminated: bool = sqlx::query_scalar("SELECT pg_terminate_backend($1, 5000)")
+            .bind(backend)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert!(terminated);
+        assert_eq!(claim.await.unwrap().unwrap_err().code, 500);
+        blocker.rollback().await.unwrap();
+        assert_claim(&pool, &claimer, &owner, 1, false).await;
+    }
+
+    #[tokio::test]
+    async fn an_exhausted_pair_is_refused_before_checkout_on_a_busy_pool() {
+        let Some(pool) = crate::db::scratch::isolated_pool(1).await else {
+            eprintln!("SKIP: MLS checkout refusal needs CATALYST_TEST_DATABASE_URL");
+            return;
+        };
+        let (claimer, owner) = claim_fixture(&pool).await;
+        assert_eq!(
+            CLAIMS_OF_PAIR.check(&claim_pair(&claimer, &owner)),
+            RateLimitDecision::Allow
+        );
+        let held = pool.acquire().await.unwrap();
+        let refusal = tokio::time::timeout(
+            Duration::from_secs(1),
+            claim_from_stock(&pool, claimer, owner.clone(), None),
+        )
+        .await
+        .expect("refused without a connection")
+        .unwrap_err();
+        assert_eq!(refusal.code, 429);
+        assert!(!CLAIMS_OF_OWNER.is_rate_limited(&owner));
+        drop(held);
     }
 
     struct Member {
