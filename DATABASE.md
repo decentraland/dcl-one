@@ -4208,7 +4208,8 @@ by default. The collections and items jobs mirror each network until the
 index publishes its ownership. A start or stop block override excludes
 that network from default ownership. An explicit list can keep either
 network mirrored. Both collections subgraph URLs also serve direct readers
-such as `/v1/owners` and `/v1/trendings`. They stay configured after the
+such as `/v1/trendings`, and `/v1/owners` on a node that does not walk the
+NFT index. They stay configured after the
 projection takes over. Sepolia and Amoy keep both mirrors. Island and
 journey leave ownership empty and their mirrors off.
 
@@ -5377,7 +5378,8 @@ profiles and the Registry's profile batches (`/lambdas/profiles`, `POST
 /profiles`), the wearable and emote lists (`/lambdas/users/{a}/wearables`,
 `/emotes`, `/lambdas/collections/*-by-owner`), the explorer backpack,
 `/v1/users/{a}/wearables` and `/emotes`, outfits, the `/v1/orders` owner
-guard and the wearable and emote pages of `/v1/nfts`. Content deployment
+guard, the wearable and emote pages of `/v1/nfts` and, where the node walks
+the NFT index, `/v1/owners`. Content deployment
 validation does not read it: it checks ownership by RPC at the entity's block
 and `shop.usage_grants`.
 
@@ -5419,7 +5421,7 @@ commits in between is never half-seen:
   ranges in the same filter for pages and counts, using one request clock.
   Both routes emit `x-listings-owner-check: checked`.
 
-Queries, all bounded by one owner or one batch:
+Queries, all bounded by one owner, one batch or one item:
 
 - an owner's copies: `shop.nft` by `owner` (`nft_owner_idx`), joined to
   `shop.items` by `(network, contract_address, item_id)` on Polygon and to
@@ -5435,7 +5437,23 @@ Queries, all bounded by one owner or one batch:
 - the orders guard: the shared open-trades query reads ownership by the
   exact contract and token primary key and checks for newer transfers
   with the per-token event index. Readers use the published snapshot on
-  any node that serves the route.
+  any node that serves the route;
+- `/v1/owners`, one item's held copies: the item is resolved first from
+  `shop.items` and `shop.collections` by its primary key, in the scope of
+  the `/v1/nfts` collection candidates. A Polygon item's page walks the
+  primary key's token range `[item << 216, (item + 1) << 216)`. The token
+  order within an item is its issue order, so the page reads `first + skip`
+  rows instead of sorting every copy. An Ethereum v1 item's page reads its
+  collection's tokens with the item's `wearable_id`, by `issued_id`. The
+  total is the same predicate counted up to 5,000, or 25,000 for a deeper
+  window. Before reading, the snapshot needs both networks' NFT folds fresh
+  and acknowledged by their publication, and the catalogue's items proof.
+  On a lean seed (3.3M tokens, one Polygon item of 100,030 copies, one
+  40,000-token v1 collection of 20 wearables; PostgreSQL 17, warm cache),
+  the item's first page took 0.05 ms and its deepest page (`skip` 24,900)
+  6.1 ms. Its total took 1.0 ms capped at 5,000 and 4.8 ms at 25,000.
+  Ordering the same item by `issued_id` over `nft_item_idx` sorted every
+  copy in 37.5 ms. A v1 wearable's page and total took about 5.6 ms each.
 
 Measured on a seeded database (3.0M Polygon tokens over 100,000 items with a
 skewed popularity, 300,000 owners of whom 20 hold about 30,000 tokens each,
