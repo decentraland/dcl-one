@@ -699,7 +699,6 @@ fn payload<T: Serialize>(message: &T) -> Value {
     serde_json::to_value(message).unwrap_or(Value::Null)
 }
 
-#[cfg(test)]
 #[allow(
     clippy::cast_possible_truncation,
     clippy::cast_possible_wrap,
@@ -707,6 +706,7 @@ fn payload<T: Serialize>(message: &T) -> Value {
     clippy::cast_precision_loss,
     reason = "test fixtures use small literal values"
 )]
+#[cfg(test)]
 mod tests {
     use super::*;
     use alloy::signers::local::PrivateKeySigner;

@@ -257,7 +257,6 @@ pub(super) async fn record_request(request: Request<Body>, next: Next) -> Respon
     response
 }
 
-#[cfg(test)]
 #[allow(
     clippy::cast_possible_truncation,
     clippy::cast_possible_wrap,
@@ -265,6 +264,7 @@ pub(super) async fn record_request(request: Request<Body>, next: Next) -> Respon
     clippy::cast_precision_loss,
     reason = "test fixtures use small literal values"
 )]
+#[cfg(test)]
 mod tests {
     use super::super::State as RpcState;
     use super::*;

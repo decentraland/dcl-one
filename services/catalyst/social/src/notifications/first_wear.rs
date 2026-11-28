@@ -977,7 +977,6 @@ mod tests {
     }
 }
 
-#[cfg(test)]
 #[allow(
     clippy::cast_possible_truncation,
     clippy::cast_possible_wrap,
@@ -985,6 +984,7 @@ mod tests {
     clippy::cast_precision_loss,
     reason = "test fixtures use small literal values"
 )]
+#[cfg(test)]
 mod pg_tests {
     use super::*;
     use crate::notifications::store::test_support::*;

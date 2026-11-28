@@ -20,7 +20,6 @@ pub mod intervals;
 pub mod sink;
 pub mod sweeper;
 
-#[cfg(test)]
 #[allow(
     clippy::cast_possible_truncation,
     clippy::cast_possible_wrap,
@@ -28,6 +27,7 @@ pub mod sweeper;
     clippy::cast_precision_loss,
     reason = "test fixtures use small literal values"
 )]
+#[cfg(test)]
 mod tests;
 
 use std::collections::{HashMap, HashSet};

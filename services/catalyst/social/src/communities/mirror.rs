@@ -687,7 +687,6 @@ fn pass_failed(out: &PassOutcome) -> bool {
     !out.fetched_all && !out.cancelled
 }
 
-#[cfg(test)]
 #[allow(
     clippy::cast_possible_truncation,
     clippy::cast_possible_wrap,
@@ -695,4 +694,5 @@ fn pass_failed(out: &PassOutcome) -> bool {
     clippy::cast_precision_loss,
     reason = "test fixtures use small literal values"
 )]
+#[cfg(test)]
 mod tests;

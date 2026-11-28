@@ -441,7 +441,6 @@ pub fn wearable_item_urn(raw: &str) -> Option<String> {
     Some(item)
 }
 
-#[cfg(test)]
 #[allow(
     clippy::cast_possible_truncation,
     clippy::cast_possible_wrap,
@@ -449,6 +448,7 @@ pub fn wearable_item_urn(raw: &str) -> Option<String> {
     clippy::cast_precision_loss,
     reason = "test fixtures use small literal values"
 )]
+#[cfg(test)]
 mod tests {
     use super::*;
 

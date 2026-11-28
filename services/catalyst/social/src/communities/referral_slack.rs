@@ -308,7 +308,6 @@ fn milestone_message(settings: &Settings, referrer: &str) -> Value {
         section("*📊 Details:*\n• Referrer has successfully invited 100 users\n• Tier milestone unlocked\n• Ready for outreach and communication\n\n*💬 Next Steps:*\n• Monitor for email submission from referrer".into()),action(settings,"primary") ]})
 }
 
-#[cfg(test)]
 #[allow(
     clippy::cast_possible_truncation,
     clippy::cast_possible_wrap,
@@ -316,6 +315,7 @@ fn milestone_message(settings: &Settings, referrer: &str) -> Value {
     clippy::cast_precision_loss,
     reason = "test fixtures use small literal values"
 )]
+#[cfg(test)]
 mod tests {
     use super::*;
     use std::sync::Arc;

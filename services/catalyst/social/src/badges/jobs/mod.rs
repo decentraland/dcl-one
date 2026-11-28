@@ -31,7 +31,6 @@ mod client_events;
 mod deployments;
 mod recount;
 mod sales;
-#[cfg(test)]
 #[allow(
     clippy::cast_possible_truncation,
     clippy::cast_possible_wrap,
@@ -39,6 +38,7 @@ mod sales;
     clippy::cast_precision_loss,
     reason = "test fixtures use small literal values"
 )]
+#[cfg(test)]
 mod tests;
 
 use std::collections::HashSet;

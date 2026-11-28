@@ -1143,7 +1143,6 @@ pub async fn add_referral_email(
     Ok(StatusCode::NO_CONTENT)
 }
 
-#[cfg(test)]
 #[allow(
     clippy::cast_possible_truncation,
     clippy::cast_possible_wrap,
@@ -1151,6 +1150,7 @@ pub async fn add_referral_email(
     clippy::cast_precision_loss,
     reason = "test fixtures use small literal values"
 )]
+#[cfg(test)]
 mod tests {
     use super::*;
 

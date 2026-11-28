@@ -322,7 +322,6 @@ pub fn router(state: SharedState) -> Router {
         .with_state(state)
 }
 
-#[cfg(test)]
 #[allow(
     clippy::cast_possible_truncation,
     clippy::cast_possible_wrap,
@@ -330,4 +329,5 @@ pub fn router(state: SharedState) -> Router {
     clippy::cast_precision_loss,
     reason = "test fixtures use small literal values"
 )]
+#[cfg(test)]
 mod tests;
