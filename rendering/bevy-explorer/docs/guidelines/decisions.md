@@ -1207,7 +1207,13 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   over a neighbour's parcels too. Each scene here has a collider set of its own, so a query is
   cut to where the scene applies: the avatar asks a scene only while its capsule touches that
   space, and a ray or a swept capsule is cast against a scene only over the stretches inside it.
-  Three consequences look like mistakes:
+  A ray is cut exactly. The avatar and a swept capsule (an `RS_AVATAR` cast) are not: while the
+  capsule touches the space it meets all of the scene's colliders, so they still act on it
+  within the capsule's width (0.6 m) outside the edge the scene is drawn to, and within its
+  height (2 m) above the height a region is drawn to. Only a collider that the whole-collider
+  test (below) leaves on can be there: one inside the rectangle around the scene's parcels, or
+  overhanging it by at most 0.2 m, and under the scene's height limit. Three consequences look
+  like mistakes:
   - A ray that comes into a scene inside a solid primitive passes through that primitive, as a
     ray does not hit what its origin is inside. Mesh colliders are surfaces, hit as usual.
   - An avatar that comes into a scene already overlapping one of its colliders, having walked

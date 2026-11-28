@@ -152,8 +152,9 @@ enum RaycastTargets {
     /// that target scene, returning entity ids for both — a known, unambiguous pair, so it can
     /// identify what it hit in the scene it's operating on.
     Pinned(Entity),
-    /// The scenes the ray crosses, with the distance at which it enters them, then global ground.
-    /// Cross-scene ids are stripped.
+    /// The scenes the cast meets, nearest first, with the distance from which each can answer,
+    /// then global ground: the scenes on a ray's line, and for the avatar's shape those its
+    /// capsule touches as well. Cross-scene ids are stripped.
     World(Vec<(Entity, f32)>),
 }
 
@@ -390,6 +391,22 @@ impl RaycastJob {
     }
 }
 
+/// The scenes a world cast asks, with the distance from which each can answer: those on its
+/// ray, and for a cast of the avatar's shape those the capsule touches beside the ray as well.
+fn world_scenes(
+    containing_scene: &ContainingScene,
+    origin: Vec3,
+    full_ray: Vec3,
+    shape: RaycastShape,
+) -> Vec<(Entity, f32)> {
+    match shape {
+        RaycastShape::RsRay => containing_scene.get_ray(origin, full_ray),
+        RaycastShape::RsAvatar => {
+            containing_scene.get_swept(origin, full_ray, PLAYER_COLLIDER_RADIUS)
+        }
+    }
+}
+
 /// What preparing a due raycast request found.
 enum Prepared {
     /// The request or its scene is gone, so it counts as neither ran nor deferred.
@@ -466,7 +483,12 @@ fn prepare(
         RaycastTargets::Pinned(target)
     } else if context.is_portable || raycast.include_world() {
         let full_ray = direction * raycast.max_distance;
-        RaycastTargets::World(containing_scene.get_ray(origin, full_ray))
+        RaycastTargets::World(world_scenes(
+            containing_scene,
+            origin,
+            full_ray,
+            raycast.shape(),
+        ))
     } else {
         RaycastTargets::Own
     };
@@ -763,10 +785,44 @@ fn run_raycasts(
 #[cfg(test)]
 mod world_target_tests {
     use super::*;
-    use crate::update_world::mesh_collider::{regions_of_parcels, ColliderId};
+    use crate::{
+        get_ray_tests::world_with_scenes,
+        update_world::mesh_collider::{regions_of_parcels, ColliderId},
+    };
+    use bevy::ecs::system::RunSystemOnce;
     use rapier3d_f64::prelude::{ColliderBuilder, Group, InteractionGroups, InteractionTestMode};
 
     const MASK: u32 = ColliderLayer::ClPointer as u32 | ColliderLayer::ClPhysics as u32;
+
+    /// A box of `size` centred on `centre`.
+    fn add_box(
+        colliders: &mut SceneColliderData,
+        index: u16,
+        centre: Vec3,
+        size: Vec3,
+    ) -> ColliderId {
+        let id = ColliderId::new(
+            SceneEntityId {
+                id: 512 + index,
+                generation: 0,
+            },
+            None,
+            0,
+        );
+        let collider = ColliderBuilder::cuboid(0.5, 0.5, 0.5)
+            .collision_groups(InteractionGroups::new(
+                Group::from_bits_truncate(MASK),
+                Group::from_bits_truncate(MASK),
+                InteractionTestMode::And,
+            ))
+            .build();
+        colliders.set_collider(&id, collider, None);
+        colliders.update_collider_transform(
+            &id,
+            &GlobalTransform::from(Transform::from_translation(centre).with_scale(size)),
+        );
+        id
+    }
 
     /// A scene around a notch: parcels (0, 0) and (2, 0), joined by the row (0, 1), (1, 1),
     /// (2, 1). The notch at (1, 0), which is not the scene's, spans world x 16 to 32 and z -16
@@ -938,5 +994,143 @@ mod world_target_tests {
             world(),
         );
         assert_eq!(hits, vec![(in_the_notch, 21.2)]);
+    }
+
+    #[test]
+    fn a_world_avatar_cast_hits_a_step_of_the_scene_beside_its_ray() {
+        // the caster's scene is parcel (0, 0); east of it, parcel (1, 0) starts at world x = 16
+        let (mut world, [caster, east]) = world_with_scenes([(0, 0), (1, 0)]);
+
+        // a step of east along the edge, x from 16 to 18, its top at 0.5 m
+        let mut colliders = SceneColliderData::for_regions(&regions_of_parcels(&[(1, 0)]), 1);
+        let step = add_box(
+            &mut colliders,
+            0,
+            Vec3::new(17.0, 0.25, -8.0),
+            Vec3::new(2.0, 0.5, 4.0),
+        );
+        colliders.update_bvh();
+
+        // straight down inside the caster's scene, 0.2 m from the edge: the capsule's 0.3 m
+        // reaches over the step, the ray down its middle does not
+        let origin = Vec3::new(15.8, 2.0, -8.0);
+        let mut cast = |shape: RaycastShape| {
+            let scenes = world
+                .run_system_once(move |containing: ContainingScene| {
+                    world_scenes(&containing, origin, Vec3::NEG_Y * 5.0, shape)
+                })
+                .unwrap();
+            let asked = scenes.iter().map(|(scene, _)| *scene).collect::<Vec<_>>();
+            let job = RaycastJob {
+                scene_root: caster,
+                scene_entity: SceneEntityId::ROOT,
+                scene_translation: Vec3::ZERO,
+                timestamp: None,
+                continuous: false,
+                origin,
+                direction: Vec3::NEG_Y,
+                max_distance: 5.0,
+                mask: MASK,
+                shape,
+                query: RaycastQueryType::RqtHitFirst,
+                targets: RaycastTargets::World(scenes),
+                results: Vec::new(),
+            };
+            let hits = job.cast(&|scene| (scene == east).then_some(&colliders), &[]);
+            (asked, hits)
+        };
+
+        let (asked, hits) = cast(RaycastShape::RsRay);
+        assert_eq!(asked, vec![caster]);
+        assert!(hits.is_empty());
+
+        let (asked, hits) = cast(RaycastShape::RsAvatar);
+        assert_eq!(asked.len(), 2);
+        assert!(asked.contains(&east));
+        assert_eq!(hits.len(), 1, "{} hits", hits.len());
+        let (scene, hit) = &hits[0];
+        assert_eq!((*scene, &hit.id), (east, &step));
+        // the capsule's rounded foot lands on the step's edge, the feet 0.42 m up
+        assert!((hit.toi - 1.576).abs() < 2e-3, "{}", hit.toi);
+    }
+
+    #[test]
+    fn a_world_avatar_cast_returns_a_stop_at_a_neighbours_edge_that_comes_before_a_hit() {
+        // west is parcel (0, 0) and east is (1, 0), the edge between them at world x = 16; the
+        // caster's scene is elsewhere
+        let (mut world, [west, east, caster]) = world_with_scenes([(0, 0), (1, 0), (5, 5)]);
+
+        // a wall of west across the path, its near face at z = -7.25
+        let mut west_colliders = SceneColliderData::for_regions(&regions_of_parcels(&[(0, 0)]), 1);
+        add_box(
+            &mut west_colliders,
+            0,
+            Vec3::new(8.0, 2.0, -7.75),
+            Vec3::new(16.0, 4.0, 1.0),
+        );
+        west_colliders.update_bvh();
+        // a wall of east along the edge, from x = 15.85: on, and 0.1 m past what east is drawn to
+        let mut east_colliders = SceneColliderData::for_regions(&regions_of_parcels(&[(1, 0)]), 1);
+        let along_the_edge = add_box(
+            &mut east_colliders,
+            1,
+            Vec3::new(16.925, 2.0, -7.0),
+            Vec3::new(2.15, 4.0, 6.0),
+        );
+        east_colliders.update_bvh();
+
+        // along -z inside west, closing on east by a centimetre a metre. The capsule touches
+        // east's space 5 m along, overlapping the wall there, so it is stopped at east's edge:
+        // a millimetre clear of it, which is 0.1 m earlier on this path. West's wall is 4.95 m
+        // along.
+        let origin = Vec3::new(15.6, 0.0, -2.0);
+        let direction = Vec3::new(0.01, 0.0, -1.0).normalize();
+        let scenes = world
+            .run_system_once(move |containing: ContainingScene| {
+                world_scenes(
+                    &containing,
+                    origin,
+                    direction * 10.0,
+                    RaycastShape::RsAvatar,
+                )
+            })
+            .unwrap();
+        let job = RaycastJob {
+            scene_root: caster,
+            scene_entity: SceneEntityId::ROOT,
+            scene_translation: Vec3::ZERO,
+            timestamp: None,
+            continuous: false,
+            origin,
+            direction,
+            max_distance: 10.0,
+            mask: MASK,
+            shape: RaycastShape::RsAvatar,
+            query: RaycastQueryType::RqtHitFirst,
+            targets: RaycastTargets::World(scenes),
+            results: Vec::new(),
+        };
+        let hits = job.cast(
+            &|scene| {
+                if scene == west {
+                    Some(&west_colliders)
+                } else if scene == east {
+                    Some(&east_colliders)
+                } else {
+                    None
+                }
+            },
+            &[],
+        );
+
+        assert_eq!(hits.len(), 1, "{} hits", hits.len());
+        let (scene, hit) = &hits[0];
+        assert_eq!(
+            (*scene, &hit.id),
+            (east, &along_the_edge),
+            "the hit is {} along",
+            hit.toi
+        );
+        assert!((hit.toi - 4.9).abs() < 2e-3, "{}", hit.toi);
     }
 }

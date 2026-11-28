@@ -50,7 +50,7 @@ use initialize_scene::{PortableScenes, TestingData};
 use ipfs::SceneIpfsLocation;
 use primary_entities::PrimaryEntities;
 use ui_core::ui_actions::{Click, On};
-use update_world::lights::LightsPlugin;
+use update_world::{lights::LightsPlugin, mesh_collider::parcel_answer_distance};
 use util::SceneUtilPlugin;
 mod debug_panel;
 
@@ -973,7 +973,21 @@ impl ContainingScene<'_, '_> {
     }
 
     // get all scenes along a ray ordered by closest point, together with distance to closest point
-    pub fn get_ray(&self, position: Vec3, mut ray: Vec3) -> Vec<(Entity, f32)> {
+    pub fn get_ray(&self, position: Vec3, ray: Vec3) -> Vec<(Entity, f32)> {
+        self.get_swept(position, ray, 0.0)
+    }
+
+    // get all scenes a shape touches as it is swept along a ray, ordered by the distance from
+    // which each can answer, together with that distance. the shape reaches `radius` to each side
+    // of the ray, and touches a scene where it touches the space one of the scene's parcels is
+    // drawn in (`parcel_answer_distance`). with no radius it is the ray, and meets the scenes
+    // whose parcels it crosses
+    pub(crate) fn get_swept(
+        &self,
+        position: Vec3,
+        mut ray: Vec3,
+        radius: f32,
+    ) -> Vec<(Entity, f32)> {
         // global scenes first
         let mut results: Vec<(Entity, f32)> = self
             .portable_scenes
@@ -998,11 +1012,37 @@ impl ContainingScene<'_, '_> {
             return results;
         }
         let mut parcel = vec3_to_parcel(position);
+        // no scene is that far out, and the parcel arithmetic below would overflow there
+        let numbered = i32::from(i16::MIN)..=i32::from(i16::MAX);
+        if !numbered.contains(&parcel.x) || !numbered.contains(&parcel.y) {
+            return results;
+        }
+        // a shape with a radius also touches the parcels around the one its ray is in: one ring of
+        // them, as long as it reaches far less than a parcel's size
+        dcl_assert!(radius < PARCEL_SIZE / 2.0);
+        let ring = if radius > 0.0 { 1 } else { 0 };
 
         loop {
-            if let Some(scene) = self.get_parcel_position(parcel_to_vec3(parcel)) {
-                if !results.iter().any(|(ent, _)| *ent == scene) {
-                    results.push((scene, distance));
+            for near in ring_parcels(parcel, ring) {
+                let touched = if radius > 0.0 {
+                    match parcel_answer_distance(
+                        near,
+                        position.as_dvec3(),
+                        dir.as_dvec3(),
+                        f64::from(length),
+                        f64::from(radius),
+                    ) {
+                        Some(touched) => touched as f32,
+                        None => continue,
+                    }
+                } else {
+                    distance
+                };
+                if let Some(scene) = self.get_parcel_position(parcel_to_vec3(near)) {
+                    match results.iter_mut().find(|(ent, _)| *ent == scene) {
+                        Some((_, closest)) => *closest = closest.min(touched),
+                        None => results.push((scene, touched)),
+                    }
                 }
             }
 
@@ -1025,7 +1065,7 @@ impl ContainingScene<'_, '_> {
 
             distance = x_dist.min(z_dist);
             if distance > length {
-                return results;
+                break;
             }
 
             if x_dist < z_dist {
@@ -1034,6 +1074,12 @@ impl ContainingScene<'_, '_> {
                 parcel.y -= dir.z.signum() as i32;
             }
         }
+
+        // a parcel beside the ray can be touched before one the ray is in earlier in the walk
+        if radius > 0.0 {
+            results.sort_by(|a, b| a.1.total_cmp(&b.1));
+        }
+        results
     }
 }
 
@@ -1439,6 +1485,165 @@ mod get_ray_tests {
 
         for hits in rays {
             assert_eq!(hits, vec![]);
+        }
+    }
+
+    /// A world with one scene on each of `parcels`, and those scenes in the same order. Parcel
+    /// (x, y) spans world x from 16x to 16x + 16 and world z from -16y - 16 to -16y.
+    pub(crate) fn world_with_scenes<const N: usize>(
+        parcels: [(i32, i32); N],
+    ) -> (World, [Entity; N]) {
+        let mut world = World::new();
+        let mut pointers = ScenePointers::default();
+        let mut live = LiveScenes::default();
+        let scenes = parcels.map(|(x, y)| {
+            let scene = world.spawn_empty().id();
+            let hash = format!("{x},{y}");
+            live.scenes.insert(hash.clone(), scene);
+            pointers.insert(IVec2::new(x, y), PointerResult::Exists { hash, urn: None });
+            scene
+        });
+        world.insert_resource(pointers);
+        world.insert_resource(live);
+        world.init_resource::<PortableScenes>();
+        (world, scenes)
+    }
+
+    /// The radius of the swept shape of these tests, in metres: the avatar's. A scene is drawn
+    /// 0.05 m past its parcels, so the shape touches a scene 0.35 m from the scene's parcels.
+    const RADIUS: f32 = 0.3;
+
+    fn scenes_of(met: &[(Entity, f32)]) -> HashSet<Entity> {
+        met.iter().map(|(scene, _)| *scene).collect()
+    }
+
+    #[test]
+    fn a_swept_shape_meets_the_scene_beside_its_path() {
+        // centre is parcel (0, 0), east is (1, 0): the edge between them is at x = 16
+        let (mut world, [centre, east]) = world_with_scenes([(0, 0), (1, 0)]);
+
+        let [on_the_ray, beside, past_the_radius, further, short_of] = world
+            .run_system_once(|containing: ContainingScene| {
+                // along -z inside centre, 0.2 m from east
+                let near_the_edge = Vec3::new(15.8, 1.0, -2.0);
+                [
+                    containing.get_ray(near_the_edge, Vec3::NEG_Z * 10.0),
+                    containing.get_swept(near_the_edge, Vec3::NEG_Z * 10.0, RADIUS),
+                    // the same path 0.33 m from east: past the radius, within what east is drawn to
+                    containing.get_swept(Vec3::new(15.67, 1.0, -2.0), Vec3::NEG_Z * 10.0, RADIUS),
+                    // the same path 0.4 m from east
+                    containing.get_swept(Vec3::new(15.6, 1.0, -2.0), Vec3::NEG_Z * 10.0, RADIUS),
+                    // towards east, ending 0.2 m short of it
+                    containing.get_swept(Vec3::new(10.0, 1.0, -8.0), Vec3::X * 5.8, RADIUS),
+                ]
+            })
+            .unwrap();
+
+        assert_eq!(on_the_ray, vec![(centre, 0.0)]);
+        for met in [beside, past_the_radius] {
+            assert_eq!(met.len(), 2, "{met:?}");
+            assert!(met.contains(&(centre, 0.0)) && met.contains(&(east, 0.0)));
+        }
+        assert_eq!(further, vec![(centre, 0.0)]);
+
+        // it touches east 0.35 m before the edge, 5.65 m along, and a stop at east's edge is
+        // reported a millimetre before that
+        assert_eq!(short_of.len(), 2);
+        assert_eq!(short_of[0], (centre, 0.0));
+        assert_eq!(short_of[1].0, east);
+        assert!((short_of[1].1 - 5.649).abs() < 2e-4, "{short_of:?}");
+    }
+
+    #[test]
+    fn a_shape_swept_straight_down_meets_the_scenes_within_its_reach() {
+        // centre is parcel (0, 0), east is (1, 0), north-east is (1, 1): x from 16, z below -16
+        let (mut world, [centre, east, north_east]) = world_with_scenes([(0, 0), (1, 0), (1, 1)]);
+
+        let [at_the_edge, at_the_corner, in_the_middle] = world
+            .run_system_once(|containing: ContainingScene| {
+                let down = Vec3::NEG_Y * 10.0;
+                [
+                    containing.get_swept(Vec3::new(15.8, 5.0, -8.0), down, RADIUS),
+                    containing.get_swept(Vec3::new(15.8, 5.0, -15.8), down, RADIUS),
+                    containing.get_swept(Vec3::new(8.0, 5.0, -8.0), down, RADIUS),
+                ]
+            })
+            .unwrap();
+
+        assert_eq!(scenes_of(&at_the_edge), HashSet::from_iter([centre, east]));
+        assert_eq!(
+            scenes_of(&at_the_corner),
+            HashSet::from_iter([centre, east, north_east])
+        );
+        assert_eq!(in_the_middle, vec![(centre, 0.0)]);
+        for (_, touched) in at_the_edge.iter().chain(&at_the_corner) {
+            assert_eq!(*touched, 0.0);
+        }
+    }
+
+    #[test]
+    fn the_scenes_a_swept_shape_meets_are_ordered_by_where_it_first_touches_them() {
+        // centre is parcel (0, 0), west is (-1, 0), north is (0, 1): z below -16
+        let (mut world, [centre, west, north]) = world_with_scenes([(0, 0), (-1, 0), (0, 1)]);
+
+        // along -x through centre into west, 0.2 m from north all the way
+        let met = world
+            .run_system_once(|containing: ContainingScene| {
+                containing.get_swept(Vec3::new(14.0, 1.0, -15.8), Vec3::NEG_X * 20.0, RADIUS)
+            })
+            .unwrap();
+
+        // centre and north from the start, then west 0.35 m before the path enters it
+        assert_eq!(met.len(), 3, "{met:?}");
+        assert_eq!(scenes_of(&met[..2]), HashSet::from_iter([centre, north]));
+        assert_eq!((met[0].1, met[1].1), (0.0, 0.0));
+        assert_eq!(met[2].0, west);
+        assert!((met[2].1 - 13.649).abs() < 2e-4, "{met:?}");
+    }
+
+    #[test]
+    fn a_descending_shape_meets_a_scene_from_where_a_stop_at_its_top_can_be_reported() {
+        // centre is parcel (0, 0), east is (1, 0): the edge between them is at x = 16
+        let (mut world, [centre, east]) = world_with_scenes([(0, 0), (1, 0)]);
+
+        // towards east, 5 cm down for each metre along
+        let path = Vec3::new(1.0, -0.05, 0.0).normalize();
+        let met = world
+            .run_system_once(move |containing: ContainingScene| {
+                containing.get_swept(Vec3::new(10.0, 25.0, -8.0), path * 10.0, RADIUS)
+            })
+            .unwrap();
+
+        // it touches east's parcel 5.65 m on along x. A stop at the top east is drawn to, whose
+        // height the lookup does not know, is reported a millimetre above that top: 2 cm
+        // earlier along this path
+        assert_eq!(met.len(), 2, "{met:?}");
+        assert_eq!(met[0], (centre, 0.0));
+        assert_eq!(met[1].0, east);
+        let touched = 5.65 / path.x;
+        let before = 0.001 / -path.y;
+        assert!((met[1].1 - (touched - before)).abs() < 2e-4, "{met:?}");
+    }
+
+    #[test]
+    fn a_cast_from_far_beyond_any_parcel_meets_no_scene() {
+        let (mut world, _) = world_with_scenes([(0, 0)]);
+
+        // further out than a parcel's number can hold
+        let origin = Vec3::new(1.0e12, 1.0, -1.0e12);
+        let casts = world
+            .run_system_once(move |containing: ContainingScene| {
+                [
+                    containing.get_ray(origin, Vec3::X * 10.0),
+                    containing.get_ray(origin, Vec3::NEG_Z * 10.0),
+                    containing.get_swept(origin, Vec3::X * 10.0, RADIUS),
+                    containing.get_swept(origin, Vec3::NEG_Y * 10.0, RADIUS),
+                ]
+            })
+            .unwrap();
+
+        for met in casts {
+            assert_eq!(met, vec![]);
         }
     }
 }

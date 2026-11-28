@@ -1,6 +1,8 @@
-use bevy::math::{DVec2, DVec3, Vec3Swizzles};
+use bevy::math::{DVec2, DVec3, IVec2, Vec3Swizzles};
 use itertools::Either;
 use scene_material::BoundRegion;
+
+use super::edge_margin;
 
 /// How far past its parcels and above its height limit a scene counts as drawn, in metres: the
 /// hard edge of the scene materials (`bound_material.wgsl`). With the out-of-bounds effect on
@@ -35,13 +37,8 @@ impl SceneVolume {
             regions
                 .iter()
                 .map(|region| {
-                    let min = region.world_min().as_dvec3();
-                    let max = region.world_max().as_dvec3();
-                    Block {
-                        min: min.xz() - DRAWN_PAST_BOUNDS,
-                        max: max.xz() + DRAWN_PAST_BOUNDS,
-                        top: max.y + DRAWN_PAST_BOUNDS,
-                    }
+                    let height = f64::from(region.world_max().y);
+                    Block::over(region, height + DRAWN_PAST_BOUNDS)
                 })
                 .collect(),
         )
@@ -106,7 +103,43 @@ impl SceneVolume {
     }
 }
 
+/// The distance along a sweep from which a scene on `parcel` can answer it, if it can. That is
+/// where the swept shape first touches the space the parcel is drawn in, whatever the height its
+/// scene is drawn to ([`SceneVolume::stretches`] for that parcel), less the margin by which a
+/// stop at the scene's edge is reported before it: at the side the sweep comes in through, or
+/// at the scene's top, which a sweep that descends can come in through later.
+pub(crate) fn parcel_answer_distance(
+    parcel: IVec2,
+    bottom: DVec3,
+    direction: DVec3,
+    distance: f64,
+    radius: f64,
+) -> Option<f64> {
+    Block::over(&BoundRegion::new(parcel, parcel, 1), f64::INFINITY)
+        .span(bottom, direction, distance, radius)
+        .map(|stretch| {
+            let at_the_side = stretch
+                .entered
+                .map_or(0.0, |edge| edge_margin(direction, edge));
+            let at_the_top = if direction.y < 0.0 {
+                edge_margin(direction, DVec3::Y)
+            } else {
+                0.0
+            };
+            (stretch.start - at_the_side.max(at_the_top)).max(0.0)
+        })
+}
+
 impl Block {
+    /// The block over `region`, up to `top`.
+    fn over(region: &BoundRegion, top: f64) -> Self {
+        Self {
+            min: region.world_min().as_dvec3().xz() - DRAWN_PAST_BOUNDS,
+            max: region.world_max().as_dvec3().xz() + DRAWN_PAST_BOUNDS,
+            top,
+        }
+    }
+
     /// The part of a sweep during which the swept shape touches the block. The shape counts as
     /// a square of `radius` to each side, which is at most 0.4 `radius` generous at a corner.
     fn span(&self, bottom: DVec3, direction: DVec3, distance: f64, radius: f64) -> Option<Stretch> {
