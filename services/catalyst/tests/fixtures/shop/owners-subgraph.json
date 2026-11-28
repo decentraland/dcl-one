@@ -1,0 +1,489 @@
+{
+ "source": "the collections subgraphs at collections-matic-mainnet block 98115214 and collections-ethereum-mainnet block 26514512, read 2026-11-28: one item's nfts each, asked as /v1/owners' subgraph reader asks (contractAddress, itemBlockchainId, orderBy issuedId)",
+ "items": [
+  {
+   "network": "matic",
+   "contractAddress": "0x6105f0f5ef8b28cf81e64551588d13221d4151ad",
+   "itemId": "3",
+   "urn": "urn:decentraland:matic:collections-v2:0x6105f0f5ef8b28cf81e64551588d13221d4151ad:3",
+   "collectionUrn": "urn:decentraland:matic:collections-v2:0x6105f0f5ef8b28cf81e64551588d13221d4151ad",
+   "totalSupply": "10",
+   "copies": [
+    {
+     "issuedId": "1",
+     "ownerId": "0xd689478d44a438798ee0dc07657cce2135c0aef7",
+     "tokenId": "315936875005671560093754083051011296956685286201647333762932932609"
+    },
+    {
+     "issuedId": "2",
+     "ownerId": "0x5e382071464a6f9ea29708a045983dc265b0d86d",
+     "tokenId": "315936875005671560093754083051011296956685286201647333762932932610"
+    },
+    {
+     "issuedId": "3",
+     "ownerId": "0x2e0d63ffcb08ea20ff3acdbb72dfec97343885d2",
+     "tokenId": "315936875005671560093754083051011296956685286201647333762932932611"
+    },
+    {
+     "issuedId": "4",
+     "ownerId": "0x97ca90ab3a66abda308f0b238f2bb27aab48735f",
+     "tokenId": "315936875005671560093754083051011296956685286201647333762932932612"
+    },
+    {
+     "issuedId": "5",
+     "ownerId": "0x34012df14b13ec13e7873d727aff7847bd5b2274",
+     "tokenId": "315936875005671560093754083051011296956685286201647333762932932613"
+    },
+    {
+     "issuedId": "6",
+     "ownerId": "0xb02365dc1a28d82cc454d05a765feee31ccc2b00",
+     "tokenId": "315936875005671560093754083051011296956685286201647333762932932614"
+    },
+    {
+     "issuedId": "7",
+     "ownerId": "0xa4244f6711052752e6bb0271bf17c756e6598406",
+     "tokenId": "315936875005671560093754083051011296956685286201647333762932932615"
+    },
+    {
+     "issuedId": "8",
+     "ownerId": "0x37f00ec67d68c2d3c662339c183d37403c36f28e",
+     "tokenId": "315936875005671560093754083051011296956685286201647333762932932616"
+    },
+    {
+     "issuedId": "9",
+     "ownerId": "0xbeffb470e9f01fe5bf9ffdcb9fbdf8a607902076",
+     "tokenId": "315936875005671560093754083051011296956685286201647333762932932617"
+    },
+    {
+     "issuedId": "10",
+     "ownerId": "0xb59da3a5fa2fab1e8aae5cb352146b3b02f53578",
+     "tokenId": "315936875005671560093754083051011296956685286201647333762932932618"
+    }
+   ],
+   "pages": [
+    {
+     "orderDirection": "desc",
+     "first": 20,
+     "skip": 0,
+     "data": [
+      {
+       "issuedId": "10",
+       "ownerId": "0xb59da3a5fa2fab1e8aae5cb352146b3b02f53578",
+       "tokenId": "315936875005671560093754083051011296956685286201647333762932932618"
+      },
+      {
+       "issuedId": "9",
+       "ownerId": "0xbeffb470e9f01fe5bf9ffdcb9fbdf8a607902076",
+       "tokenId": "315936875005671560093754083051011296956685286201647333762932932617"
+      },
+      {
+       "issuedId": "8",
+       "ownerId": "0x37f00ec67d68c2d3c662339c183d37403c36f28e",
+       "tokenId": "315936875005671560093754083051011296956685286201647333762932932616"
+      },
+      {
+       "issuedId": "7",
+       "ownerId": "0xa4244f6711052752e6bb0271bf17c756e6598406",
+       "tokenId": "315936875005671560093754083051011296956685286201647333762932932615"
+      },
+      {
+       "issuedId": "6",
+       "ownerId": "0xb02365dc1a28d82cc454d05a765feee31ccc2b00",
+       "tokenId": "315936875005671560093754083051011296956685286201647333762932932614"
+      },
+      {
+       "issuedId": "5",
+       "ownerId": "0x34012df14b13ec13e7873d727aff7847bd5b2274",
+       "tokenId": "315936875005671560093754083051011296956685286201647333762932932613"
+      },
+      {
+       "issuedId": "4",
+       "ownerId": "0x97ca90ab3a66abda308f0b238f2bb27aab48735f",
+       "tokenId": "315936875005671560093754083051011296956685286201647333762932932612"
+      },
+      {
+       "issuedId": "3",
+       "ownerId": "0x2e0d63ffcb08ea20ff3acdbb72dfec97343885d2",
+       "tokenId": "315936875005671560093754083051011296956685286201647333762932932611"
+      },
+      {
+       "issuedId": "2",
+       "ownerId": "0x5e382071464a6f9ea29708a045983dc265b0d86d",
+       "tokenId": "315936875005671560093754083051011296956685286201647333762932932610"
+      },
+      {
+       "issuedId": "1",
+       "ownerId": "0xd689478d44a438798ee0dc07657cce2135c0aef7",
+       "tokenId": "315936875005671560093754083051011296956685286201647333762932932609"
+      }
+     ]
+    },
+    {
+     "orderDirection": "asc",
+     "first": 20,
+     "skip": 0,
+     "data": [
+      {
+       "issuedId": "1",
+       "ownerId": "0xd689478d44a438798ee0dc07657cce2135c0aef7",
+       "tokenId": "315936875005671560093754083051011296956685286201647333762932932609"
+      },
+      {
+       "issuedId": "2",
+       "ownerId": "0x5e382071464a6f9ea29708a045983dc265b0d86d",
+       "tokenId": "315936875005671560093754083051011296956685286201647333762932932610"
+      },
+      {
+       "issuedId": "3",
+       "ownerId": "0x2e0d63ffcb08ea20ff3acdbb72dfec97343885d2",
+       "tokenId": "315936875005671560093754083051011296956685286201647333762932932611"
+      },
+      {
+       "issuedId": "4",
+       "ownerId": "0x97ca90ab3a66abda308f0b238f2bb27aab48735f",
+       "tokenId": "315936875005671560093754083051011296956685286201647333762932932612"
+      },
+      {
+       "issuedId": "5",
+       "ownerId": "0x34012df14b13ec13e7873d727aff7847bd5b2274",
+       "tokenId": "315936875005671560093754083051011296956685286201647333762932932613"
+      },
+      {
+       "issuedId": "6",
+       "ownerId": "0xb02365dc1a28d82cc454d05a765feee31ccc2b00",
+       "tokenId": "315936875005671560093754083051011296956685286201647333762932932614"
+      },
+      {
+       "issuedId": "7",
+       "ownerId": "0xa4244f6711052752e6bb0271bf17c756e6598406",
+       "tokenId": "315936875005671560093754083051011296956685286201647333762932932615"
+      },
+      {
+       "issuedId": "8",
+       "ownerId": "0x37f00ec67d68c2d3c662339c183d37403c36f28e",
+       "tokenId": "315936875005671560093754083051011296956685286201647333762932932616"
+      },
+      {
+       "issuedId": "9",
+       "ownerId": "0xbeffb470e9f01fe5bf9ffdcb9fbdf8a607902076",
+       "tokenId": "315936875005671560093754083051011296956685286201647333762932932617"
+      },
+      {
+       "issuedId": "10",
+       "ownerId": "0xb59da3a5fa2fab1e8aae5cb352146b3b02f53578",
+       "tokenId": "315936875005671560093754083051011296956685286201647333762932932618"
+      }
+     ]
+    },
+    {
+     "orderDirection": "desc",
+     "first": 4,
+     "skip": 0,
+     "data": [
+      {
+       "issuedId": "10",
+       "ownerId": "0xb59da3a5fa2fab1e8aae5cb352146b3b02f53578",
+       "tokenId": "315936875005671560093754083051011296956685286201647333762932932618"
+      },
+      {
+       "issuedId": "9",
+       "ownerId": "0xbeffb470e9f01fe5bf9ffdcb9fbdf8a607902076",
+       "tokenId": "315936875005671560093754083051011296956685286201647333762932932617"
+      },
+      {
+       "issuedId": "8",
+       "ownerId": "0x37f00ec67d68c2d3c662339c183d37403c36f28e",
+       "tokenId": "315936875005671560093754083051011296956685286201647333762932932616"
+      },
+      {
+       "issuedId": "7",
+       "ownerId": "0xa4244f6711052752e6bb0271bf17c756e6598406",
+       "tokenId": "315936875005671560093754083051011296956685286201647333762932932615"
+      }
+     ]
+    },
+    {
+     "orderDirection": "desc",
+     "first": 4,
+     "skip": 8,
+     "data": [
+      {
+       "issuedId": "2",
+       "ownerId": "0x5e382071464a6f9ea29708a045983dc265b0d86d",
+       "tokenId": "315936875005671560093754083051011296956685286201647333762932932610"
+      },
+      {
+       "issuedId": "1",
+       "ownerId": "0xd689478d44a438798ee0dc07657cce2135c0aef7",
+       "tokenId": "315936875005671560093754083051011296956685286201647333762932932609"
+      }
+     ]
+    },
+    {
+     "orderDirection": "asc",
+     "first": 3,
+     "skip": 2,
+     "data": [
+      {
+       "issuedId": "3",
+       "ownerId": "0x2e0d63ffcb08ea20ff3acdbb72dfec97343885d2",
+       "tokenId": "315936875005671560093754083051011296956685286201647333762932932611"
+      },
+      {
+       "issuedId": "4",
+       "ownerId": "0x97ca90ab3a66abda308f0b238f2bb27aab48735f",
+       "tokenId": "315936875005671560093754083051011296956685286201647333762932932612"
+      },
+      {
+       "issuedId": "5",
+       "ownerId": "0x34012df14b13ec13e7873d727aff7847bd5b2274",
+       "tokenId": "315936875005671560093754083051011296956685286201647333762932932613"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "network": "ethereum",
+   "contractAddress": "0x24d538a6265b006d4b53c45ba91af5ef60dca6cb",
+   "itemId": "3",
+   "urn": "urn:decentraland:ethereum:collections-v1:cybermike_cybersoldier_set:cybersoldier_helmet",
+   "collectionUrn": "urn:decentraland:ethereum:collections-v1:cybermike_cybersoldier_set",
+   "totalSupply": "10",
+   "copies": [
+    {
+     "issuedId": "1",
+     "ownerId": "0x338ad1918362025f34b3701dac1e9648e8e8268f",
+     "tokenId": "2"
+    },
+    {
+     "issuedId": "2",
+     "ownerId": "0x338ad1918362025f34b3701dac1e9648e8e8268f",
+     "tokenId": "8"
+    },
+    {
+     "issuedId": "3",
+     "ownerId": "0x20f93ad48a478a35d7115896df65290fcf7adea2",
+     "tokenId": "14"
+    },
+    {
+     "issuedId": "4",
+     "ownerId": "0x0636211443e91468ee3657e1d7faede7059c4843",
+     "tokenId": "20"
+    },
+    {
+     "issuedId": "5",
+     "ownerId": "0x411a4a2510bf1fe912b698a95b1b0cab63b28464",
+     "tokenId": "26"
+    },
+    {
+     "issuedId": "6",
+     "ownerId": "0x02c400e731ebe4d4c80332a6c1dc0cba4620fa40",
+     "tokenId": "29"
+    },
+    {
+     "issuedId": "7",
+     "ownerId": "0x02c400e731ebe4d4c80332a6c1dc0cba4620fa40",
+     "tokenId": "38"
+    },
+    {
+     "issuedId": "8",
+     "ownerId": "0x02c400e731ebe4d4c80332a6c1dc0cba4620fa40",
+     "tokenId": "44"
+    },
+    {
+     "issuedId": "9",
+     "ownerId": "0x02c400e731ebe4d4c80332a6c1dc0cba4620fa40",
+     "tokenId": "50"
+    },
+    {
+     "issuedId": "10",
+     "ownerId": "0x02c400e731ebe4d4c80332a6c1dc0cba4620fa40",
+     "tokenId": "56"
+    }
+   ],
+   "pages": [
+    {
+     "orderDirection": "desc",
+     "first": 20,
+     "skip": 0,
+     "data": [
+      {
+       "issuedId": "10",
+       "ownerId": "0x02c400e731ebe4d4c80332a6c1dc0cba4620fa40",
+       "tokenId": "56"
+      },
+      {
+       "issuedId": "9",
+       "ownerId": "0x02c400e731ebe4d4c80332a6c1dc0cba4620fa40",
+       "tokenId": "50"
+      },
+      {
+       "issuedId": "8",
+       "ownerId": "0x02c400e731ebe4d4c80332a6c1dc0cba4620fa40",
+       "tokenId": "44"
+      },
+      {
+       "issuedId": "7",
+       "ownerId": "0x02c400e731ebe4d4c80332a6c1dc0cba4620fa40",
+       "tokenId": "38"
+      },
+      {
+       "issuedId": "6",
+       "ownerId": "0x02c400e731ebe4d4c80332a6c1dc0cba4620fa40",
+       "tokenId": "29"
+      },
+      {
+       "issuedId": "5",
+       "ownerId": "0x411a4a2510bf1fe912b698a95b1b0cab63b28464",
+       "tokenId": "26"
+      },
+      {
+       "issuedId": "4",
+       "ownerId": "0x0636211443e91468ee3657e1d7faede7059c4843",
+       "tokenId": "20"
+      },
+      {
+       "issuedId": "3",
+       "ownerId": "0x20f93ad48a478a35d7115896df65290fcf7adea2",
+       "tokenId": "14"
+      },
+      {
+       "issuedId": "2",
+       "ownerId": "0x338ad1918362025f34b3701dac1e9648e8e8268f",
+       "tokenId": "8"
+      },
+      {
+       "issuedId": "1",
+       "ownerId": "0x338ad1918362025f34b3701dac1e9648e8e8268f",
+       "tokenId": "2"
+      }
+     ]
+    },
+    {
+     "orderDirection": "asc",
+     "first": 20,
+     "skip": 0,
+     "data": [
+      {
+       "issuedId": "1",
+       "ownerId": "0x338ad1918362025f34b3701dac1e9648e8e8268f",
+       "tokenId": "2"
+      },
+      {
+       "issuedId": "2",
+       "ownerId": "0x338ad1918362025f34b3701dac1e9648e8e8268f",
+       "tokenId": "8"
+      },
+      {
+       "issuedId": "3",
+       "ownerId": "0x20f93ad48a478a35d7115896df65290fcf7adea2",
+       "tokenId": "14"
+      },
+      {
+       "issuedId": "4",
+       "ownerId": "0x0636211443e91468ee3657e1d7faede7059c4843",
+       "tokenId": "20"
+      },
+      {
+       "issuedId": "5",
+       "ownerId": "0x411a4a2510bf1fe912b698a95b1b0cab63b28464",
+       "tokenId": "26"
+      },
+      {
+       "issuedId": "6",
+       "ownerId": "0x02c400e731ebe4d4c80332a6c1dc0cba4620fa40",
+       "tokenId": "29"
+      },
+      {
+       "issuedId": "7",
+       "ownerId": "0x02c400e731ebe4d4c80332a6c1dc0cba4620fa40",
+       "tokenId": "38"
+      },
+      {
+       "issuedId": "8",
+       "ownerId": "0x02c400e731ebe4d4c80332a6c1dc0cba4620fa40",
+       "tokenId": "44"
+      },
+      {
+       "issuedId": "9",
+       "ownerId": "0x02c400e731ebe4d4c80332a6c1dc0cba4620fa40",
+       "tokenId": "50"
+      },
+      {
+       "issuedId": "10",
+       "ownerId": "0x02c400e731ebe4d4c80332a6c1dc0cba4620fa40",
+       "tokenId": "56"
+      }
+     ]
+    },
+    {
+     "orderDirection": "desc",
+     "first": 4,
+     "skip": 0,
+     "data": [
+      {
+       "issuedId": "10",
+       "ownerId": "0x02c400e731ebe4d4c80332a6c1dc0cba4620fa40",
+       "tokenId": "56"
+      },
+      {
+       "issuedId": "9",
+       "ownerId": "0x02c400e731ebe4d4c80332a6c1dc0cba4620fa40",
+       "tokenId": "50"
+      },
+      {
+       "issuedId": "8",
+       "ownerId": "0x02c400e731ebe4d4c80332a6c1dc0cba4620fa40",
+       "tokenId": "44"
+      },
+      {
+       "issuedId": "7",
+       "ownerId": "0x02c400e731ebe4d4c80332a6c1dc0cba4620fa40",
+       "tokenId": "38"
+      }
+     ]
+    },
+    {
+     "orderDirection": "desc",
+     "first": 4,
+     "skip": 8,
+     "data": [
+      {
+       "issuedId": "2",
+       "ownerId": "0x338ad1918362025f34b3701dac1e9648e8e8268f",
+       "tokenId": "8"
+      },
+      {
+       "issuedId": "1",
+       "ownerId": "0x338ad1918362025f34b3701dac1e9648e8e8268f",
+       "tokenId": "2"
+      }
+     ]
+    },
+    {
+     "orderDirection": "asc",
+     "first": 3,
+     "skip": 2,
+     "data": [
+      {
+       "issuedId": "3",
+       "ownerId": "0x20f93ad48a478a35d7115896df65290fcf7adea2",
+       "tokenId": "14"
+      },
+      {
+       "issuedId": "4",
+       "ownerId": "0x0636211443e91468ee3657e1d7faede7059c4843",
+       "tokenId": "20"
+      },
+      {
+       "issuedId": "5",
+       "ownerId": "0x411a4a2510bf1fe912b698a95b1b0cab63b28464",
+       "tokenId": "26"
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}

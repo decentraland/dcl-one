@@ -95,6 +95,37 @@ pub trait NameAuthority: Send + Sync {
         purpose: Purpose,
     ) -> Result<Answer<HashMap<String, Option<String>>>, NamesError>;
 
+    /// [`NameAuthority::owned_names`] for many owners, keyed by the
+    /// lowercased owner, each requested owner present (an empty list when it
+    /// holds none). A source that reads the database answers it in one
+    /// statement under one observation; the default asks each owner in turn
+    /// and keeps an observation only when every read saw the same one.
+    async fn owned_names_of(
+        &self,
+        owners: &[String],
+        purpose: Purpose,
+    ) -> Result<Answer<HashMap<String, Arc<Vec<OwnedName>>>>, NamesError> {
+        let mut value = HashMap::with_capacity(owners.len());
+        let mut observation: Option<Option<Observation>> = None;
+        for owner in owners {
+            let owner = owner.to_lowercase();
+            if value.contains_key(&owner) {
+                continue;
+            }
+            let answer = self.owned_names(&owner, purpose).await?;
+            observation = match observation {
+                None => Some(answer.observation),
+                Some(seen) if seen == answer.observation => Some(seen),
+                Some(_) => Some(None),
+            };
+            value.insert(owner, answer.value);
+        }
+        Ok(Answer {
+            value,
+            observation: observation.flatten(),
+        })
+    }
+
     /// [`NameAuthority::owned_names`] read on `conn`, a database session the
     /// caller holds (a partial upload's): a source that reads the database
     /// reads it there rather than waiting on a pool the caller may be

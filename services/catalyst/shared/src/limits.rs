@@ -9,16 +9,15 @@
 //! contract-wallet check, `eip1654_budget`). In-process state that follows the
 //! process's lifetime, never the database.
 
-use dashmap::DashMap;
 use parking_lot::Mutex;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::hash_map::RandomState;
+use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::hash::BuildHasher;
 use std::net::{IpAddr, Ipv6Addr};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 pub const DEFAULT_MAX_BUCKETS: usize = 10_000;
-
-const SWEEP_EVERY: u64 = 512;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RateLimitDecision {
@@ -26,65 +25,216 @@ pub enum RateLimitDecision {
     Deny,
 }
 
-struct Bucket {
-    tokens: f64,
-    last: Instant,
+/// A failed spend. Oversized requests cannot succeed after waiting.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RateLimitDenial {
+    CostExceedsCapacity,
+    RetryAfter(Duration),
 }
 
-/// Token bucket per key. Keys are attacker-chosen, so the map is pruned: a
-/// fully refilled bucket is dropped on a periodic sweep, and the map is
-/// hard-capped so a burst of distinct keys cannot grow the process without
-/// bound.
+/// Debt is measured in token-nanoseconds: one token costs a window's
+/// nanoseconds, and each elapsed nanosecond refills `capacity` units.
+#[derive(Debug, Clone, Copy)]
+struct Bucket {
+    debt: u128,
+    last: Instant,
+    generation: u64,
+}
+
+impl Bucket {
+    fn remaining(self, now: Instant, capacity: u32) -> u128 {
+        self.debt.saturating_sub(
+            now.saturating_duration_since(self.last).as_nanos() * u128::from(capacity),
+        )
+    }
+
+    fn full_at(self, capacity: u32) -> Option<Instant> {
+        self.last.checked_add(refill_time(self.debt, capacity))
+    }
+}
+
+fn refill_time(debt: u128, capacity: u32) -> Duration {
+    let nanos = debt.div_ceil(u128::from(capacity));
+    Duration::new(
+        (nanos / 1_000_000_000) as u64,
+        (nanos % 1_000_000_000) as u32,
+    )
+}
+
+#[derive(Debug)]
+enum BucketKey {
+    Exact(Arc<str>),
+    Overflow(usize),
+}
+
+#[derive(Debug)]
+struct Buckets {
+    exact: HashMap<Arc<str>, Bucket>,
+    // One deadline per stored exact bucket. A new admission reclaims at
+    // most one entry and never has to scan the table.
+    deadlines: BTreeSet<(Instant, Arc<str>)>,
+    overflow: Box<[Option<Bucket>]>,
+    generation: u64,
+}
+
+impl Buckets {
+    fn new(overflow: usize) -> Self {
+        Self {
+            exact: HashMap::new(),
+            deadlines: BTreeSet::new(),
+            overflow: vec![None; overflow].into_boxed_slice(),
+            generation: 0,
+        }
+    }
+
+    fn next_generation(&mut self) -> u64 {
+        self.generation += 1;
+        self.generation
+    }
+
+    fn get(&self, key: &BucketKey) -> Option<Bucket> {
+        match key {
+            BucketKey::Exact(key) => self.exact.get(key).copied(),
+            BucketKey::Overflow(index) => self.overflow[*index],
+        }
+    }
+
+    fn set(&mut self, key: &BucketKey, value: Option<Bucket>, capacity: u32) {
+        match key {
+            BucketKey::Exact(key) => {
+                self.remove_exact(key, capacity);
+                if let Some(bucket) = value {
+                    if let Some(full_at) = bucket.full_at(capacity) {
+                        self.deadlines.insert((full_at, key.clone()));
+                    }
+                    self.exact.insert(key.clone(), bucket);
+                }
+            }
+            BucketKey::Overflow(index) => self.overflow[*index] = value,
+        }
+    }
+
+    fn remove_exact(&mut self, key: &str, capacity: u32) {
+        if let Some((key, bucket)) = self.exact.remove_entry(key)
+            && let Some(full_at) = bucket.full_at(capacity)
+        {
+            self.deadlines.remove(&(full_at, key));
+        }
+    }
+
+    fn expired(&self, now: Instant) -> Option<&Arc<str>> {
+        self.deadlines
+            .first()
+            .filter(|(full_at, _)| *full_at <= now)
+            .map(|(_, key)| key)
+    }
+}
+
+/// A successful spend tied to the bucket and refill generation it charged.
+/// Dropping the receipt keeps the charge. A caller may refund once when
+/// the work is known to have failed.
+#[must_use = "drop the receipt to keep the charge, or refund it once"]
+pub struct RateLimitReceipt<'a> {
+    limiter: &'a RateLimiter,
+    spend: Option<(BucketKey, Bucket, u128)>,
+}
+
+impl std::fmt::Debug for RateLimitReceipt<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RateLimitReceipt").finish_non_exhaustive()
+    }
+}
+
+impl RateLimitReceipt<'_> {
+    pub fn refund(self) {
+        self.refund_with_clock(Instant::now);
+    }
+
+    fn refund_with_clock(self, now: impl FnOnce() -> Instant) {
+        let Some((key, charged, cost)) = self.spend else {
+            return;
+        };
+        let mut buckets = self.limiter.buckets.lock();
+        let now = now();
+        let capacity = self.limiter.capacity;
+        let Some(bucket) = buckets
+            .get(&key)
+            .filter(|b| b.generation == charged.generation)
+        else {
+            return;
+        };
+        // Elapsed refill may already have paid this charge. Credit only the
+        // part that would still be outstanding if it were the only debit.
+        let refundable = Bucket {
+            debt: cost,
+            ..charged
+        }
+        .remaining(now, capacity);
+        let debt = bucket.remaining(now, capacity).saturating_sub(refundable);
+        let updated = (debt != 0).then_some(Bucket {
+            debt,
+            last: now,
+            ..bucket
+        });
+        buckets.set(&key, updated, capacity);
+    }
+}
+
+/// Exact per-key token buckets with a hard cap that includes a fixed set of
+/// overflow buckets. Unknown keys at capacity share a randomly keyed hash
+/// bucket. Keep them there until it fully refills, even if an exact slot
+/// opens, so promotion cannot erase earlier spending.
 pub struct RateLimiter {
-    capacity: f64,
-    refill_per_sec: f64,
+    capacity: u32,
+    window_nanos: u128,
     max_buckets: usize,
-    checks: AtomicU64,
-    buckets: DashMap<String, Mutex<Bucket>>,
+    overflow_hash: RandomState,
+    buckets: Mutex<Buckets>,
+}
+
+fn overflow_slots(max_buckets: usize) -> usize {
+    (max_buckets / 8).clamp(1, 1_024)
 }
 
 impl RateLimiter {
     pub fn new(capacity: u32, per: Duration) -> Self {
         Self {
-            capacity: capacity as f64,
-            refill_per_sec: capacity as f64 / per.as_secs_f64(),
+            capacity,
+            window_nanos: per.as_nanos().max(1),
             max_buckets: DEFAULT_MAX_BUCKETS,
-            checks: AtomicU64::new(0),
-            buckets: DashMap::new(),
+            overflow_hash: RandomState::new(),
+            buckets: Mutex::new(Buckets::new(overflow_slots(DEFAULT_MAX_BUCKETS))),
         }
     }
 
+    /// Set the cap before the limiter is used.
     pub fn with_max_buckets(mut self, max_buckets: usize) -> Self {
+        assert_eq!(self.buckets.get_mut().generation, 0, "limiter already used");
         self.max_buckets = max_buckets.max(1);
+        self.buckets = Mutex::new(Buckets::new(overflow_slots(self.max_buckets)));
         self
     }
 
     pub fn len(&self) -> usize {
-        self.buckets.len()
+        let buckets = self.buckets.lock();
+        buckets.exact.len() + buckets.overflow.iter().flatten().count()
     }
 
     pub fn is_empty(&self) -> bool {
-        self.buckets.is_empty()
+        self.len() == 0
     }
 
-    fn maybe_sweep(&self) {
-        let n = self.checks.fetch_add(1, Ordering::Relaxed);
-        if n.is_multiple_of(SWEEP_EVERY) || self.buckets.len() >= self.max_buckets {
-            self.sweep();
+    fn locate(&self, buckets: &Buckets, key: &str, now: Instant) -> BucketKey {
+        if let Some((key, _)) = buckets.exact.get_key_value(key) {
+            return BucketKey::Exact(key.clone());
         }
-    }
-
-    fn sweep(&self) {
-        let now = Instant::now();
-        let capacity = self.capacity;
-        let refill_per_sec = self.refill_per_sec;
-        self.buckets.retain(|_, bucket| {
-            let b = bucket.get_mut();
-            let elapsed = now.saturating_duration_since(b.last).as_secs_f64();
-            b.tokens + elapsed * refill_per_sec < capacity
-        });
-        if self.buckets.len() >= self.max_buckets {
-            self.buckets.clear();
+        let index = (self.overflow_hash.hash_one(key) % buckets.overflow.len() as u64) as usize;
+        let has_debt = buckets.overflow[index].is_some_and(|b| b.remaining(now, self.capacity) > 0);
+        let room = buckets.exact.len() < self.max_buckets - buckets.overflow.len();
+        if !has_debt && (room || buckets.expired(now).is_some()) {
+            BucketKey::Exact(Arc::from(key))
+        } else {
+            BucketKey::Overflow(index)
         }
     }
 
@@ -92,62 +242,90 @@ impl RateLimiter {
         self.check_cost(key, 1)
     }
 
-    /// Spends `cost` tokens at once (e.g. bytes in KiB); a cost above the
-    /// capacity is always refused and a zero cost spends nothing.
+    /// Spends weighted tokens. An impossible or zero cost leaves no state.
     pub fn check_cost(&self, key: &str, cost: u32) -> RateLimitDecision {
+        match self.reserve(key, cost) {
+            Ok(_) => RateLimitDecision::Allow,
+            Err(_) => RateLimitDecision::Deny,
+        }
+    }
+
+    pub fn reserve(&self, key: &str, cost: u32) -> Result<RateLimitReceipt<'_>, RateLimitDenial> {
+        self.reserve_with_clock(key, cost, Instant::now)
+    }
+
+    fn reserve_with_clock(
+        &self,
+        key: &str,
+        cost: u32,
+        now: impl FnOnce() -> Instant,
+    ) -> Result<RateLimitReceipt<'_>, RateLimitDenial> {
         if cost == 0 {
-            return RateLimitDecision::Allow;
-        }
-        let cost = f64::from(cost);
-        self.maybe_sweep();
-        let now = Instant::now();
-        let entry = self
-            .buckets
-            .entry(key.to_ascii_lowercase())
-            .or_insert_with(|| {
-                Mutex::new(Bucket {
-                    tokens: self.capacity,
-                    last: now,
-                })
+            return Ok(RateLimitReceipt {
+                limiter: self,
+                spend: None,
             });
-        let mut b = entry.lock();
-        let elapsed = now.saturating_duration_since(b.last).as_secs_f64();
-        b.tokens = (b.tokens + elapsed * self.refill_per_sec).min(self.capacity);
-        b.last = now;
-        if b.tokens >= cost {
-            b.tokens -= cost;
-            RateLimitDecision::Allow
-        } else {
-            RateLimitDecision::Deny
         }
+        if cost > self.capacity {
+            return Err(RateLimitDenial::CostExceedsCapacity);
+        }
+        let cost = u128::from(cost) * self.window_nanos;
+        let key = key.to_ascii_lowercase();
+        let mut buckets = self.buckets.lock();
+        let now = now();
+        let key = self.locate(&buckets, &key, now);
+        let old = buckets.get(&key);
+        let remaining = old.map_or(0, |b| b.remaining(now, self.capacity));
+        let debt = remaining + cost;
+        let max_debt = u128::from(self.capacity) * self.window_nanos;
+        if debt > max_debt {
+            return Err(RateLimitDenial::RetryAfter(refill_time(
+                debt - max_debt,
+                self.capacity,
+            )));
+        }
+        if matches!(key, BucketKey::Exact(_))
+            && old.is_none()
+            && let Some(expired) = buckets.expired(now).cloned()
+        {
+            buckets.remove_exact(&expired, self.capacity);
+        }
+        let generation = match old {
+            Some(bucket) if remaining != 0 => bucket.generation,
+            _ => buckets.next_generation(),
+        };
+        let charged = Bucket {
+            debt,
+            last: now,
+            generation,
+        };
+        buckets.set(&key, Some(charged), self.capacity);
+        Ok(RateLimitReceipt {
+            limiter: self,
+            spend: Some((key, charged, cost)),
+        })
     }
 
-    /// Returns `cost` tokens spent on work that did not happen.
-    pub fn refund(&self, key: &str, cost: u32) {
-        if let Some(entry) = self.buckets.get(&key.to_ascii_lowercase()) {
-            let mut b = entry.lock();
-            b.tokens = (b.tokens + f64::from(cost)).min(self.capacity);
-        }
-    }
-
-    /// Called once the caller proves legitimate, so earlier failures cannot
-    /// lock out a user who then gets it right.
+    /// Forgive only the exact key. A shared bucket also holds others' debt.
     pub fn clear(&self, key: &str) {
-        self.buckets.remove(&key.to_ascii_lowercase());
+        self.buckets
+            .lock()
+            .remove_exact(&key.to_ascii_lowercase(), self.capacity);
     }
 
-    /// Whether the next attempt would be refused, without spending a token.
+    /// Whether the next one-token attempt would be refused, without spending.
     pub fn is_rate_limited(&self, key: &str) -> bool {
-        match self.buckets.get(&key.to_ascii_lowercase()) {
-            Some(entry) => {
-                let b = entry.lock();
-                let elapsed = Instant::now()
-                    .saturating_duration_since(b.last)
-                    .as_secs_f64();
-                (b.tokens + elapsed * self.refill_per_sec).min(self.capacity) < 1.0
-            }
-            None => false,
+        if self.capacity == 0 {
+            return true;
         }
+        let key = key.to_ascii_lowercase();
+        let buckets = self.buckets.lock();
+        let now = Instant::now();
+        let bucket = self.locate(&buckets, &key, now);
+        buckets.get(&bucket).is_some_and(|b| {
+            b.remaining(now, self.capacity) + self.window_nanos
+                > u128::from(self.capacity) * self.window_nanos
+        })
     }
 
     pub fn record_failed_attempt(&self, key: &str) -> RateLimitDecision {
@@ -183,8 +361,7 @@ struct KeyedBucket {
 /// Token buckets, at most `max_keys`, each call naming its keys and their
 /// budgets a minute: a key is stored only when a call spends from it, and
 /// past the cap the least recently used goes, so keys a denied flood invents
-/// never displace the buckets it exhausted (unlike [`RateLimiter`], whose
-/// sweep empties a full map).
+/// never displace the buckets it exhausted.
 pub struct KeyedLimiter {
     max_keys: usize,
     inner: Mutex<KeyedBuckets>,
@@ -256,21 +433,41 @@ impl KeyedLimiter {
 mod tests {
     use super::*;
 
-    #[test]
-    fn check_cost_spends_several_tokens_and_refuses_over_budget() {
-        let limiter = RateLimiter::new(10, Duration::from_secs(60));
-        assert_eq!(limiter.check_cost("a", 6), RateLimitDecision::Allow);
-        assert_eq!(limiter.check_cost("a", 6), RateLimitDecision::Deny);
-        assert_eq!(limiter.check_cost("a", 4), RateLimitDecision::Allow);
-        assert_eq!(limiter.check_cost("b", 11), RateLimitDecision::Deny);
-        assert_eq!(limiter.check_cost("a", 0), RateLimitDecision::Allow);
-        limiter.refund("a", 6);
-        assert_eq!(limiter.check_cost("a", 6), RateLimitDecision::Allow);
-        assert_eq!(limiter.check_cost("a", 1), RateLimitDecision::Deny);
+    fn spend_at<'a>(
+        limiter: &'a RateLimiter,
+        key: &str,
+        cost: u32,
+        now: Instant,
+    ) -> Result<RateLimitReceipt<'a>, RateLimitDenial> {
+        limiter.reserve_with_clock(key, cost, || now)
     }
 
     #[test]
-    fn is_rate_limited_does_not_consume_and_clear_forgives() {
+    fn check_cost_spends_several_tokens_and_refuses_over_budget() {
+        let limiter = RateLimiter::new(10, Duration::from_secs(60));
+        let now = Instant::now();
+        let spend = spend_at(&limiter, "a", 6, now).unwrap();
+        assert_eq!(
+            spend_at(&limiter, "a", 6, now).unwrap_err(),
+            RateLimitDenial::RetryAfter(Duration::from_secs(12))
+        );
+        drop(spend_at(&limiter, "a", 4, now).unwrap());
+        assert_eq!(
+            spend_at(&limiter, "b", 11, now).unwrap_err(),
+            RateLimitDenial::CostExceedsCapacity
+        );
+        drop(spend_at(&limiter, "b", 0, now).unwrap());
+        assert_eq!(limiter.len(), 1, "untouched keys allocate nothing");
+        spend.refund_with_clock(|| now);
+        drop(spend_at(&limiter, "a", 6, now).unwrap());
+        assert_eq!(
+            spend_at(&limiter, "a", 1, now).unwrap_err(),
+            RateLimitDenial::RetryAfter(Duration::from_secs(6))
+        );
+    }
+
+    #[test]
+    fn is_rate_limited_does_not_consume_and_clear_forgives_an_exact_key() {
         let limiter = RateLimiter::new(2, Duration::from_secs(60));
         assert!(!limiter.is_rate_limited("0xabc"));
         assert_eq!(limiter.check("0xabc"), RateLimitDecision::Allow);
@@ -287,41 +484,87 @@ mod tests {
     }
 
     #[test]
-    fn distinct_keys_never_grow_past_the_cap() {
-        let limiter = RateLimiter::new(3, Duration::from_secs(60)).with_max_buckets(64);
-        for i in 0..10_000 {
-            limiter.check(&format!("ip-{i}"));
-        }
-        assert!(
-            limiter.len() <= 64,
-            "attacker-keyed buckets grew to {}",
-            limiter.len()
+    fn concurrent_distinct_keys_stay_within_the_state_cap() {
+        let limiter = RateLimiter::new(8, Duration::from_secs(24 * 3600)).with_max_buckets(16);
+        let now = Instant::now();
+        drop(spend_at(&limiter, "tracked", 8, now).unwrap());
+        let accepted = std::sync::atomic::AtomicUsize::new(0);
+        std::thread::scope(|scope| {
+            for thread in 0..8 {
+                let limiter = &limiter;
+                let accepted = &accepted;
+                scope.spawn(move || {
+                    for index in 0..2_000 {
+                        if spend_at(limiter, &format!("{thread}-{index}"), 1, now).is_ok() {
+                            accepted.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                        }
+                        assert!(limiter.len() <= 16);
+                        assert!(spend_at(limiter, "TRACKED", 1, now).is_err());
+                    }
+                });
+            }
+        });
+        assert_eq!(
+            accepted.into_inner(),
+            13 + 2 * 8,
+            "fresh keys spent both overflow budgets"
         );
+        let buckets = limiter.buckets.lock();
+        assert_eq!(buckets.exact.len(), 14);
+        assert_eq!(buckets.deadlines.len(), 14);
+        assert_eq!(buckets.overflow.len(), 2);
     }
 
     #[test]
-    fn a_refilled_bucket_is_swept_but_a_deficient_one_survives() {
-        let limiter = RateLimiter::new(2, Duration::from_secs(60));
-        assert_eq!(limiter.check("full"), RateLimitDecision::Allow);
-        limiter.buckets.get("full").unwrap().lock().tokens = 2.0;
-        assert_eq!(limiter.check("spent"), RateLimitDecision::Allow);
-        assert_eq!(limiter.check("spent"), RateLimitDecision::Allow);
-        limiter.sweep();
-        assert!(limiter.buckets.get("full").is_none());
-        assert!(limiter.buckets.get("spent").is_some());
+    fn opening_an_exact_slot_cannot_reset_overflow_debt() {
+        let limiter = RateLimiter::new(2, Duration::from_secs(60)).with_max_buckets(2);
+        let now = Instant::now();
+        drop(spend_at(&limiter, "tracked", 1, now).unwrap());
+        drop(spend_at(&limiter, "overflow", 2, now).unwrap());
+        limiter.clear("overflow");
+        let half = now + Duration::from_secs(30);
+        assert_eq!(
+            spend_at(&limiter, "overflow", 2, half).unwrap_err(),
+            RateLimitDenial::RetryAfter(Duration::from_secs(30))
+        );
+        assert_eq!(
+            spend_at(&limiter, "colliding", 2, half).unwrap_err(),
+            RateLimitDenial::RetryAfter(Duration::from_secs(30))
+        );
+        let full = now + Duration::from_secs(60);
+        drop(spend_at(&limiter, "overflow", 2, full).unwrap());
+        let buckets = limiter.buckets.lock();
+        assert!(buckets.exact.contains_key("overflow"));
+        assert!(!buckets.exact.contains_key("tracked"));
+        assert_eq!(buckets.deadlines.len(), 1);
     }
 
     #[test]
-    fn a_swept_key_starts_from_a_full_bucket() {
-        let limiter = RateLimiter::new(2, Duration::from_secs(60));
-        assert_eq!(limiter.check("a"), RateLimitDecision::Allow);
-        assert_eq!(limiter.check("a"), RateLimitDecision::Allow);
-        assert_eq!(limiter.check("a"), RateLimitDecision::Deny);
-        limiter.buckets.get("a").unwrap().lock().tokens = 2.0;
-        limiter.sweep();
-        assert!(limiter.is_empty());
-        assert_eq!(limiter.check("a"), RateLimitDecision::Allow);
-        assert_eq!(limiter.len(), 1);
+    fn old_receipts_do_not_refund_a_new_bucket_generation() {
+        for cap in [1, 2] {
+            let limiter = RateLimiter::new(1, Duration::from_secs(60)).with_max_buckets(cap);
+            let now = Instant::now();
+            let old = spend_at(&limiter, "original", 1, now).unwrap();
+            let full = now + Duration::from_secs(60);
+            drop(spend_at(&limiter, "original", 1, full).unwrap());
+            old.refund_with_clock(|| full);
+            assert!(spend_at(&limiter, "original", 1, full).is_err());
+        }
+    }
+
+    #[test]
+    fn a_delayed_refund_does_not_erase_newer_spending_on_a_shared_bucket() {
+        let limiter = RateLimiter::new(2, Duration::from_secs(2)).with_max_buckets(1);
+        let now = Instant::now();
+        let old = spend_at(&limiter, "old", 1, now).unwrap();
+        let later = now + Duration::from_millis(750);
+        drop(spend_at(&limiter, "recent", 1, later).unwrap());
+        old.refund_with_clock(|| later);
+        drop(spend_at(&limiter, "other", 1, later).unwrap());
+        assert_eq!(
+            spend_at(&limiter, "recent", 1, later).unwrap_err(),
+            RateLimitDenial::RetryAfter(Duration::from_secs(1))
+        );
     }
 
     #[test]

@@ -1447,11 +1447,16 @@ const CATALOG_PRICE_PREFIX_LIMIT: i64 = 2_049;
 fn build_catalog_price_prefix(f: &CatalogFilters, scope: &CatalogScope, now_ms: i64) -> Builder {
     let mut b = Builder::new();
     let now = b.bind_i64(now_ms);
+    let network = if scope.nets == [ChainNet::Matic] {
+        " AND network = 'matic'"
+    } else {
+        ""
+    };
     b.push(&format!(
         "WITH legacy_price_prefix AS MATERIALIZED (
             SELECT network, contract_address, token_id, seller, price, created_at, status, expires_at
             FROM shop.legacy_order
-            WHERE status = 'open' AND expires_at > {now}
+            WHERE status = 'open' AND expires_at > {now}{network}
             ORDER BY price LIMIT {CATALOG_PRICE_PREFIX_LIMIT}
         ), price_bound AS MATERIALIZED (
             SELECT count(*) < {CATALOG_PRICE_PREFIX_LIMIT} AS exhaustive, max(price) AS frontier
@@ -1789,7 +1794,8 @@ async fn rank_catalog_page(
     let Some(scope) = books.filter(|scope| {
         !is_v2
             && scope.reads_book
-            && scope.nets.len() == ChainNet::ALL.len()
+            && (scope.nets.len() == ChainNet::ALL.len()
+                || (f.network == Some(Network::Matic) && scope.nets == [ChainNet::Matic]))
             && f.uses_price_prefix()
     }) else {
         return Ok(None);
@@ -2203,7 +2209,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn price_prefix_proves_both_network_pages_before_hydrating() {
+    async fn price_prefix_proves_catalog_pages_before_hydrating() {
         let Some(db) = super::super::tests::support::OwnDb::create("catalog_prefix").await else {
             return;
         };
@@ -2315,8 +2321,62 @@ mod tests {
             }
         }
 
+        sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
+            "INSERT INTO shop.legacy_order
+                (network,marketplace_address,order_id,contract_address,token_id,seller,price,expires_at,
+                 status,created_block,created_log,created_at,updated_block,updated_log,updated_at)
+             SELECT 'ethereum','{contract}','extra-eth-'||g,'{unrelated}',g,'{owner}',2,5000,'open',
+                    1,0,1,1,0,1
+             FROM generate_series(1,{CATALOG_PRICE_PREFIX_LIMIT}) g;
+             UPDATE shop.legacy_order SET price=8
+             WHERE network='matic' AND contract_address='{unrelated}';"
+        )))
+        .execute(&db.pool)
+        .await
+        .unwrap();
         let mut read = catalogue::begin_unchecked(&state).await;
         read.now = chrono::DateTime::from_timestamp_millis(2000).unwrap();
+        let polygon = CatalogScope {
+            reads_book: true,
+            ..CatalogScope::new(Catalogue::Mainnet, vec![ChainNet::Matic])
+        };
+        for (skip, expected_price) in [(0, Some("90")), (1, None)] {
+            let filters = parse_catalog_filters(&pairs(&[
+                ("network", "MATIC"),
+                ("first", "1"),
+                ("skip", &skip.to_string()),
+            ]))
+            .unwrap();
+            // The cheaper Ethereum orders must stay out of the raw prefix.
+            let ranked = rank_catalog_page(&mut read, &filters, false, Some(&polygon))
+                .await
+                .unwrap()
+                .expect("the scoped Polygon prefix proves the page");
+            assert_eq!(ranked.total, 2);
+            let (sql, args) = build_catalog_page_query(
+                &filters,
+                false,
+                read.now.naive_utc(),
+                None,
+                false,
+                Some(&polygon),
+                None,
+            );
+            let expected = sqlx::query_with(sqlx::AssertSqlSafe(sql), args)
+                .fetch_all(&mut *read.tx)
+                .await
+                .unwrap();
+            let (page, total) = fetch_page(&state, &mut read, &filters, false, Some(&polygon))
+                .await
+                .unwrap();
+            assert_eq!(total, 2);
+            assert_eq!(page[0].network, Network::Matic);
+            assert_eq!(page[0].max_listing_price.as_deref(), expected_price);
+            assert_eq!(
+                serde_json::to_value(&page).unwrap(),
+                serde_json::to_value(expected.iter().map(row_to_item).collect::<Vec<_>>()).unwrap()
+            );
+        }
         for targeted in [
             CatalogFilters {
                 contract_addresses: vec![contract.to_owned()],

@@ -1461,6 +1461,8 @@ impl PgAssignmentFence {
 }
 
 struct PgRealmLease {
+    // Read only by the unfenced test store.
+    #[cfg(any(test, feature = "test-support"))]
     generation_required: bool,
     selected: Option<SelectedLease>,
     read_only: bool,
@@ -1563,6 +1565,7 @@ impl PgAssignmentFence {
             .filter(PulseAdmissionStamp::valid);
         tx.commit().await.map_err(|_| FenceError::Unavailable)?;
         Ok(Box::new(PgRealmLease {
+            #[cfg(any(test, feature = "test-support"))]
             generation_required: self.generation_required,
             selected: None,
             read_only: false,

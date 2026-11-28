@@ -438,8 +438,11 @@ pub async fn insert_events(
 
 use crate::shared::collections::ITEM_SHIFT as TWO_POW_216;
 
+/// The time the legacy book lane may spend before the NFT walk.
+const LEGACY_BOOK_REBUILD_PER_PASS: std::time::Duration = std::time::Duration::from_secs(120);
+
 /// The keys a fold past `$2` touches, counted before the fold decides its
-/// join strategy (`NESTED_LOOP_TOUCHED_MAX`); the same two arms as the
+/// join strategy (`NESTED_LOOP_TOUCHED_MAX`). The same two arms as the
 /// fold's `touched`.
 const COUNT_TOUCHED_SQL: &str = "
 SELECT count(*) FROM (
@@ -821,6 +824,7 @@ pub struct NftIndex {
     /// The cursor's start: nothing before it is the walk's (a bounded
     /// window's history, or none at all for a full one).
     walk_start: Mutex<Option<u64>>,
+    legacy_book_lane: super::legacy_orders::RebuildLane,
 }
 
 impl NftIndex {
@@ -844,6 +848,7 @@ impl NftIndex {
             collections: Mutex::new(None),
             walked: Mutex::new(None),
             walk_start: Mutex::new(None),
+            legacy_book_lane: super::legacy_orders::RebuildLane::default(),
         }
     }
 
@@ -974,10 +979,12 @@ impl ChainIndex for NftIndex {
         self.reset();
     }
 
-    /// A walk that owes a backfill runs its lanes, alone.
+    /// A walk that owes a backfill, or whose legacy order book has a rebuild
+    /// open, runs its lanes, alone: a shared pass skips them.
     async fn walks_alone(&self, pool: &PgPool) -> anyhow::Result<bool> {
         Ok(sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
-            "SELECT EXISTS (SELECT 1 FROM shop.nft_contract WHERE network = $1 AND {BACKFILL_PENDING_SQL})"
+            "SELECT EXISTS (SELECT 1 FROM shop.nft_contract WHERE network = $1 AND {BACKFILL_PENDING_SQL}) \
+                 OR EXISTS (SELECT 1 FROM shop.legacy_order_rebuild WHERE network = $1)"
         )))
         .bind(self.net.db_name())
         .fetch_one(pool)
@@ -1251,6 +1258,20 @@ impl ChainIndex for NftIndex {
         cursor: Option<(u64, &str)>,
     ) -> anyhow::Result<chain_walk::Spent> {
         self.reset();
+        // The private legacy order build spends a bounded share of this
+        // pass. A restart resumes at the last committed step.
+        let deadline = std::time::Instant::now() + LEGACY_BOOK_REBUILD_PER_PASS;
+        if let Err(error) = super::legacy_orders::run_rebuild(
+            pool,
+            self.net,
+            owner,
+            deadline,
+            &self.legacy_book_lane,
+        )
+        .await
+        {
+            tracing::warn!(network = self.net.db_name(), %error, "legacy order book: rebuild batch deferred");
+        }
         let owed: Vec<WalkedContract> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
             "SELECT contract_address, walked_from_block, backfill_from_block, backfilled_to_block FROM shop.nft_contract \
              WHERE network = $1 AND {BACKFILL_PENDING_SQL} ORDER BY walked_from_block, contract_address"
