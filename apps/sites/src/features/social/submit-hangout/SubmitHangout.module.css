@@ -1,6 +1,5 @@
 .cover { margin: 0; display: flex; flex-direction: column; align-items: flex-start; gap: 8px; }
 .coverImage { object-fit: cover; max-width: 100%; }
-.cover :focus-visible { outline: 2px solid var(--ui-accent); outline-offset: 3px; }
 
 /* Pinned to the viewport while the form scrolls, as the production editor's fixed page background. */
 .authoring[data-editor] {
@@ -199,8 +198,6 @@
 
 /* The sign-in gate's button keeps its own width inside the column of controls. */
 .signIn { align-self: flex-start; }
-
-.cancel { padding: var(--dcl-space-12); color: inherit; font-weight: 600; text-decoration: none; }
 
 .coverField,
 .dropZone {

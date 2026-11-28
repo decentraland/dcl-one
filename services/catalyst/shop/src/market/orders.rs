@@ -116,10 +116,12 @@ pub struct Keyed {
 }
 
 pub fn from_seconds_to_milliseconds(time: f64) -> i64 {
-    if time < super::nft_index::LEGACY_EXPIRY_UNIT_THRESHOLD as f64 {
-        (time * 1000.0).round() as i64
+    #[allow(clippy::cast_precision_loss, reason = "10^11 is exact in f64")]
+    let threshold = super::nft_index::LEGACY_EXPIRY_UNIT_THRESHOLD as f64;
+    if time < threshold {
+        super::casts::saturating_i64((time * 1000.0).round())
     } else {
-        time.round() as i64
+        super::casts::saturating_i64(time.round())
     }
 }
 
@@ -156,8 +158,8 @@ pub fn parse_filters(pairs: &[(String, String)]) -> Result<OrderFilters, Invalid
             }
         });
     Ok(OrderFilters {
-        first: p.get_number("first", None).map(|v| v as i64),
-        skip: p.get_number("skip", None).map(|v| v as i64),
+        first: p.get_integer("first"),
+        skip: p.get_integer("skip"),
         sort_by,
         marketplace_address: p.get_string("marketplaceAddress", None),
         owner: p.get_string("owner", None),
@@ -197,8 +199,7 @@ pub(crate) fn parse_open_by_items(
         items.push(item);
     }
     let per_contract = p
-        .get_number("perContract", None)
-        .map(|v| v as i64)
+        .get_integer("perContract")
         .unwrap_or(OPEN_BY_ITEMS_DEFAULT_PER_CONTRACT)
         .clamp(1, OPEN_BY_ITEMS_MAX_PER_CONTRACT);
     Ok((items, per_contract))
@@ -225,11 +226,30 @@ fn stamp_owner_check(mut response: Response) -> Response {
 
 /// `$1` is now, `$2` the trades floor; `extra` binds from `$3`.
 fn trades_leg_sql(extra: &str) -> String {
-    format!(
-        "WITH {} SELECT {} {TRADE_ORDER_FROM} {extra} ORDER BY u.created_at DESC, u.id::text ASC LIMIT {TRADE_ORDER_CAP}",
-        unified_trades_cte("$1", "$2"),
-        TRADE_ORDER_COLUMNS.replace("SHIFT", ITEM_ID_SHIFT),
-    )
+    let trades = unified_trades_cte("$1", "$2");
+    let columns = TRADE_ORDER_COLUMNS.replace("SHIFT", ITEM_ID_SHIFT);
+    if extra.is_empty() {
+        // Process candidates in creation order and verify each before
+        // the limit so a newer unbacked trade cannot displace an older
+        // eligible one.
+        format!(
+            "WITH {trades}
+             SELECT verified.* FROM (
+                 SELECT id, created_at FROM shop.trades
+                 WHERE type = 'public_nft_order' AND expires_at > $1 AND effective_since <= $1
+                 ORDER BY created_at DESC, id::text ASC OFFSET 0
+             ) candidate
+             CROSS JOIN LATERAL (
+                 SELECT {columns} {TRADE_ORDER_FROM} AND u.id = candidate.id OFFSET 0
+             ) verified
+             ORDER BY candidate.created_at DESC, candidate.id::text ASC LIMIT {TRADE_ORDER_CAP}"
+        )
+    } else {
+        format!(
+            "WITH {trades} SELECT {columns} {TRADE_ORDER_FROM} {extra}
+             ORDER BY u.created_at DESC, u.id::text ASC LIMIT {TRADE_ORDER_CAP}"
+        )
+    }
 }
 
 /// An open v3 listing ([`TRADE_ORDER_COLUMNS`]' row) as an order: its id is the
@@ -448,9 +468,16 @@ pub const UNPUBLISHED_FOLD_READS: dcl_metrics::CounterFamily<2> = dcl_metrics::C
     Some(dcl_metrics::Unit::Count),
     &["network", "route"],
 );
+const BOOK_READINESS_REFUSALS: dcl_metrics::CounterFamily<3> = dcl_metrics::CounterFamily::new(
+    "catalyst_shop_order_book_readiness_refusals_total",
+    "Reads refused by legacy order book readiness, by network, reason and route.",
+    Some(dcl_metrics::Unit::Count),
+    &["network", "reason", "route"],
+);
 pub const FAMILIES: &[dcl_metrics::Descriptor] = &[
     FOLD_READ_CHECKS.descriptor,
     UNPUBLISHED_FOLD_READS.descriptor,
+    BOOK_READINESS_REFUSALS.descriptor,
 ];
 
 /// The scope of the book and listings on their shared snapshot.
@@ -612,15 +639,31 @@ pub(super) async fn require_published_book(
         }
     }
     for &net in nets {
-        if !super::legacy_orders::caught_up(conn, net).await? {
-            return Err(owned_items::ReadError::NotReady(
-                super::Source::NftIndex,
+        use super::legacy_orders::Readiness;
+        let (reason, message) = match super::legacy_orders::readiness_on(conn, net).await? {
+            Readiness::Published => continue,
+            Readiness::Behind => (
+                "fold_behind",
                 format!(
                     "the {} legacy order book has not caught up with the published nft fold",
                     net.db_name()
                 ),
-            ));
-        }
+            ),
+            Readiness::RefoldQueued => (
+                "refold_queued",
+                format!(
+                    "the {} legacy order book has a queued refold",
+                    net.db_name()
+                ),
+            ),
+        };
+        BOOK_READINESS_REFUSALS
+            .handle([net.db_name(), reason, route.label()])
+            .increment(1);
+        return Err(owned_items::ReadError::NotReady(
+            super::Source::NftIndex,
+            message,
+        ));
     }
     Ok(())
 }
@@ -736,6 +779,7 @@ struct Served {
     matic: i64,
     land: String,
     estate: String,
+    land_network: &'static str,
     names: String,
 }
 
@@ -785,9 +829,8 @@ fn served(state: &MarketplaceState) -> Served {
     let ethereum = catalogue.chain_id(ChainNet::Ethereum);
     let deployments =
         super::nft_index::deployments::Deployments::for_chain(ChainNet::Ethereum, ethereum);
-    let (land, estate) = deployments
-        .as_ref()
-        .and_then(|d| d.land.as_ref())
+    let land_deployment = deployments.and_then(|d| d.land);
+    let (land, estate) = land_deployment
         .map(|n| {
             (
                 n.land_registry.to_lowercase(),
@@ -800,6 +843,7 @@ fn served(state: &MarketplaceState) -> Served {
         matic: catalogue.chain_id(ChainNet::Matic),
         land,
         estate,
+        land_network: land_deployment.map_or("", |land| land.network),
         names: deployments
             .and_then(|d| d.registrar())
             .unwrap_or_default()
@@ -811,6 +855,9 @@ fn served(state: &MarketplaceState) -> Served {
 fn is_uint(s: &str) -> bool {
     !s.is_empty() && s.len() <= 78 && s.bytes().all(|b| b.is_ascii_digit())
 }
+
+pub(super) const BOOK_NFT_FOLD_JOIN: &str = "LEFT JOIN shop.chain_cursor nft_fold \
+    ON nft_fold.indexer = 'nft' AND nft_fold.network = o.network";
 
 /// The `shop.legacy_order` leg's `FROM ... WHERE` for `f` at `now_ms`, its
 /// binds from `$1`, or `None` when no order can match (a token or item id
@@ -836,15 +883,20 @@ fn book_from(
         next(&mut binds, served.estate.clone()),
         next(&mut binds, served.names.clone()),
     );
+    let land_joins = if land {
+        format!(
+            "LEFT JOIN land_authz.index_cursor land_fold ON land_fold.network = '{}' AND o.network = 'ethereum' \
+               AND land_fold.land_registry = $1 AND land_fold.estate_registry = $2 \
+             LEFT JOIN land_authz.token_right tr ON o.network = 'ethereum' AND tr.token_address = o.contract_address AND tr.token_id = o.token_id",
+            served.land_network,
+        )
+    } else {
+        String::new()
+    };
     let mut sql = format!(
         "FROM shop.legacy_order o \
-         LEFT JOIN shop.nft n ON n.network = o.network AND n.contract_address = o.contract_address AND n.token_id = o.token_id{} \
-         WHERE {listed}",
-        if land {
-            " LEFT JOIN land_authz.token_right tr ON o.network = 'ethereum' AND tr.token_address = o.contract_address AND tr.token_id = o.token_id"
-        } else {
-            ""
-        }
+         LEFT JOIN shop.nft n ON n.network = o.network AND n.contract_address = o.contract_address AND n.token_id = o.token_id \
+         {BOOK_NFT_FOLD_JOIN} {land_joins} WHERE {listed}",
     );
     let status = book_status(land);
     if let Some(v) = &f.marketplace_address {
@@ -928,20 +980,25 @@ fn book_from(
 /// owner source proves the seller holds the token: `shop.nft` for the
 /// collections and names, `land_authz.token_right` for the LAND and Estate
 /// registries (`$1`, `$2` of [`book_from`]'s binds, joined only with
-/// `land`). Another owner, no owner (burned, dissolved) or no row at all
-/// reads `transferred`, so an order whose ownership cannot be proven is
-/// never served as open. Without `land` no open LAND or estate order is
-/// read ([`reads_land`]); one would read `transferred`, having no
-/// `shop.nft` row.
+/// `land`). Use the same post-fold transfer and unfinished-history checks as
+/// backed v3 listings. An open order whose ownership cannot be proven
+/// reads `transferred`. `book_from` and the catalog aggregation supply
+/// `BOOK_NFT_FOLD_JOIN` on their checked snapshot.
 pub(super) fn book_status(land: bool) -> String {
-    let moved = if land {
-        "(CASE WHEN o.network = 'ethereum' AND o.contract_address IN ($1, $2) \
-               THEN tr.token_id IS NULL OR tr.owner IS DISTINCT FROM o.seller \
-               ELSE n.token_id IS NULL OR n.owner IS DISTINCT FROM o.seller END)"
+    let nft = super::catalog::nft_owner_at_fold_sql("n", "nft_fold");
+    let nft_backed = format!("(n.owner = o.seller AND {nft})");
+    let backed = if land {
+        let land = super::catalog::land_owner_at_fold_sql("tr", "land_fold.folded_block");
+        format!(
+            "(CASE WHEN o.network = 'ethereum' AND o.contract_address IN ($1, $2) \
+                   THEN tr.owner = o.seller AND {land} ELSE {nft_backed} END)"
+        )
     } else {
-        "(n.token_id IS NULL OR n.owner IS DISTINCT FROM o.seller)"
+        nft_backed
     };
-    format!("(CASE WHEN o.status = 'open' AND {moved} THEN 'transferred' ELSE o.status END)")
+    format!(
+        "(CASE WHEN o.status = 'open' AND NOT COALESCE({backed}, false) THEN 'transferred' ELSE o.status END)"
+    )
 }
 
 /// The legacy leg's order for `sort_by`, ties by id as [`sort_merged`].
@@ -1037,13 +1094,33 @@ async fn book_total(
     let Some((from, binds)) = book_from(&served(state), f, now_ms, land) else {
         return Ok(0);
     };
+    let unfiltered = f.status.is_none()
+        && f.marketplace_address.is_none()
+        && f.owner.is_none()
+        && f.buyer.is_none()
+        && f.contract_address.is_none()
+        && f.token_id.is_none()
+        && f.item_id.is_none();
+    let cap = cap.max(0);
     let mut total = 0;
     for net in nets_of(f.network) {
-        let sql = format!(
-            "SELECT count(*) FROM (SELECT 1 {from} AND o.network = '{}' LIMIT {}) x",
-            net.db_name(),
-            cap.max(0)
-        );
+        let from = format!("{from} AND o.network = '{}'", net.db_name());
+        let sql = if unfiltered {
+            // The open-expiry index can fill a shallow count on its own.
+            // Count unexpired terminal orders only for the remaining cap.
+            format!(
+                "WITH live AS (
+                     SELECT count(*) AS found FROM (
+                         SELECT 1 {from} AND o.status = 'open' LIMIT {cap}
+                     ) open_orders
+                 )
+                 SELECT live.found + (SELECT count(*) FROM (
+                     SELECT 1 {from} AND o.status <> 'open' LIMIT ({cap} - live.found)
+                 ) terminal_orders) FROM live"
+            )
+        } else {
+            format!("SELECT count(*) FROM (SELECT 1 {from} LIMIT {cap}) x")
+        };
         let mut q = sqlx::query_scalar(sqlx::AssertSqlSafe(sql));
         for b in &binds {
             q = q.bind(b);
@@ -1055,18 +1132,6 @@ async fn book_total(
 }
 
 const ORDER_FIELDS: &str = "id marketplaceAddress nftAddress tokenId owner buyer price status expiresAt createdAt updatedAt nft { issuedId }";
-
-/// Compare the two raw expiry encodings on the Graph before paging.
-/// Nest OR under AND so it can share a query with column filters and the
-/// count cursor. The boundary is the NFT walk's `expires_ms` conversion.
-fn graph_unexpired(field: &str, now_ms: i64) -> Value {
-    let threshold = super::nft_index::LEGACY_EXPIRY_UNIT_THRESHOLD.to_string();
-    let gt = format!("{field}_gt");
-    json!([{ "or": [
-        { (&gt): now_ms.div_euclid(1_000).to_string(), (format!("{field}_lt")): threshold },
-        { (&gt): now_ms.to_string(), (format!("{field}_gte")): threshold },
-    ] }])
-}
 
 fn legacy_where(f: &OrderFilters, now_ms: i64) -> Value {
     let mut w = json!({});
@@ -1088,10 +1153,10 @@ fn legacy_where(f: &OrderFilters, now_ms: i64) -> Value {
     match f.status.as_deref() {
         Some("open") => {
             w["status"] = json!("open");
-            w["and"] = graph_unexpired("expiresAt", now_ms);
+            w["and"] = readers::graph_unexpired("expiresAt", now_ms);
         }
         Some(s) => w["status"] = json!(s),
-        None => w["and"] = graph_unexpired("expiresAt", now_ms),
+        None => w["and"] = readers::graph_unexpired("expiresAt", now_ms),
     }
     if let Some(v) = &f.item_id {
         let composite = if v.contains('-') {
@@ -1282,13 +1347,13 @@ pub(super) async fn list_orders_for(
         let (rows, total) = legacy_leg(state, f, window, now.timestamp_millis()).await?;
         (rows, total, trades)
     };
-    let total = legacy_total + trades.len() as i64;
+    let total = legacy_total + crate::market::casts::len_i64(trades.len());
     merged.extend(trades);
     sort_merged(&mut merged, f.sort_by);
     let page = merged
         .into_iter()
-        .skip(offset as usize)
-        .take(limit as usize)
+        .skip(crate::market::casts::page(offset))
+        .take(crate::market::casts::page(limit))
         .map(|k| k.order)
         .collect();
     Ok((page, total))
@@ -1474,7 +1539,7 @@ pub async fn open_orders_by_items(
     let mut all: Vec<Keyed> = Vec::new();
     for (contract, mut rows) in per {
         sort_merged(&mut rows, Some(OrderSortBy::Cheapest));
-        rows.truncate(per_contract as usize);
+        rows.truncate(crate::market::casts::page(per_contract));
         all.extend(rows.into_iter().filter(|k| {
             k.order
                 .token_id
@@ -1660,6 +1725,7 @@ mod tests {
             matic: 137,
             land: "0xland".to_string(),
             estate: "0xestate".to_string(),
+            land_network: "ethereum-mainnet",
             names: "0xnames".to_string(),
         };
         let open = parse_filters(&pairs(&[
@@ -1676,9 +1742,11 @@ mod tests {
                 && sql.contains("LEFT JOIN land_authz.token_right tr")
                 && sql.contains("o.seller = $4")
                 && sql.contains("o.status = 'open' AND o.expires_at > $5::bigint")
-                && sql.contains("THEN tr.token_id IS NULL OR tr.owner IS DISTINCT FROM o.seller")
-                && sql
-                    .contains("ELSE n.token_id IS NULL OR n.owner IS DISTINCT FROM o.seller END)"),
+                && sql.contains("THEN tr.owner = o.seller AND (tr.updated_block <= land_fold.folded_block")
+                && sql.contains("n.transferred_block <= nft_fold.folded_block")
+                && sql.contains("e.block_number > land_fold.folded_block")
+                && sql.contains("e.block_number > nft_fold.folded_block")
+                && sql.contains("watched.refold_owed"),
             "{sql}"
         );
         assert_eq!(

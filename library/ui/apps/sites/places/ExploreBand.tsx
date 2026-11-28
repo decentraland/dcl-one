@@ -1,7 +1,7 @@
 import { forwardRef, useState, type ReactNode, type SVGProps } from 'react'
 import { Button } from '../../../components/Button/Button'
 import { CloseButton } from '../../../components/CloseButton/CloseButton'
-import { WebSelect } from '../../../components/InputField/InputFieldWebControls'
+import { Dropdown } from '../../../components/Dropdown/Dropdown'
 import { InputWebCreatorTools } from '../../../components/InputWebCreatorTools/InputWebCreatorTools'
 import { GeneralClose } from '../../../foundations/icons'
 import { Dialog } from './Dialog'
@@ -145,7 +145,7 @@ function SearchGlyph() {
   )
 }
 
-/** The shared native select, in a box of the toolbar's width so its frame does not fill the row. */
+/** The shared dark Dropdown, in a box of the toolbar's width so its frame does not fill the row. */
 function CategorySelect({
   value,
   options,
@@ -161,17 +161,14 @@ function CategorySelect({
 }) {
   return (
     <div className={`${styles.selectBox} ${className ?? ''}`}>
-      <WebSelect
-        aria-label={label}
+      <Dropdown
+        variant="dark"
+        label={label}
+        labelHidden
+        options={options}
         value={value}
-        onChange={(event) => onChange(event.target.value)}
-      >
-        {options.map((option) => (
-          <option key={option.value} value={option.value}>
-            {option.label}
-          </option>
-        ))}
-      </WebSelect>
+        onChange={onChange}
+      />
     </div>
   )
 }

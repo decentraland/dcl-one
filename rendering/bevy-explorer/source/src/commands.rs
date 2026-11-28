@@ -7,7 +7,11 @@ use common::{
     },
 };
 use console::PendingConsoleResponses;
-use scene_runner::initialize_scene::{parcels_in_range, ScenePointers};
+use scene_runner::{
+    initialize_scene::{parcels_in_range, ScenePointers},
+    util::settle::{self, SceneWaits},
+};
+use serde_json::json;
 
 /// set location
 #[derive(clap::Parser, ConsoleCommand)]
@@ -22,28 +26,53 @@ pub struct ChangeLocationCommand {
     /// name of the spawn point of the parcel's scene to land on
     #[arg(long)]
     spawn: Option<String>,
+    /// Reply once the player has landed and the parcel's scene runs, shows its content (past tick
+    /// 5, nothing blocking it) and a frame with it was drawn: JSON with `arrived`, `sceneReady`,
+    /// `sceneHash`, `ticksWaited`, `settled`.
+    #[arg(long)]
+    wait: bool,
+    /// How long --wait waits, a realm change included, in seconds (60 by default).
+    #[arg(long, requires = "wait")]
+    timeout_seconds: Option<f32>,
 }
 
 pub fn change_location(
     mut commands: Commands,
     mut input: ConsoleCommand<ChangeLocationCommand>,
     mut pending: ResMut<PendingConsoleResponses>,
+    mut waits: ResMut<SceneWaits>,
 ) {
     if let Some(Ok(command)) = input.take() {
+        let timeout = match settle::wait_timeout(command.wait, command.timeout_seconds) {
+            Ok(timeout) => timeout,
+            Err(e) => return input.reply_failed(e),
+        };
         // the teleport scenes use, sent by the engine itself: with a realm a realm change (a full
         // reconnect) landing on the parcel, without one a move inside the realm the player is in
         let (response, rx) = RpcResultSender::channel();
+        let parcel = IVec2::new(command.x, command.y);
         let location = (command.x, command.y);
-        let reply = match &command.realm {
-            Some(realm) => format!("new location: {location:?} in {realm}"),
-            None => format!("new location: {location:?}"),
+        let (reply, json_reply) = match &command.realm {
+            Some(realm) => (
+                format!("new location: {location:?} in {realm}"),
+                json!({ "location": [parcel.x, parcel.y], "realm": realm }),
+            ),
+            None => (
+                format!("new location: {location:?}"),
+                json!({ "location": [parcel.x, parcel.y] }),
+            ),
         };
         commands.send_event(RpcCallEvent::engine(RpcCall::TeleportPlayer {
-            to: Some(IVec2::new(command.x, command.y)),
+            to: Some(parcel),
             realm: command.realm,
             spawn_point: command.spawn,
             response,
         }));
+        if let Some(timeout) = timeout {
+            let rx = waits.arrival(parcel, timeout, rx, json_reply);
+            pending.push_oneshot(rx, |r| r, input.take_responder());
+            return;
+        }
         pending.push_receiver(
             rx,
             move |result| result.map(|()| reply.clone()),

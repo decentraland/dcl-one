@@ -1892,6 +1892,39 @@ operator must hear about (`shop/src/credits/alerts.rs`), one row per
   - `purchase_settled`, keyed by salt: a credit's first use settled (not a
     replayed debit), in the settlement's transaction, with its lines from
     `authorization_lines` (the primary key's prefix).
+- **the daily summary** (`daily_summary.rs`): `daily_summary`, keyed by the
+  closed UTC day (`YYYY-MM-DD`). The leased `credits-daily-summary` job runs
+  every five minutes where `OPS_WRITES_ENABLED` is on, and does nothing
+  before `CREDITS_DAILY_SUMMARY_HOUR_UTC` (9). From that hour:
+  - one `EXISTS` on `alerts_kind_dedupe_key` ends the pass once yesterday is
+    queued, so a tick otherwise reads nothing;
+  - otherwise it reads the day's figures on one REPEATABLE READ, READ ONLY
+    snapshot with a 10-second statement timeout. The figures come from
+    `purchases`, `usage_settlements` with `usages` and `authorization_lines`,
+    `wallets`, `goal_grants`, `authorizations` and `payment_reversals`;
+  - the day filters' time columns carry no index, so each figure scans its
+    table once a day. The tables are `purchases` (a row per purchase),
+    `usage_settlements` and `usages` (a row per CreditUsed log),
+    `authorizations` (a row per checkout attempt), `payment_reversals` (a
+    row per reversed intent) and `wallets`. New buyers aggregate every
+    purchase settlement in that same single scan. A claimed goal grant's
+    usage is read by salt through `usages_salt_idx`, keeping the usages of
+    the grant's chain, contract, credit and wallet;
+  - a pass whose reads fail is retried after 5 minutes, doubling up to an
+    hour. A failure within 65 minutes of the end of the reporting day,
+    judged when it failed, may get no retry before the next day: it queues
+    the day with `figuresUnavailable`, so the channel shows the gap;
+  - it then reads the CreditsManager's MANA balance and the MANA/USD round
+    over the CreditUsed index's RPC, 10 seconds each. A failed read, or a
+    round older than `MANA_PRICE_MAX_STALENESS_SECS`, is stored as
+    `unavailable`, and the row is queued anyway;
+  - the insert's `ON CONFLICT DO NOTHING` is the claim, so a second replica
+    or a restart adds nothing, and the pass that lost reports the day as
+    already queued.
+
+  The row is rendered from its payload at delivery. The figures, and those
+  credits-server reported that the node doesn't, are listed in the module's
+  doc.
 
 The writer of delivery is the leased `credits-alerts` job, every 15 seconds
 where `OPS_WRITES_ENABLED` is on. It claims up to 20 due `pending` rows
@@ -2704,7 +2737,23 @@ See the [synthetic fixture measurements](METRICS.md#wallet-activity-transfers) f
 
 `sale_publication.last_sale_through` records the block through which the table holds every published sale. `last_sale_generation` records the publication generation the table was kept for. Each pass applies the ledger past `last_sale_through`, at most 5,000,000 blocks at a time. Once the table is current, that is the new window itself. After step `0078_shop_nft_last_sale` adds the columns, or after a rebuild, it is the earlier history. A receipt can be retried after its block is covered and set the token ID of a trade's mint. The pass then recomputes those tokens' latest sale from the ledger and keeps a later sale. Every writer rotates the generation when it replaces the history or corrects a published sale. A writer from before step 0078 does so without touching the table or these columns, so they no longer match. The table is then not read, and the next pass of a current writer deletes the network's rows and refills them from the start. It does the same when the coverage is cleared. The schema object pass creates the table.
 
-A `/v1/nfts` read checks the publication of each network its page can return, on the read's own snapshot (`sale_fold::last_sale_networks`). The publication must be valid and fresh, as the sales reads require, its table must be kept for its generation, and `last_sale_through` must reach its block. For such a network, `sold_at` is the later of the token's latest legacy `OrderSuccessful` (`shop.nft.sold_at`, or the LAND source's subquery) and its row in `shop.nft_last_sale`, joined on the primary key. Elsewhere, including on a testnet node, `sold_at` keeps the legacy order alone. On a walker, a shallow NAME page of any sort reads the index instead of the marketplace graph when the Ethereum latest sales are admitted on the snapshot that supplies its rows, because the graph's `soldAt` counts other sales. Such a page follows the index path's rules: the `first + skip` window, and the trades mirror's readiness on the same snapshot when it filters or sorts on orders. Admission is checked at the request's clock, and the page's values and order use that answer. An ordinary shallow page can read the graph when the names index or the latest sales are not ready. A page filtered or sorted by orders uses the native page even when the latest-sale display is unavailable, and returns the named readiness response if its required listing sources cannot answer. The recently sold sort still reads and sorts every held token, and the join adds one primary-key lookup or hash probe per token. See the [synthetic fixture measurements](METRICS.md#latest-sale-per-token).
+A `/v1/nfts` read checks the publication of each network its page can return, on the read's own snapshot (`sale_fold::last_sale_networks`). The publication must be valid and fresh, as the sales reads require, its table must be kept for its generation, and `last_sale_through` must reach its block. For such a network, `sold_at` is the later of the token's latest legacy `OrderSuccessful` (`shop.nft.sold_at`, or the LAND source's subquery) and its row in `shop.nft_last_sale`, joined on the primary key. Elsewhere, including on a testnet node, `sold_at` keeps the legacy order alone. On a walker, a shallow NAME page of any sort reads the index instead of the marketplace graph when the Ethereum latest sales are admitted on the snapshot that supplies its rows, because the graph's `soldAt` counts other sales. Such a page follows the index path's rules: the `first + skip` window, and the trades mirror's readiness on the same snapshot when it filters or sorts on orders. Admission is checked at the request's clock, and the page's values and order use that answer. An ordinary shallow page can read the graph when the names index or the latest sales are not ready. A page filtered or sorted by orders uses the native page even when the latest-sale display is unavailable, and returns the named readiness response if its required listing sources cannot answer.
+
+The recently sold sort reads the capped total first, on the same snapshot. With enough candidates and no owner, lessor or on-sale-only filter, each source is walked in three parts. Enough means at least 400 per row of the `first + skip` window, or more than the cap with a window of at most 12,500. The parts:
+- its tokens with a latest sale, walked newest first through `nft_last_sale_recent_idx` (`(network, sold_at DESC, contract_address, token_id)`), each sale looking up its token by primary key;
+- its tokens with a legacy order, walked newest first through `nft_sold_order_idx`. For LAND, the registries' `OrderSuccessful` events in `nft_event_successful_order` are aggregated per token and sorted, so that part's cost follows LAND's order history rather than the window;
+- its tokens with neither, by contract and token.
+
+A part stops after `first + skip` rows under the filters. A token's `sold_at` is the later of its two times, so the page's window lies within the first two parts' rows (a token in both is kept once) followed by the third's. Ties are broken by contract, token and then network: the same contract address and token ID can be held on both networks.
+
+The walk has a budget: half the capped total, in index rows of each sold part of a collection or NAME source. Each such part reads that many rows of its index on its network, newest first, under a `LIMIT` before any filter, so it never inspects a row past them, however many rows share a sale time. When a part finds fewer than `first + skip` rows among them and its index holds a row past the budget, the page returns no row and is read again, sorted whole. The one-row probe past the budget runs only for a part that fell short. A filter that keeps many tokens but few sold ones, such as a large, rarely sold collection, so reads at most that budget instead of walking every sale of the network. With fewer candidates, the page reads and sorts them whole from the filters' own indexes, which costs less than walking for matches.
+
+The tests:
+- `the_recently_sold_lane_pages_like_the_whole_set` compares the walk with the whole sort over every source, every admission and windows that cross into the unsold tokens. Under small budgets it checks that a walked page is either the whole sort's or empty.
+- `the_walk_reads_a_bounded_prefix` covers the budget's routing. It includes a sale time shared by more tokens than the budget, where the filter's tokens lie past the budget: the walk misses, the page is sorted whole, and the plan shows at most the budget plus one row read from each index.
+- `a_token_on_both_networks_pages_by_network` pages a token held on both networks, sold at the same time and unsold, one row at a time, through the walk and the whole sort.
+
+See the [synthetic fixture measurements](METRICS.md#recently-sold).
 
 ### Badge processor
 
@@ -3960,8 +4009,19 @@ An ordinary page can still use the admitted item catalogue when the book
 is unavailable. It leaves out the legacy listing contributions until that
 book can answer. When a sort does not depend on listings, the read selects
 the page and its count first and aggregates legacy listings for those items.
-The default cheapest sort uses the admitted listings to order the whole
-candidate set by the same price the page displays.
+The default cheapest sort orders candidates by the same price the page
+displays. For two-network v1 pages and requests scoped to Polygon within
+the first 1,000 results, the reader can use a prefix of 2,049 live orders from
+`legacy_order_open_price_idx` when membership does not depend on listings
+and the request has no explicit contract or item filter. Polygon requests
+limit the prefix to Polygon orders before taking the cheapest rows. The reader
+ranks those orders after the usual ownership proof, together with the mint prices.
+A full prefix proves the page only when every selected price is strictly
+below the highest raw prefix price. The exact total comes from the
+eligible items. The reader then loads all listing details for the selected
+item keys on the same snapshot. If the prefix cannot prove the page,
+the reader uses the full query. The `catalog price prefix evaluated`
+debug event records whether the proof covered the page on a cache miss.
 V2 combines the legacy counts and prices with backed v3 resales. A v3
 resale needs published NFT ownership even when the legacy book is withheld.
 Polygon mainnet uses the folded item ID without the collection publication.
@@ -5484,8 +5544,8 @@ windows below are a lower bound for a table folded in another order.
 | newest, `itemRarity=mythic` (85,000 tokens) | 204 ms | 222 ms | walks `nft_mint_order_idx` |
 | name, `category=wearable` | 380 ms | 78 ms | the items sorted by name, then `nft_item_idx` |
 | name, no category | 0.7 to 1.2 s | 96 ms | the same, and 300,000 names sorted |
-| recently sold, `category=wearable` | 1.6 to 3.3 s | 80 ms | every held token read and sorted: no index orders `sold_at` (before `shop.nft_last_sale`; see [Latest sale per token](#latest-sale-per-token)) |
-| recently sold, no category | 2.1 to 2.9 s | 94 ms | the same |
+| recently sold, `category=wearable` | 28 to 31 ms | 80 ms | walks the latest sales and the legacy orders newest first ([Recently sold](METRICS.md#recently-sold), measured with `shop.nft_last_sale` on a later seed, where sorting every held token takes 1.9 s) |
+| recently sold, no category | 123 to 142 ms | 94 ms | the same, over four sources (2.4 s sorted whole) |
 | cheapest or recently listed, `category=wearable` | 736 to 740 ms | 65 ms | the listed part (8,200 listed tokens with their lookups); the unlisted part reads 24 rows |
 | the same, no category | 791 ms | 82 ms | the same, with names and LAND |
 | the same, `category=wearable`, `skip=1,000` | 749 to 755 ms | 65 ms | 1,024 unlisted rows of each source added |
@@ -5545,6 +5605,26 @@ The object pass creates only objects the database lacks, so it then skips the
 index. A failed concurrent build leaves an invalid index of that name: drop it
 before retrying. Each nft fold maintains the index beside `nft_owner_idx` and
 `nft_item_idx`.
+
+The recently sold walk's indexes come the same way: the object pass builds
+them in the migrate transaction, which blocks writes to `shop.nft` and
+`shop.nft_last_sale` while they build. They took 1.4 s and 1.2 s on the
+3.5M-token seed in [Recently sold](METRICS.md#recently-sold); production's
+build time is unmeasured. Whenever production's `shop.nft` is larger than
+that seed, build them before the release with the same definitions as
+`schemas/30_shop.sql`:
+
+```sql
+CREATE INDEX CONCURRENTLY nft_last_sale_recent_idx
+    ON shop.nft_last_sale (network, sold_at DESC, contract_address, token_id);
+CREATE INDEX CONCURRENTLY nft_sold_order_idx
+    ON shop.nft (network, sold_at DESC, contract_address, token_id)
+    WHERE sold_at IS NOT NULL AND owner IS NOT NULL;
+```
+
+The sales fold maintains the first beside `nft_last_sale_block`; the nft
+fold maintains the second, which holds only the held tokens with a legacy
+`OrderSuccessful`.
 
 The DCL NAME owner read (`services/catalyst/shop/src/market/names.rs`) looks
 a label up lowercased, through `nft_ens_label_idx`, which only the
@@ -5658,6 +5738,11 @@ NFT-index 503s are counted by network in `catalyst_shop_bid_nft_unavailable_read
 The check runs before any seller filter or pagination, so a pending owner
 change cannot move bids between seller pages or totals.
 
+The collections subgraph leg compares raw expiry in two disjoint ranges.
+Second values use the request cutoff in whole seconds. Millisecond values
+use the same cutoff in milliseconds. The Graph applies this filter to
+both the page and the count.
+
 Measured on 60,000 synthetic bids over 2,000 catalogued contracts, plus
 3,000 bids on 200 contracts outside the catalogue, with 2M transfers and
 6,000 bids without a stored seller (PostgreSQL 17, warm cache), no index
@@ -5708,9 +5793,13 @@ Invariants:
   follows restores the orders whose creation remains.
 - `transferred` is not stored: a reader derives it on its snapshot from the
   token's owner (`shop.nft`, or `land_authz.token_right` for LAND and
-  estates). An open order reads `open` only while that owner is its seller;
-  another owner, none (burned, dissolved) or no row reads `transferred`,
-  before the status filter, the total and the page. The reader serves only
+  estates). An open order reads `open` while the published fold proves its
+  seller holds it. An owner row or a raw transfer beyond the fold withholds
+  that proof, as does an unfinished NFT contract backfill or refold. A
+  testnet collection also needs an active watch and a verified collection
+  row on the served chain. The Ethereum NAME registrar uses its fixed
+  deployment. An unproven open order reads `transferred` before the status
+  filter, total and page. The reader serves only
   the orders of the catalogue the nft index walks on the served chain (a
   `shop.collections` row of that `chain_id`, `testnet_verified` on a
   testnet) and of that chain's LAND and Estate registries and DCLRegistrar,
@@ -5732,9 +5821,17 @@ Invariants:
   network's. The queue holds a repair window's tokens until the next fold.
   The trigger costs one primary-key read of `shop.legacy_order_cursor` per
   order event written; transfers do not fire it. While a network has a
-  refold queued, its book is not read (`legacy_orders::caught_up`, on the
-  read's snapshot): an earlier binary can republish the same height
-  without folding it. Another network's queue does not withhold it.
+  refold queued, its book is not read. The `nft-index` message names the
+  queued refold separately from a book behind its published fold, and
+  `catalyst_shop_order_book_readiness_refusals_total` counts them by
+  network, route and reason (`refold_queued` or `fold_behind`). The reader
+  reports a queued refold once the book reaches the published fold.
+  An earlier binary can republish that network
+  without draining the queue. Refusals can continue until a writer with
+  the order fold takes the walk and publishes. Another network's queue
+  does not withhold this one. Operators can inspect the queue with no read
+  traffic using `SELECT network, count(*) FROM shop.legacy_order_refold
+  GROUP BY network`.
 - The book stands only while the nft walk's recovery point at its block
   (`shop.chain_checkpoint`) carries its hash. Every binary's rewind drops the
   points past its target, so a branch republished at the same height carries

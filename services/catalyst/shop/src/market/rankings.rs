@@ -137,7 +137,7 @@ pub fn parse_filters(
         });
     Ok(RankingsFilters {
         from,
-        first: p.get_number("first", None).map(|v| v as i64),
+        first: p.get_integer("first"),
         rarity: p.get_string("rarity", None),
         category: p.get_string("category", None),
         sort_by,

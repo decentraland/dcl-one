@@ -1,4 +1,15 @@
-import { useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
+import {
+  createContext,
+  useContext,
+  useEffect,
+  useId,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type CSSProperties,
+  type ReactNode
+} from 'react'
+import { GeneralCheck, GeneralRightArrow } from '../../foundations/icons/general'
 import { Switch } from '../Switch/Switch'
 import styles from './ContextMenu.module.css'
 
@@ -20,7 +31,7 @@ export type ContextMenuItem =
       checked?: boolean
       onChange?: (checked: boolean) => void
     }
-  /** One of a set of exclusive choices (a radio): the checked one carries the mark. */
+  /** One of a set of exclusive choices (a radio): the checked one carries the mark where a row's icon sits. */
   | { kind: 'option'; label: ReactNode; icon?: ReactNode; checked: boolean; onClick?: () => void }
   /** A 'submenu' with `items` opens them beside it; without, it only shows its chevron. */
   | {
@@ -37,11 +48,14 @@ export interface ContextMenuProps {
   'aria-label'?: string
   /** Scroll past a long list's maximum height (a submenu's list of names). */
   scroll?: boolean
-  /** sheet: a flat sheet with taller rows. */
-  variant?: 'default' | 'sheet'
+  /** The surface's width in px. Unset, it fits its rows, from 180 to 280px. */
+  width?: number
   /** Handed to each list this menu opens beside a row. */
   whileSubmenuOpen?: MenuWhileOpen
 }
+
+/** Whether a row sits in a ContextMenu: a Submenu row there takes the menu's icon box and chevron. */
+const InMenu = createContext(false)
 
 function shortAddress(address: string): string {
   if (address.length <= 13) return address
@@ -56,119 +70,112 @@ function classes(...names: (string | false | undefined)[]): string {
 export function ContextMenu({
   items,
   scroll = false,
-  variant = 'default',
+  width,
   whileSubmenuOpen,
   'aria-label': ariaLabel
 }: ContextMenuProps) {
   return (
-    <div
-      className={classes(styles.ctx, scroll && styles.scroll, variant === 'sheet' && styles.sheet)}
-      role="menu"
-      aria-label={ariaLabel}
-    >
-      {items.map((item, index) => {
-        if (item.kind === 'separator') return <div className={styles.sep} role="separator" key={index} />
+    <InMenu.Provider value={true}>
+      <div
+        className={classes(styles.ctx, scroll && styles.scroll)}
+        style={width != null ? ({ '--menu-width': `${width}px` } as CSSProperties) : undefined}
+        role="menu"
+        aria-label={ariaLabel}
+      >
+        {items.map((item, index) => {
+          if (item.kind === 'separator') return <div className={styles.sep} role="separator" key={index} />
 
-        if (item.kind === 'title') {
-          return (
-            <div className={styles.title} key={index}>
-              {item.label}
-            </div>
-          )
-        }
-
-        if (item.kind === 'caption') {
-          return (
-            <div className={styles.caption} key={index}>
-              {item.avatar != null && item.avatar}
-              <span className={styles.captionLabel}>{item.label}</span>
-            </div>
-          )
-        }
-
-        if (item.kind === 'header') {
-          return (
-            <div className={styles.header} key={index}>
-              {item.avatar != null && item.avatar}
-              <div className={styles.hinfo}>
-                <div className={styles.hname}>
-                  {item.name}
-                  {item.tag != null && <span className={styles.htag}>{item.tag}</span>}
-                </div>
-                {item.address != null && <span className={styles.wallet}>{shortAddress(item.address)}</span>}
+          if (item.kind === 'title') {
+            return (
+              <div className={styles.title} key={index}>
+                {item.label}
               </div>
-            </div>
-          )
-        }
+            )
+          }
 
-        if (item.kind === 'toggle') return <ToggleItem item={item} key={index} />
+          if (item.kind === 'caption') {
+            return (
+              <div className={styles.caption} key={index}>
+                {item.avatar != null && item.avatar}
+                <span className={styles.captionLabel}>{item.label}</span>
+              </div>
+            )
+          }
 
-        if (item.kind === 'option') {
+          if (item.kind === 'header') {
+            return (
+              <div className={styles.header} key={index}>
+                {item.avatar != null && item.avatar}
+                <div className={styles.hinfo}>
+                  <div className={styles.hname}>
+                    {item.name}
+                    {item.tag != null && <span className={styles.htag}>{item.tag}</span>}
+                  </div>
+                  {item.address != null && <span className={styles.wallet}>{shortAddress(item.address)}</span>}
+                </div>
+              </div>
+            )
+          }
+
+          if (item.kind === 'toggle') return <ToggleItem item={item} key={index} />
+
+          if (item.kind === 'option') {
+            return (
+              <button
+                type="button"
+                className={styles.item}
+                role="menuitemradio"
+                aria-checked={item.checked}
+                key={index}
+                onClick={item.onClick}
+              >
+                <span className={styles.icon} aria-hidden="true">
+                  {item.checked ? <GeneralCheck size={20} /> : null}
+                </span>
+                {item.icon != null && <span className={styles.icon}>{item.icon}</span>}
+                <span className={styles.label}>{item.label}</span>
+              </button>
+            )
+          }
+
+          if (item.kind === 'submenu' && item.items != null) {
+            return (
+              <Submenu
+                key={index}
+                label={item.label}
+                icon={item.icon}
+                className={styles.item}
+                whileOpen={whileSubmenuOpen}
+              >
+                <ContextMenu items={item.items} scroll whileSubmenuOpen={whileSubmenuOpen} />
+              </Submenu>
+            )
+          }
+
           return (
             <button
               type="button"
-              className={styles.item}
-              role="menuitemradio"
-              aria-checked={item.checked}
+              className={classes(styles.item, item.danger && styles.itemDanger)}
+              role="menuitem"
               key={index}
               onClick={item.onClick}
             >
               {item.icon != null && <span className={styles.icon}>{item.icon}</span>}
               <span className={styles.label}>{item.label}</span>
-              <span className={styles.check} aria-hidden="true">
-                {item.checked ? <CheckMark /> : null}
-              </span>
+              {item.kind === 'submenu' && <Chevron />}
             </button>
           )
-        }
-
-        if (item.kind === 'submenu' && item.items != null) {
-          return (
-            <Submenu
-              key={index}
-              label={item.label}
-              icon={item.icon}
-              className={styles.item}
-              whileOpen={whileSubmenuOpen}
-            >
-              <ContextMenu items={item.items} scroll whileSubmenuOpen={whileSubmenuOpen} />
-            </Submenu>
-          )
-        }
-
-        return (
-          <button
-            type="button"
-            className={classes(styles.item, item.danger && styles.itemDanger)}
-            role="menuitem"
-            key={index}
-            onClick={item.onClick}
-          >
-            {item.icon != null && <span className={styles.icon}>{item.icon}</span>}
-            <span className={styles.label}>{item.label}</span>
-            {item.kind === 'submenu' && <span className={styles.chev}>›</span>}
-          </button>
-        )
-      })}
-    </div>
+        })}
+      </div>
+    </InMenu.Provider>
   )
 }
 
-function CheckMark() {
+function Chevron() {
   return (
-    <svg
-      viewBox="0 0 12 16"
-      width="0.75em"
-      height="1em"
-      aria-hidden="true"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth={1.5}
-      strokeLinecap="round"
-      strokeLinejoin="round"
-    >
-      <path d="M1.6 8.6l3 3 5.8-7" />
-    </svg>
+    <span className={styles.chev} aria-hidden="true">
+      <GeneralRightArrow size={20} />
+    </span>
   )
 }
 
@@ -187,7 +194,7 @@ function ToggleItem({ item }: { item: Extract<ContextMenuItem, { kind: 'toggle' 
   const name = typeof item.label === 'string' ? item.label : undefined
   return (
     <div
-      className={classes(styles.item, styles.itemToggle)}
+      className={styles.item}
       role="menuitemcheckbox"
       aria-checked={on}
       aria-label={name}
@@ -235,8 +242,10 @@ function clipEdges(element: HTMLElement): { right: number; bottom: number } {
  * the list's first item. The list opens to the right and down, and flips left or up where that side has no room.
  */
 export function Submenu({ label, icon, children, className, whileOpen }: SubmenuProps) {
+  const inMenu = useContext(InMenu)
   const [open, setOpen] = useState(false)
-  const [flip, setFlip] = useState({ left: false, up: false })
+  // Null until the open list is measured.
+  const [flip, setFlip] = useState<{ left: boolean; up: boolean } | null>(null)
   const [focusFirst, setFocusFirst] = useState(false)
   const flyout = useRef<HTMLDivElement>(null)
   const row = useRef<HTMLButtonElement>(null)
@@ -245,9 +254,10 @@ export function Submenu({ label, icon, children, className, whileOpen }: Submenu
   useEffect(() => {
     opened.current = whileOpen
   })
+  // Measured once per opening: measured again once flipped, the list would find room and flip back.
   useLayoutEffect(() => {
     if (!open) {
-      setFlip({ left: false, up: false })
+      setFlip(null)
       return
     }
     const element = flyout.current
@@ -255,13 +265,15 @@ export function Submenu({ label, icon, children, className, whileOpen }: Submenu
     const rect = element.getBoundingClientRect()
     const edges = clipEdges(element)
     setFlip({ left: rect.right > edges.right, up: rect.bottom > edges.bottom })
-    if (focusFirst) {
-      element
-        .querySelector<HTMLElement>('[role^="menuitem"]:not([aria-disabled="true"]):not(:disabled)')
-        ?.focus()
-      setFocusFirst(false)
-    }
-  }, [open, focusFirst])
+  }, [open])
+  // Once the list is placed, so the focus does not scroll a clipping ancestor towards where it would have been.
+  useLayoutEffect(() => {
+    if (flip == null || !focusFirst) return
+    flyout.current
+      ?.querySelector<HTMLElement>('[role^="menuitem"]:not([aria-disabled="true"]):not(:disabled)')
+      ?.focus()
+    setFocusFirst(false)
+  }, [flip, focusFirst])
   // The host's close (Cancel) shuts the list first and returns the focus to the row.
   useEffect(() => {
     if (!open) return
@@ -293,17 +305,21 @@ export function Submenu({ label, icon, children, className, whileOpen }: Submenu
           setOpen(true)
         }}
       >
-        {icon != null && <span className={styles.subIcon}>{icon}</span>}
-        <span className={styles.subLabel}>{label}</span>
-        <span className={styles.subChev} aria-hidden="true">
-          ›
-        </span>
+        {icon != null && <span className={inMenu ? styles.icon : styles.subIcon}>{icon}</span>}
+        <span className={styles.label}>{label}</span>
+        {inMenu ? (
+          <Chevron />
+        ) : (
+          <span className={styles.subChev} aria-hidden="true">
+            ›
+          </span>
+        )}
       </button>
       {open && (
         <div
           id={listId}
           ref={flyout}
-          className={classes(styles.flyout, flip.left && styles.flyoutLeft, flip.up && styles.flyoutUp)}
+          className={classes(styles.flyout, flip?.left && styles.flyoutLeft, flip?.up && styles.flyoutUp)}
         >
           {children}
         </div>

@@ -262,8 +262,8 @@ fn apply_head_ik(
                 let h_dist = (delta.x * delta.x + delta.z * delta.z).sqrt();
                 // DCL yaw of the bevy delta: DCL +Z = bevy -Z, so atan2(x, -z).
                 // Pitch is sign-flipped to match the head-sync wire convention
-                // (positive pitch_deg = looking down, captured as
-                // `-options.pitch.to_degrees()` on the sender).
+                // (positive pitch_deg = looking down, captured from the
+                // camera's rotation on the sender).
                 let yaw_dcl = delta.x.atan2(-delta.z).to_degrees();
                 let pitch_dcl = -delta.y.atan2(h_dist.max(1e-3)).to_degrees();
                 (yaw_dcl, pitch_dcl, true)

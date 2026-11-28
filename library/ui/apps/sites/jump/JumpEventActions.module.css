@@ -1,79 +1,10 @@
-/*
- * decentraland.org's event actions, drawn on the shared Button: ADD TO CALENDAR is the MUI outlined
- * button, REMIND ME a plain pill the reference leaves on the browser's own button font, Share a 48 by 40 tile.
- * The shared Button's own rules can follow these in the built stylesheet, so each rule names the element the Button
- * renders (an `a` with a link, else a `button`) and outranks them whatever the order.
- */
+/* The event actions are the shared Button: Add to calendar and Share outline, Remind me as the events dialog's. */
 .root {
   display: flex;
   flex-wrap: wrap;
   gap: var(--dcl-space-12);
   width: 100%;
   margin-top: var(--dcl-space-16);
-}
-
-a.calendar,
-button.calendar {
-  gap: var(--dcl-space-8);
-  padding: var(--dcl-space-8) var(--dcl-space-24);
-  border: 1px solid var(--dcl-neutrals-snow);
-  border-radius: var(--dcl-radius-sm);
-  box-shadow: none;
-  font-size: var(--dcl-font-size-body-sm);
-  font-weight: 600;
-  letter-spacing: 0.4px;
-  line-height: 24px;
-  text-transform: uppercase;
-}
-
-a.calendar svg,
-button.calendar svg {
-  margin-left: calc(-1 * var(--dcl-space-4));
-}
-
-a.calendar:hover:not(:disabled),
-button.calendar:hover:not(:disabled) {
-  background: #4a0f5f; /* the reference's hover fill, no token */
-  box-shadow: none;
-}
-
-a.remind,
-button.remind {
-  display: flex;
-  box-sizing: content-box;
-  flex-shrink: 1;
-  gap: var(--dcl-space-4);
-  min-width: 30px;
-  padding: 6px;
-  overflow: hidden;
-  border-radius: var(--dcl-radius-sm);
-  background: var(--dcl-neutrals-pearl);
-  box-shadow: none;
-  color: var(--dcl-neutrals-shadow);
-  font:
-    400 13.3333px Arial,
-    sans-serif;
-  letter-spacing: normal;
-  text-transform: none;
-  transition: background-color 250ms;
-}
-
-a.remind[aria-pressed='true'],
-button.remind[aria-pressed='true'] {
-  background: var(--dcl-neutrals-snow);
-  color: var(--dcl-primary-primary);
-}
-
-a.remind:hover:not(:disabled),
-button.remind:hover:not(:disabled) {
-  background: #d9d8db; /* the reference's hover fill, no token */
-  box-shadow: none;
-}
-
-a.remind:disabled,
-button.remind:disabled {
-  cursor: default;
-  opacity: 0.5;
 }
 
 .bell {
@@ -96,35 +27,18 @@ button.remind:disabled {
   opacity: 0;
 }
 
-.label {
-  font-size: var(--dcl-font-size-body-xs);
-  font-weight: 600;
-  text-transform: uppercase;
-  white-space: nowrap;
-}
-
-a.share,
-button.share {
-  width: var(--dcl-space-48);
-  height: 40px;
-  flex-shrink: 1;
-  padding: 0;
-  border: 1px solid #e0e0e0; /* MUI grey 300, no token */
-  border-radius: var(--dcl-radius-sm);
-  background: var(--dcl-neutrals-snow);
-  box-shadow: none;
-  color: var(--dcl-primary-primary);
-}
-
-a.share:hover:not(:disabled),
-button.share:hover:not(:disabled) {
-  border-color: var(--dcl-primary-primary);
-  background: #f5f5f5; /* MUI grey 100, no token */
-  box-shadow: none;
-}
-
 .explore {
-  composes: explore from './JumpButtons.module.css';
+  width: 100%;
+}
+
+/* A phone stacks the actions at full width; Share keeps its square. */
+.share {
+  align-self: flex-start;
+}
+
+/* The share mark is the button's only content: as a block it sits in its middle. */
+.shareIcon {
+  display: block;
 }
 
 .notice {

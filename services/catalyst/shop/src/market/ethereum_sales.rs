@@ -11,6 +11,7 @@ use anyhow::{Context, ensure};
 use serde_json::json;
 use sqlx::{PgConnection, PgPool};
 
+use super::casts::{self, RowCount};
 use super::chain_walk::{self, ChainIndex, ChainNet, INDEXER_SALES, LogGroup};
 use super::{nft_index, sales_index};
 use crate::chain_index::rpc::{BlockHeader, RpcLog};
@@ -157,7 +158,7 @@ impl ChainIndex for EthereumSalesIndex {
             .bind(chunk.iter().map(|row| &row.tx_hash).collect::<Vec<_>>())
             .bind(chunk.iter().map(|row| &row.venue).collect::<Vec<_>>())
             .execute(&mut *conn).await?;
-            written += result.rows_affected() as usize;
+            written += result.rows_usize();
         }
         Ok(written)
     }
@@ -168,8 +169,12 @@ impl ChainIndex for EthereumSalesIndex {
         previous: (i64, Option<&str>),
         end: &BlockHeader,
     ) -> anyhow::Result<()> {
-        super::ethereum_bid_history::record(conn, previous, (end.number as i64, Some(&end.hash)))
-            .await?;
+        super::ethereum_bid_history::record(
+            conn,
+            previous,
+            (casts::to_i64(end.number)?, Some(&end.hash)),
+        )
+        .await?;
         Ok(())
     }
 

@@ -450,8 +450,10 @@ async fn read_copies(
         .bind(&nets)
         .bind(catalogue.registrar())
         .bind(catalogue == Catalogue::Mainnet)
-        .bind(catalogue.chain_id(ChainNet::Matic) as i32)
-        .bind(catalogue.chain_id(ChainNet::Ethereum) as i32)
+        .bind(super::casts::to_i32(catalogue.chain_id(ChainNet::Matic))?)
+        .bind(super::casts::to_i32(
+            catalogue.chain_id(ChainNet::Ethereum),
+        )?)
         .fetch_all(conn)
         .await?;
     let mut copies: Vec<OwnedCopy> = rows
