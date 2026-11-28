@@ -438,7 +438,7 @@ export default function ReportForm({ trackCtx }: { trackCtx: TrackContext }) {
                   setEvidence(files);
                 }}
               />
-              {reattachEvidence && <p className={styles.helper}>Add your evidence files again after signing in.</p>}
+              {reattachEvidence && <p className={`${textClasses.bodySm} ${styles.evidenceHelp}`}>Add your evidence files again after signing in.</p>}
               {shown(errors.evidence) && (
                 <p id="report-field-5-error" className={styles.error}>
                   {shown(errors.evidence)}

@@ -118,14 +118,6 @@
   color: var(--dcl-text-secondary);
 }
 
-.helper {
-  margin: 0;
-  font-size: var(--dcl-font-size-body-sm);
-  line-height: 1.43;
-  letter-spacing: 0.01071em;
-  color: var(--dcl-text-secondary);
-}
-
 .error {
   margin: 0;
   font-size: var(--dcl-font-size-body-xs);
