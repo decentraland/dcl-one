@@ -694,6 +694,10 @@ pub struct MarketplaceState {
     /// `(pointer, publications)` -> the processed profile (`Null`: none),
     /// read under that publication of the nft index.
     pub(crate) profile_cache: TtlMap<(String, owned_items::Publications), Value>,
+    /// `(pointer, publications)` -> the profile read in flight: concurrent
+    /// misses of one pointer under one publication share it.
+    pub(crate) profile_flights:
+        crate::shared::cache::Coalesce<(String, owned_items::Publications), profiles::ProfileRead>,
     /// `(owner, category, includeDefinitions, publications)`: an answer
     /// read under another publication of the nft index is never served.
     pub(crate) by_owner_cache: TtlMap<(String, String, bool, owned_items::Publications), Value>,
@@ -746,6 +750,13 @@ pub struct MarketplaceState {
     /// loopback fake upstream for the shop's calls and the subgraph readers.
     #[cfg(test)]
     pub(crate) test_allow_loopback: Arc<std::sync::atomic::AtomicBool>,
+    /// While set, a profile or outfits read waits on this gate right after
+    /// its ownership query (a test holding a read in flight);
+    /// `test_held` tells the test a read got there.
+    #[cfg(test)]
+    pub(crate) test_hold: std::sync::Mutex<Option<Arc<tokio::sync::Semaphore>>>,
+    #[cfg(test)]
+    pub(crate) test_held: tokio::sync::Notify,
 }
 
 pub type SharedState = Arc<MarketplaceState>;
@@ -795,11 +806,16 @@ impl MarketplaceState {
             http,
             #[cfg(test)]
             test_allow_loopback: index.loopback_switch_for_tests(),
+            #[cfg(test)]
+            test_hold: Default::default(),
+            #[cfg(test)]
+            test_held: Default::default(),
             index,
             profile_cache: TtlMap::bounded(
                 profiles::PROFILE_CACHE_TTL,
                 profiles::PROFILE_CACHE_MAX_ENTRIES,
             ),
+            profile_flights: Default::default(),
             by_owner_cache: TtlMap::bounded(Duration::from_secs(30), 50_000),
             contracts: contracts::Caches::default(),
             readers: readers::Caches::default(),
@@ -871,6 +887,31 @@ impl MarketplaceState {
 
     /// Warms the faces of these profile entities when they point at this
     /// node's `/profile-images` (no `PROFILE_CDN_BASE_URL`).
+    /// Waits on [`Self::test_hold`]'s gate, when one is set.
+    #[cfg(test)]
+    pub(crate) async fn test_hold_after_ownership(&self) {
+        let gate = self.test_hold.lock().unwrap().clone();
+        if let Some(gate) = gate {
+            self.test_held.notify_one();
+            let _ = gate.acquire().await;
+        }
+    }
+
+    /// Holds every profile or outfits read after its ownership query until
+    /// [`Self::test_release`].
+    #[cfg(test)]
+    pub(crate) fn test_hold_reads(&self) {
+        *self.test_hold.lock().unwrap() = Some(Arc::new(tokio::sync::Semaphore::new(0)));
+    }
+
+    /// Lets the held reads go on, and no later read wait.
+    #[cfg(test)]
+    pub(crate) fn test_release(&self) {
+        if let Some(gate) = self.test_hold.lock().unwrap().take() {
+            gate.add_permits(tokio::sync::Semaphore::MAX_PERMITS);
+        }
+    }
+
     pub(crate) fn warm_faces(&self, entities: impl IntoIterator<Item = String>) {
         if self.settings.profile_cdn_base_url.is_some() {
             return;
