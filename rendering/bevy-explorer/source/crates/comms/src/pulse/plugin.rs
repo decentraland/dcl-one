@@ -29,7 +29,6 @@ use bevy::platform::time::Instant;
 use bevy::prelude::*;
 use bevy::tasks::{IoTaskPool, Task};
 use common::{
-    bounds_calc::scene_regions,
     structs::{CurrentRealm, EmoteMask, OutOfWorld, PlayerTeleported, PrimaryUser, WorldHold},
     util::{TaskCompat, TaskExt},
 };
@@ -45,6 +44,7 @@ use wallet::Wallet;
 #[path = "debug.rs"]
 mod debug;
 
+use super::listener_aoi::{self, Compaction, HostedScene};
 use super::pacing::DiscreteEventPacer;
 use super::reconnect::{Failure, Next, ReconnectPolicy};
 use super::transport::{
@@ -102,7 +102,8 @@ enum Connection {
     /// Handshake accepted and the realm announced, by its initial state or a teleport; steady state.
     Established,
     /// Terminally disconnected (banned, evicted by a newer session, flagged for misbehaviour, or a
-    /// code this build doesn't know) — no reconnect attempted. A realm change while here sets
+    /// code this build doesn't know) — no reconnect attempted. A listener whose announcement was
+    /// rejected retries instead (see [`ReconnectPolicy`]). A realm change while here sets
     /// `Down { respawn_at: 0.0 }` and resets the [`ReconnectPolicy`].
     Dead,
 }
@@ -242,11 +243,15 @@ struct ListenerRole {
     /// well as parcel because a parcel index only means something inside one: every world numbers
     /// its parcels from 0,0, so a server cohosting two worlds has two different scenes at `0,0`.
     transport_by_parcel: HashMap<String, HashMap<IVec2, Entity>>,
-    /// The AoI we want observed: one entry per hosted realm, its parcels consolidated into one rect
-    /// per contiguous rectangular block ([`scene_regions`]). The rects tile each realm's parcel set
-    /// exactly — no overlap, no over-coverage — so consolidating them is purely a wire-size win
-    /// against the server's Σ-area budget.
+    /// The AoI we want observed ([`listener_aoi::listener_aoi`]); it may cover unhosted parcels.
     aoi: Vec<pulse::SceneListenerAoi>,
+    /// How `aoi` was compacted, so a change of which scenes collapse is logged once.
+    compaction: Compaction,
+    /// The compacted AoI of the hosted scenes, before `left_out` is taken from it.
+    hosted_aoi: Vec<pulse::SceneListenerAoi>,
+    /// Realms left out of `aoi` after the server rejected an announcement over its budget, so one
+    /// oversized realm cannot cost the others their players. Cleared when the hosted scenes change.
+    left_out: HashSet<String>,
     /// The AoI the server holds: what the handshake carried, then what the last update carried.
     /// `flush_listener_aoi` sends an update whenever `aoi` differs from this, so a change is never
     /// lost — only deferred — however many frames it took to settle.
@@ -385,7 +390,7 @@ impl PulseRole {
         }
     }
 
-    /// `handshake` / `scene-listener handshake (2 realms, 5 rects)`, for logs.
+    /// `handshake` / `scene-listener handshake (2 realms, 5 rects, 12 parcels, 61 bytes)`, for logs.
     fn handshake_label(&self) -> String {
         match self {
             Self::Player(_) => "handshake".to_owned(),
@@ -403,10 +408,18 @@ impl PulseRole {
     }
 }
 
-/// `2 realms, 5 rects` — the shape of an announced area of interest, for logs.
+/// `2 realms, 5 rects, 12 parcels, 61 bytes`: an AoI's shape for logs, overlaps counted per rect.
 fn describe_aoi(aoi: &[pulse::SceneListenerAoi]) -> String {
     let rects: usize = aoi.iter().map(|realm| realm.parcel_rects.len()).sum();
-    format!("{} realms, {rects} rects", aoi.len())
+    let area: i64 = aoi
+        .iter()
+        .map(|realm| listener_aoi::area(&realm.parcel_rects))
+        .sum();
+    format!(
+        "{} realms, {rects} rects, {area} parcels, {} bytes",
+        aoi.len(),
+        listener_aoi::encoded_len(aoi)
+    )
 }
 
 /// A pending handshake's contents, before it is signed. Both variants carry the same auth chain;
@@ -728,6 +741,10 @@ fn connect_pulse(
         })
     };
 
+    let policy = match role {
+        PulseRole::Listener(_) => ReconnectPolicy::default().for_listener(),
+        PulseRole::Player(_) => ReconnectPolicy::default(),
+    };
     commands.insert_resource(PulseSession {
         link: None,
         _driver: None,
@@ -742,7 +759,7 @@ fn connect_pulse(
         last_state: None,
         local_emote: None,
         pacer: DiscreteEventPacer::default(),
-        policy: ReconnectPolicy::default(),
+        policy,
         accepted: false,
         initial_realm: None,
         teleport_owed: false,
@@ -1149,7 +1166,31 @@ fn drain_status(session: &mut PulseSession, sinks: &Query<&PulseSink>, now: f64)
                 }
             }
             Ok(PulseStatus::Disconnected(reason)) => {
-                warn!("pulse: disconnected ({reason:?})");
+                let hint = match reason {
+                    transport::PulseDisconnect::None => {
+                        ": no reason code, e.g. a transport timeout"
+                    }
+                    _ => "",
+                };
+                warn!(
+                    "pulse: disconnected ({reason:?}{hint}; handshake accepted: {})",
+                    session.accepted
+                );
+                match (reason, session.role.listener_mut()) {
+                    // the codes a budget rejection carries: drop one realm so the rest pass
+                    (
+                        transport::PulseDisconnect::InvalidHandshakeField
+                        | transport::PulseDisconnect::InvalidSceneListenerField,
+                        Some(listener),
+                    ) => leave_out_rejected_realm(listener),
+                    (transport::PulseDisconnect::PacketCorrupted, Some(listener)) => {
+                        error!(
+                            "pulse: the server rejected the scene-listener announcement ({}); retrying until the hosted scenes change",
+                            describe_aoi(&listener.announced)
+                        );
+                    }
+                    _ => {}
+                }
                 taken_over |= reason == transport::PulseDisconnect::DuplicateSession;
                 let accepted = session.accepted;
                 lost_connection(
@@ -1641,6 +1682,7 @@ fn update_listener_aoi(
     // isn't registered yet simply isn't routable yet, and gets picked up on a later frame.
     let mut context_by_parcel: HashMap<String, HashMap<IVec2, Entity>> = HashMap::default();
     let mut live_contexts: HashSet<Entity> = HashSet::default();
+    let mut hosted: Vec<(Entity, HostedScene)> = Vec::new();
     for (_, definition) in definitions.iter() {
         let mut parcels = definition_parcels(definition);
         let Some(first) = parcels.next() else {
@@ -1657,10 +1699,19 @@ fn update_listener_aoi(
             continue;
         };
         live_contexts.insert(context);
-        let realm_parcels = context_by_parcel.entry(scene_realm).or_default();
-        for parcel in std::iter::once(first).chain(parcels) {
+        let parcels: Vec<IVec2> = std::iter::once(first).chain(parcels).collect();
+        let realm_parcels = context_by_parcel.entry(scene_realm.clone()).or_default();
+        for &parcel in &parcels {
             realm_parcels.insert(parcel, context);
         }
+        hosted.push((
+            context,
+            HostedScene {
+                realm: scene_realm,
+                scene: definition.id.clone(),
+                parcels,
+            },
+        ));
     }
 
     // The transports that exist now, by the context each serves — the world is the record, so
@@ -1725,33 +1776,80 @@ fn update_listener_aoi(
         })
         .collect();
 
-    // One entry per realm, its parcels consolidated into one rect per contiguous rectangular block
-    // — blocks from adjacent scenes in the same realm merging is fine, the AoI is only a filter.
-    // Sorted so an unchanged AoI compares equal across frames (HashMap iteration order does not).
-    let mut aoi: Vec<_> = listener
-        .transport_by_parcel
-        .iter()
-        .map(|(realm, parcels)| {
-            // ordered input: rects come out in its order
-            let mut parcels: Vec<IVec2> = parcels.keys().copied().collect();
-            parcels.sort_unstable_by_key(|p| (p.x, p.y));
-            pulse::SceneListenerAoi {
-                realm: realm.clone(),
-                parcel_rects: scene_regions(parcels.into_iter())
-                    .into_iter()
-                    .map(|region| pulse::ParcelRect {
-                        min_x: region.min.x,
-                        min_z: region.min.y,
-                        max_x: region.max.x,
-                        max_z: region.max.y,
-                    })
-                    .collect(),
-            }
-        })
+    // Only routed scenes are announced; the result is sorted, so an unchanged AoI compares equal.
+    let hosted: Vec<HostedScene> = hosted
+        .into_iter()
+        .filter(|(context, _)| transport_for.contains_key(context))
+        .map(|(_, scene)| scene)
         .collect();
-    aoi.sort_by(|a, b| a.realm.cmp(&b.realm));
+    let (aoi, compaction) = listener_aoi::listener_aoi(&hosted, listener_aoi::MAX_AOI_BYTES);
+    if (&listener.compaction.collapsed, &listener.compaction.dropped)
+        != (&compaction.collapsed, &compaction.dropped)
+    {
+        log_compaction(&compaction, &aoi);
+    }
+    listener.compaction = compaction;
+    if listener.hosted_aoi != aoi {
+        if !listener.left_out.is_empty() {
+            info!("pulse: hosted scenes changed; announcing every realm again");
+            listener.left_out.clear();
+        }
+        listener.hosted_aoi = aoi;
+    }
+    let aoi = listener
+        .hosted_aoi
+        .iter()
+        .filter(|entry| !listener.left_out.contains(&entry.realm))
+        .cloned()
+        .collect();
 
     set_listener_aoi(session, aoi);
+}
+
+/// After a budget rejection, drops the largest realm from the listener's AoI so the next attempt
+/// can pass for the rest. Logs which, or that a single realm is left to retry as is.
+fn leave_out_rejected_realm(listener: &mut ListenerRole) {
+    let Some(realm) = listener_aoi::realm_to_leave_out(&listener.announced) else {
+        error!(
+            "pulse: the server rejected the scene-listener announcement ({}); retrying until the hosted scenes change",
+            describe_aoi(&listener.announced)
+        );
+        return;
+    };
+    let (name, parcels) = (realm.realm.clone(), listener_aoi::area(&realm.parcel_rects));
+    error!(
+        "pulse: the server rejected the scene-listener announcement ({}); leaving out {name} ({parcels} parcels), its players unseen until the hosted scenes change",
+        describe_aoi(&listener.announced)
+    );
+    listener.aoi.retain(|entry| entry.realm != name);
+    listener.left_out.insert(name);
+}
+
+/// Says what compaction changed in the announced AoI; called only when that changes.
+fn log_compaction(compaction: &Compaction, aoi: &[pulse::SceneListenerAoi]) {
+    if compaction.is_empty() {
+        info!("pulse: scene-listener AoI announced exactly again");
+        return;
+    }
+    let collapsed: Vec<String> = compaction
+        .collapsed
+        .iter()
+        .map(|c| format!("{} in {}: {} rects -> 1", c.scene, c.realm, c.rects))
+        .collect();
+    warn!(
+        "pulse: scene-listener AoI of {} bytes is over {}; announced as bounding boxes [{}] ({})",
+        compaction.exact_bytes,
+        listener_aoi::MAX_AOI_BYTES,
+        collapsed.join(", "),
+        describe_aoi(aoi)
+    );
+    if !compaction.dropped.is_empty() {
+        error!(
+            "pulse: scene-listener AoI still over {} bytes; realms not announced, their players unseen: [{}]",
+            listener_aoi::MAX_AOI_BYTES,
+            compaction.dropped.join(", ")
+        );
+    }
 }
 
 /// The parcels a definition points at. Only scenes have any: profiles and wearables point at

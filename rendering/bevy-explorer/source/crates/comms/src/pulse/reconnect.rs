@@ -12,7 +12,8 @@
 //! It recovers two ways. A connection that was up and dropped waits a fixed time chosen by the
 //! server's reason. An attempt that never got its handshake accepted backs off, doubling. A refusal
 //! (codes 6, 7, 8, 17 and 18) sets a floor under the wait either way, and a rejected handshake is
-//! retried.
+//! retried. A scene listener also retries a rejected announcement (codes 15, 16 and 19), which
+//! holds only until the scenes it hosts change.
 
 use rand::Rng as _;
 
@@ -43,6 +44,8 @@ pub const ATTEMPT_BACKOFF_CAP: f64 = 60.0;
 pub const LISTENER_LIMIT_START: f64 = 10.0;
 /// Where the wait after a scene-listener refusal stops: five minutes.
 pub const LISTENER_LIMIT_CAP: f64 = 300.0;
+/// The least wait after the server rejects a scene listener's announcement (codes 15, 16, 19).
+pub const LISTENER_REJECTION_RETRY_DELAY: f64 = 10.0;
 
 /// What went wrong with the connection.
 #[derive(Debug)]
@@ -77,6 +80,8 @@ pub struct ReconnectPolicy {
     /// Scene-listener refusals (code 18) since the last acceptance or reset. They wait on a
     /// sequence of their own, which no other failure advances or restarts.
     listener_refusals: u32,
+    /// Whether this is a scene listener's connection, which retries a rejected announcement.
+    listener: bool,
     /// The factor each wait is scaled by, within `1 ± JITTER`: drawn at random, or pinned by a
     /// test.
     jitter: fn() -> f64,
@@ -87,12 +92,21 @@ impl Default for ReconnectPolicy {
         Self {
             attempts: 0,
             listener_refusals: 0,
+            listener: false,
             jitter: random_jitter,
         }
     }
 }
 
 impl ReconnectPolicy {
+    /// The policy for a scene listener.
+    pub fn for_listener(self) -> Self {
+        Self {
+            listener: true,
+            ..self
+        }
+    }
+
     /// A policy whose every wait is scaled by what `jitter` returns.
     #[cfg(test)]
     pub(crate) fn with_jitter(jitter: fn() -> f64) -> Self {
@@ -125,10 +139,16 @@ impl ReconnectPolicy {
                 | PulseDisconnect::InvalidEmoteField
                 | PulseDisconnect::InvalidTeleportField
                 | PulseDisconnect::HandshakeReplayRejected
-                | PulseDisconnect::InvalidHandshakeField
-                | PulseDisconnect::PacketCorrupted
-                | PulseDisconnect::InvalidSceneListenerField
                 | PulseDisconnect::Unknown(_) => return Next::Dead,
+                // A listener's announcement is rebuilt each attempt, so it may pass later.
+                PulseDisconnect::InvalidHandshakeField
+                | PulseDisconnect::PacketCorrupted
+                | PulseDisconnect::InvalidSceneListenerField => {
+                    if !self.listener {
+                        return Next::Dead;
+                    }
+                    LISTENER_REJECTION_RETRY_DELAY
+                }
                 PulseDisconnect::None
                 | PulseDisconnect::Graceful
                 | PulseDisconnect::AuthTimeout

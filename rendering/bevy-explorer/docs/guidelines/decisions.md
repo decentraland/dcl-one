@@ -664,7 +664,12 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
 - **A rejected Pulse handshake is retried, and a realm change ends a terminal stop.** A rejection,
   or no answer within 10 s, closes the connection and the next attempt is a new one on the
   backoff; a ban, an eviction, misbehaviour or an unknown code stops Pulse until the realm changes,
-  or for a scene listener, which follows no realm, until restart. unity-explorer stops Pulse on a
+  or for a scene listener, which follows no realm, until restart. A scene listener retries a
+  rejected announcement (codes 15, 16 and 19) on the backoff with a 10 s floor: each attempt
+  announces the hosted scenes as they are then, compacted to fit the server's 4096-byte buffer
+  (`listener_aoi.rs`). After a budget rejection (15 or 19) it also leaves the largest realm by
+  area out until the hosted scenes change, so one oversized world cannot cost every cohosted
+  scene its players. unity-explorer stops Pulse on a
   rejection and on those codes until a new sign-in, which has no counterpart here: the account is
   fixed once in the world. It has no response timeout: it waits, and the server's pre-auth
   deadline ends the attempt with AUTH_TIMEOUT, which it retries.

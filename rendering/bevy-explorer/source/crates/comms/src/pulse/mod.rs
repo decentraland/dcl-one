@@ -27,6 +27,7 @@ use bevy::platform::time::Instant;
 use common::sync::MutexExt;
 use dcl_component::proto_components::{kernel::comms::rfc4, pulse};
 
+pub(crate) mod listener_aoi;
 pub(crate) mod movement_pacing;
 pub mod pacing;
 pub mod plugin;
