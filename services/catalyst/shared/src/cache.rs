@@ -375,6 +375,9 @@ where
     flights: DashMap<K, (u64, watch::Receiver<Option<O>>)>,
     next: AtomicU64,
     reads: AtomicU64,
+    joins: AtomicU64,
+    #[cfg(any(test, feature = "test-support"))]
+    changed: Notify,
 }
 
 /// The flights a caller joined: each one's output channel and the caller's
@@ -438,6 +441,9 @@ where
             flights: DashMap::new(),
             next: AtomicU64::new(0),
             reads: AtomicU64::new(0),
+            joins: AtomicU64::new(0),
+            #[cfg(any(test, feature = "test-support"))]
+            changed: Notify::new(),
         }
     }
 }
@@ -449,6 +455,12 @@ where
 {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    fn bump(&self, counter: &AtomicU64) {
+        counter.fetch_add(1, Ordering::SeqCst);
+        #[cfg(any(test, feature = "test-support"))]
+        self.changed.notify_waiters();
     }
 
     /// Joins the flights `keys` are in and claims the others for one read of
@@ -474,7 +486,10 @@ where
                     let (other, channel) = flight.get();
                     match joined.iter_mut().find(|(id, _, _)| id == other) {
                         Some((_, _, keys)) => keys.push(key.clone()),
-                        None => joined.push((*other, channel.clone(), vec![key.clone()])),
+                        None => {
+                            joined.push((*other, channel.clone(), vec![key.clone()]));
+                            self.bump(&self.joins);
+                        }
                     }
                 }
                 MapEntry::Vacant(free) => {
@@ -484,7 +499,7 @@ where
             }
         }
         if !led.is_empty() {
-            self.reads.fetch_add(1, Ordering::Relaxed);
+            self.bump(&self.reads);
         }
         let flight = (!led.is_empty()).then(|| Flight {
             flights: &self.flights,
@@ -496,7 +511,11 @@ where
     }
 
     /// The output of `key`'s flight, joined or read here with `read`, for a
-    /// caller that may be answered from any read in flight.
+    /// caller that may be answered from any read in flight. The one
+    /// exception to validating a joined output: a joiner's answer may
+    /// predate its arrival by the one read already in flight, and a joined
+    /// failure is passed through as it is. Use [`Coalesce::run_accepting`]
+    /// when either is not acceptable.
     pub async fn run<F, Fut>(&self, key: K, read: F) -> O
     where
         F: FnOnce() -> Fut,
@@ -534,7 +553,7 @@ where
                 return output;
             }
         }
-        self.reads.fetch_add(1, Ordering::Relaxed);
+        self.bump(&self.reads);
         read().await
     }
 
@@ -580,7 +599,31 @@ where
     /// of callers) and the unshared one a caller makes after refusing a
     /// joined output.
     pub fn reads_started(&self) -> u64 {
-        self.reads.load(Ordering::Relaxed)
+        self.reads.load(Ordering::SeqCst)
+    }
+
+    /// How many times a caller joined a read in flight.
+    pub fn joins(&self) -> u64 {
+        self.joins.load(Ordering::SeqCst)
+    }
+
+    /// Resolves once `done` holds; tests wait on a join with it rather than
+    /// sleeping. A state that never comes fails the test at
+    /// [`HANG_GUARD`](crate::test_wait::HANG_GUARD) instead of hanging it.
+    #[cfg(any(test, feature = "test-support"))]
+    pub async fn until(&self, done: impl Fn(&Self) -> bool) {
+        let reached = async {
+            loop {
+                let changed = self.changed.notified();
+                if done(self) {
+                    return;
+                }
+                changed.await;
+            }
+        };
+        tokio::time::timeout(crate::test_wait::HANG_GUARD, reached)
+            .await
+            .expect("the coalescer did not reach the awaited state in time");
     }
 }
 
@@ -658,13 +701,6 @@ mod tests {
         }
     }
 
-    /// Lets every spawned caller reach its `run` before the test goes on.
-    async fn settle() {
-        for _ in 0..20 {
-            tokio::task::yield_now().await;
-        }
-    }
-
     #[tokio::test]
     async fn concurrent_callers_share_one_read_and_nothing_is_kept() {
         let coalesce: Arc<Coalesce<&'static str, u32>> = Arc::new(Coalesce::new());
@@ -682,7 +718,8 @@ mod tests {
                 })
             })
             .collect();
-        settle().await;
+        coalesce.until(|c| c.joins() >= 7).await;
+        assert_eq!(coalesce.joins(), 7);
         assert_eq!(gate.reads(), 1, "one read in flight");
         gate.open();
         for caller in callers {
@@ -706,7 +743,7 @@ mod tests {
             let coalesce = coalesce.clone();
             tokio::spawn(async move { coalesce.run("k", std::future::pending::<u32>).await })
         };
-        settle().await;
+        coalesce.until(|c| c.reads_started() >= 1).await;
         let joiner = {
             let (coalesce, gate) = (coalesce.clone(), gate.clone());
             tokio::spawn(async move {
@@ -718,7 +755,7 @@ mod tests {
                     .await
             })
         };
-        settle().await;
+        coalesce.until(|c| c.joins() >= 1).await;
         assert_eq!(gate.reads(), 0, "the joiner waits on the leader's read");
         leader.abort();
         let _ = leader.await;
@@ -745,7 +782,7 @@ mod tests {
                     .await
             })
         };
-        settle().await;
+        coalesce.until(|c| c.reads_started() >= 1).await;
         let joiner = {
             let coalesce = coalesce.clone();
             tokio::spawn(async move {
@@ -754,7 +791,7 @@ mod tests {
                     .await
             })
         };
-        settle().await;
+        coalesce.until(|c| c.joins() >= 1).await;
         gate.open();
         assert_eq!(leader.await.unwrap(), 1);
         assert_eq!(joiner.await.unwrap(), 2, "the refused 1 was read again");
@@ -819,9 +856,9 @@ mod tests {
             })
         };
         let first = call(vec![1, 2, 2]);
-        settle().await;
+        coalesce.until(|c| c.reads_started() >= 1).await;
         let second = call(vec![2, 3]);
-        settle().await;
+        coalesce.until(|c| c.joins() >= 1).await;
         gate.open();
         let first = first.await.unwrap();
         assert_eq!(first.own, Some(vec![1, 2]));
@@ -849,12 +886,12 @@ mod tests {
                     .await
             })
         };
-        settle().await;
+        coalesce.until(|c| c.reads_started() >= 1).await;
         let joiner = {
             let coalesce = coalesce.clone();
             tokio::spawn(async move { coalesce.run_many(&[2, 3], |led| async move { led }).await })
         };
-        settle().await;
+        coalesce.until(|c| c.joins() >= 1).await;
         leader.abort();
         let _ = leader.await;
         let joiner = joiner.await.unwrap();
