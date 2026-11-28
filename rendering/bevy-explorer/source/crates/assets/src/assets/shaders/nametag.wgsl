@@ -50,9 +50,14 @@ fn vertex(vertex: Vertex) -> VertexOutput {
     // the anchor alone: the tag takes neither its player's turn nor its scale
     let anchor = mesh_functions::get_world_from_local(vertex.instance_index)[3].xyz;
     let range = distance(view.world_position, anchor);
-    // clip_from_view[1][1] is 1 / tan(fov / 2): a tag unit covers the same share of the
-    // view's height at any distance and field of view
-    let scale = range * f32(#{NAMETAG_SCALE_MILLIONTHS}) * 1e-6 / view.clip_from_view[1][1];
+    // a tag unit covers the same share of the view's height under any camera. Under a
+    // perspective clip_from_view[1][1] is 1 / tan(fov / 2) and the view's height grows with the
+    // distance, so the tag does too. Under an orthographic one (clip_from_view[3][3] is 1, where
+    // a perspective's is 0) it is 2 / the view's height, so the size doesn't depend on the
+    // distance; the fade below still does
+    let orthographic = view.clip_from_view[3][3] == 1.0;
+    let depth = select(range, 1.0, orthographic);
+    let scale = depth * f32(#{NAMETAG_SCALE_MILLIONTHS}) * 1e-6 / view.clip_from_view[1][1];
     let right = view.world_from_view[0].xyz;
     let up = view.world_from_view[1].xyz;
     let world_position = anchor + (right * vertex.position.x + up * vertex.position.y) * scale;

@@ -11,7 +11,7 @@ import { type GotoTarget, randomParcel, worldOfRealm } from '@explorer-core/feat
 import { answerItemPurchase, type PurchaseSceneItem } from '../itemPurchase/answer'
 import type { PlatformBanNotice, PortableInfo, PortableState, SatelliteView, WorldAccessVerdict } from '@explorer-core/engine/generated'
 import type { AvatarLook } from '@explorer-core/engine/avatarEquip'
-import { PLATFORM_BANNED_REFUSAL, type UiSound, type EngineViewportRegion, type GiftingPageMessage, type GiftingQueryRequest, type PhotoModeSnapshot, type PhotoModeSource, type PreviewFocus, type PreviewStageFraming, type SituationalReaction } from '@explorer-core/engine/protocol'
+import { PLATFORM_BANNED_REFUSAL, type UiSound, type EngineViewportRegion, type GiftingPageMessage, type GiftingQueryRequest, type PhotoModeSnapshot, type PhotoModeSource, type PreviewFocus, type PreviewNametag, type PreviewStageFraming, type SituationalReaction } from '@explorer-core/engine/protocol'
 import { clickButton, screenViewed, sessionId, track } from '@explorer-core/lib/analytics'
 import { useStoredProfile } from '../login/useStoredProfile'
 import { inShell, postToShell } from '@explorer-core/lib/shell'
@@ -261,6 +261,8 @@ export interface BackpackState {
    *  page draws the avatar (the catalogue's framing, unless given); null gives the preview the Backpack's backdrop
    *  back. */
   stage: (rect: { x: number; y: number; width: number; height: number } | null, framing?: PreviewStageFraming) => void
+  /** The Shop's nametag over the preview avatar, drawn by the engine; null takes it away. */
+  nametag: (nametag: PreviewNametag | null) => void
   /** Play an emote on the preview avatar (again for every call); null stops it. */
   emote: (urn: string | null) => void
   /** Turn the preview avatar by `degrees` about its vertical axis (a drag over it). */
@@ -4245,6 +4247,9 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
   const stagePreview = useCallback((rect: { x: number; y: number; width: number; height: number } | null, framing?: PreviewStageFraming) => {
     driverRef.current?.send(framing != null ? { kind: 'previewStage', rect, framing } : { kind: 'previewStage', rect })
   }, [])
+  const nametagPreview = useCallback((nametag: PreviewNametag | null) => {
+    driverRef.current?.send({ kind: 'previewNametag', nametag })
+  }, [])
   const emotePreview = useCallback((urn: string | null) => {
     driverRef.current?.send({ kind: 'previewEmote', urn })
   }, [])
@@ -5632,7 +5637,7 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
     queryGifting,
     backpack: {
       list: catalogItems, total: catalogTotal, loading: catalogLoading, query: queryCatalog,
-      equipped: equippedWearables, open: backpackOpen, toggle: toggleBackpack, bodyShape, colors: avatarColors, setColor: setAvatarColor, equip: equipWearables, saveError, retrySave, revertSave, preview: previewWearables, focus: focusPreview, stage: stagePreview, emote: emotePreview, rotate: rotatePreview, zoom: zoomPreview, forceRender, setForceRender,
+      equipped: equippedWearables, open: backpackOpen, toggle: toggleBackpack, bodyShape, colors: avatarColors, setColor: setAvatarColor, equip: equipWearables, saveError, retrySave, revertSave, preview: previewWearables, focus: focusPreview, stage: stagePreview, nametag: nametagPreview, emote: emotePreview, rotate: rotatePreview, zoom: zoomPreview, forceRender, setForceRender,
       outfits: outfits.outfits, outfitSlots: extraOutfitSlots ? 10 : 5, outfitsLoaded, outfitOperation, outfitEquipping, warnAboutClearingExtraOutfits,
       saveOutfit, deleteOutfit, outfitError, dismissOutfitError, equipOutfit, previewOutfit, restoreOutfitPreview,
       outfitHistory, randomizeOutfit, undoOutfit, redoOutfit

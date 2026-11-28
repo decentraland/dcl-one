@@ -397,6 +397,17 @@ module.exports.setChatBubbleText = function(messageId, message) {
     Deno.core.ops.op_set_chat_bubble_text(messageId, message)
 }
 
+// put the engine's nametag on one of this scene's avatars (an AvatarShape entity), or take it away (null)
+// type AvatarShapeNametag = {
+//   name: string,
+//   claimed: boolean,          // the verified badge and no `#` suffix
+//   color?: { r: number, g: number, b: number }, // absent: the engine's colour for the name
+//   scale: number,             // the tag's size on screen, 1 being a player's tag
+// }
+module.exports.setAvatarShapeNametag = function(entity, nametag) {
+    Deno.core.ops.op_set_avatar_shape_nametag(entity, nametag ?? null)
+}
+
 // get reactions to chat messages (the local user's included) as a stream
 // type ChatReaction = {
 //   channel: string, // "Nearby" or the DM partner's wallet

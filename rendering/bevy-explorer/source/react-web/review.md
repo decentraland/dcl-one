@@ -264,6 +264,13 @@ tag (name, badges, distance, opacity, scale) and `/nametag_bubble` shows a test 
       nametag, as the design's NAMEs frames draw it. Switching between a catalogue page and NAMEs eases
       the camera from one framing to the other; resizing the window midway neither snaps nor restarts
       it. Closing the Shop gives the Backpack its own framing back. Mock has no engine, so nothing moves.
+- [ ] **Shop NAMEs nametag** (`avatarPreview.tsx`, the engine's `SetAvatarShapeNametag` and nametag
+      shader): on the Shop's NAMEs pages the Explorer's own nametag stands over the avatar's head
+      and what it wears, at the design's size: the typed NAME (claimed, its badge), or the silver
+      "YourName" while nothing is typed; on RESALE NAME the player's own name. Put on a tall hat:
+      the tag rises over it. Turn the avatar, zoom and resize the window: the tag stays over the
+      head, the same size on screen. Leaving NAMEs, or closing the Shop, takes it away. It never
+      shows in the world view. Mock has no engine, so there is no tag.
 - [ ] **Full-screen view entrance** (`features/menu/MainMenuShell`): opening Map, Backpack or any other
       menu page from the world darkens the world to black, then reveals the page, in 0.2 s; the
       Backpack's engine-drawn avatar appears only after the black frame. Switching between menu pages

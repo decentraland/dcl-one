@@ -287,6 +287,13 @@ pub enum SystemApi {
         message_id: String,
         message: String,
     },
+    /// Puts a nametag on one of the system scene's avatars (`entity`, its `AvatarShape` entity as
+    /// the scene numbers it, read in the system scene's own context), or takes it away (`None`).
+    /// Only the system scene can ask (it is a `SystemApi`). The tag goes with the `AvatarShape`.
+    SetAvatarShapeNametag {
+        entity: u32,
+        nametag: Option<AvatarShapeNametag>,
+    },
     // Voice chat (private calls and community streams)
     /// Emits the voice chat state now and whenever it changes, until dropped.
     GetVoiceChatStateStream(RpcStreamSender<VoiceChatState>),

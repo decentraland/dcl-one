@@ -2,14 +2,12 @@
 // the web Shop checks it (length, banned list, the registrar), priced in Credits, and registered or offered
 // for on the web; RESALE NAME lists the NAMEs on resale, each bought on the web Marketplace.
 import { describe, it, expect, vi, afterEach } from 'vitest'
-import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { keccak256, stringToHex } from 'viem'
-import InWorldShop, { type InWorldShopProps } from '@dcl/one-ui/apps/shop/InWorldShop'
+import InWorldShop, { NAMETAG_PLACEHOLDER, type InWorldShopProps } from '@dcl/one-ui/apps/shop/InWorldShop'
 import { webNameTokenUrl, webNameUrl } from '@dcl/one-ui/apps/shop/itemLinks'
-import { NAMETAG_PLACEHOLDER } from '@dcl/one-ui/apps/shop/ui'
-import { userNameColor } from '@explorer-core/engine/nameColor'
 import { NAME_RESALES_KEY, nameQueries } from '@dcl/one-ui/apps/shop/namesQuery'
 import { NAME_CHECK_DEBOUNCE_MS } from '@shop/names/name'
 import { CHAIN } from '@shop/model/chain'
@@ -104,6 +102,7 @@ function renderShop(over: Partial<InWorldShopProps> = {}) {
     preview: vi.fn(),
     focus: vi.fn(),
     stage: vi.fn(),
+    nametag: vi.fn(),
     emote: vi.fn(),
     rotate: vi.fn(),
     zoom: vi.fn(),
@@ -124,7 +123,10 @@ async function openNames(): Promise<HTMLInputElement> {
   return screen.getByRole('textbox', { name: 'Your NAME' })
 }
 
-const nametag = (): HTMLElement | null => document.querySelector<HTMLElement>('[data-nametag]')
+/** What the Shop last told the engine to draw over the avatar: its nametag, or null for none. */
+const toldTag = (props: InWorldShopProps): unknown => vi.mocked(props.nametag).mock.lastCall?.[0]
+/** The design's silver, which the empty nametag's "YourName" reads in. */
+const SILVER = { r: 160 / 255, g: 155 / 255, b: 168 / 255 }
 const claim = (): HTMLButtonElement => screen.getByRole('button', { name: /^Claim name/ })
 
 /** CONTINUE on the redirect dialog with this title. */
@@ -157,27 +159,46 @@ describe('the in-world Shop’s Names', () => {
     expect(stage.mock.calls).toEqual([[rect, 'catalog']])
   })
 
-  it('opens on UNIQUE NAME, the nametag over the avatar reading the placeholder until a NAME is typed', async () => {
+  it('opens on UNIQUE NAME, the engine’s nametag over the avatar reading the placeholder until a NAME is typed', async () => {
     serve()
-    renderShop()
+    const { props } = renderShop()
+    // the catalogue shows no tag
+    expect(toldTag(props)).toBeNull()
     const field = await openNames()
     expect(screen.getByRole('heading', { name: 'Get your unique NAME!' })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Unique name' })).toHaveAttribute('aria-pressed', 'true')
-    expect(nametag()).toHaveTextContent(NAMETAG_PLACEHOLDER)
+    expect(toldTag(props)).toEqual({ name: NAMETAG_PLACEHOLDER, claimed: true, color: SILVER })
 
+    // As it will read once claimed: the badge, and the engine's colour for a claimed NAME (the name's own hue).
     await userEvent.type(field, 'Carolo')
-    expect(nametag()).toHaveTextContent('Carolo')
-    expect(nametag()).not.toHaveTextContent(NAMETAG_PLACEHOLDER)
-    // In the colour the NAME takes once claimed, with the field's caret while it has the focus.
-    expect(nametag()!.querySelector('span')).toHaveStyle({ color: userNameColor('Carolo', ADDRESS, true) })
-    expect(within(nametag()!).getByTestId('nametag-caret')).toBeInTheDocument()
+    expect(toldTag(props)).toEqual({ name: 'Carolo', claimed: true })
+    // Told once per change of what it reads: leaving the field changes nothing.
+    const told = vi.mocked(props.nametag).mock.calls.length
     fireEvent.blur(field)
-    expect(within(nametag()!).queryByTestId('nametag-caret')).toBeNull()
+    expect(vi.mocked(props.nametag).mock.calls).toHaveLength(told)
+    // Another page takes it away, and so does closing the Shop.
+    await userEvent.click(screen.getByRole('tab', { name: 'Wearables' }))
+    expect(toldTag(props)).toBeNull()
+    await openNames()
+    expect(toldTag(props)).toEqual({ name: 'Carolo', claimed: true })
+  })
+
+  it('takes the nametag away when the Shop closes or goes', async () => {
+    serve()
+    const { props, rerender } = renderShop()
+    await openNames()
+    expect(toldTag(props)).toEqual({ name: NAMETAG_PLACEHOLDER, claimed: true, color: SILVER })
+    rerender({ shop: { open: false, toggle: vi.fn() } })
+    expect(toldTag(props)).toBeNull()
+    rerender({ shop: { open: true, toggle: vi.fn() } })
+    vi.mocked(props.nametag).mockClear()
+    cleanup()
+    expect(toldTag(props)).toBeNull()
   })
 
   it('keeps letters and digits only, and one past the limit says so', async () => {
     serve()
-    renderShop()
+    const { props } = renderShop()
     const field = await openNames()
     await userEvent.type(field, 'Calabaza Chop-eria!!')
     expect(field).toHaveValue('CalabazaChoperia')
@@ -187,7 +208,7 @@ describe('the in-world Shop’s Names', () => {
     expect(screen.getByText(/16\/15/)).toHaveTextContent('16/15Character Limit Reached')
     expect(field).toHaveAttribute('aria-invalid', 'true')
     expect(claim()).toBeDisabled()
-    expect(nametag()).toHaveTextContent('CalabazaChoperia')
+    expect(toldTag(props)).toEqual({ name: 'CalabazaChoperia', claimed: true })
   })
 
   it('cleans a pasted NAME before capping it, so its letters are kept and the limit shows', async () => {
@@ -478,45 +499,48 @@ describe('the in-world Shop’s Names', () => {
     const { rerender, props } = renderShop()
     await openNames()
     await userEvent.click(screen.getByRole('button', { name: 'Resale name' }))
-    expect(nametag()).toHaveTextContent('Mojito')
-    expect(nametag()!.querySelector('img')).not.toBeNull()
-    // The engine names an unclaimed name with # and the last four of the address (ADDRESS ends in b47f).
-    rerender({ profile: { ...props.profile, data: { ...ME, name: 'Guest#b47f', hasClaimedName: false } } })
-    expect(nametag()).toHaveTextContent(/^Guest#b47f$/)
-    expect(nametag()!.querySelector('img')).toBeNull()
-    // A name that comes without them takes them from the address.
+    expect(toldTag(props)).toEqual({ name: 'Mojito', claimed: true })
+    // A claimed NAME in the colour its player picked.
+    const picked = { r: 0.2, g: 0.6, b: 0.9 }
+    rerender({ profile: { ...props.profile, data: { ...ME, nameColor: picked } } })
+    expect(toldTag(props)).toEqual({ name: 'Mojito', claimed: true, color: picked })
+    // Unclaimed, the engine follows it with # and the last four of the avatar's id, the player's address, as it
+    // names a player in the world: whatever the profile's name carries after a # is dropped.
+    rerender({ profile: { ...props.profile, data: { ...ME, name: 'Guest#b47f', hasClaimedName: false, nameColor: picked } } })
+    expect(toldTag(props)).toEqual({ name: 'Guest', claimed: false })
     rerender({ profile: { ...props.profile, data: { ...ME, name: 'Guest', hasClaimedName: false } } })
-    expect(nametag()).toHaveTextContent(/^Guest#b47f$/)
-    expect(nametag()!.querySelector('img')).toBeNull()
+    expect(toldTag(props)).toEqual({ name: 'Guest', claimed: false })
     // No nametag until the profile has a name: the empty one's placeholder and badge would claim a NAME.
     rerender({ profile: { ...props.profile, data: { ...ME, name: '', hasClaimedName: false } } })
     expect(screen.getByRole('button', { name: 'Resale name' })).toBeInTheDocument()
-    expect(nametag()).toBeNull()
+    expect(toldTag(props)).toBeNull()
     // Signed out, the Marketplace is gone (RESALE NAME with it), and UNIQUE NAME shows its own nametag.
     rerender({ profile: { ...props.profile, data: null } })
     expect(screen.queryByRole('button', { name: 'Resale name' })).toBeNull()
   })
 
-  it('hides the nametag while the avatar is zoomed, and shows it once back out', async () => {
+  it('keeps the nametag while the avatar is zoomed: the engine stands it on the head, wherever the view puts it', async () => {
     serve()
-    renderShop()
+    const { props } = renderShop()
     await openNames()
+    const told = vi.mocked(props.nametag).mock.calls.length
     const surface = screen.getByTestId('avatar-drag-surface')
     fireEvent.wheel(surface, { deltaY: -400 })
-    await waitFor(() => expect(nametag()).toBeNull())
+    await waitFor(() => expect(props.zoom).toHaveBeenCalled())
     fireEvent.wheel(surface, { deltaY: 4000 })
-    await waitFor(() => expect(nametag()).not.toBeNull())
+    expect(vi.mocked(props.nametag).mock.calls).toHaveLength(told)
+    expect(toldTag(props)).toEqual({ name: NAMETAG_PLACEHOLDER, claimed: true, color: SILVER })
   })
 
   it('shows no nametag outside Names, and a reopened Shop starts with no NAME typed', async () => {
     serve()
     const { rerender, props } = renderShop()
-    expect(nametag()).toBeNull()
+    expect(toldTag(props)).toBeNull()
     const field = await openNames()
     await userEvent.type(field, 'Carolo')
     rerender({ shop: { ...props.shop, open: false } })
     rerender({ shop: { ...props.shop, open: true } })
     expect(await openNames()).toHaveValue('')
-    expect(nametag()).toHaveTextContent(NAMETAG_PLACEHOLDER)
+    expect(toldTag(props)).toEqual({ name: NAMETAG_PLACEHOLDER, claimed: true, color: SILVER })
   })
 })

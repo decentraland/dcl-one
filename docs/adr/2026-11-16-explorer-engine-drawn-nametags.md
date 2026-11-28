@@ -57,9 +57,23 @@ scene draws none.
   a shorter id), never the verified or official badge, and the voice bars while `talking` is
   set. As in a player's name, what follows a `#` in the name is dropped; a name with nothing
   before one reads `NPC`. The tag goes while the avatar is rebuilt for a new outfit, and comes
-  back once the new body is built. A scene entity that only restyles a player gets none, nor do
-  the HUD's preview avatars, which a system scene makes. Avatar modifier areas act on players,
-  so they do not hide these tags; a scene hides its avatar's tag by hiding the avatar.
+  back once the new body is built. A scene entity that only restyles a player gets none, nor,
+  from their name, do the HUD's preview avatars, which a system scene makes. Avatar modifier
+  areas act on players, so they do not hide these tags; a scene hides its avatar's tag by hiding
+  the avatar.
+- **A system scene puts a tag on its own avatar by call.** `SystemApi::SetAvatarShapeNametag`
+  (the bridge's `setAvatarShapeNametag`) names an entity, read in the system scene's own context,
+  and a tag or none; of several words on an entity in one engine update, the last counts. The
+  word doesn't name its scene, so it is taken only while there is one system scene. A tag
+  asked before the engine has the entity waits until that scene names it, and is dropped if the
+  entity dies or the scene goes. The engine keeps the tag on the entity as `SystemSceneNametag`
+  until it is taken away or the avatar's `AvatarShape` is removed, and makes it the avatar's
+  `NametagContent` once the avatar is built: the name; for a claimed NAME the verified badge and
+  no suffix, else `#` and the end of the id; the given colour or the engine's for the name; and a
+  size, a multiple of a player's from 0.25 to 4, by which the tag's mesh is scaled. The tag shows
+  for the camera that draws the avatar: it skips the range from the player's camera and inherits
+  the avatar's render layers. The in-world Shop's NAMEs pages put the NAME on their preview avatar
+  this way.
 - **A scene's plate is part of the avatar's tag.** `AvatarNametag` on a scene entity asks for a
   plate over the name of the avatar the entity stands for: the local player, another player, or
   an avatar the scene made, once its body is built. The avatar carries a `NametagPlate` beside
@@ -80,7 +94,8 @@ scene draws none.
   hips, plus the height of what the avatar wears above its head bone, measured in the head bone's
   bind space when the avatar is built. The anchor is relative to the player, so transform
   propagation places the tag from the player's transform of the same frame. The vertex shader
-  turns the tag to the camera plane, scales it by distance so that it keeps its size on screen,
+  turns the tag to the camera plane, scales it by distance under a perspective camera (not under
+  an orthographic one, such as a HUD preview's) so that it keeps its size on screen,
   and fades it over the second half of its 2 m to 40 m range. Nothing on an idle tag changes from
   frame to frame except, when its player moves, its place in the world. Its bounds are a cube
   around the anchor that covers the mesh at the far end of the range, where it is largest,

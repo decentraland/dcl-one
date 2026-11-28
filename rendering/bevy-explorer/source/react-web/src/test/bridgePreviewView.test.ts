@@ -1,7 +1,7 @@
 // The avatar preview's view arithmetic (bridge-scene/src/domains/previewView): the Shop's framings, checked against
 // the design by where they draw the avatar in the preview's window, and how far a zoomed view moves.
 import { describe, expect, it } from 'vitest'
-import { SHOP_FRAMING, SHOP_NAMES_FRAMING, shiftWithin, type Framing } from '../../bridge-scene/src/domains/previewView'
+import { SHOP_FRAMING, SHOP_NAMES_FRAMING, SHOP_NAMETAG_SCALE, shiftWithin, type Framing } from '../../bridge-scene/src/domains/previewView'
 
 const PITCH = 12
 const ASPECT = 573 / 942
@@ -51,5 +51,13 @@ describe("the Shop's avatar preview view", () => {
     const once = windowPoint(0, SHOP_FRAMING.centerY + 1, SHOP_FRAMING)
     const twice = windowPoint(0, SHOP_FRAMING.centerY + 1, SHOP_FRAMING, 2)
     expect(0.5 - twice.y).toBeCloseTo(2 * (0.5 - once.y), 9)
+  })
+
+  it("sizes the engine's nametag on Names as the design draws it: 54.066px of the 942px window", () => {
+    // The engine's idle tag: its 18-unit name at 1.21 line height, 5 units above and below; each unit 0.075% of the
+    // view's height (nametag.wgsl's SCREEN_SCALE × UNIT, halved), under the preview's orthographic camera too.
+    const tagUnits = 18 * 1.21 + 5 + 5
+    const shareOfView = (0.15 * 0.01) / 2
+    expect(tagUnits * shareOfView * SHOP_NAMETAG_SCALE * 942).toBeCloseTo(54.066, 0)
   })
 })

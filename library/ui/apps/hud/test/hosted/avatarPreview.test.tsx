@@ -103,4 +103,21 @@ describe('avatarPreview domain', () => {
     act(() => h.session().turnLobbyAvatar(12))
     expect(h.driver.last('previewRotate')).toEqual({ kind: 'previewRotate', degrees: 12, stage: 'lobby' })
   })
+
+  it("tells the scene the Shop's stage with its page's framing, and the Shop's nametag", async () => {
+    const h = renderSession()
+    await enterAsGuest(h)
+    const rect = { x: 0, y: -70, width: 1920, height: 1080 }
+    act(() => h.session().backpack.stage(rect, 'names'))
+    expect(h.driver.last('previewStage')).toEqual({ kind: 'previewStage', rect, framing: 'names' })
+    // no framing named: none on the wire, which the scene reads as the catalogue's
+    act(() => h.session().backpack.stage(null))
+    expect(h.driver.last('previewStage')).toEqual({ kind: 'previewStage', rect: null })
+
+    const color = { r: 0.2, g: 0.6, b: 0.9 }
+    act(() => h.session().backpack.nametag({ name: 'Mojito', claimed: true, color }))
+    expect(h.driver.last('previewNametag')).toEqual({ kind: 'previewNametag', nametag: { name: 'Mojito', claimed: true, color } })
+    act(() => h.session().backpack.nametag(null))
+    expect(h.driver.last('previewNametag')).toEqual({ kind: 'previewNametag', nametag: null })
+  })
 })

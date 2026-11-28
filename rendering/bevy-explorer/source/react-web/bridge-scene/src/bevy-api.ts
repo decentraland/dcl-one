@@ -7,6 +7,7 @@ import type { CompactProfile, SerializedProfile } from './domains/profile'
 import type {
   AnalyticsEvent,
   AvatarModifierState,
+  AvatarShapeNametag,
   BlockedUserData,
   BlockingStatusData,
   ChatMessage,
@@ -199,6 +200,9 @@ export type BevyApiInterface = {
   /** Replace the text of the chat bubble still showing `messageId` (its translation, or the
    *  original back); a message no bubble shows is ignored. */
   setChatBubbleText: (messageId: string, message: string) => void
+  /** Puts the engine's own nametag on one of this scene's avatars (an AvatarShape entity), or takes it away (null).
+   *  The tag goes with the avatar's shape. Optional: absent on runtimes that predate it. */
+  setAvatarShapeNametag?: (entity: number, nametag: AvatarShapeNametag | null) => void
   getChatStream: () => Promise<AsyncIterable<ChatStreamMessage>>
   /** Add or remove the local user's reaction to a chat message; echoed on getChatReactionStream. */
   sendChatReaction: (channel: string, messageId: string, emoji: string, remove: boolean) => void

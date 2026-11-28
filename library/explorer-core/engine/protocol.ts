@@ -232,6 +232,7 @@ export type PageToScene =
   | PreviewAvatarRequest
   | PreviewFocusRequest
   | PreviewStageRequest
+  | PreviewNametagRequest
   | PreviewEmoteRequest
   | PreviewRotateRequest
   | PreviewZoomRequest
@@ -2345,6 +2346,22 @@ export interface PreviewStageRequest {
 /** How the Shop's page draws its avatar: the catalogue's whole body, or Names' (smaller and lower, with room
  *  over the head for the nametag). */
 export type PreviewStageFraming = 'catalog' | 'names'
+
+/** The Shop's nametag over its preview avatar: the Explorer's own tag, which the engine draws over the head and
+ *  what the avatar wears, at the size the Shop's design draws it. `null` takes it away. */
+export interface PreviewNametagRequest {
+  kind: 'previewNametag'
+  nametag: PreviewNametag | null
+}
+
+/** What the Shop's nametag reads. A claimed NAME carries the verified badge; one that isn't is followed by `#`
+ *  and the end of the player's address. `color` is the name's (a claimed NAME's chosen one), else the engine's
+ *  for that name. */
+export interface PreviewNametag {
+  name: string
+  claimed: boolean
+  color?: { r: number; g: number; b: number }
+}
 
 /** Play an emote on the preview avatar once (the Shop trying one on); asked again, it plays again.
  *  `null` stops it. */

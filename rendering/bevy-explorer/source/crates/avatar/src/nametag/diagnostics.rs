@@ -19,6 +19,7 @@ use super::{
     tag_opacity, tag_scale,
     text::TextShaper,
     ChatBubble, Nametag, NametagContent, NametagVoice, OfficialWallets, SceneAvatarNametag,
+    SystemSceneNametag,
 };
 use crate::dynamic_nametag::{NametagHeadOffset, NametagsVisible};
 
@@ -55,8 +56,10 @@ pub const SECTION: DebugSection = DebugSection {
 /// `nameShown` (false for a tag that is its plate alone: the avatar has no name, or a scene's
 /// area hides it), `plate` (null, or the plate's `label` and its `labelColor`, `backgroundColor`
 /// and `borderColor` as `#RRGGBB`), `name` and `suffix` (empty for an avatar with no name),
-/// `verified`, `official`, `voice` (`off`, `idle`, `speaking`, `hushed`),
-/// `distance` in metres from the camera, `opacity` (0 to 1), `scale` (metres per tag unit),
+/// `verified`, `official`, `voice` (`off`, `idle`, `speaking`, `hushed`), `systemTag` (the tag a
+/// system scene put on its avatar, drawn for that avatar's own camera), `size` (the tag's size
+/// as a multiple of a player's), `distance` in metres from the player's camera, `opacity` (0 to
+/// 1), `scale` (metres per tag unit; these three null for a system scene's tag),
 /// `position` (world, metres; all four as of the last frame drawn), `headOffset` (how far over
 /// the head bone the tag sits, in metres for an avatar at a scale of one; null until the
 /// avatar is built) and `bubble` (null, or its `kind`, `mention` and message `length`; never
@@ -80,6 +83,7 @@ pub fn nametag_state(
         Option<&NametagHeadOffset>,
         Option<&ChatBubble>,
         Has<SceneAvatarNametag>,
+        Has<SystemSceneNametag>,
     )>,
     local: Res<common::structs::PrimaryPlayerRes>,
 ) {
@@ -106,7 +110,7 @@ pub fn nametag_state(
             hidden += 1;
             continue;
         }
-        let Ok((content, plate, voice, foreign, head_offset, bubble, scene_avatar)) =
+        let Ok((content, plate, voice, foreign, head_offset, bubble, scene_avatar, system_tag)) =
             owners.get(owner.parent())
         else {
             continue;
@@ -118,10 +122,14 @@ pub fn nametag_state(
             None => Value::Null,
         };
         let position = transform.translation();
-        let distance = view.map(|(camera, _)| camera.distance(position));
+        let size = content.map_or(1.0, |content| content.scale);
+        // a system scene's tag is drawn for its avatar's own camera, not the player's
+        let distance = view
+            .filter(|_| !system_tag)
+            .map(|(camera, _)| camera.distance(position));
         let scale = distance
             .zip(view.and_then(|(_, fov)| fov))
-            .map(|(distance, fov)| tag_scale(distance, fov));
+            .map(|(distance, fov)| tag_scale(distance, fov) * size);
         shown.push(json!({
             "player": player,
             "sceneAvatar": scene_avatar,
@@ -142,6 +150,8 @@ pub fn nametag_state(
                 Voice::Speaking => "speaking",
                 Voice::Hushed => "hushed",
             },
+            "systemTag": system_tag,
+            "size": size,
             "distance": distance,
             "opacity": distance.map(tag_opacity),
             "scale": scale,

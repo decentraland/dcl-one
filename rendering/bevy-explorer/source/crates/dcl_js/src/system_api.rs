@@ -14,17 +14,17 @@ use serde::{Deserialize, Serialize};
 use std::{cell::RefCell, collections::HashMap, marker::PhantomData, rc::Rc, sync::Arc};
 use strum::IntoEnumIterator;
 use system_bridge::{
-    settings::SettingInfo, AnalyticsEvent, AvatarModifierState, BlockUpdateData, BlockedUserData,
-    BlockingStatusData, ChatMessage, ChatReactionData, CommunityMemberConnectivityData,
-    CommunityVoiceUpdate, ConnectivitySnapshot, DmHistoryEntryData, DmUserStateData,
-    FriendConnectivityEvent, FriendData, FriendRequestData, FriendStatusData,
-    FriendshipEventUpdate, HomeScene, HoverEvent, ItemPurchaseRequest, ItemPurchaseState,
-    ListenedCommunity, LiveSceneInfo, LobbyStage, MapPinInfo, OutfitsData, PermanentPermissionItem,
-    PermissionRequestEvent, PhotoModeState, PlatformBanNotice, PortableInfo, ProfileChangedEvent,
-    ProximityEvent, ReactionData, SatelliteView, SceneLoadingUi, SetAvatarData, SetAvatarResult,
-    SetItemPurchaseState, SetPermanentPermission, SetSinglePermission, SystemApi,
-    TextureOptimizationStatus, VoiceChatAction, VoiceChatState, VoiceMessage, WelcomeState,
-    WorldAccessEvent, WorldAccessVerdict,
+    settings::SettingInfo, AnalyticsEvent, AvatarModifierState, AvatarShapeNametag,
+    BlockUpdateData, BlockedUserData, BlockingStatusData, ChatMessage, ChatReactionData,
+    CommunityMemberConnectivityData, CommunityVoiceUpdate, ConnectivitySnapshot,
+    DmHistoryEntryData, DmUserStateData, FriendConnectivityEvent, FriendData, FriendRequestData,
+    FriendStatusData, FriendshipEventUpdate, HomeScene, HoverEvent, ItemPurchaseRequest,
+    ItemPurchaseState, ListenedCommunity, LiveSceneInfo, LobbyStage, MapPinInfo, OutfitsData,
+    PermanentPermissionItem, PermissionRequestEvent, PhotoModeState, PlatformBanNotice,
+    PortableInfo, ProfileChangedEvent, ProximityEvent, ReactionData, SatelliteView, SceneLoadingUi,
+    SetAvatarData, SetAvatarResult, SetItemPurchaseState, SetPermanentPermission,
+    SetSinglePermission, SystemApi, TextureOptimizationStatus, VoiceChatAction, VoiceChatState,
+    VoiceMessage, WelcomeState, WorldAccessEvent, WorldAccessVerdict,
 };
 use tokio::sync::Notify;
 
@@ -702,6 +702,20 @@ pub fn op_set_chat_bubble_text(
             message_id,
             message,
         })
+        .unwrap();
+}
+
+/// Puts the engine's nametag on one of the system scene's avatars (an `AvatarShape` entity, as the
+/// scene numbers it), or takes it away. A `SystemApi`, so only the system scene can ask.
+pub fn op_set_avatar_shape_nametag(
+    state: Rc<RefCell<impl State>>,
+    entity: u32,
+    nametag: Option<AvatarShapeNametag>,
+) {
+    state
+        .borrow_mut()
+        .borrow_mut::<SuperUserScene>()
+        .send(SystemApi::SetAvatarShapeNametag { entity, nametag })
         .unwrap();
 }
 

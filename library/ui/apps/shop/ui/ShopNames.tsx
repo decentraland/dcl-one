@@ -43,8 +43,6 @@ export interface ShopNamesProps {
   clean: (raw: string) => string
   /** The most the field holds: one past the limit, so typing past it shows it. */
   maxLength: number
-  /** The field's focus, for the nametag's caret. */
-  onFocusChange?: (focused: boolean) => void
   /** The fewest letters a NAME has. */
   minLength: number
   /** The limit the counter counts to. */
@@ -84,7 +82,7 @@ export function ShopNames(props: ShopNamesProps): React.JSX.Element {
   )
 }
 
-function UniqueName({ value, onChange, clean, maxLength, onFocusChange, minLength, limit, suffix, status, price, onClaim, onMakeOffer, onRetry }: ShopNamesProps): React.JSX.Element {
+function UniqueName({ value, onChange, clean, maxLength, minLength, limit, suffix, status, price, onClaim, onMakeOffer, onRetry }: ShopNamesProps): React.JSX.Element {
   const invalid = status === 'tooLong' || status === 'taken' || status === 'banned'
   // An edit is cleaned on each side of the caret and capped where it was made, as a maxLength field caps it:
   // a paste loses its punctuation, not its letters, and typing into a full field takes nothing and leaves
@@ -126,8 +124,6 @@ function UniqueName({ value, onChange, clean, maxLength, onFocusChange, minLengt
                 aria-invalid={invalid || undefined}
                 aria-describedby="shop-names-feedback"
                 onChange={(e) => edit(e.currentTarget)}
-                onFocus={() => onFocusChange?.(true)}
-                onBlur={() => onFocusChange?.(false)}
               />
               {suffix != null && (
                 <span className={styles.suffix} aria-hidden="true">

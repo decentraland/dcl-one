@@ -476,6 +476,7 @@ fn demo_command(
                     verified: claimed,
                     official: false,
                     name,
+                    scale: 1.0,
                 };
                 let mut entity = commands.spawn((
                     DemoAvatar,

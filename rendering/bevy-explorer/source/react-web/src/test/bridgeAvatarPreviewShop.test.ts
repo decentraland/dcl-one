@@ -1,6 +1,6 @@
 // The Shop's avatar preview in the bridge (bridge-scene/src/domains/avatarPreview): the camera framed as the Shop's
-// page draws the avatar, and eased from one page's framing to another's while the stage stays up. The engine's ECS is
-// a fake that keeps components as plain records.
+// page draws the avatar, eased from one page's framing to another's while the stage stays up, and the engine's own
+// nametag put on the avatar as the page asks. The engine's ECS is a fake that keeps components as plain records.
 import { describe, expect, it, vi } from 'vitest'
 import type { Ctx } from '../../bridge-scene/src/bridge'
 import type { PageToScene } from '@explorer-core/engine/protocol'
@@ -66,7 +66,7 @@ vi.mock('../../bridge-scene/src/domains/avatarDraft', () => ({ currentLook: () =
 const { api } = vi.hoisted(() => ({ api: {} as Record<string, unknown> }))
 vi.mock('../../bridge-scene/src/bevy-api', () => ({ BevyApi: api }))
 
-const { SHOP_FRAMING, SHOP_NAMES_FRAMING } = await import('../../bridge-scene/src/domains/previewView')
+const { SHOP_FRAMING, SHOP_NAMES_FRAMING, SHOP_NAMETAG_SCALE } = await import('../../bridge-scene/src/domains/previewView')
 
 const WINDOW = { x: 0, y: 138, width: 573, height: 942 }
 const STAGE = { x: 0, y: 68, width: 1920, height: 1080 }
@@ -141,5 +141,68 @@ describe("the Shop's avatar preview", () => {
     expect(shop.camera()).not.toBeCloseTo(SHOP_NAMES_FRAMING.range, 3)
     shop.emit({ kind: 'previewStage', rect: STAGE, framing: 'names' } as PageToScene)
     expect(shop.camera()).toBeCloseTo(SHOP_NAMES_FRAMING.range, 9)
+  })
+})
+
+describe("the Shop's avatar nametag", () => {
+  it("puts the page's tag on the preview avatar at the design's size, once per change, and takes it away with the stage", async () => {
+    const shop = await openShop('names')
+    const set = vi.fn()
+    api.setAvatarShapeNametag = set
+    shop.frame()
+    // nothing asked yet, and a fresh avatar has no tag to take away
+    expect(set).not.toHaveBeenCalled()
+
+    shop.emit({ kind: 'previewNametag', nametag: { name: 'Ada', claimed: true } } as PageToScene)
+    shop.frame()
+    shop.frame()
+    expect(set.mock.calls).toEqual([[expect.any(Number), { name: 'Ada', claimed: true, scale: SHOP_NAMETAG_SCALE }]])
+    const avatar = set.mock.calls[0][0]
+
+    const red = { r: 1, g: 0, b: 0 }
+    shop.emit({ kind: 'previewNametag', nametag: { name: 'Ada', claimed: false, color: red } } as PageToScene)
+    shop.frame()
+    expect(set).toHaveBeenLastCalledWith(avatar, { name: 'Ada', claimed: false, color: red, scale: SHOP_NAMETAG_SCALE })
+
+    // the page takes it away
+    shop.emit({ kind: 'previewNametag', nametag: null } as PageToScene)
+    shop.frame()
+    expect(set).toHaveBeenLastCalledWith(avatar, null)
+    expect(set).toHaveBeenCalledTimes(3)
+
+    // and the stage going takes it away, though the page still asks for it
+    shop.emit({ kind: 'previewNametag', nametag: { name: 'Ada', claimed: true } } as PageToScene)
+    shop.frame()
+    shop.emit({ kind: 'previewStage', rect: null } as PageToScene)
+    shop.frame()
+    expect(set).toHaveBeenLastCalledWith(avatar, null)
+    expect(set).toHaveBeenCalledTimes(5)
+  })
+
+  it('puts the tag on a new preview avatar again, and asks nothing of the one that went', async () => {
+    const shop = await openShop('names')
+    const set = vi.fn()
+    api.setAvatarShapeNametag = set
+    shop.emit({ kind: 'previewNametag', nametag: { name: 'Ada', claimed: true } } as PageToScene)
+    shop.frame()
+    const first = set.mock.calls[0][0]
+
+    // the preview closes and opens again: another avatar, the last one gone with its tag
+    shop.emit({ kind: 'engineViewport', region: 'avatarPreview', rect: null, dpr: 1 } as PageToScene)
+    for (let i = 0; i < 4; i++) shop.frame()
+    shop.emit({ kind: 'engineViewport', region: 'avatarPreview', rect: WINDOW, dpr: 1 } as PageToScene)
+    shop.frame()
+    shop.frame()
+    const [avatar, tag] = set.mock.lastCall!
+    expect(avatar).not.toBe(first)
+    expect(tag).toEqual({ name: 'Ada', claimed: true, scale: SHOP_NAMETAG_SCALE })
+    expect(set.mock.calls.filter(([entity, sent]) => entity === first && sent === null)).toEqual([])
+  })
+
+  it('asks nothing of a runtime that predates the call', async () => {
+    const shop = await openShop('names')
+    delete api.setAvatarShapeNametag
+    shop.emit({ kind: 'previewNametag', nametag: { name: 'Ada', claimed: true } } as PageToScene)
+    expect(() => shop.frame()).not.toThrow()
   })
 })

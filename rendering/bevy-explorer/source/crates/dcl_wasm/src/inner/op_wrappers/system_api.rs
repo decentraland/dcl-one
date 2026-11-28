@@ -291,6 +291,20 @@ pub fn op_set_chat_bubble_text(state: &WorkerContext, message_id: String, messag
 }
 
 #[wasm_bindgen]
+pub fn op_set_avatar_shape_nametag(
+    state: &WorkerContext,
+    entity: u32,
+    nametag: JsValue,
+) -> Result<(), WasmError> {
+    // map_err rather than serde_parse!'s unwrap: with deny_unknown_fields a caller mistake
+    // must surface as a catchable JS error, not a worker panic.
+    let nametag = serde_wasm_bindgen::from_value(nametag)
+        .map_err(|e| WasmError::from(anyhow::anyhow!("setAvatarShapeNametag: {e}")))?;
+    dcl_js::system_api::op_set_avatar_shape_nametag(state.rc(), entity, nametag);
+    Ok(())
+}
+
+#[wasm_bindgen]
 pub async fn op_get_chat_reaction_stream(state: &WorkerContext) -> u32 {
     dcl_js::system_api::op_get_chat_reaction_stream(state.rc()).await
 }

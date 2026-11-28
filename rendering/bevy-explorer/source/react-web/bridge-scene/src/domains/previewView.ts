@@ -12,6 +12,12 @@ export const SHOP_FRAMING: Framing = { range: 4.9, centerY: 1.84 }
  *  rather than 1.4px above it. So the view is the catalogue's over 0.919, centred 0.42m higher. */
 export const SHOP_NAMES_FRAMING: Framing = { range: 5.33, centerY: 2.26 }
 
+/** The size of the engine's nametag over the Shop's avatar on Names, as a multiple of a player's: the design's tag
+ *  is 54.066px tall in the 942px window. The engine's idle tag is 31.78 units tall (its 18-unit name at 1.21 line
+ *  height, 5 units above and below), each unit 0.075% of the view's height under any camera. So
+ *  (54.066 / 942) / (31.78 × 0.00075) ≈ 2.41. */
+export const SHOP_NAMETAG_SCALE = 2.41
+
 /** The view's centre moved `shift` metres up at zoom `z`, kept inside the framing (none at zoom 1). */
 export function shiftWithin(f: { range: number }, z: number, shift: number): number {
   const room = (f.range - f.range / z) / 2

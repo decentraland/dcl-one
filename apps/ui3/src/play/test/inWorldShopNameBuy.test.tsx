@@ -90,6 +90,7 @@ function renderShop(): InWorldShopProps {
     preview: vi.fn(),
     focus: vi.fn(),
     stage: vi.fn(),
+    nametag: vi.fn(),
     emote: vi.fn(),
     rotate: vi.fn(),
     zoom: vi.fn()
@@ -104,7 +105,6 @@ function renderShop(): InWorldShopProps {
   return props
 }
 
-const nametag = (): HTMLElement | null => document.querySelector<HTMLElement>('[data-nametag]')
 const claim = (): HTMLButtonElement => screen.getByRole('button', { name: /^Claim name/ })
 const nameEvent = (event: Record<string, unknown>): void =>
   act(() => shell.handlers.get(SHOP_EVENT)?.({ type: SHOP_EVENT, v: 1, operation: 'n1', buyer: BUYER, items: [], name: 'Carolo', mode: 'simulation', ...event }))
@@ -211,7 +211,8 @@ describe('CLAIM NAME in the web shell', () => {
     nameEvent({ state: 'succeeded' })
     nameEvent({ state: 'succeeded', next: 'previewName' })
     expect(await screen.findByRole('textbox', { name: 'Your NAME' })).toHaveValue('Carolo')
-    expect(nametag()).toHaveTextContent('Carolo')
+    // over the avatar, in the engine's nametag
+    expect(vi.mocked(props.nametag).mock.lastCall?.[0]).toEqual({ name: 'Carolo', claimed: true })
     expect(await screen.findByText('Preview only: your profile’s name hasn’t changed.')).toBeInTheDocument()
     // The same choice again (a replayed event, or shop.status) previews nothing more.
     await awayFromNames()

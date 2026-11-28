@@ -43,6 +43,7 @@ function Shop({ session, onNavigate, mock }: HudShopProps): React.JSX.Element | 
         preview={session.backpack.preview}
         focus={session.backpack.focus}
         stage={session.backpack.stage}
+        nametag={session.backpack.nametag}
         emote={session.backpack.emote}
         rotate={session.backpack.rotate}
         zoom={session.backpack.zoom}

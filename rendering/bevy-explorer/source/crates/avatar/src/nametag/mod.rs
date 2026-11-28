@@ -16,8 +16,14 @@ pub(crate) mod text;
 
 use alloy_core::primitives::Address;
 use bevy::{
-    app::PropagateStop, color::Mix, ecs::system::SystemParam, math::Vec3A, pbr::NotShadowCaster,
-    platform::collections::HashSet, prelude::*, render::primitives::Aabb,
+    app::PropagateStop,
+    color::Mix,
+    ecs::system::SystemParam,
+    math::Vec3A,
+    pbr::NotShadowCaster,
+    platform::collections::{HashMap, HashSet},
+    prelude::*,
+    render::primitives::Aabb,
 };
 use common::{
     feature_flags::{FeatureFlags, FlagsSource},
@@ -36,12 +42,13 @@ use comms::{
 use console::{AddDebugSection, DoAddConsoleCommand};
 use dcl_component::{
     proto_components::sdk::components::{PbAvatarNametag, PbAvatarShape},
-    SceneComponentId,
+    SceneComponentId, SceneEntityId,
 };
 use dcl_types::interface::ComponentPosition;
 use scene_material::highlight::Highlight;
 use scene_runner::{
     initialize_scene::SuperUserScene,
+    renderer_context::RendererSceneContext,
     update_world::{
         avatar_modifier_area::HiddenNametag,
         text_shape::{GlyphAtlasMaintenance, GlyphAtlases, Page, Pending},
@@ -49,7 +56,7 @@ use scene_runner::{
     },
     SceneEntity,
 };
-use system_bridge::SystemApi;
+use system_bridge::{AvatarShapeNametag, SystemApi};
 
 use crate::{
     dynamic_nametag::{smallest_scale, NametagHeadOffset, NametagsVisible, Overhead},
@@ -131,6 +138,7 @@ impl Plugin for NametagPlugin {
             Update,
             (
                 resolve_content,
+                set_system_scene_nametags,
                 resolve_scene_avatar_content,
                 resolve_plates,
                 resolve_voice,
@@ -248,7 +256,13 @@ pub struct NametagContent {
     pub color: Color,
     pub verified: bool,
     pub official: bool,
+    /// How large the tag draws on screen, as a multiple of a player's: 1 but on a system scene's
+    /// avatar that was given a larger one ([`SystemSceneNametag`]).
+    pub scale: f32,
 }
+
+/// The sizes a system scene may give its avatar's tag, as a multiple of a player's.
+const SYSTEM_TAG_SCALES: std::ops::RangeInclusive<f32> = 0.25..=4.0;
 
 impl NametagContent {
     fn from_profile(profile: &UserProfile, official: &OfficialWallets) -> Self {
@@ -274,6 +288,7 @@ impl NametagContent {
             official: address
                 .as_h160()
                 .is_some_and(|address| official.0.contains(&address)),
+            scale: 1.0,
         }
     }
 
@@ -290,17 +305,47 @@ impl NametagContent {
             name => name,
         };
         let name = capped(name, MAX_NAME_CHARS);
-        let suffix = match shape.id.char_indices().rev().nth(3) {
-            // never cut: `capped` is here to keep a control character off the tag
-            Some((last4, _)) => format!("#{}", capped(&shape.id[last4..], 4)),
-            None => "#0000".to_owned(),
-        };
         Some(Self {
             color: name_color(&name, &shape.id, false),
             name,
-            suffix,
+            suffix: id_suffix(&shape.id),
             verified: false,
             official: false,
+            scale: 1.0,
+        })
+    }
+
+    /// What a system scene's avatar shows: the tag the scene put on it. A claimed NAME carries
+    /// the verified badge and no suffix; one that isn't, the end of the avatar's id, as a scene
+    /// avatar's does. The colour is the given one, else the engine's for that name. The id is
+    /// read in lower case, as a player's address is for their own tag, so a checksummed address
+    /// gives the same hue and suffix. `None` for a blank name, which asks for no tag.
+    fn from_system(tag: &AvatarShapeNametag, shape: &PbAvatarShape) -> Option<Self> {
+        let name = tag.name.split('#').next().unwrap_or_default().trim();
+        if name.is_empty() {
+            return None;
+        }
+        let name = capped(name, MAX_NAME_CHARS);
+        let id = shape.id.to_lowercase();
+        let color = match &tag.color {
+            Some(color) => Color::srgb(color.r, color.g, color.b),
+            None => name_color(&name, &id, tag.claimed),
+        };
+        Some(Self {
+            color,
+            suffix: match tag.claimed {
+                true => String::new(),
+                false => id_suffix(&id),
+            },
+            name,
+            verified: tag.claimed,
+            official: false,
+            scale: match tag.scale.is_finite() {
+                true => tag
+                    .scale
+                    .clamp(*SYSTEM_TAG_SCALES.start(), *SYSTEM_TAG_SCALES.end()),
+                false => 1.0,
+            },
         })
     }
 
@@ -311,6 +356,21 @@ impl NametagContent {
         ]
     }
 }
+
+/// `#` and the last four characters of a scene avatar's id; zeros for an id shorter than that.
+fn id_suffix(id: &str) -> String {
+    match id.char_indices().rev().nth(3) {
+        // never cut: `capped` is here to keep a control character off the tag
+        Some((last4, _)) => format!("#{}", capped(&id[last4..], 4)),
+        None => "#0000".to_owned(),
+    }
+}
+
+/// On one of a system scene's avatars: the tag the scene put on it
+/// (`SystemApi::SetAvatarShapeNametag`). A system scene's avatars get no tag from their
+/// [`AvatarShape`]'s name, only this way. It goes when the shape is removed.
+#[derive(Component, Clone, Debug, PartialEq)]
+pub(crate) struct SystemSceneNametag(pub AvatarShapeNametag);
 
 /// On a scene's avatar whose [`AvatarShape`] was read for its nametag, until the shape changes.
 #[derive(Component, Clone, Copy, Debug, PartialEq, Eq)]
@@ -560,10 +620,105 @@ fn resolve_content(
     }
 }
 
+/// On a system scene's root: its last word on the tag of each of its entities that the engine
+/// doesn't have yet, a tag or none. It goes with the scene.
+#[derive(Component, Default)]
+pub(crate) struct PendingSystemNametags(HashMap<SceneEntityId, Option<AvatarShapeNametag>>);
+
+/// The system scene's word on the tag of one of its avatars: put on it, or taken away. Only the
+/// last word on an entity in an engine update counts. The entity is read in the system scene's
+/// own context, so no other scene's entity can be reached. The word doesn't say which scene sent
+/// it, so it is taken only while there is one system scene: with two (one going as another
+/// comes), it could land on the other's entity of the same number. The scene's word can come before the
+/// engine has the entity: it waits on the scene's root ([`PendingSystemNametags`]) until the
+/// scene names the entity, and a tag waiting for an entity that died is dropped; a word to take
+/// it away has nothing to wait for. The scene's `AvatarShape` may come later still: the tag waits
+/// on the entity, and shows once the avatar is built.
+fn set_system_scene_nametags(
+    mut commands: Commands,
+    mut requests: EventReader<SystemApi>,
+    mut system_scenes: Query<
+        (
+            Entity,
+            &RendererSceneContext,
+            Option<&mut PendingSystemNametags>,
+        ),
+        With<SuperUserScene>,
+    >,
+    tagged: Query<Option<&SystemSceneNametag>>,
+) {
+    let words: Vec<_> = requests
+        .read()
+        .filter_map(|request| match request {
+            SystemApi::SetAvatarShapeNametag { entity, nametag } => {
+                Some((SceneEntityId::from_proto_u32(*entity), nametag.clone()))
+            }
+            _ => None,
+        })
+        .collect();
+    let scenes = system_scenes.iter().count();
+    let words = match scenes {
+        1 => words,
+        _ if words.is_empty() => words,
+        0 => {
+            warn!(
+                "no system scene to take {} nametag words: dropped",
+                words.len()
+            );
+            Vec::new()
+        }
+        _ => {
+            warn!(
+                "{scenes} system scenes: their nametag words can't be told apart and are dropped"
+            );
+            Vec::new()
+        }
+    };
+    for (root, context, pending) in &mut system_scenes {
+        if words.is_empty() && pending.as_ref().is_none_or(|pending| pending.0.is_empty()) {
+            continue;
+        }
+        let mut owned = HashMap::default();
+        let waiting = match pending {
+            Some(pending) => &mut pending.into_inner().0,
+            None => &mut owned,
+        };
+        // a later word on an entity replaces an earlier one
+        waiting.extend(words.iter().cloned());
+        waiting.retain(|&entity, nametag| {
+            let Some((avatar, current)) = context
+                .bevy_entity(entity)
+                .and_then(|avatar| tagged.get(avatar).ok().map(|current| (avatar, current)))
+            else {
+                // a tag waits for the entity, unless it died
+                return nametag.is_some() && !context.is_dead(entity);
+            };
+            match nametag {
+                Some(nametag) if current.is_none_or(|current| current.0 != *nametag) => {
+                    commands
+                        .entity(avatar)
+                        .try_insert(SystemSceneNametag(nametag.clone()));
+                }
+                None if current.is_some() => {
+                    commands.entity(avatar).try_remove::<SystemSceneNametag>();
+                }
+                _ => {}
+            }
+            false
+        });
+        if !owned.is_empty() {
+            commands
+                .entity(root)
+                .try_insert(PendingSystemNametags(owned));
+        }
+    }
+}
+
 /// Names the avatars a scene made, while they have a body that is built: without one the tag
 /// would sit at their feet. A scene entity that only restyles a player has no
-/// [`AvatarSelection`] and gets no tag, and nor do the avatars the HUD previews, which a system
-/// scene makes. One the scene marks as talking is [`Speaking`], as in a call: a scene that
+/// [`AvatarSelection`] and gets no tag. The avatars the HUD previews, which a system scene
+/// makes, show only the tag the system scene puts on them ([`SystemSceneNametag`]), never one
+/// from their name. One the scene marks as talking is [`Speaking`], as in a call: a scene that
 /// turns nearby voice off leaves its bars up.
 fn resolve_scene_avatar_content(
     mut commands: Commands,
@@ -572,6 +727,7 @@ fn resolve_scene_avatar_content(
             Entity,
             &SceneEntity,
             Ref<AvatarShape>,
+            Option<Ref<SystemSceneNametag>>,
             Option<&NametagContent>,
             Option<&SceneAvatarNametag>,
             Has<Speaking>,
@@ -584,6 +740,7 @@ fn resolve_scene_avatar_content(
         ),
     >,
     system_scenes: Query<(), With<SuperUserScene>>,
+    mut untagged: RemovedComponents<SystemSceneNametag>,
     dropped: Query<
         Entity,
         (
@@ -595,14 +752,23 @@ fn resolve_scene_avatar_content(
             )>,
         ),
     >,
+    mut unshaped: RemovedComponents<AvatarShape>,
+    system_tagged: Query<(), With<SystemSceneNametag>>,
 ) {
-    for (avatar, scene_entity, shape, current, marker, speaking) in &avatars {
-        if marker.is_some() && !shape.is_changed() {
+    // a system scene took its tag away: the avatar is read again
+    let untagged: HashSet<Entity> = untagged.read().collect();
+    for (avatar, scene_entity, shape, system_tag, current, marker, speaking) in &avatars {
+        if marker.is_some()
+            && !shape.is_changed()
+            && !system_tag.as_ref().is_some_and(Ref::is_changed)
+            && !untagged.contains(&avatar)
+        {
             continue;
         }
-        let content = (!system_scenes.contains(scene_entity.root))
-            .then(|| NametagContent::from_shape(&shape.0))
-            .flatten();
+        let content = match system_scenes.contains(scene_entity.root) {
+            true => system_tag.and_then(|tag| NametagContent::from_system(&tag.0, &shape.0)),
+            false => NametagContent::from_shape(&shape.0),
+        };
         // an avatar with no tag is marked too: its shape is not read again until it changes
         let resolved = SceneAvatarNametag {
             named: content.is_some(),
@@ -635,6 +801,12 @@ fn resolve_scene_avatar_content(
         commands
             .entity(avatar)
             .try_remove::<(NametagContent, SceneAvatarNametag, Speaking)>();
+    }
+    // the tag a system scene put on its avatar goes with the avatar's shape
+    for avatar in unshaped.read() {
+        if system_tagged.contains(avatar) {
+            commands.entity(avatar).try_remove::<SystemSceneNametag>();
+        }
     }
 }
 
@@ -786,6 +958,7 @@ fn show_tags(
             &GlobalTransform,
             Overhead,
             Has<HiddenNametag>,
+            Has<SystemSceneNametag>,
             Has<NametagContent>,
             Has<NametagPlate>,
         ),
@@ -802,11 +975,13 @@ fn show_tags(
         let (shown, name_shown) = players
             .get(owner.parent())
             .ok()
-            .filter(|(transform, overhead, ..)| {
+            .filter(|(transform, overhead, _, system_tag, ..)| {
                 overhead.shows(&visible, transform, first_person)
-                    && in_range(transform.translation(), camera_transform.translation)
+                    // a system scene's avatar is drawn by its own camera, on its own layer: its
+                    // tag shows for that camera, wherever the player's is
+                    && (*system_tag || in_range(transform.translation(), camera_transform.translation))
             })
-            .map_or((false, false), |(_, _, hidden, named, plated)| {
+            .map_or((false, false), |(_, _, hidden, _, named, plated)| {
                 let name_shown = named && !hidden;
                 (name_shown || plated, name_shown)
             });
@@ -1110,6 +1285,7 @@ impl TagBuilder<'_, '_> {
         }
 
         let content = named.as_ref().map(|(content, _)| *content);
+        let scale = content.map_or(1.0, |content| content.scale);
         let dirty = nametag.awaiting
             || texts_changed
             || nametag.built.as_ref().is_none_or(|built| {
@@ -1158,7 +1334,7 @@ impl TagBuilder<'_, '_> {
             }
             match drawn {
                 Ok(()) => {
-                    nametag.reach = self.write_mesh(mesh, &quads);
+                    nametag.reach = self.write_mesh(mesh, &quads, scale);
                     nametag.awaiting = false;
                     nametag.built = Some(Built {
                         content: content.cloned(),
@@ -1193,9 +1369,10 @@ impl TagBuilder<'_, '_> {
         ));
     }
 
-    /// Replace the tag's mesh with `quads`. Returns how far it reaches from the anchor.
-    fn write_mesh(&mut self, mesh: &mut Mut<Mesh3d>, quads: &[Quad]) -> f32 {
-        let (tag_mesh, reach) = quad_mesh(quads);
+    /// Replace the tag's mesh with `quads`, drawn `scale` times a player's size. Returns how far
+    /// it reaches from the anchor.
+    fn write_mesh(&mut self, mesh: &mut Mut<Mesh3d>, quads: &[Quad], scale: f32) -> f32 {
+        let (tag_mesh, reach) = quad_mesh(quads, scale);
         if mesh.0 == Handle::default() {
             mesh.0 = self.meshes.add(tag_mesh);
         } else {

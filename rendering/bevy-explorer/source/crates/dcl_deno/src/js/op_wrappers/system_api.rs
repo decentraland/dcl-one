@@ -10,16 +10,16 @@ use dcl_js::system_api::{JsBindingsData, PermissionTypeDetail};
 use deno_core::{op2, OpDecl, OpState};
 use std::{cell::RefCell, rc::Rc};
 use system_bridge::{
-    settings::SettingInfo, AnalyticsEvent, AvatarModifierState, BlockUpdateData, BlockedUserData,
-    BlockingStatusData, ChatMessage, ChatReactionData, CommunityMemberConnectivityData,
-    CommunityVoiceUpdate, ConnectivitySnapshot, DmHistoryEntryData, DmUserStateData,
-    FriendConnectivityEvent, FriendData, FriendRequestData, FriendStatusData,
-    FriendshipEventUpdate, HomeScene, HoverEvent, ItemPurchaseRequest, ItemPurchaseState,
-    ListenedCommunity, LiveSceneInfo, LobbyStage, MapPinInfo, OutfitsData, PermanentPermissionItem,
-    PermissionRequestEvent, PhotoModeState, PlatformBanNotice, PortableInfo, ProfileChangedEvent,
-    ProximityEvent, ReactionData, SatelliteView, SceneLoadingUi, SetAvatarData, SetAvatarResult,
-    TextureOptimizationStatus, VoiceChatAction, VoiceChatState, VoiceMessage, WelcomeState,
-    WorldAccessEvent, WorldAccessVerdict,
+    settings::SettingInfo, AnalyticsEvent, AvatarModifierState, AvatarShapeNametag,
+    BlockUpdateData, BlockedUserData, BlockingStatusData, ChatMessage, ChatReactionData,
+    CommunityMemberConnectivityData, CommunityVoiceUpdate, ConnectivitySnapshot,
+    DmHistoryEntryData, DmUserStateData, FriendConnectivityEvent, FriendData, FriendRequestData,
+    FriendStatusData, FriendshipEventUpdate, HomeScene, HoverEvent, ItemPurchaseRequest,
+    ItemPurchaseState, ListenedCommunity, LiveSceneInfo, LobbyStage, MapPinInfo, OutfitsData,
+    PermanentPermissionItem, PermissionRequestEvent, PhotoModeState, PlatformBanNotice,
+    PortableInfo, ProfileChangedEvent, ProximityEvent, ReactionData, SatelliteView, SceneLoadingUi,
+    SetAvatarData, SetAvatarResult, TextureOptimizationStatus, VoiceChatAction, VoiceChatState,
+    VoiceMessage, WelcomeState, WorldAccessEvent, WorldAccessVerdict,
 };
 
 // list of op declarations
@@ -66,6 +66,7 @@ pub fn ops(super_user: bool) -> Vec<OpDecl> {
             op_read_chat_stream(),
             op_send_chat(),
             op_set_chat_bubble_text(),
+            op_set_avatar_shape_nametag(),
             op_get_chat_reaction_stream(),
             op_read_chat_reaction_stream(),
             op_send_chat_reaction(),
@@ -457,6 +458,15 @@ pub fn op_set_chat_bubble_text(
     #[string] message: String,
 ) {
     dcl_js::system_api::op_set_chat_bubble_text(state, message_id, message)
+}
+
+#[op2]
+pub fn op_set_avatar_shape_nametag(
+    state: Rc<RefCell<OpState>>,
+    entity: u32,
+    #[serde] nametag: Option<AvatarShapeNametag>,
+) {
+    dcl_js::system_api::op_set_avatar_shape_nametag(state, entity, nametag)
 }
 
 #[op2]
