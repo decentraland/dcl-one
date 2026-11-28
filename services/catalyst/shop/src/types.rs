@@ -51,6 +51,9 @@ impl fmt::Display for ChainId {
     }
 }
 
+/// 2^63 as an f64: `i64::MAX as f64` without the cast. `-TWO_POW_63` is `i64::MIN`.
+pub const TWO_POW_63: f64 = 9_223_372_036_854_775_808.0;
+
 /// A chain id that does not fit the integer column it is stored in.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 #[error("chain id {0} does not fit its column")]
@@ -548,7 +551,8 @@ impl ManaWei {
         if cents.get() <= 0 || rate.is_zero() {
             return None;
         }
-        let usd_wei = U256::from(cents.get() as u64).checked_mul(U256::from(WEI_PER_MANA))?
+        let usd_wei = U256::from(u64::try_from(cents.get()).ok()?)
+            .checked_mul(U256::from(WEI_PER_MANA))?
             / U256::from(100u64);
         let scale = U256::from(10u64).checked_pow(U256::from(decimals))?;
         let base = usd_wei.checked_mul(scale)? / rate;
@@ -606,8 +610,8 @@ impl ManaWei {
         }
         let numerator = price_wei
             .0
-            .checked_mul(U256::from(remainder.get() as u64))?;
-        let denominator = U256::from(price.get() as u64);
+            .checked_mul(U256::from(u64::try_from(remainder.get()).ok()?))?;
+        let denominator = U256::from(u64::try_from(price.get()).ok()?);
         Some(Self(numerator.div_ceil(denominator)))
     }
 
@@ -1034,6 +1038,13 @@ pub enum SettlementOperation {
 }
 
 #[cfg(test)]
+#[allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    clippy::cast_possible_wrap,
+    clippy::cast_precision_loss,
+    reason = "test fixtures use small literal values"
+)]
 mod tests {
     use super::*;
 

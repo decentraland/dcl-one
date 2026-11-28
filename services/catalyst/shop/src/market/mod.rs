@@ -39,16 +39,17 @@
 //! complete pass per configured network. Readers (`readers.rs`: first ≤ 100,
 //! skip ≤ 5000, id-keyset counts capped at 5000, per-route TTL buckets):
 //! the LAND, estate and name pages of `/v1/nfts`, the legacy leg of
-//! `/v1/bids` (Polygon's bids use the sales index on a node that walks it)
-//! and `/v1/orders` on a node that does not walk the nft index, `/v1/owners`,
+//! `/v1/bids` (Polygon's bids use the sales index on a node that walks it),
+//! `/v1/orders` and `/v1/owners` on a node that does not walk the nft index,
 //! the sales signal of the trending and creators rails, and the `/v1/users`
 //! names over `graph.rs`. Sales, seller
 //! summaries, proceeds, accounts, rankings, volume, store statistics and the
 //! sales leg of activity read the published shop sales index. Wearable and
 //! emote ownership (`/v1/nfts`, `/v1/users`, the `/v1/orders` owner guard,
 //! the lambdas lists, profiles, outfits and the backpack) reads the nft
-//! index (`owned_items.rs`), and so does the legacy order book of
-//! `/v1/orders` (`legacy_orders.rs`). Local: `POST /v1/trades` (`listings.rs`, the old EIP-712
+//! index (`owned_items.rs`), and so do the legacy order book of
+//! `/v1/orders` (`legacy_orders.rs`) and an item's holders on `/v1/owners`
+//! (`owners.rs`) where the node walks it. Local: `POST /v1/trades` (`listings.rs`, the old EIP-712
 //! policy, `ownerOf` on `TRADE_RPC_URLS`), lists and picks (`lists.rs`), the
 //! operator moderation (`admin.rs`, `MARKET_ADMIN_TOKEN`), a wallet's
 //! `/v1/activity` over the readers, the local trades and the nft index's
@@ -68,6 +69,7 @@ pub mod base_wearables;
 pub mod bid_notices;
 pub mod bids;
 mod cancelled_trades;
+pub(crate) mod casts;
 pub mod catalog;
 pub mod catalogue;
 pub mod chain_group;
@@ -531,7 +533,9 @@ impl Settings {
 
     /// The catalogue pair selected by the validated chain settings.
     pub fn catalogue(&self) -> nft_index::Catalogue {
-        if self.market.indexes.chain_id_ethereum == crate::types::ChainId::SEPOLIA.0 as i64 {
+        if u64::try_from(self.market.indexes.chain_id_ethereum).ok()
+            == Some(crate::types::ChainId::SEPOLIA.0)
+        {
             nft_index::Catalogue::Testnet
         } else {
             nft_index::Catalogue::Mainnet
@@ -691,6 +695,10 @@ pub struct MarketplaceState {
     /// `(pointer, publications)` -> the processed profile (`Null`: none),
     /// read under that publication of the nft index.
     pub(crate) profile_cache: TtlMap<(String, owned_items::Publications), Value>,
+    /// `(pointer, publications)` -> the profile read in flight: concurrent
+    /// misses of one pointer under one publication share it.
+    pub(crate) profile_flights:
+        crate::shared::cache::Coalesce<(String, owned_items::Publications), profiles::ProfileRead>,
     /// `(owner, category, includeDefinitions, publications)`: an answer
     /// read under another publication of the nft index is never served.
     pub(crate) by_owner_cache: TtlMap<(String, String, bool, owned_items::Publications), Value>,
@@ -743,6 +751,13 @@ pub struct MarketplaceState {
     /// loopback fake upstream for the shop's calls and the subgraph readers.
     #[cfg(test)]
     pub(crate) test_allow_loopback: Arc<std::sync::atomic::AtomicBool>,
+    /// While set, a profile or outfits read waits on this gate right after
+    /// its ownership query (a test holding a read in flight);
+    /// `test_held` tells the test a read got there.
+    #[cfg(test)]
+    pub(crate) test_hold: std::sync::Mutex<Option<Arc<tokio::sync::Semaphore>>>,
+    #[cfg(test)]
+    pub(crate) test_held: tokio::sync::Notify,
 }
 
 pub type SharedState = Arc<MarketplaceState>;
@@ -792,11 +807,16 @@ impl MarketplaceState {
             http,
             #[cfg(test)]
             test_allow_loopback: index.loopback_switch_for_tests(),
+            #[cfg(test)]
+            test_hold: Default::default(),
+            #[cfg(test)]
+            test_held: Default::default(),
             index,
             profile_cache: TtlMap::bounded(
                 profiles::PROFILE_CACHE_TTL,
                 profiles::PROFILE_CACHE_MAX_ENTRIES,
             ),
+            profile_flights: Default::default(),
             by_owner_cache: TtlMap::bounded(Duration::from_secs(30), 50_000),
             contracts: contracts::Caches::default(),
             readers: readers::Caches::default(),
@@ -868,6 +888,31 @@ impl MarketplaceState {
 
     /// Warms the faces of these profile entities when they point at this
     /// node's `/profile-images` (no `PROFILE_CDN_BASE_URL`).
+    /// Waits on [`Self::test_hold`]'s gate, when one is set.
+    #[cfg(test)]
+    pub(crate) async fn test_hold_after_ownership(&self) {
+        let gate = self.test_hold.lock().unwrap().clone();
+        if let Some(gate) = gate {
+            self.test_held.notify_one();
+            let _ = gate.acquire().await;
+        }
+    }
+
+    /// Holds every profile or outfits read after its ownership query until
+    /// [`Self::test_release`].
+    #[cfg(test)]
+    pub(crate) fn test_hold_reads(&self) {
+        *self.test_hold.lock().unwrap() = Some(Arc::new(tokio::sync::Semaphore::new(0)));
+    }
+
+    /// Lets the held reads go on, and no later read wait.
+    #[cfg(test)]
+    pub(crate) fn test_release(&self) {
+        if let Some(gate) = self.test_hold.lock().unwrap().take() {
+            gate.add_permits(tokio::sync::Semaphore::MAX_PERMITS);
+        }
+    }
+
     pub(crate) fn warm_faces(&self, entities: impl IntoIterator<Item = String>) {
         if self.settings.profile_cdn_base_url.is_some() {
             return;
@@ -975,11 +1020,12 @@ impl MarketplaceState {
         if crate::shared::network::ChainPair::from_eth_network(&self.settings.eth_network)
             != Some(crate::shared::network::ChainPair::Mainnet)
         {
+            let chain_id = i64::try_from(chain_id).ok()?;
             return self
                 .settings
                 .market
                 .trade_rpc_urls
-                .for_chain(chain_id as i64)
+                .for_chain(chain_id)
                 .map(str::to_string);
         }
         self.chain_rpc_url(net)
@@ -1026,6 +1072,17 @@ impl MarketplaceState {
 
     /// The `TRADE_RPC_URLS` 137 entry, with `RPC_ENDPOINT_POLYGON` as a
     /// fallback when `ETH_NETWORK` is mainnet. Callers verify the chain ID.
+    /// Whether this deployment walks the Polygon curation committee index:
+    /// the switch on a node serving mainnet Polygon
+    /// ([`chain_walk::IndexSettings::walks_committee`]) with a Polygon mainnet
+    /// RPC to walk it with ([`Self::polygon_mainnet_rpc_url`]). The committee
+    /// job is scheduled exactly then, and the Builder's curation console
+    /// answers a missing publication as this deployment's own lag exactly
+    /// then.
+    pub fn walks_committee(&self) -> bool {
+        self.settings.market.indexes.walks_committee() && self.polygon_mainnet_rpc_url().is_some()
+    }
+
     pub fn polygon_mainnet_rpc_url(&self) -> Option<String> {
         self.chain_rpc_url(chain_walk::ChainNet::Matic).or_else(|| {
             (self.land_network() == Some(crate::land_authz::LAND_MAINNET))
@@ -1054,7 +1111,7 @@ pub(crate) async fn ensure_chain(
     source: &dyn chain_walk::LogSource,
     expected: i64,
 ) -> anyhow::Result<()> {
-    let served = source.chain_id().await?.value as i64;
+    let served = casts::to_i64(source.chain_id().await?.value)?;
     if served != expected {
         return Err(chain_walk::WrongChain { served, expected }.into());
     }

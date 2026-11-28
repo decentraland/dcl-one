@@ -1,0 +1,63 @@
+name: Protocol / Release
+# next on every push to main that changes the protocol. It publishes @dcl/protocol, and only
+# through the npm-release environment the SDK's releases use (main and auth-server only, a
+# repository setting) that the npm trusted publisher requires: no other branch's run can use it,
+# whatever its workflow says.
+on:
+  push:
+    branches: [main]
+    paths:
+      - library/protocol/**
+permissions:
+  contents: read
+concurrency:
+  # pushes publish in order and a waiting one gives way to a newer one, so next ends on the newest commit
+  group: protocol-release-${{ github.ref_name }}
+  cancel-in-progress: false
+env:
+  PNPM: corepack pnpm@12.21.0
+jobs:
+  build:
+    uses: ./.github/workflows/protocol.yml
+    # the most protocol.yml's jobs may ask for; its preview job, the one that does, is skipped here
+    permissions:
+      contents: read
+      pull-requests: write
+      id-token: write
+  publish:
+    name: Publish to npm
+    needs: build
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-26.04
+    timeout-minutes: 15
+    environment: npm-release
+    permissions:
+      id-token: write # npm OIDC trusted publishing — no token secret
+    steps:
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24.16.0
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: protocol-package-${{ github.sha }}
+          path: dist
+      - name: Publish
+        run: |
+          set -euo pipefail
+          tgz=$(ls ./dist/*.tgz)
+          packed=$(tar -xOf "$tgz" package/package.json | node -p 'const p = JSON.parse(require("fs").readFileSync(0, "utf8")); p.name + "@" + p.version')
+          if [ "${packed%@*}" != "@dcl/protocol" ] || ! [[ "${packed##*@}" =~ ^[0-9]+\.[0-9]+\.[0-9]+-[0-9]+\.commit-[0-9a-f]+$ ]]; then
+            echo "next is a snapshot version of @dcl/protocol, got $packed" >&2
+            exit 1
+          fi
+          # A rerun of this run's failed jobs repeats the version with the same tarball, so a version
+          # npm already serves is skipped only when it is this tarball.
+          on_npm=$($PNPM view "$packed" dist.shasum 2> /dev/null || true)
+          if [ -z "$on_npm" ]; then
+            $PNPM publish "$tgz" --provenance --access public --tag next --no-git-checks --registry https://registry.npmjs.org
+          elif [ "$on_npm" = "$(sha1sum "$tgz" | cut -d' ' -f1)" ]; then
+            echo "$packed is already on npm; skipping"
+          else
+            echo "$packed is already on npm from another build" >&2
+            exit 1
+          fi

@@ -36,6 +36,7 @@ use serde_json::{Value as JsonValue, json};
 use sha2::{Digest, Sha256};
 use sqlx::{PgConnection, Row};
 
+use super::alerts::{grouped, usd};
 use super::errors::ApiError;
 use super::store::{AuditEntry, Credits};
 
@@ -112,30 +113,13 @@ fn describe_usd_cents(cents: i64) -> String {
     format!("${}.{:02}", cents / 100, cents % 100)
 }
 
-/// `1,234` (`toLocaleString('en-US')` on a whole number).
-fn grouped(n: i64) -> String {
-    let digits = n.unsigned_abs().to_string();
-    let mut out = String::new();
-    for (i, c) in digits.chars().enumerate() {
-        if i > 0 && (digits.len() - i).is_multiple_of(3) {
-            out.push(',');
-        }
-        out.push(c);
-    }
-    if n < 0 { format!("-{out}") } else { out }
-}
-
 /// `1,000 credits ($100.00)`, as credits-server describes a studio grant.
 fn describe_grant_cents(cents: i64) -> String {
     let credits = match cents % USD_CENTS_PER_CREDIT {
         0 => grouped(cents / USD_CENTS_PER_CREDIT),
         tenths => format!("{}.{}", grouped(cents / USD_CENTS_PER_CREDIT), tenths.abs()),
     };
-    format!(
-        "{credits} credits (${}.{:02})",
-        grouped(cents / 100),
-        (cents % 100).abs()
-    )
+    format!("{credits} credits ({})", usd(cents))
 }
 
 impl StudioError {
@@ -515,10 +499,7 @@ fn budget_request_hash(kind: &str, usd_cents: i64, note: Option<&str>) -> String
 
 /// Takes the studio's row lock on `tx`; `NotFound` when there is none.
 /// Returns the studio's name.
-pub(super) async fn lock_studio(
-    tx: &mut PgConnection,
-    studio_id: &str,
-) -> Result<String, StudioError> {
+async fn lock_studio(tx: &mut PgConnection, studio_id: &str) -> Result<String, StudioError> {
     sqlx::query_scalar("SELECT name FROM credits.studios WHERE id = $1::uuid FOR UPDATE")
         .bind(studio_id)
         .fetch_optional(&mut *tx)

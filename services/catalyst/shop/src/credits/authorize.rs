@@ -11,13 +11,6 @@
 //! status. The budget a wallet may pledge is `available` at the peg minus
 //! `SUM(usd_cents)` of its `authorized` and `retired` rows.
 
-// Money and chain values: a silently truncated or sign-flipped cast is a bug.
-#![deny(
-    clippy::cast_possible_truncation,
-    clippy::cast_sign_loss,
-    clippy::cast_possible_wrap
-)]
-
 use chrono::NaiveDateTime;
 use sqlx::Row;
 

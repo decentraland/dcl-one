@@ -284,8 +284,13 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
     user. In a stream `MuteSpeakerFromCommunityVoiceChat` is still sent, so every client shows the
     same state (a focus pause is the exception, below).
   - Don't play calls at the nearby-voice volume. Calls and streams follow `Voice Chat Volume` and
-    nearby players `Voice Volume`, both scaled by `Master`. Capture uses the system's default
-    microphone; a device picker is next work.
+    nearby players `Voice Volume`, both scaled by `Master`.
+  - Don't rebuild a microphone route to change its input. On the web, Settings › Sounds ›
+    Microphone (`config.audio.microphone`) moves each live track in place with livekit's
+    `setDeviceId`, under the same publication. An unplugged input is left to livekit, which
+    restarts the track on the system default; once the page lists the chosen input again, the
+    track moves back. The page reports the input each track captures from. Native capture uses the
+    system's default microphone.
   - Don't loop the call tune in the audio layer, which has no loop: the one-shot clip is
     re-triggered every 3.056 s (its length) while ringing.
   - Don't auto-subscribe the voice room. Like every room it joins with `auto_subscribe: false`,
@@ -667,6 +672,32 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   what both servers allow for them, and keeps only the latest teleport and the latest emote command
   while that is spent. Overrunning the servers' budget ends the session for good, and a scene that
   repositions the player every frame would do it; unity-explorer has no limiter (`pacing.rs`).
+  The native driver also holds teleports and emotes while 8 reliable messages are
+  unacknowledged, and holds inputs once traffic has been in flight for 600 ms with no
+  acknowledgement arriving, so what a stall delivers at once stays within the servers' bursts.
+  The count is ENet's, so resyncs, a fragmented handshake and announcements count too: a burst of
+  them holds a teleport or emote for a round trip, which ENet's acknowledgements, not tracked per
+  message, cannot tell apart. A realm change withdraws a held teleport, as it does the pacer's.
+  WebTransport exposes no acknowledgements, so the web build has no such gate (`native.rs`).
+- **The native uplink is probed every 250 ms, and inputs are spaced on a long round trip.**
+  ENet's own ping waits 500 ms after the last acknowledgement and only while nothing reliable is
+  in flight; probing only then as well keeps one probe out and an acknowledgement once per round
+  trip. Above a 600 ms round trip a working link then reads as stalled every cycle (inputs held
+  22% of the time at 800 ms, 48% at 1.2 s, 68% at 2 s, in the simulation), and at 300 ± 100 ms
+  one lost probe holds inputs for up to 300 ms, which 2% loss does about every 10 s. A ping every
+  250 ms whatever is in flight removes both (no hold up to a 2 s round trip, none in two minutes
+  of that loss), but the gate then closes about a round trip and 600 ms after a stall begins
+  rather than within a second, and a stall that queues what was sent meanwhile delivers it at
+  once: 18 inputs at a 1.2 s round trip and 36 at 3 s against the servers' burst of 16. So from a
+  smoothed round trip of 600 ms inputs are spaced so that a round trip and 600 ms hold at most 8
+  (6.7 a second at 600 ms, 3.1 at 2 s, at most 12 delivered at once up to 3 s). Holding inputs
+  whenever the uplink is unconfirmed on such links, the other way to stay within the burst, stops
+  movement for most of each round trip; spacing keeps updates regular, which observers smooth.
+  A teleport that goes drops an input queued before it and still waiting for its spacing: sent
+  after it, that pose would snap observers back before the next input. The input is newer than
+  the teleport when the teleport waited in the pacer; Pulse then keeps the facing from before the
+  teleport until the next input, about a second at most. An emote leaves the input waiting.
+  The rules run over simulated ENet links in `native/link_sim_tests.rs`.
 - **The client never sends what the Pulse server refuses for good.** A one-shot emote longer than
   60 s goes out without a duration and ends with an explicit stop, and inputs and teleports from
   outside the parcel grid are not sent (`lib.rs`, `pulse/mod.rs`).
@@ -712,10 +743,72 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   better than a late answer. A share of the target frame, not a fixed time, keeps the cap the same
   part of the main thread at any frame rate. See [Interaction](interaction.md#scene-raycasts).
 
+- **The player camera's look speed is the engine's own.** The three zoom levels, their orbit
+  rings, fields of view, shoulder offsets and the 0.5 s blend between them are unity-explorer's.
+  The pointer still turns the camera through this engine's sensitivity and smoothing settings, so
+  the vertical travel across an orbit and the easing of a turn differ from unity-explorer's, which
+  runs each level's axes with their own gain, acceleration and deceleration.
+- **The camera's field of view does not widen while running.** unity-explorer adds up to 15
+  degrees in first and third person while the avatar runs.
+- **The zoom levels have no gamepad D-pad or stick binding.** unity-explorer steps the level with
+  D-pad up and down and cycles it with the right stick pressed down. Here the D-pad is the scene's
+  actions 1 and 3 and the right stick turns the camera, so the bumpers step the level, as they
+  zoomed before, and the cycle is the V key only.
+- **A scene that forces first person on a drone camera keeps the player's aim.** unity-explorer's
+  first-person camera then comes back with the aim it had when the player last left first person.
+  Here the camera has one aim, so first person looks along the heading and pitch the drone had.
+- **The Camera Zoom sensitivity setting scales photo mode only.** The player camera reads which
+  way the wheel turned, not how far, so the setting has nothing to scale there.
 - **Photo mode follows the engine's cursor convention.** unity-explorer's in-world camera has its
   own Lock/Unlock cursor actions. Here right-click toggles the lock as everywhere else, left-drag
   looks while the cursor is free (Unity's drag), and Escape closes photo mode. The gallery key (G,
   Unity's K) closes photo mode and opens the gallery, where Unity's K only closes it.
+- **Left-drag camera: reticle at the centre, no per-frame cursor warp.** unity-explorer's
+  left-button drag hides the cursor, shows its crosshair at the press point and warps the OS
+  cursor back to the press point every frame. Here the drag holds the engine's `"camera"` cursor
+  lock, as the right button does: the reticle is at the screen centre (both HUDs draw it there
+  while locked), and the cursor is not moved each frame. A page cannot move the cursor, and
+  Pointer Lock gives the same end state on web: the browser restores the pointer where the lock
+  began. Natively, where the window confines the cursor instead of locking it, the cursor
+  reappears where it drifted during the drag, not where the press was.
+- **Left-drag camera: a drag that starts on a HUD panel or scene UI never turns the camera.**
+  Whether a press may turn the camera is decided once, at the press: a press over UI or within
+  10 px of a window edge stays an ordinary press for its whole hold, even if the drag then
+  leaves the UI. unity-explorer checks every frame. UI refuses because scene UI content scrolls
+  by dragging without reserving the pointer, so a drag on it must stay the scene's.
+- **Left-drag camera: the release after a drag reaches no entity.** While the drag turns the
+  camera nothing is hovered, scene UI included, up to and including the release, so `PetUp`
+  after a drag goes to no entity. The cursor is still locked at the screen centre on that frame,
+  and an entity under the reticle did not get the press. Natively the hidden cursor is only
+  confined and keeps moving, so a scene UI button it ends over did not get the press either.
+- **Left-drag camera follows the pointer binding, gamepad included.** The pan starts from the
+  `IaPointer` action, not the left mouse button itself, so with the setting on, holding the
+  pad's pointer button (LT) and moving the right stick turns the camera instead of moving the
+  virtual cursor. unity-explorer's drag is fixed to the left mouse button. Following the action
+  keeps the pan on whatever the player binds to the pointer, as every other pointer action is.
+  On web a pad press gives the page no user activation, so the browser refuses the pointer
+  lock; a pan pressed on the pad then turns the camera without it, and only a lock that was
+  granted and then dropped ends it. A pan pressed with a mouse button or key still ends when
+  the browser refuses the lock, as when Escape released it less than a second before.
+- **Left-drag camera: no pan under any scene camera.** While a scene's camera is active the
+  left drag never turns the camera, even when the scene allows manual rotation
+  (`allow_manual_rotation`) and the right button still turns it there. The scene owns the view
+  there, so the left button stays the scene's press.
+- **Left-drag camera: a scene's drag capture wins.** When the press is captured by an entity that
+  listens for `PetDrag` or `PetDragLocked`, the press never turns the camera: the scene asked
+  for the drag. unity-explorer has no such capture. Drags that do not use `PetDrag` are taken
+  over once the motion passes the start threshold, with the setting on: `PetDown` followed by
+  reading `PrimaryPointerInfo` until `PetUp`, a global `isPressed` read with the pointer info,
+  and drawing or box-select on empty ground. From then on `screen_coordinates` is the screen
+  centre, `isPointerLocked` reads true, nothing is hovered and `PetUp` reaches no entity. As in
+  unity-explorer. A scene opts out with a `PetDrag` or `PetDragLocked` listener on the collider
+  that wins the press, including a large invisible collider for drags on empty ground.
+- **Left-drag camera starts on motion since the press.** unity-explorer starts the pan when one
+  frame's mouse motion exceeds 1 px, motion from before the press included. Here the pointer
+  motion counts from the frame after the press and accumulates while the button is held, and
+  the pan starts once the total exceeds 1. That motion is the pointer analog input, so it is
+  scaled by the pointer sensitivity setting rather than measured in pixels. A still click stays
+  a click, and a slow drag still starts at a high frame rate, where one frame's motion is tiny.
 - **Photo mode has no gamepad toggle, and its pan is on the D-pad.** unity-explorer opens the
   in-world camera with the pad's East button and pans with the bumpers (and `dpad/y`). Here East
   is the scenes' secondary action and nothing is reserved outside photo mode, so a pad binding
@@ -736,8 +829,8 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   unity-explorer disables. Jump In treats a photo as taken in a World when the HUD's `worldOfRealm`
   accepts its realm, so hyphenated ENS names and Worlds-server realm URLs count, where
   unity-explorer's test is `^[a-zA-Z0-9.]+\.eth$` and sends those photos to a Genesis City parcel.
-- **The third-person camera collides with scene geometry.** It is pulled in front of the scene
-  colliders on both `CL_PHYSICS` and `CL_POINTER` and of the terrain, with unity-explorer's
+- **The third-person and drone cameras collide with scene geometry.** Each is pulled in front of
+  the scene colliders on both `CL_PHYSICS` and `CL_POINTER` and of the terrain, with unity-explorer's
   camera radius, distances and easing times. The layer rule is unity-explorer's, kept so a scene
   behaves the same in both clients: a physics-only collider, often an invisible wall, lets the
   camera through, where the avatar and the photo camera stop at any `CL_PHYSICS` collider. A
@@ -1017,11 +1110,25 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   show seams between the slices, so here they are radii, borders and gradients with the sprites'
   colours. The canvas scales by the smaller of width and height, as every menu page does, where
   unity-explorer's scales by width.
-- **Jump to Location closes the passport.** unity-explorer's passport does not close itself
-  when its Jump to Location runs; here the passport closes once the friend's parcel or World is
-  known, as it already does for a photo's teleport. A friend found nowhere leaves it open, and
+- **Jump to Location closes the passport once it has somewhere to go.** unity-explorer's passport
+  closes when its header button is clicked, whatever the jump finds, and stays open after the same
+  entry of its options menu; here both close it once the friend's parcel or World is
+  known, as a photo's teleport does. A friend found nowhere leaves it open, and
   nothing is shown, as there. The profile card offers the jump after View Profile, since its rows
   already follow a different order from unity-explorer's user menu.
+- **The passport offers no Call to a blocked user.** unity-explorer's passport shows Call
+  whatever the block state; here Call follows Chat, hidden for a user you blocked and for one who
+  blocked you.
+- **ACCEPT FRIEND on the passport shows its result.** As in unity-explorer, the click accepts;
+  here "Accepting Friend Request" and then the result show over the passport.
+- **The passport menu's profile entry is a row with no copy buttons.** unity-explorer's entry
+  centres a large picture over the name and the wallet, each with a copy button; here it is the
+  shared menu header, the picture beside the name and wallet, and the passport header copies both.
+- **The passport's header tips open below their buttons.** unity-explorer's open above, over the
+  panel's top edge; here the panel clips at that edge, so the tips open below.
+- **A guest's Call from the passport is refused by a notice.** unity-explorer asks a guest to
+  upgrade the account for Call and for a new direct message; here Call says voice chat is not
+  available to guests, and Chat opens the conversation.
 - **INVITE FRIENDS is for a signed-in player only.** unity-explorer's copy runs for any
   identity it holds. Here neither kind of guest gets the button: not the throwaway guest, and not a
   guest account. As there, it copies the deployment site's `/invite/<address>`

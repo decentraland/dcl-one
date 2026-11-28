@@ -393,10 +393,10 @@ pub async fn user_names(
         if authority.observes() {
             match authority.owned_names(&address, Purpose::Display).await {
                 Ok(answer) => answer.value,
-                Err(NamesError::NotEstablished(message)) => {
+                Err(NamesError::NotEstablished(message) | NamesError::Ambiguous(message)) => {
                     return super::unavailable(super::Source::NftIndex, &message);
                 }
-                Err(NamesError::Failed(e)) => {
+                Err(NamesError::Failed(e) | NamesError::Transient(e)) => {
                     tracing::warn!(error = %e, address, "names source failed");
                     return fetcher_error(&requested);
                 }
@@ -525,7 +525,11 @@ async fn owned_items_body(
                 .max()
                 .unwrap_or("")
                 .to_string();
-            (g.urn, g.individual.len() as i64, rarity)
+            (
+                g.urn,
+                crate::market::casts::len_i64(g.individual.len()),
+                rarity,
+            )
         })
         .collect();
     sort_owned_by_rarity_then_urn(&mut rows);

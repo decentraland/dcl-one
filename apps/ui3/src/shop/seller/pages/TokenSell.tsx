@@ -4,11 +4,10 @@
 //       catalyrst-v2 sites/src/features/stories/marketplace/sell-list (the v2 sell wizard's steps)
 // Copyright 2020 Metaverse Holdings Ltd. (marketplace), Apache-2.0.
 import { useQueryClient } from "@tanstack/react-query";
-import { useId, useMemo, useState } from "react";
+import { useId, useMemo, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router";
 
-import ManaMark from "../../../atoms/ManaMark";
-import Modal from "../../../components/Modal";
+import { Button, InputWebCreatorTools, Modal, ShopManaMark } from "@dcl/one-ui";
 import { isPolygon, type ChainId } from "@shop/model/chain";
 import { formatMana } from "@shop/model/money";
 import { shopPath } from "../../routes";
@@ -59,6 +58,8 @@ export function SellForm({ token, now = Date.now }: { token: TokenRecord; now?: 
   const [expiresAt, setExpiresAt] = useState(() => dateInputValue(now() + DEFAULT_EXPIRATION_DAYS * DAY));
   const [confirming, setConfirming] = useState(false);
   const [confirmed, setConfirmed] = useState("");
+  const priceInput = useRef<HTMLInputElement>(null);
+  const listingButton = useRef<HTMLButtonElement>(null);
   const [step, setStep] = useState<Step | null>(null);
   const write = useWrite();
   const amount = useMemo(() => parseManaInput(price), [price]);
@@ -80,10 +81,14 @@ export function SellForm({ token, now = Date.now }: { token: TokenRecord; now?: 
     );
   }
 
-  const submit = () => {
-    if (!amount || invalidDate) return;
+  function closeConfirmation() {
     setConfirming(false);
     setConfirmed("");
+  }
+
+  const submit = () => {
+    if (!amount || invalidDate) return;
+    closeConfirmation();
     void write.run("Preparing your listing…", "Listed.", async (progress) => {
       const go = (s: Step) => {
         setStep(s);
@@ -118,7 +123,7 @@ export function SellForm({ token, now = Date.now }: { token: TokenRecord; now?: 
   };
   const confirmMatches = !!amount && parseManaInput(confirmed) === amount;
 
-  return (
+  const listingForm = (
     <form
       className="seller-sell"
       onSubmit={(e) => {
@@ -139,7 +144,7 @@ export function SellForm({ token, now = Date.now }: { token: TokenRecord; now?: 
             Price
           </label>
           <span className="seller-field__control" data-invalid={price && !amount ? "" : undefined}>
-            <ManaMark size={16} network={isPolygon(token.chainId) ? "polygon" : "ethereum"} />
+            <ShopManaMark size={16} network={isPolygon(token.chainId) ? "polygon" : "ethereum"} />
             <input
               id={`${id}-price`}
               inputMode="decimal"
@@ -181,36 +186,53 @@ export function SellForm({ token, now = Date.now }: { token: TokenRecord; now?: 
         <button type="button" className="seller-btn" disabled={write.busy} onClick={back}>
           Cancel
         </button>
-        <button type="submit" className="seller-btn seller-btn--primary" disabled={!amount || invalidDate || write.busy}>
+        <button ref={listingButton} type="submit" className="seller-btn seller-btn--primary" disabled={!amount || invalidDate || write.busy}>
           {write.busy ? "Listing…" : relist ? "Update" : "List for sale"}
         </button>
       </div>
       <WriteStatus state={write.state} />
+    </form>
+  );
+
+  return (
+    <>
+      {listingForm}
       {confirming && amount ? (
-        <Modal onClose={() => setConfirming(false)} className="seller-confirm" width={480}>
-          <h2 className="seller-confirm__title">Please confirm</h2>
-          <p>
-            You are about to list <b>{token.name}</b> on sale for <ManaMark size={14} network={isPolygon(token.chainId) ? "polygon" : "ethereum"} /> {formatMana(amount, { group: true })}.
-          </p>
-          <p>Please re-enter the price to confirm:</p>
-          <label className="seller-field">
-            <span className="seller-field__label">Price</span>
-            <span className="seller-field__control">
-              <ManaMark size={16} network={isPolygon(token.chainId) ? "polygon" : "ethereum"} />
-              <input inputMode="decimal" value={confirmed} placeholder={formatMana(amount)} aria-label="Confirm the price" onChange={(e) => setConfirmed(e.target.value.replace(/[^\d.]/g, ""))} autoFocus />
-            </span>
-          </label>
-          <div className="seller-buttons">
-            <button type="button" className="seller-btn" onClick={() => (setConfirmed(""), setConfirming(false))}>
-              Cancel
-            </button>
-            <button type="button" className="seller-btn seller-btn--primary" disabled={!confirmMatches} onClick={submit}>
-              Proceed
-            </button>
-          </div>
+        <Modal
+          title="Please confirm"
+          onClose={closeConfirmation}
+          initialFocusRef={priceInput}
+          returnFocusRef={listingButton}
+          description={
+            <>
+              You are about to list <b>{token.name}</b> on sale for <ShopManaMark size={14} network={isPolygon(token.chainId) ? "polygon" : "ethereum"} /> {formatMana(amount, { group: true })}.
+            </>
+          }
+          actions={
+            <>
+              <Button variant="secondaryLight" onClick={closeConfirmation}>
+                Cancel
+              </Button>
+              <Button disabled={!confirmMatches} onClick={submit}>
+                Proceed
+              </Button>
+            </>
+          }
+        >
+          <InputWebCreatorTools
+            ref={priceInput}
+            label="Price"
+            aria-label="Confirm the price"
+            description="Please re-enter the price to confirm:"
+            leadingIcon={<ShopManaMark size={16} network={isPolygon(token.chainId) ? "polygon" : "ethereum"} />}
+            inputMode="decimal"
+            value={confirmed}
+            placeholder={formatMana(amount)}
+            onChange={(e) => setConfirmed(e.target.value.replace(/[^\d.]/g, ""))}
+          />
         </Modal>
       ) : null}
-    </form>
+    </>
   );
 }
 

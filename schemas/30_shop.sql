@@ -683,6 +683,11 @@ CREATE INDEX nft_item_idx ON shop.nft (network, contract_address, item_id) WHERE
 -- held tokens by minted_at DESC, walked per network (an incremental sort
 -- orders the ties by contract and token) instead of sorting every candidate.
 CREATE INDEX nft_mint_order_idx ON shop.nft (network, minted_at DESC) WHERE owner IS NOT NULL;
+-- The recently sold browse of /v1/nfts: each source's first `first + skip`
+-- held tokens by their legacy OrderSuccessful time, newest first, ties by
+-- contract and token, walked per network.
+CREATE INDEX nft_sold_order_idx ON shop.nft (network, sold_at DESC, contract_address, token_id)
+    WHERE sold_at IS NOT NULL AND owner IS NOT NULL;
 -- A DCL NAME's holders by label, compared lowercased (the NAME source's owner
 -- read: worlds' owner and admission, the Admin Toolkit, the lambdas name
 -- owner): WHERE lower(ens_subdomain) = ANY($1).
@@ -720,8 +725,8 @@ CREATE INDEX nft_order_open_idx ON shop.nft_order (network, contract_address, ex
 -- How far each network's legacy order book (`shop.legacy_order`) is folded,
 -- and from which branch: the nft walk's last block and its hash when the
 -- order fold last ran, in the nft fold's transaction. No row (a database
--- that predates the book) means the book does not stand: readers refuse it,
--- and the next nft fold folds it whole. The book stands only while the nft
+-- that predates the book) means the book does not stand. The next NFT fold
+-- publishes a proven empty book or opens a private build. The book stands only while the NFT
 -- walk's recovery point at that
 -- block (`shop.chain_checkpoint`) still has that hash: a rewind (by any
 -- binary) drops the points past its target, so a branch republished at the
@@ -729,8 +734,8 @@ CREATE INDEX nft_order_open_idx ON shop.nft_order (network, contract_address, ex
 -- points loses its point. The order fold refolds the orders touched past the
 -- lower of this block and the nft fold's own marker, so the book catches up
 -- with nft folds that ran without it (a replica on an earlier binary during a
--- rollout); a book that no longer stands, or a rebuild, is refolded whole
--- after its rows are deleted. A reader serves the book only while it stands
+-- rollout). A private rebuild reconciles the rows behind a publication gate.
+-- A reader serves the book only while it stands
 -- and its block reaches the published nft fold (`folded_block`). This
 -- binary's rewind lowers the block to its target and clears the hash.
 CREATE TABLE shop.legacy_order_cursor (
@@ -755,6 +760,115 @@ CREATE TABLE shop.legacy_order_refold (
     PRIMARY KEY (network, contract_address, token_id),
     CONSTRAINT legacy_order_refold_network_known CHECK (network IN ('ethereum', 'matic'))
 );
+
+-- Shadow rebuild progress. The opening point and moving checkpoint fence
+-- bind the build to a branch. Once applying starts, only the legacy book
+-- stays unpublished, including across a reset onto a different branch.
+CREATE TABLE shop.legacy_order_rebuild (
+    network text PRIMARY KEY,
+    phase text NOT NULL DEFAULT 'scan' CHECK (phase IN ('reset', 'scan', 'build', 'tail',
+        'repair_clear', 'repair_scan', 'repair_build', 'reconcile', 'publish', 'cleanup')),
+    upto bigint NOT NULL,
+    upto_hash text NOT NULL,
+    anchor_block bigint NOT NULL,
+    anchor_hash text NOT NULL,
+    reorg_rewinds integer NOT NULL,
+    rebuilds integer NOT NULL,
+    visible_through bigint,
+    visible_hash text,
+    target bigint NOT NULL,
+    scan_block bigint NOT NULL DEFAULT -1,
+    scan_log integer NOT NULL DEFAULT -1,
+    step_block bigint NOT NULL DEFAULT -1,
+    step_log integer NOT NULL DEFAULT -1,
+    repair_contract varchar(42),
+    repair_token numeric(78,0),
+    repair_revision bigint,
+    applying boolean NOT NULL DEFAULT false,
+    reconciled boolean NOT NULL DEFAULT false,
+    applied_marketplace varchar(42),
+    applied_order text,
+    progressed_at timestamp without time zone NOT NULL DEFAULT timezone('UTC', now()),
+    CONSTRAINT legacy_order_rebuild_network_known CHECK (network IN ('ethereum', 'matic'))
+);
+
+-- Only order events already passed by the shadow scan need replay. This
+-- queue is independent from the queue read by deployed book writers.
+CREATE TABLE shop.legacy_order_build_dirty (
+    network text NOT NULL,
+    contract_address varchar(42) NOT NULL,
+    token_id numeric(78,0) NOT NULL,
+    revision bigint NOT NULL DEFAULT 0,
+    PRIMARY KEY (network, contract_address, token_id)
+);
+
+CREATE FUNCTION shop.note_legacy_order_build_change(
+    net text, contract varchar, token numeric, block bigint, idx integer
+) RETURNS void LANGUAGE sql AS $$
+    INSERT INTO shop.legacy_order_build_dirty AS d (network, contract_address, token_id)
+    SELECT r.network, contract, token FROM shop.legacy_order_rebuild r
+    WHERE r.network = net AND r.phase NOT IN ('reset', 'cleanup')
+      AND (block, idx) <= (r.scan_block, r.scan_log)
+    ON CONFLICT (network, contract_address, token_id)
+    DO UPDATE SET revision = d.revision + 1;
+$$;
+
+CREATE FUNCTION shop.capture_legacy_order_build_change() RETURNS trigger
+LANGUAGE plpgsql AS $$
+BEGIN
+    IF TG_OP <> 'INSERT' AND OLD.kind IN ('order_created', 'order_successful', 'order_cancelled') THEN
+        PERFORM shop.note_legacy_order_build_change(OLD.network, OLD.contract_address,
+            OLD.token_id, OLD.block_number, OLD.log_index);
+    END IF;
+    IF TG_OP <> 'DELETE' AND NEW.kind IN ('order_created', 'order_successful', 'order_cancelled') THEN
+        PERFORM shop.note_legacy_order_build_change(NEW.network, NEW.contract_address,
+            NEW.token_id, NEW.block_number, NEW.log_index);
+    END IF;
+    RETURN NULL;
+END;
+$$;
+
+CREATE TRIGGER nft_event_order_build_insert AFTER INSERT ON shop.nft_event
+FOR EACH ROW WHEN (NEW.kind IN ('order_created', 'order_successful', 'order_cancelled'))
+EXECUTE FUNCTION shop.capture_legacy_order_build_change();
+CREATE TRIGGER nft_event_order_build_update AFTER UPDATE ON shop.nft_event
+FOR EACH ROW WHEN (OLD.kind IN ('order_created', 'order_successful', 'order_cancelled')
+                   OR NEW.kind IN ('order_created', 'order_successful', 'order_cancelled'))
+EXECUTE FUNCTION shop.capture_legacy_order_build_change();
+CREATE TRIGGER nft_event_order_build_delete AFTER DELETE ON shop.nft_event
+FOR EACH ROW WHEN (OLD.kind IN ('order_created', 'order_successful', 'order_cancelled'))
+EXECUTE FUNCTION shop.capture_legacy_order_build_change();
+
+-- Private order input. These indexes bound each creation's next-creation
+-- and latest-terminal probes even where one token has a long history.
+CREATE TABLE shop.legacy_order_build_event (
+    network text NOT NULL,
+    block_number bigint NOT NULL,
+    log_index integer NOT NULL,
+    block_time bigint NOT NULL,
+    kind text NOT NULL,
+    emitter varchar(42) NOT NULL,
+    contract_address varchar(42) NOT NULL,
+    token_id numeric(78,0) NOT NULL,
+    from_address varchar(42),
+    to_address varchar(42),
+    amount numeric(78,0),
+    expires_at bigint,
+    detail text NOT NULL,
+    PRIMARY KEY (network, block_number, log_index)
+);
+
+CREATE INDEX legacy_order_build_event_token_idx
+    ON shop.legacy_order_build_event (network, contract_address, token_id, block_number, log_index);
+CREATE INDEX legacy_order_build_created_idx
+    ON shop.legacy_order_build_event (network, block_number, log_index) WHERE kind = 'order_created';
+CREATE INDEX legacy_order_build_token_created_idx
+    ON shop.legacy_order_build_event (network, contract_address, token_id, block_number, log_index)
+    WHERE kind = 'order_created';
+CREATE INDEX legacy_order_build_terminal_idx
+    ON shop.legacy_order_build_event
+        (network, contract_address, token_id, emitter, detail, block_number, log_index)
+    WHERE kind IN ('order_successful', 'order_cancelled');
 
 -- Queues the token of an order event written at or below its network's book
 -- marker. Only order events fire it; one past the marker is the fold's own.
@@ -817,11 +931,66 @@ CREATE TABLE shop.legacy_order (
     CONSTRAINT legacy_order_price_nonneg CHECK (price >= 0)
 );
 
--- A database that predates the table gets it empty and with no marker, so
--- the book does not stand: the first nft fold after the upgrade refolds it
--- whole, in the fold's own transaction, and readers refuse it until that fold
--- is published. The schema run never reads `shop.nft_event`: a whole book is
--- a large statement, and the run is not where a statement may take minutes.
+-- The build has the live row shape and only the indexes the writer needs.
+-- It is never read by the routes.
+CREATE TABLE shop.legacy_order_build (
+    network text NOT NULL,
+    marketplace_address varchar(42) NOT NULL,
+    order_id text NOT NULL,
+    contract_address varchar(42) NOT NULL,
+    token_id numeric(78,0) NOT NULL,
+    seller varchar(42) NOT NULL,
+    buyer varchar(42),
+    price numeric(78,0) NOT NULL,
+    expires_at bigint NOT NULL,
+    status text NOT NULL,
+    created_block bigint NOT NULL,
+    created_log integer NOT NULL,
+    created_at bigint NOT NULL,
+    updated_block bigint NOT NULL,
+    updated_log integer NOT NULL,
+    updated_at bigint NOT NULL,
+    PRIMARY KEY (network, marketplace_address, order_id)
+);
+CREATE INDEX legacy_order_build_token_idx
+    ON shop.legacy_order_build (network, contract_address, token_id, marketplace_address, order_id);
+
+-- Keys changed by a deployed live writer during reconciliation or by
+-- shadow catch-up after the keyset pass. The lane drains them before release.
+CREATE TABLE shop.legacy_order_apply_dirty (
+    network text NOT NULL,
+    marketplace_address varchar(42) NOT NULL,
+    order_id text NOT NULL,
+    PRIMARY KEY (network, marketplace_address, order_id)
+);
+
+CREATE FUNCTION shop.capture_legacy_order_apply_change() RETURNS trigger
+LANGUAGE plpgsql AS $$
+BEGIN
+    IF current_setting('shop.legacy_order_apply', true) IS DISTINCT FROM 'on' THEN
+        INSERT INTO shop.legacy_order_apply_dirty (network, marketplace_address, order_id)
+        SELECT w.network, w.marketplace_address, w.order_id
+        FROM written w JOIN shop.legacy_order_rebuild r USING (network)
+        WHERE r.applying AND r.phase <> 'cleanup'
+          AND (TG_TABLE_NAME = 'legacy_order' OR r.reconciled)
+        ON CONFLICT DO NOTHING;
+    END IF;
+    RETURN NULL;
+END;
+$$;
+
+CREATE TRIGGER legacy_order_apply_insert AFTER INSERT ON shop.legacy_order
+REFERENCING NEW TABLE AS written FOR EACH STATEMENT EXECUTE FUNCTION shop.capture_legacy_order_apply_change();
+CREATE TRIGGER legacy_order_apply_update AFTER UPDATE ON shop.legacy_order
+REFERENCING NEW TABLE AS written FOR EACH STATEMENT EXECUTE FUNCTION shop.capture_legacy_order_apply_change();
+CREATE TRIGGER legacy_order_apply_delete AFTER DELETE ON shop.legacy_order
+REFERENCING OLD TABLE AS written FOR EACH STATEMENT EXECUTE FUNCTION shop.capture_legacy_order_apply_change();
+CREATE TRIGGER legacy_order_build_apply_insert AFTER INSERT ON shop.legacy_order_build
+REFERENCING NEW TABLE AS written FOR EACH STATEMENT EXECUTE FUNCTION shop.capture_legacy_order_apply_change();
+CREATE TRIGGER legacy_order_build_apply_update AFTER UPDATE ON shop.legacy_order_build
+REFERENCING NEW TABLE AS written FOR EACH STATEMENT EXECUTE FUNCTION shop.capture_legacy_order_apply_change();
+CREATE TRIGGER legacy_order_build_apply_delete AFTER DELETE ON shop.legacy_order_build
+REFERENCING OLD TABLE AS written FOR EACH STATEMENT EXECUTE FUNCTION shop.capture_legacy_order_apply_change();
 
 -- A token's orders: the fold's and the rewind's per-token rewrite, and
 -- /v1/orders?contractAddress=&tokenId= (which names no network).
@@ -839,6 +1008,8 @@ CREATE INDEX legacy_order_updated_idx ON shop.legacy_order (updated_at DESC);
 -- (/v1/orders?status=open&sortBy=cheapest).
 CREATE INDEX legacy_order_open_idx ON shop.legacy_order (contract_address, price) WHERE status = 'open';
 CREATE INDEX legacy_order_open_price_idx ON shop.legacy_order (price) WHERE status = 'open';
+-- The next expiry in the catalogue's memo key, read on its publication snapshot.
+CREATE INDEX legacy_order_open_expiry_idx ON shop.legacy_order (network, expires_at) WHERE status = 'open';
 -- Unscoped token ID sorts walk this index in either direction.
 -- PostgreSQL sorts the equal-token ties by order ID.
 CREATE INDEX legacy_order_issued_idx ON shop.legacy_order (token_id);
@@ -17343,7 +17514,7 @@ CREATE TABLE shop.sale_publication (
 -- reader takes it only from a valid publication whose `last_sale_through`
 -- reaches the published block. Workload: one row per sold token, written by
 -- the fold (a window's tokens per pass), read by joining a page's
--- candidates on the primary key.
+-- candidates on the primary key, and newest first by the recently sold sort.
 CREATE TABLE shop.nft_last_sale (
     network text NOT NULL CHECK (network IN ('ethereum', 'matic')),
     contract_address text NOT NULL,
@@ -17354,6 +17525,9 @@ CREATE TABLE shop.nft_last_sale (
 );
 -- The rows a changed history deletes: WHERE network = $1 AND block_number > $2.
 CREATE INDEX nft_last_sale_block ON shop.nft_last_sale (network, block_number);
+-- The recently sold browse of /v1/nfts: a network's sold tokens newest first,
+-- ties by contract and token, each joined to its source until the page fills.
+CREATE INDEX nft_last_sale_recent_idx ON shop.nft_last_sale (network, sold_at DESC, contract_address, token_id);
 
 -- Sparse fee configuration changes. Look up the last event before a
 -- particular execution, including a change earlier in the same block.
@@ -17566,6 +17740,12 @@ CREATE TRIGGER nft_written_update AFTER UPDATE ON shop.nft
 REFERENCING NEW TABLE AS written FOR EACH STATEMENT EXECUTE FUNCTION shop.note_projection_write('nft');
 CREATE TRIGGER nft_written_delete AFTER DELETE ON shop.nft
 REFERENCING OLD TABLE AS written FOR EACH STATEMENT EXECUTE FUNCTION shop.note_projection_write('nft');
+CREATE TRIGGER nft_order_written_insert AFTER INSERT ON shop.nft_order
+REFERENCING NEW TABLE AS written FOR EACH STATEMENT EXECUTE FUNCTION shop.note_projection_write('nft');
+CREATE TRIGGER nft_order_written_update AFTER UPDATE ON shop.nft_order
+REFERENCING NEW TABLE AS written FOR EACH STATEMENT EXECUTE FUNCTION shop.note_projection_write('nft');
+CREATE TRIGGER nft_order_written_delete AFTER DELETE ON shop.nft_order
+REFERENCING OLD TABLE AS written FOR EACH STATEMENT EXECUTE FUNCTION shop.note_projection_write('nft');
 CREATE TRIGGER legacy_order_written_insert AFTER INSERT ON shop.legacy_order
 REFERENCING NEW TABLE AS written FOR EACH STATEMENT EXECUTE FUNCTION shop.note_projection_write('nft');
 CREATE TRIGGER legacy_order_written_update AFTER UPDATE ON shop.legacy_order
@@ -17597,6 +17777,45 @@ $$;
 
 CREATE TRIGGER chain_cursor_publication AFTER INSERT OR UPDATE OF folded_block, folded_at ON shop.chain_cursor
 FOR EACH ROW EXECUTE FUNCTION shop.acknowledge_projection_writes();
+
+-- Older writers acknowledge every projection at each NFT publication,
+-- including a same-height update. Keep the legacy book alone withheld
+-- until reconciliation certifies the complete book and writes its marker.
+CREATE FUNCTION shop.keep_legacy_order_pending() RETURNS trigger
+LANGUAGE plpgsql AS $$
+BEGIN
+    IF EXISTS (SELECT FROM shop.legacy_order_rebuild r
+               WHERE r.network = NEW.network AND r.applying AND r.phase <> 'cleanup') THEN
+        NEW.pending := true;
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+CREATE TRIGGER legacy_order_publication_gate BEFORE UPDATE OF pending ON shop.projection_write
+FOR EACH ROW WHEN (OLD.indexer = 'nft' AND OLD.projection = 'legacy_order' AND OLD.pending AND NOT NEW.pending)
+EXECUTE FUNCTION shop.keep_legacy_order_pending();
+
+-- On upgrade an existing NFT cursor must publish once after the object pass
+-- adds the nft_order triggers. Even an empty order projection gains proof.
+-- The shared publication trigger acknowledges writes on existing rows.
+CREATE FUNCTION shop.record_nft_order_publication() RETURNS trigger
+LANGUAGE plpgsql AS $$
+BEGIN
+    IF NEW.indexer = 'nft' AND NEW.folded_block IS NOT NULL AND NEW.folded_at IS NOT NULL
+       AND (TG_OP = 'INSERT' OR NEW.folded_at IS DISTINCT FROM OLD.folded_at
+            OR NEW.folded_block IS DISTINCT FROM OLD.folded_block) THEN
+        INSERT INTO shop.projection_write (indexer, network, projection, pending, written_through)
+        VALUES ('nft', NEW.network, 'nft_order', false, NEW.folded_block)
+        ON CONFLICT (indexer, network, projection) DO NOTHING;
+    END IF;
+    RETURN NULL;
+END;
+$$;
+
+CREATE TRIGGER chain_cursor_nft_order_publication
+AFTER INSERT OR UPDATE OF folded_block, folded_at ON shop.chain_cursor
+FOR EACH ROW EXECUTE FUNCTION shop.record_nft_order_publication();
 
 -- The nft walk's rewinds, for the bids fold: a seller inferred from the nft
 -- walk's transfers may name an owner the rewind took away, so the next fold

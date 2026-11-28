@@ -4,9 +4,9 @@
 // purchase, the credits fallback stays on screen and opens the flow that offers a top-up, so the way to
 // buy more credits never depends on the MANA balance. MANA the buyer holds that cannot pay is shown on a
 // disabled button with its reason, never hidden.
+import { ShopManaMark } from "@dcl/one-ui";
 import { useId } from "react";
 
-import ManaMark from "../../../atoms/ManaMark";
 import { isEthereum } from "@shop/model/chain";
 import { formatMana, type ManaWei } from "@shop/model/money";
 import type { CartRail } from "../lib/cart-rails";
@@ -30,7 +30,7 @@ function ManaAmountMark({ wei, chainId }: { wei: ManaWei; chainId: number }) {
   return (
     <span className={styles.amount}>
       <span className={styles.manaMark}>
-        <ManaMark size={24} network={isEthereum(chainId) ? "ethereum" : "polygon"} />
+        <ShopManaMark size={24} network={isEthereum(chainId) ? "ethereum" : "polygon"} />
       </span>
       <span>{formatMana(wei)}</span>
     </span>

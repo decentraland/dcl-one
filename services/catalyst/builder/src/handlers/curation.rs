@@ -74,8 +74,12 @@ fn parse_uuid(raw: &str) -> Result<Uuid, ApiError> {
 }
 
 /// The curation queue: the committee's current members from the Polygon
-/// committee index (empty until it is published) and the collections under
-/// review from the collections subgraphs (empty without a reader).
+/// committee index, and the collections under review from the collections
+/// subgraphs (empty without a reader). A current committee publication is
+/// listed whichever process maintains it. Without one, a deployment that
+/// walks the index ([`crate::Settings::committee_index_walked`]) answers 503,
+/// never an empty committee, since the publication is its own lag; one that
+/// does not walk it lists no indexed members.
 pub async fn get_curation_collections(
     State(state): State<SharedState>,
     OriginalUri(original): OriginalUri,
@@ -85,7 +89,14 @@ pub async fn get_curation_collections(
     admin(&state, &headers, "get", &original, &uri).await?;
 
     let committee = match crate::committee::current_members(state.items.pool()).await {
-        Ok(members) => onchain::shape_committee(members.unwrap_or_default()),
+        Ok(Some(members)) => onchain::shape_committee(members),
+        Ok(None) if !state.settings.committee_index_walked => onchain::shape_committee(Vec::new()),
+        Ok(None) => {
+            return Err(ApiError::http(
+                503,
+                "the curation committee index is not published (catching up or stale)",
+            ));
+        }
         Err(error) => {
             tracing::warn!(error = %error, "committee read failed");
             return Err(ApiError::http(503, "committee unavailable"));

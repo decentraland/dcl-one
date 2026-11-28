@@ -1,8 +1,18 @@
+#![allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    clippy::cast_possible_wrap,
+    clippy::cast_precision_loss,
+    reason = "test fixtures use small literal values"
+)]
+
 use std::sync::{Arc, Mutex};
 
+use alloy::signers::local::PrivateKeySigner;
 use axum::Router;
 use axum::body::Body;
 use axum::http::{HeaderMap, Request, StatusCode};
+use catalyst_config::config::DEFAULT_WERT_SIGN_REQUESTS_PER_MINUTE;
 use ed25519_dalek::{Signature, SigningKey, Verifier as _};
 use serde_json::{Value, json};
 use tower::ServiceExt as _;
@@ -10,7 +20,8 @@ use tower::ServiceExt as _;
 use super::*;
 use crate::market::tests::support::state_without_db_settings;
 use crate::market::{Settings, market_router};
-use crate::shared::signed_fetch::test_support::{address, signed_headers};
+use crate::shared::signed_fetch::test_support::{address, signed_headers, signed_headers_by};
+use crate::shared::test_keys::random_key;
 
 const MARKETPLACE: &str = r#"{"signer":"dcl:marketplace"}"#;
 
@@ -29,18 +40,27 @@ fn test_policy() -> anyhow::Result<WertPolicy> {
     )
 }
 
-fn settings_with_policy(api_url: &str, policy: WertPolicy) -> WertSettings {
+fn settings_with_policy(
+    api_url: &str,
+    policy: WertPolicy,
+    requests_per_minute: NonZeroU32,
+) -> WertSettings {
     WertSettings {
         default_key: Arc::new(SigningKey::from_bytes(&[0x11; 32])),
         publication_fees_key: Arc::new(SigningKey::from_bytes(&[0x22; 32])),
         api_url: api_url.to_owned(),
         api_key: "wert-api-key-example".to_owned(),
         policy: Arc::new(policy),
+        signer_budget: Arc::new(RateLimiter::new(requests_per_minute.get(), SIGN_WINDOW)),
     }
 }
 
 fn test_settings(api_url: &str) -> WertSettings {
-    settings_with_policy(api_url, test_policy().unwrap())
+    settings_with_policy(
+        api_url,
+        test_policy().unwrap(),
+        DEFAULT_WERT_SIGN_REQUESTS_PER_MINUTE,
+    )
 }
 
 fn message(amount: Value) -> Message {
@@ -158,13 +178,29 @@ fn settings_need_all_four_and_never_echo_a_value() {
     let key = format!("0x{}", "11".repeat(32));
     let url = Some("https://partner.example.com/api/v3/");
     assert!(
-        WertSettings::parse(None, Some(" "), None, None, &[], test_policy)
-            .unwrap()
-            .is_none()
+        WertSettings::parse(
+            None,
+            Some(" "),
+            None,
+            None,
+            DEFAULT_WERT_SIGN_REQUESTS_PER_MINUTE,
+            &[],
+            test_policy
+        )
+        .unwrap()
+        .is_none()
     );
-    let partial = WertSettings::parse(Some(&key), None, url, None, &[], test_policy)
-        .unwrap_err()
-        .to_string();
+    let partial = WertSettings::parse(
+        Some(&key),
+        None,
+        url,
+        None,
+        DEFAULT_WERT_SIGN_REQUESTS_PER_MINUTE,
+        &[],
+        test_policy,
+    )
+    .unwrap_err()
+    .to_string();
     assert!(
         partial.contains("missing: WERT_PUBLICATION_FEES_PRIVATE_KEY_FILE, WERT_API_KEY")
             && !partial.contains(&key),
@@ -176,6 +212,7 @@ fn settings_need_all_four_and_never_echo_a_value() {
         Some(&key),
         url,
         Some("api-key-example"),
+        DEFAULT_WERT_SIGN_REQUESTS_PER_MINUTE,
         &[],
         test_policy,
     )
@@ -190,6 +227,7 @@ fn settings_need_all_four_and_never_echo_a_value() {
         Some(&key),
         Some("http://partner.example.com"),
         Some("api-key-example"),
+        DEFAULT_WERT_SIGN_REQUESTS_PER_MINUTE,
         &[],
         test_policy,
     )
@@ -201,6 +239,7 @@ fn settings_need_all_four_and_never_echo_a_value() {
         Some(&"22".repeat(32)),
         url,
         Some("api-key-example"),
+        DEFAULT_WERT_SIGN_REQUESTS_PER_MINUTE,
         &[],
         test_policy,
     )
@@ -282,6 +321,16 @@ fn app_with(wert: Option<WertSettings>) -> Router {
 }
 
 async fn post(app: Router, path: &str, headers: HeaderMap, body: Value) -> (StatusCode, Value) {
+    let (status, _, body) = post_with_headers(app, path, headers, body).await;
+    (status, body)
+}
+
+async fn post_with_headers(
+    app: Router,
+    path: &str,
+    headers: HeaderMap,
+    body: Value,
+) -> (StatusCode, HeaderMap, Value) {
     let mut request = Request::post(path).header("content-type", "application/json");
     for (name, value) in &headers {
         request = request.header(name, value);
@@ -290,12 +339,11 @@ async fn post(app: Router, path: &str, headers: HeaderMap, body: Value) -> (Stat
         .oneshot(request.body(Body::from(body.to_string())).unwrap())
         .await
         .unwrap();
-    let status = response.status();
-    let bytes = axum::body::to_bytes(response.into_body(), 1 << 20)
-        .await
-        .unwrap();
+    let (parts, body) = response.into_parts();
+    let bytes = axum::body::to_bytes(body, 1 << 20).await.unwrap();
     (
-        status,
+        parts.status,
+        parts.headers,
         serde_json::from_slice(&bytes).unwrap_or(Value::Null),
     )
 }
@@ -449,7 +497,8 @@ async fn wert_contract_policy_signs_each_seeded_tuple_and_the_configured_extra()
     );
 
     let contracts = policy.contracts.clone();
-    let app = app_with(Some(settings_with_policy(&url, policy)));
+    let requests = NonZeroU32::new(u32::try_from(contracts.len()).unwrap()).unwrap();
+    let app = app_with(Some(settings_with_policy(&url, policy, requests)));
     let headers = signed_headers("post", PATH, MARKETPLACE, true).await;
     for (chain, address, target) in &contracts {
         let (_, network) = NETWORKS.into_iter().find(|(id, _)| id == chain).unwrap();
@@ -663,6 +712,118 @@ async fn both_mounts_serve_it_and_bind_the_signature_to_the_incoming_path() {
         let (status, _) = post(app, &path, headers, request_body(None)).await;
         assert_eq!(status, StatusCode::UNAUTHORIZED, "{mount}");
     }
+}
+
+#[tokio::test]
+async fn a_verified_wallet_shares_the_burst_between_mounts_contracts_and_targets() {
+    let (url, fake) = fake_wert(StatusCode::OK, json!({ "sessionId": "session-example" })).await;
+    let mut settings = Settings::for_tests();
+    settings.market.wert = Some(test_settings(&url));
+    let state = state_without_db_settings(settings);
+    let app = Router::new()
+        .nest("/shop-api", market_router(state.clone()))
+        .nest("/marketplace-api", market_router(state));
+    let shop = format!("/shop-api{PATH}");
+    let market = format!("/marketplace-api{PATH}");
+    let shop_auth = signed_headers("post", &shop, MARKETPLACE, true).await;
+    let market_auth = signed_headers("post", &market, MARKETPLACE, true).await;
+
+    let mut wrong_wallet = request_body(None);
+    wrong_wallet["session"]["wallet_address"] = json!(PUBLICATION_MANAGER);
+    let forbidden_contract = request_for("Ethereum", PUBLICATION_MANAGER, Target::Default);
+    let assert_validation = || async {
+        let (status, _) = post(app.clone(), &shop, shop_auth.clone(), wrong_wallet.clone()).await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED);
+        let (status, _) = post(
+            app.clone(),
+            &shop,
+            shop_auth.clone(),
+            forbidden_contract.clone(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+    };
+    assert_validation().await;
+    assert!(fake.seen.lock().unwrap().is_empty());
+
+    for index in 0..10 {
+        let (path, auth) = if index % 2 == 0 {
+            (&shop, &shop_auth)
+        } else {
+            (&market, &market_auth)
+        };
+        let body = if index % 3 == 0 {
+            let mut publication =
+                request_for("Polygon", PUBLICATION_MANAGER, Target::PublicationFees);
+            publication["session"]["wallet_address"] =
+                json!(address().to_uppercase().replacen("0X", "0x", 1));
+            publication
+        } else {
+            request_body(None)
+        };
+        let (status, response) = post(app.clone(), path, auth.clone(), body).await;
+        assert_eq!(status, StatusCode::OK, "{index}: {response}");
+    }
+    assert_validation().await;
+    let (status, headers, body) =
+        post_with_headers(app.clone(), &market, market_auth, request_body(None)).await;
+    assert_eq!(status, StatusCode::TOO_MANY_REQUESTS, "{body}");
+    assert_eq!(body["message"], "Wert signing rate limit exceeded");
+    let retry: u64 = headers[RETRY_AFTER].to_str().unwrap().parse().unwrap();
+    assert!((1..=6).contains(&retry), "{retry}");
+    assert_eq!(fake.seen.lock().unwrap().len(), 10);
+
+    let other: PrivateKeySigner = random_key().parse().unwrap();
+    let timestamp = chrono::Utc::now().timestamp_millis().to_string();
+    let other_auth = signed_headers_by(&other, "post", &shop, MARKETPLACE, true, &timestamp).await;
+    let other_address = format!("{:#x}", other.address());
+    let mut sent = request_body(None);
+    sent["message"]["address"] = json!(other_address);
+    sent["session"]["wallet_address"] = json!(other_address);
+    let (status, response) = post(app, &shop, other_auth, sent).await;
+    assert_eq!(status, StatusCode::OK, "{response}");
+    assert_eq!(fake.seen.lock().unwrap().len(), 11);
+}
+
+#[tokio::test]
+async fn the_configured_budget_refills_and_reports_the_token_wait() {
+    let (url, fake) = fake_wert(StatusCode::OK, json!({ "sessionId": "session-example" })).await;
+    let requests = NonZeroU32::new(60).unwrap();
+    let mut wert = WertSettings::parse(
+        Some(&"11".repeat(32)),
+        Some(&"22".repeat(32)),
+        Some("https://partner.example.com"),
+        Some("api-key-example"),
+        requests,
+        &[],
+        test_policy,
+    )
+    .unwrap()
+    .unwrap();
+    wert.api_url = url;
+    let budget = wert.signer_budget.clone();
+    let app = app_with(Some(wert));
+    let auth = signed_headers("post", PATH, MARKETPLACE, true).await;
+    drop(budget.reserve(&address(), requests.get() - 1).unwrap());
+    let (status, body) = post(app.clone(), PATH, auth.clone(), request_body(None)).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let (status, headers, body) =
+        post_with_headers(app.clone(), PATH, auth.clone(), request_body(None)).await;
+    assert_eq!(status, StatusCode::TOO_MANY_REQUESTS, "{body}");
+    assert_eq!(headers[RETRY_AFTER], "1");
+    assert_eq!(fake.seen.lock().unwrap().len(), 1);
+
+    tokio::time::sleep(Duration::from_secs(1)).await;
+    let (status, body) = post(app, PATH, auth, request_body(None)).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(fake.seen.lock().unwrap().len(), 2);
+}
+
+#[test]
+fn retry_after_rounds_up_with_a_one_second_minimum() {
+    assert_eq!(retry_after_seconds(Duration::ZERO), 1);
+    assert_eq!(retry_after_seconds(Duration::from_secs(6)), 6);
+    assert_eq!(retry_after_seconds(Duration::from_millis(6_001)), 7);
 }
 
 #[test]

@@ -233,7 +233,7 @@ State, in every build:
 - `/world_state`: JSON with `inWorld` and its parts (signed in, world hold, realm connected, out
   of world), the position, and `arrivals`, the player's returns to the world. Every teleport and
   realm change takes the player out of world first, so a test reads `arrivals` before one and
-  waits for it to grow with `inWorld`. `keyboardClaimed` is whether a text field (the HUD's or a
+  waits for it to grow with `inWorld` (`/teleport --wait` waits for the landing and the scene). `keyboardClaimed` is whether a text field (the HUD's or a
   scene's) holds the keyboard: while it is true keys are typed and resolve no action, so a test
   waits for it to turn true after filling a field and false after leaving one (null where the
   client takes no input).
@@ -242,6 +242,45 @@ State, in every build:
   to start one), and `last`, the `name` the player's last such landing looked for with `found`,
   whether its scene had a spawn point of that name. `/teleport <x> <y> [realm] --spawn <name>`
   asks for such a landing.
+- `/teleport x y [realm] --wait [--timeout-seconds S]`: teleports, then answers JSON once the
+  player has landed (`arrived`) and the parcel's scene is ready and drawn: `sceneReady`,
+  `sceneHash`, `title`, `sceneState`, `ticksWaited` (scene ticks during the wait),
+  `renderedFrames` (frames drawn since the scene was ready: 2 when it settled on a ready scene,
+  the first of them presented; 0 otherwise), `settleMs`, `settled` and, while the scene is
+  blocked, `blocked` (what holds it, sorted: `frozen`, `gltfs loading`).
+  A parcel with no scene settles on landing (`sceneState:"none"`, a `warning`), and so does a
+  parcel whose scene refuses the player, a scene or world ban, since that scene is not loaded for
+  them (`sceneState:"refused"`, no `sceneHash`, a `warning`); a failed or broken scene ends the
+  wait at once with `settled:false` and a `warning` naming its state, and so does a frozen one
+  once its glTFs have loaded; the timeout (60 s by default, at most 300, counted from the command, a
+  realm change included) answers `settled:false` with a `warning` naming what it waited for; one
+  that expires before the teleport request is answered (during a realm change, say) has no
+  `sceneHash`. Without `--wait` it answers at once, and `--timeout-seconds` without `--wait` is an
+  error.
+- `/reload --current --wait [--timeout-seconds S]` (or `/reload <hash> --wait`): reloads the scene
+  and answers once the new instance runs, shows its content and a frame with it was presented:
+  `reloaded`, `sceneHash`, `sceneState`, `ticksWaited`, `renderedFrames`, `settleMs`, `settled`, a
+  `hint` that the scene starts from scratch (its counters and scene-UI ids are new), and a
+  `warning` when the wait expired or the new instance failed, broke or froze (`the scene is
+  frozen; it will not become ready`), with `settled:false`. A ready scene is `running`: past tick 5 with nothing blocking it (its
+  glTFs loaded), which is when its content replaces its stand-ins and a teleport releases the
+  player; until then it is `starting` or `blocked`. A teleport also releases the player onto a
+  scene that will load no further (broken, or frozen with its glTFs loaded), which is the scene a
+  wait gives up on. `/reload` with neither a hash nor `--current` reloads every scene and
+  takes no `--wait`.
+- `/scene_loading_state`: JSON of how scene loading stands. Of the parcel scene under the player:
+  `playerParcel`, `outOfWorld` (the player has not landed; the scene under them loads first),
+  `sceneHash` (known once the parcel's pointer has resolved, before the scene spawns; null on an
+  empty parcel or one whose scene refuses the player), `stage` (its load stage, or why there is
+  none), `state` (`loading`, `failed`, `starting`, `blocked`, `broken`, `running`, `none` on an
+  empty parcel, or `refused` when the parcel's scene refuses the player; `stage` and `state` name
+  one classification), `blockedBy` (what holds it: `frozen`, `gltfs loading`) and `isReady`
+  (`state` is `running`), the scene readiness the two `--wait` commands above wait for; a
+  teleport's wait also needs the player landed. Every `null` has its reason in `unavailable`. Of
+  every scene: counts by load stage (`spawned`, `definition`, `crdt`, `javascript`, `failed`,
+  `running`, `blocked`, `broken`), `gltf`, `preloads`, `texturePreloads`, `current` and
+  `settleWaits` (the `--wait` commands still waiting). The scene's title (`name`), SDK version
+  and tick are in `/current_scene_state`, which reads the scene once the player has landed.
 - `/avatar_state [all|<address>]`: avatars as selected (body shape, wearables, emotes, forced
   slots), as rendered (built or not, wearables by category, hidden categories), the files it
   could not be built from (`loadFailures`: bodies and wearables its builds leave out, `noBody`
@@ -359,7 +398,8 @@ State, in every build:
   Retry through that bridge; the console commands remain available for diagnostics.
   The [modal reference](connection-lost-modal.md) records Unity assets, dimensions and platform differences.
 - `/bevy_variants`: the abgen Bevy variants client as JSON: `base` (the variants origin, `null`
-  when off), `state` (on, off and why, or waiting for the GPU's texture formats), `formats` (the
+  when off or waiting for the endpoint flag), `baseSource` (what set it), `state` (on, off and
+  why, waiting for the endpoint flag, or waiting for the GPU's texture formats), `formats` (the
   variant formats this build takes and those it does not), `manifestCounts` (manifests loaded,
   none, failed, not eligible and pending), `manifests` (each entity's manifest state: scene,
   wearable or emote), `served` (variants downloaded and read from the cache), `servedByFormat`
@@ -412,6 +452,54 @@ State, in every build:
   `height` in logical pixels, `scale`). The scene is the one `/set_scene`
   picked, else the player's; the entity is as `/scene_entities` lists it. `--bounds` aims at the
   centre of its visible meshes instead of its origin.
+- `/screenshot [--max-width N] [--jpg] [--world-only]`: the primary window's frame, read back at
+  the end of the frame it was rendered in. Alone, the reply is raw base64 PNG at full size (no
+  `data:` prefix; the scene editor's thumbnail reads it). With any option it is JSON: `image`
+  (base64), `format` (`png`, or `jpg` at quality 75), `width`, `height`, `frame` (the size
+  captured, device pixels), `screen` (as `/entity_screen_position`'s), `parcel`, `worldOnly`,
+  `blendWaitMs`, and `caption`, e.g. `640x325 (screen 1600x813, frame 3200x1626) full-view
+  capture at parcel (149,149)`. `--max-width` (64 to 1920) scales down, never up, on the CPU:
+  off the main thread natively, on the engine's own thread on the web, where a large encode can
+  cost a frame. `--world-only` hides the native HUD and every scene's window UI while the
+  capture runs (UI drawn to a texture stays); what `/show_ui` chose, before or during the
+  capture, shows when it ends. Every capture, the bare one included, first waits two frames,
+  then while the camera is in a timed transition (a virtual camera handing back, a mode area;
+  an instant cut is none), at most 1.5 s: the caption then ends `, waited N ms for the camera
+  blend` or `, camera still blending after N ms -- the frame may be mid-transition`, `N` being
+  `blendWaitMs`. On the
+  web the capture is the engine's canvas, never the page's HUD, and the reply's `info` says so.
+  One capture runs at a time, a single frame or a sequence: another fails with
+  `{"refused": "a capture is already in progress (<holder>); retry when it completes", "cause":
+  {"holder"}}`, the holder `screenshot` or `screenshot --count`.
+- `/screenshot --count N [--interval-seconds S] [--max-width N] [--jpg] [--world-only]
+  [--dir <path>]`: a sequence of `N` frames (1 to 20) `S` seconds apart (0.05 to 2, default
+  0.5; the burst spans at most 20 s), each scaled to `--max-width` (default 640).
+  `--interval-seconds` and `--dir` need `--count`. The schedule
+  runs from the first frame. At most six frames wait at the window's full size for the encoder:
+  while six do, the next is not asked for, so an encoder that falls behind makes later frames
+  `late` instead of holding every frame in memory. Natively the frames are files in
+  `--dir` (created on the IO task pool before the first frame; a relative path is the client's
+  working directory's; one that cannot be created ends the capture with a refusal) or a new
+  `captures/capture-<ms>` folder in the client's cache, and `directory` and each `path` are
+  absolute. A `--dir` that already holds frames is written over from `frame-000`; the capture
+  deletes nothing, so an earlier, longer sequence's higher-numbered frames stay, and the reply
+  then carries `staleFrames` (their count) and a `warning`: read only the paths in `frames`, or
+  give each sequence its own folder. The web client
+  cannot write the host's disk, refuses `--dir` and keeps the frames in memory (the last sequence
+  only), `capture://<n>/frame-000.png`, which `/screenshot --frame <path>` returns as raw base64
+  (`--frame` takes no other flag). JSON
+  reply, no image: `directory`, `stored` (`disk` or `memory`), `count`, `format`, `worldOnly`,
+  `requestedIntervalSeconds`, `meanIntervalSeconds` (null for one frame), `late` (frames taken
+  more than half an interval after their time), `screen`, `parcel`, `note`, and `frames` (`index`,
+  `path`, `width`, `height`, `bytes`, `atSeconds` from the first, `intervalFromPreviousSeconds`,
+  `engineFrame`, `tick` of the scene `/set_scene` chose, else the one under the player, `late`).
+  It shares the gate and the camera
+  wait with a single frame.
+- `/screenshot --state` (no other flag): captures nothing and replies the capture gate as JSON,
+  the Frame capture section of the debug panel:
+  `holder` (`screenshot`, `screenshot --count` or `none`), `framesTaken` and `count` of the running
+  capture, `worldOnly`, and the `framesInMemory` and `bytesInMemory` the last in-memory sequence
+  keeps.
 - `/photo_mode [on|off] [button|shortcut|console]`: the camera reel's in-world camera as JSON:
   `active`, the primary camera's `position`, `storage` (`[current, max]` photos kept, meaningful
   once `storageLoaded`), `phase` (`idle`, `capturing`, `encoding` or `uploading`), this session's

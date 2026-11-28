@@ -140,6 +140,7 @@ pub async fn deploy_scene_with_on(
         replacement,
         forward_to,
         quota,
+        name_check,
     } = deployment;
     let mut s = scene_settings_from_entity(entity);
     if let Some(hash) = s.thumbnail_hash.take() {
@@ -167,6 +168,18 @@ pub async fn deploy_scene_with_on(
             .fetch_optional(&mut *tx)
             .await?
             .flatten();
+    // The NAME authorization, re-read under the publication it is granted
+    // on, which stays held (no fold withdraws or replaces it) until this
+    // transaction ends. Taken after the world's locks and inside this short
+    // transaction alone: the upload and its hashing are done by now.
+    if let Some(check) = name_check {
+        check.confirm_on(&mut tx).await?;
+    }
+    #[cfg(test)]
+    if let Ok((reached, resume)) = super::AFTER_NAME_CHECK.try_with(Clone::clone) {
+        reached.notify_one();
+        resume.notified().await;
+    }
 
     let (is_insert, disabled): (bool, bool) = sqlx::query_as(
         r#"INSERT INTO worlds.worlds AS w (

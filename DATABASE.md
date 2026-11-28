@@ -119,6 +119,31 @@ from a deployment's content hash. Each world scene has a stable identity
 exactly one active scene retains it, including a moved base; overlapping none
 or several creates a new identity. Retired identities keep their storage rows.
 
+A DCL NAME world's publish is authorized during validation, before its write
+transaction, and re-checked inside that transaction. After the transaction
+takes the world's publish lock and row lock, it holds the names index's
+publication row (the Ethereum `nft` cursor) `FOR SHARE` and reads the NAME's
+holder under it. A fold withdrawn since validation answers 503 `nft-index`; a
+holder replaced since then answers the owner's 400 refusal, or 409 to a scoped
+grantee, who retries against the new owner. Either way the world keeps its scene
+and owner. No withdrawal, refold or publication of the NFT index commits while
+the share is held. The NFT fold locks that row `FOR UPDATE` from its first
+projection write to its commit, and the sales fold locks it `FOR UPDATE` at its
+publication step. Every publication or withdrawal updates it. None of those
+transactions takes a world lock, so the order (world locks, then the cursor)
+cannot deadlock. The share is taken only in that short write transaction, after
+upload, hashing and validation. A fold's publication waits only for the scene
+writes already in progress when it asks for the row. A publish that arrives
+during a fold waits for that fold's commit, and then reads its publication. The
+whole wait is bounded by `HOLD_WAIT` (5 s, as the share statement's
+`statement_timeout`, restored after it), including a wait queued behind another
+fold. Past it the publish answers the names index's retryable 503, so it never
+holds the world and store locks behind a long refold. A transient database fault
+reading the names index (a lost connection, a deadlock or serialization failure,
+a cancelled statement) is the same retryable 503, with a fixed message; any other
+failed read is the fail-closed 403. Personal and ENS worlds, and a node reading
+NAMEs from the subgraph, hold nothing.
+
 Partial batches for one entity hold a session advisory lock from their first
 pending-upload/replay read through the staging or committed-publication decision.
 The guard owns one connection from the shared pool, and every guarded query and
@@ -1785,10 +1810,13 @@ an adjustment. Each writes one `ops.admin_audit` row in its own transaction
 `studio.operator.remove`, `studio.budget`). A studio's own operators grant
 Credits to players out of its budget, signed fetch with no admin gate
 (`POST /credits/operator/studios/{id}/grants` and its `/shop-api` twin, paced
-at 60 per operator wallet a minute). Its signature counts over the mount's
-path or the credits host's own route, never a foreign prefix ending with it;
-a contract wallet's is checked with the uncached EIP-1654 validator; and a
-signed `bodySha256` must be the body's. A grant writes, in one transaction, the
+at 60 a minute per operator wallet and per process, counting only wallets
+that act for the studio). Its signature counts over the mount's path or the
+credits host's own route, never a foreign prefix ending with it; a contract
+wallet's is checked with the uncached EIP-1654 validator; a signed
+`bodySha256` must be the body's, and one that signs none is refused while
+`CREDITS_ADMIN_WRITES_REQUIRE_BOUND_BODY` is on, as an admin write is. A grant
+writes, in one transaction, the
 player's paid credit as an admin grant does (`credits.wallets`,
 `credits.ledger` with its `ops.admin_audit` row, the operator as actor, and
 the "A gift from {studio}" notice) and the `grant` entry naming that ledger
@@ -1802,9 +1830,9 @@ studios (`GET /credits/operator/studios`, by `studio_operators_address_idx`)
 and one of them with its grants (`GET /credits/operator/studios/{id}`, from one
 REPEATABLE READ, READ ONLY snapshot), and a player's gifts (the `gifts` block of
 `GET /credits/users/{address}/credit-orders`: the wallet's ledger `grant` rows
-with an admin `grant` audit row or named by a budget entry, by
-`ledger_address_id_idx`, the total and the page from one REPEATABLE READ, READ
-ONLY snapshot; a gift that is not a whole number of cents within
+with an admin `grant` audit row or named by a budget entry, the wallet's rows
+found by `ledger_address_id_idx` and sorted by time, newest first, the total
+and the page from one REPEATABLE READ, READ ONLY snapshot; a gift that is not a whole number of cents within
 `Number.MAX_SAFE_INTEGER` cannot take that shape and is left out of both,
 counted in a warning; a migrated Decentraland grant has neither link and is not
 listed until #2473). The credits report calls a grant `studio_grant` only on
@@ -1819,12 +1847,14 @@ Locks: a change that adds budget first takes the service-wide advisory lock
 `studio-budget-deposits`, credits-server's), then the studio's row
 (`FOR UPDATE`); any other budget change, and adding or removing an operator,
 takes the studio's row alone, and so does a grant, which then takes the
-player's wallet row (no path takes a wallet row before a studio row). Each
-transaction pins READ COMMITTED whatever the session default, so each statement
-after a lock reads a snapshot taken after it was granted, and a balance, the
-day's total, a grant's operators or its studio's status is never read from
-before the previous holder committed: of two grants racing for the last of a
-budget, the second waits for the row and sees the first's entry.
+player's wallet row (no path takes a wallet row before a studio row). A budget
+change and a grant, the writes that judge what they read under the lock, pin
+READ COMMITTED whatever the session default, so each statement after the lock
+reads a snapshot taken after it was granted, and a balance, the day's total, a
+grant's operators or its studio's status is never read from before the
+previous holder committed: of two grants racing for the last of a budget, the
+second waits for the row and sees the first's entry. Renaming, pausing and
+operator changes judge nothing they read and run at the session's level.
 
 Invariants: a studio's balance never goes below zero (checked under its row
 lock before the entry is written). The new budget written in one UTC day of
@@ -1887,6 +1917,39 @@ operator must hear about (`shop/src/credits/alerts.rs`), one row per
   - `purchase_settled`, keyed by salt: a credit's first use settled (not a
     replayed debit), in the settlement's transaction, with its lines from
     `authorization_lines` (the primary key's prefix).
+- **the daily summary** (`daily_summary.rs`): `daily_summary`, keyed by the
+  closed UTC day (`YYYY-MM-DD`). The leased `credits-daily-summary` job runs
+  every five minutes where `OPS_WRITES_ENABLED` is on, and does nothing
+  before `CREDITS_DAILY_SUMMARY_HOUR_UTC` (9). From that hour:
+  - one `EXISTS` on `alerts_kind_dedupe_key` ends the pass once yesterday is
+    queued, so a tick otherwise reads nothing;
+  - otherwise it reads the day's figures on one REPEATABLE READ, READ ONLY
+    snapshot with a 10-second statement timeout. The figures come from
+    `purchases`, `usage_settlements` with `usages` and `authorization_lines`,
+    `wallets`, `goal_grants`, `authorizations` and `payment_reversals`;
+  - the day filters' time columns carry no index, so each figure scans its
+    table once a day. The tables are `purchases` (a row per purchase),
+    `usage_settlements` and `usages` (a row per CreditUsed log),
+    `authorizations` (a row per checkout attempt), `payment_reversals` (a
+    row per reversed intent) and `wallets`. New buyers aggregate every
+    purchase settlement in that same single scan. A claimed goal grant's
+    usage is read by salt through `usages_salt_idx`, keeping the usages of
+    the grant's chain, contract, credit and wallet;
+  - a pass whose reads fail is retried after 5 minutes, doubling up to an
+    hour. A failure within 65 minutes of the end of the reporting day,
+    judged when it failed, may get no retry before the next day: it queues
+    the day with `figuresUnavailable`, so the channel shows the gap;
+  - it then reads the CreditsManager's MANA balance and the MANA/USD round
+    over the CreditUsed index's RPC, 10 seconds each. A failed read, or a
+    round older than `MANA_PRICE_MAX_STALENESS_SECS`, is stored as
+    `unavailable`, and the row is queued anyway;
+  - the insert's `ON CONFLICT DO NOTHING` is the claim, so a second replica
+    or a restart adds nothing, and the pass that lost reports the day as
+    already queued.
+
+  The row is rendered from its payload at delivery. The figures, and those
+  credits-server reported that the node doesn't, are listed in the module's
+  doc.
 
 The writer of delivery is the leased `credits-alerts` job, every 15 seconds
 where `OPS_WRITES_ENABLED` is on. It claims up to 20 due `pending` rows
@@ -2699,7 +2762,23 @@ See the [synthetic fixture measurements](METRICS.md#wallet-activity-transfers) f
 
 `sale_publication.last_sale_through` records the block through which the table holds every published sale. `last_sale_generation` records the publication generation the table was kept for. Each pass applies the ledger past `last_sale_through`, at most 5,000,000 blocks at a time. Once the table is current, that is the new window itself. After step `0078_shop_nft_last_sale` adds the columns, or after a rebuild, it is the earlier history. A receipt can be retried after its block is covered and set the token ID of a trade's mint. The pass then recomputes those tokens' latest sale from the ledger and keeps a later sale. Every writer rotates the generation when it replaces the history or corrects a published sale. A writer from before step 0078 does so without touching the table or these columns, so they no longer match. The table is then not read, and the next pass of a current writer deletes the network's rows and refills them from the start. It does the same when the coverage is cleared. The schema object pass creates the table.
 
-A `/v1/nfts` read checks the publication of each network its page can return, on the read's own snapshot (`sale_fold::last_sale_networks`). The publication must be valid and fresh, as the sales reads require, its table must be kept for its generation, and `last_sale_through` must reach its block. For such a network, `sold_at` is the later of the token's latest legacy `OrderSuccessful` (`shop.nft.sold_at`, or the LAND source's subquery) and its row in `shop.nft_last_sale`, joined on the primary key. Elsewhere, including on a testnet node, `sold_at` keeps the legacy order alone. On a walker, a shallow NAME page of any sort reads the index instead of the marketplace graph when the Ethereum latest sales are admitted on the snapshot that supplies its rows, because the graph's `soldAt` counts other sales. Such a page follows the index path's rules: the `first + skip` window, and the trades mirror's readiness on the same snapshot when it filters or sorts on orders. Admission is checked once, at the request's clock, and the page's values and order use that answer. The page reads the graph when the names index or those latest sales are not ready, and answers the error when the check cannot run. The recently sold sort still reads and sorts every held token, and the join adds one primary-key lookup or hash probe per token. See the [synthetic fixture measurements](METRICS.md#latest-sale-per-token).
+A `/v1/nfts` read checks the publication of each network its page can return, on the read's own snapshot (`sale_fold::last_sale_networks`). The publication must be valid and fresh, as the sales reads require, its table must be kept for its generation, and `last_sale_through` must reach its block. For such a network, `sold_at` is the later of the token's latest legacy `OrderSuccessful` (`shop.nft.sold_at`, or the LAND source's subquery) and its row in `shop.nft_last_sale`, joined on the primary key. Elsewhere, including on a testnet node, `sold_at` keeps the legacy order alone. On a walker, a shallow NAME page of any sort reads the index instead of the marketplace graph when the Ethereum latest sales are admitted on the snapshot that supplies its rows, because the graph's `soldAt` counts other sales. Such a page follows the index path's rules: the `first + skip` window, and the trades mirror's readiness on the same snapshot when it filters or sorts on orders. Admission is checked at the request's clock, and the page's values and order use that answer. An ordinary shallow page can read the graph when the names index or the latest sales are not ready. Without a configured marketplace graph, such a page answers the unavailable envelope of the index source it waits for (`nft-index` or `sales-index`), not `marketplace-subgraph`. A page filtered or sorted by orders uses the native page even when the latest-sale display is unavailable, and returns the named readiness response if its required listing sources cannot answer.
+
+The recently sold sort reads the capped total first, on the same snapshot. With enough candidates and no owner, lessor or on-sale-only filter, each source is walked in three parts. Enough means at least 400 per row of the `first + skip` window, or more than the cap with a window of at most 12,500. The parts:
+- its tokens with a latest sale, walked newest first through `nft_last_sale_recent_idx` (`(network, sold_at DESC, contract_address, token_id)`), each sale looking up its token by primary key;
+- its tokens with a legacy order, walked newest first through `nft_sold_order_idx`. For LAND, the registries' `OrderSuccessful` events in `nft_event_successful_order` are aggregated per token and sorted, so that part's cost follows LAND's order history rather than the window;
+- its tokens with neither, by contract and token.
+
+A part stops after `first + skip` rows under the filters. A token's `sold_at` is the later of its two times, so the page's window lies within the first two parts' rows (a token in both is kept once) followed by the third's. Ties are broken by contract, token and then network: the same contract address and token ID can be held on both networks.
+
+The walk has a budget: half the capped total, in index rows of each sold part of a collection or NAME source. Each such part reads that many rows of its index on its network, newest first, under a `LIMIT` before any filter, so it never inspects a row past them, however many rows share a sale time. When a part finds fewer than `first + skip` rows among them and its index holds a row past the budget, the page returns no row and is read again, sorted whole. The one-row probe past the budget runs only for a part that fell short. A filter that keeps many tokens but few sold ones, such as a large, rarely sold collection, so reads at most that budget instead of walking every sale of the network. With fewer candidates, the page reads and sorts them whole from the filters' own indexes, which costs less than walking for matches.
+
+The tests:
+- `the_recently_sold_lane_pages_like_the_whole_set` compares the walk with the whole sort over every source, every admission and windows that cross into the unsold tokens. Under small budgets it checks that a walked page is either the whole sort's or empty.
+- `the_walk_reads_a_bounded_prefix` covers the budget's routing. It includes a sale time shared by more tokens than the budget, where the filter's tokens lie past the budget: the walk misses, the page is sorted whole, and the plan shows at most the budget plus one row read from each index.
+- `a_token_on_both_networks_pages_by_network` pages a token held on both networks, sold at the same time and unsold, one row at a time, through the walk and the whole sort.
+
+See the [synthetic fixture measurements](METRICS.md#recently-sold).
 
 ### Badge processor
 
@@ -2753,9 +2832,9 @@ default, and social writes are), each a reader of tables other areas own, with o
   `BADGES_EVENT_MAX_AGE_SECS` gets no badge and never waits, and one that
   grows older than it while it waits passes without a badge, as under the
   mirrors. The page,
-  its goods' item types and the wait come from one snapshot. Without
-  `MARKETPLACE_MIRRORS_ENABLED` no pass ever completes, so the sales job is
-  not started (logged at startup);
+  its goods' item types and the wait come from one snapshot. The sales job
+  starts when `MARKETPLACE_MIRRORS_ENABLED` enables the items mirror or
+  `MARKETPLACE_COLLECTIONS_INDEX_OWNS` includes Polygon;
 - recounts of `shop.items` and `shop.collections` on Polygon (once
   `shop.mirror_state` records a complete pass, or, once the collections
   index owns Polygon, while its descriptive verdict holds; the verdict, the
@@ -3294,10 +3373,9 @@ acquisition. A lost lease ends the projection's pass at once, even inside a
 fold; transactions it had already committed stay, and the generation fences
 any later one.
 
-Every transaction that writes the projection ends by locking the row
-(`SELECT … FOR UPDATE`) and comparing that generation, the chain binding and
-the quarantine. On a mismatch it rolls back, so a job that lost the
-projection commits nothing. This covers:
+A transaction that writes the projection locks the cursor row
+(`SELECT … FOR UPDATE`) and checks the generation, chain binding and
+quarantine. On a mismatch the transaction rolls back. This covers:
 - the window's rows with the cursor advance (which also requires the
   checkpoint it read, height and hash);
 - a reorg rewind, and the withdrawal of a diverged checkpoint's publication;
@@ -3305,11 +3383,20 @@ projection commits nothing. This covers:
 - each fold, including each trade-events digest batch;
 - the fold record, the publish and its withdrawal.
 
-The lock is taken last, so it lasts only as long as the commit. A writer
-that also moves the notification producers' cursors (a rewind, a rebuild,
-the nft lane) moves them before it locks this row. A fenced
-job drops its generation, and its next pass claims again, which only works
-while it still holds the lease.
+NFT and sales writers lock the chain cursor before their projection
+writes. A writer that also moves the notification producers' cursors
+(a rewind, a rebuild, the nft lane) takes those locks first. A fenced
+job drops its generation and claims again on its next pass while it
+still holds the lease.
+
+The NFT and legacy bid folds hold the chain cursor lock through commit or
+rollback. Their 3,600 s `statement_timeout` applies to individual fold SQL
+statements, so a rebuild spanning several statements can hold the lock
+longer. A lease takeover's claim times out after 1.5 s waiting on the row
+and can keep failing until the fold ends. Before publishing, the sales
+ledger locks `collections`, `nft`, `sales` and `trade_events` cursors in
+that order. It can block on a fold while holding earlier cursor locks,
+which delays those walkers as well.
 
 **Binding.** `chain_id` is the chain the history was read from, as the
 source proved it at the claim. The walk checks the source's chain every
@@ -3389,11 +3476,13 @@ member that diverged withdraws and recovers in a pass alone, which runs
 under no member deadline, and walks with others again once its checkpoint
 matches theirs.
 
-The rewind is one transaction: the notification producers' replay plan,
-the projection's own cleanup past the point, the producers' moves, the
-cursor's compare-and-set from the checkpoint it read, the pruning of the
-recovery points past the point, then the owner check. The next fold is a
-rebuild, as after any rewind.
+One transaction rewinds the projection and prunes recovery points past
+the retained block. It plans the notification replay before cleanup.
+For NFT and sales, it moves the notification cursors, then locks and
+checks the chain cursor before cleaning up projection rows. Other
+indexes run their cleanup before moving the notification cursors and
+checking the owner. The cursor moves from the checkpoint the recovery
+read. The next fold rebuilds the projection.
 
 A sales fold may have inferred a bid's seller from an nft transfer before
 the nft walk saw the fork. So the nft walk's rewind on every network (also a
@@ -3435,7 +3524,9 @@ pass claims the projection again and acts.
   at once. In one transaction, the owner's next pass:
   1. plans the notification producers' replay from the state before the
      cleanup;
-  2. runs the projection's own cleanup down to `start_block - 1`;
+  2. rewinds the notification cursors, then locks and checks the chain cursor.
+     The cleanup down to `start_block - 1` runs after that chain cursor
+     lock for NFT and sales, and before it for other indexes;
   3. restarts the cursor there, bound to the chain it proved and out of
      quarantine, and drops the projection's recovery points.
 
@@ -3493,6 +3584,46 @@ advance drops only the points past the checkpoint it extends, which does not
 cover a point below the cursor.) Such a binary also leaves `diverged_at` as
 it finds it; the newer binary's next pass that finds the cursor block on its
 stored hash clears it.
+
+**Rolling back the legacy order writer.** When possible, wait for the
+legacy rebuild to reach `cleanup` or finish and for `shop.projection_write`
+to acknowledge the completed book before rolling back. An earlier writer
+can publish NFT ownership during an open
+reconciliation, but the schema keeps the partial legacy book pending.
+
+If you must roll back with reconciliation open, stop the index processes
+on that database and wait for their transactions to end. With the writers
+stopped, use the administrative connection to run the transaction below
+for the affected network. For Ethereum, replace both occurrences of
+`matic` with `ethereum`.
+
+```sql
+BEGIN;
+SELECT 1 FROM shop.chain_cursor
+WHERE indexer = 'nft' AND network = 'matic' FOR UPDATE;
+
+WITH abandoned AS (
+    UPDATE shop.legacy_order_rebuild
+    SET phase = 'cleanup', applying = false
+    WHERE network = 'matic' AND applying AND phase <> 'cleanup'
+    RETURNING network
+)
+UPDATE shop.legacy_order_cursor AS book
+SET through_hash = NULL
+FROM abandoned WHERE book.network = abandoned.network;
+COMMIT;
+```
+
+This retires the unfinished build and invalidates the book's marker in
+the same transaction. A missing marker already withholds the book. Leave
+`shop.projection_write` and the live order rows for the writer. A
+same-height acknowledgement alone cannot make the invalidated book
+readable. Start the previous writer with a legacy order fold. Its next
+fold clears and refolds the full affected book because the marker no
+longer stands. The legacy routes return `503 nft-index` until that fold
+publishes, and the older whole-book fold can also delay NFT publication.
+When the current writer resumes, it cleans up the retired shadow rows
+and apply journal in bounded steps.
 
 The schema migration object pass adds the Ethereum NFT cursor's estate
 repair trigger. It clears the marker when a writer completes a requested
@@ -3574,9 +3705,17 @@ published block (`folded_block`) set it, so rows a pass adds before its
 publish wait for it. Published membership stays readable while a pass
 runs. When Polygon is in scope, Shop accounts require a fresh committee
 fold covering the published sales block and include every indexed member
-through that block, including former members. An index that is off, not yet published or
-published more than 30 minutes ago (`READY_WINDOW`) admits only the
-configured addresses, and a failed read answers 503. Changing a column builder reads updates this section
+through that block, including former members. A current publication
+authorizes its members whichever process maintains it, so a node with the
+switch off still admits them when another process walks the index. With no
+publication, or one published more than 30 minutes ago (`READY_WINDOW`), only
+the configured addresses are admitted, and a failed read answers 503. The
+curation console lists a current publication the same way. Without one, a
+deployment that walks the index (`MARKETPLACE_COMMITTEE_INDEX_ENABLED` on a node
+serving mainnet Polygon with a Polygon RPC endpoint, the rule that schedules the
+job) answers 503, never an empty committee, because the publication is its own
+lag. A deployment that does not walk it (the switch off, no Polygon endpoint, or
+a testnet, which schedules no committee walk) lists no indexed members. Changing a column builder reads updates this section
 and the AGENTS.md "Ownership" entry in the same change.
 
 ## Third-party registry
@@ -3618,11 +3757,10 @@ Those events are the items added, rescued and edited, the mints (`Issue`),
 the global and item minters and managers, approval, editability,
 completion, creatorship and ownership. The walk keeps them in
 `shop.collection_event`, appended with each window's cursor advance and
-deleted past a rewind. A process that runs the collections mirror
-(`MARKETPLACE_MIRRORS_ENABLED=true`) keeps the log alone. One that does not
-also projects it into `shop.collections` and `shop.items` (see
-"Projection"). Either way, the publication means everything the fold wrote
-is complete to `folded_block`.
+deleted past a rewind. A process projects the log into `shop.collections`
+and `shop.items` for the networks in `MARKETPLACE_COLLECTIONS_INDEX_OWNS`
+(see "Projection"). The collections and items mirrors may still write
+another network. A publication covers the fold through `folded_block`.
 Account inventory and creator rankings require the Polygon log
 publication. Creatorship transitions are indexed by contract and by both
 wallet roles.
@@ -3789,19 +3927,28 @@ follows the collections subgraph's v1 handlers:
 An `AddWearable` whose wearable id has no representation is left out of
 `shop.items` and logged. The collection still counts it, and the next item
 is numbered after it. `catalyst_index_collections_v1_unrepresented_items`
-reports how many this process's last projection left out. That count
-depends only on the log up to the projected block and the vendored data:
-a publication rolled back after counting is retried and counts the same,
-and a walk's first publication (each process or lease) sets it again, so
-the gauge is absent only until then. It never holds the publication. On
-mainnet every one of the 438 items has a representation.
+reports how many the committed projection leaves out. It is recounted from
+the log up to the projected block after each committed publication
+(`ChainIndex::published`, which `chain_walk::close` calls after the commit),
+so a publication rolled back sets nothing, and a process's first
+publication, an event-free one included, restores it. It is absent only
+until then. It never holds the publication. On mainnet every one of the
+438 items has a representation.
 
 A publication projects Ethereum when an event was walked past the block its
 rows stand at, or none stand. It then rebuilds the network's rows, about 480,
-from the whole log; otherwise it writes nothing. A walk's first publication
-(each process or lease, and again after a failed pass) rebuilds them
-whatever was walked, so a change to the fold or a re-pinned vendored file
-reaches the rows, and the unrepresented gauge is set again.
+from the whole log; otherwise it writes nothing. Each process or lease
+rebuilds them at every publication, whatever was walked, until one that
+rebuilt them has committed (`ChainIndex::published`, which
+`chain_walk::close` calls after the commit). A change to the fold or a
+re-pinned vendored file therefore reaches the rows, and a publication rolled
+back (a failed close included) leaves the next one to rebuild. A rebuild
+also publishes the v1 royalty catalogue (`shop.v1_royalty_collection`,
+`shop.v1_royalty_item`) from the rows it wrote, through
+`shop.publish_v1_royalty_catalogue`, as a completed Ethereum mirror pass
+does. While the index owns Ethereum and its projection stands, the sales
+summary's v1 royalty attribution reads that copy in place of the mirror's
+pass markers.
 
 **Projection.** A network the operator hands the index
 (`MARKETPLACE_COLLECTIONS_INDEX_OWNS`: `matic`, `ethereum` or empty,
@@ -3912,11 +4059,59 @@ meanwhile never splits an answer. A reader that joins the open trades
 snapshot, at the read's instant. That instant also decides the rows' open
 trades, trade floor and coupon window, on every page of the read.
 
-The statement is uncached and probes primary keys only:
+The shared catalogue admission statement is uncached and probes:
 `collection_projection (network)`, `chain_cursor (indexer, network)`,
 `mirror_state (mirror, network)`, the first row of `collections` and of
 `items` by their `(network, …)` keys, and the first `collection_event` past
 the publication by `(network, block_number, log_index)`.
+
+Catalog v1 and v2 read resale listings from the legacy order book on the
+catalogue snapshot. The book must stand at the published NFT fold and have
+no queued refold or unacknowledged writes to orders or ownership. The request
+clock decides which orders have expired. Open orders must still belong to
+the seller. The item is the NFT's folded item ID on Polygon and the
+collection URN plus the Issue's wearable ID on Ethereum v1. The item and
+collection must belong to the served chain. The route admits the collection
+publication on each network used by the legacy leg, including its mirror
+pass when that network is mirrored.
+
+Listing filters, price bounds and explicit listing-dependent sorts need a published
+local book and return the required source's 503 while it is unavailable.
+Exact item and contract filters scope which networks the book must cover.
+An ordinary page can still use the admitted item catalogue when the book
+is unavailable. It leaves out the legacy listing contributions until that
+book can answer. When a sort does not depend on listings, the read selects
+the page and its count first and aggregates legacy listings for those items.
+The default cheapest sort orders candidates by the same price the page
+displays. For two-network v1 pages and requests scoped to Polygon within
+the first 1,000 results, the reader can use a prefix of 2,049 live orders from
+`legacy_order_open_price_idx` when membership does not depend on listings
+and the request has no explicit contract or item filter. Polygon requests
+limit the prefix to Polygon orders before taking the cheapest rows. The reader
+ranks those orders after the usual ownership proof, together with the mint prices.
+A full prefix proves the page only when every selected price is strictly
+below the highest raw prefix price. The exact total comes from the
+eligible items. The reader then loads all listing details for the selected
+item keys on the same snapshot. If the prefix cannot prove the page,
+the reader uses the full query. The `catalog price prefix evaluated`
+debug event records whether the proof covered the page on a cache miss.
+V2 combines the legacy counts and prices with backed v3 resales. A v3
+resale needs published NFT ownership even when the legacy book is withheld.
+Polygon mainnet uses the folded item ID without the collection publication.
+Ethereum v1 and testnet attribution also use the served collection copy.
+V3 mint offers need a collection publication for the minter permission.
+Explicit mint-only V2 reads require this proof. Ordinary pages omit an
+unavailable contribution and keep the item page.
+
+V1 shares a short memo under `MARKETPLACE_CATALOG_CACHE_TTL_SECS`. Before
+using it the route admits the book on its read snapshot and keys the result
+by the catalogue copies, each NFT publication and the next legacy order
+expiry on its network. A withdrawal, republication or crossing an expiry
+changes the key before reading prices. Open orders outside the page can
+shorten the interval and trigger a fresh read. The partial
+`legacy_order_open_expiry_idx (network, expires_at)` supplies the first
+future expiry per network. A request waiting for a fetch of the same key
+releases its database connection.
 
 The transaction holds a pooled connection, so a reader never waits on
 anything else while it holds it:
@@ -4054,8 +4249,8 @@ With no subgraph configured, a network an index owns answers. An unscoped
 priced read names the subgraph of the network without a source; a
 descriptive or authorizing read serves the passes the tables record. The
 lambdas catalogue falls back to asking the subgraphs only when the mirrors
-refused and the index owns no network; it never stands in for a network the
-index owns.
+refused and no network is owned by the index or awaiting configured native
+ownership.
 
 A memo over catalogue rows is filed under what its read saw: each mirror's
 pass on each network it may take rows from, configured or not (the oldest
@@ -4064,31 +4259,147 @@ network's publication and projection generation. The creator directory is a
 display aggregate that keeps its stated staleness (15 minutes, kept up to an hour), so it is filed
 under which source serves each network: an ownership change files it anew.
 
-**Switching a network from the mirror.** Run this only once two things
-hold:
-- every reader above follows the index, the other readers included;
-- the NFT and sales walks take their contracts from the index.
+The NFT and Polygon sales walks take their collection addresses from the
+chain-bound rows in `shop.collections`. On a network the index owns, the
+walks require an existing projection height, a cursor bound to the expected
+chain with full history and no quarantine or branch recovery. The projection
+can stand at any age and through catch-up closes that clear the fold marker.
+A rewind invalidates the projection. On other networks the walks wait for
+the collections mirror's first complete pass, with testnet verification.
+Each load checks the gate on the snapshot that supplies its addresses, so
+a hand-back between the job gate and that load waits for the mirror. The
+NFT walk keeps contracts recorded in `shop.nft_contract` if a replacement
+catalogue omits them. Historical source comparisons also include a
+registered address when the requested window overlaps its recorded backfill.
+Newly discovered contracts enter through the existing backfill lane when
+they predate the live window.
 
-Deploys are manual, one process at a time:
+### Mainnet catalogue cutover
 
-1. Run the enabled walk (`MARKETPLACE_COLLECTIONS_INDEX_ENABLED=true` in the mirror posture) on the
-   process that runs the mirror, and wait until the `collections` cursor on
-   `matic` publishes. That is the catch-up, from block 15,202,000. The
-   mirror keeps serving meanwhile.
-2. Stop that process, set `MARKETPLACE_COLLECTIONS_INDEX_OWNS=matic`, and
-   start it again. Two processes must never write the catalogue under
-   different settings. The mirror switch stays as it was: the mirror keeps
-   walking Ethereum. The next pass's publication rebuilds Polygon's rows from
-   the log and takes the network.
-3. Check `SELECT owned_at, projected_through, pending, generation FROM
-   shop.collection_projection`.
+On the mainnet mirror posture the collections index takes `matic,ethereum`
+by default. The collections and items jobs mirror each network until the
+index publishes its ownership. A start or stop block override excludes
+that network from default ownership. An explicit list can keep either
+network mirrored. Both collections subgraph URLs also serve direct readers
+such as `/v1/trendings`, and `/v1/owners` on a node that does not walk the
+NFT index. They stay configured after the
+projection takes over. Sepolia and Amoy keep both mirrors. Island and
+journey leave ownership empty and their mirrors off.
 
-**Handing a network back to the mirror.**
-1. Stop the index process, remove the network from
-   `MARKETPLACE_COLLECTIONS_INDEX_OWNS`, and start it again. Its fold keeps
-   the log alone from then.
-2. Run this transaction. It takes the exclusive catalogue lock, and removes
-   the network's rows, the mirror's pass markers and the ownership together:
+Until a configured native network first publishes, a scoped or combined
+read needs the mirror proof for that network. A read without its required
+mirror copy returns `503 collections-index`. A priced read also needs the
+items pass within its money budget.
+
+**Before switching an existing database**
+
+1. Run the owner-aware NFT and sales walkers on the database before handing
+   over the catalogue. To warm the collections walks with the mirror still
+   serving, explicitly set `MARKETPLACE_COLLECTIONS_INDEX_OWNS=` and
+   `MARKETPLACE_MIRRORS_ENABLED=true`. Preserve the two previous subgraph
+   URLs if the deployment overrides them.
+2. Verify `shop.chain_cursor` rows for `indexer='collections'` and the
+   networks being handed over. Polygon is chain 137 from block 15,202,000.
+   Ethereum is chain 1 from block 8,828,687. Each cursor needs full history,
+   a published `folded_block` and `folded_at`, and no quarantine or detected
+   divergence. Ethereum's first walk takes about 37 minutes of back-to-back
+   passes. See [the measured replay](METRICS.md#ethereum-collections-v1-first-walk).
+3. Pause automatic releases of the catalogue writers for the cutover
+   window. Stop the catalogue writers sharing the database and use the
+   same ownership list on each replacement writer. Set
+   `MARKETPLACE_COLLECTIONS_INDEX_OWNS=matic,ethereum`, or let the
+   mainnet mirror posture choose it. Keep both collections subgraph URLs
+   for direct reads. Keep the replacement writers running through the
+   first publication on every network being handed over.
+4. Check ownership and publication for every network being handed over.
+   Edit the `VALUES` list to match the cutover scope. A network still
+   appears if its cursor or projection row is missing.
+
+   ```sql
+   SELECT selected.network, c.chain_id, p.owned_at, p.projected_through,
+          c.folded_block, c.folded_at, c.full_history,
+          c.quarantined_at, c.diverged_at, p.pending, p.generation
+   FROM (VALUES ('ethereum'), ('matic')) AS selected(network)
+   LEFT JOIN shop.collection_projection p ON p.network = selected.network
+   LEFT JOIN shop.chain_cursor c ON c.network = selected.network AND c.indexer = 'collections'
+   ORDER BY selected.network;
+   ```
+
+   Resume automatic releases once each handed-over network has
+   `owned_at` set, `chain_id` 137 on Polygon or 1 on Ethereum, full
+   history, and no quarantine or divergence. Check that `folded_at` is
+   within the last 30 minutes, `projected_through = folded_block`, and
+   `pending = 0`. Compare the chain-bound collection
+   counts at a common height, check catalogue and royalty reads, and
+   confirm the NFT and Polygon sales cursors advance. Check that badge
+   sales runs and the mirrors skip the owned networks.
+
+**While the first projection runs**
+
+The publishing transaction locks the collections cursor row and takes
+the network's exclusive catalogue advisory lock. On Ethereum, the first
+publication after a process starts, a lease changes or a pass fails locks
+any existing projection row to invalidate it before taking the advisory
+lock. The replacement rows, ownership and publication commit together
+with Ethereum's v1 royalties.
+A mirror-sized fixture took 1.270–1.314 s on Polygon (6,196 collections
+and 11,986 items) and 22–25 ms on Ethereum (42 collections and 438 items).
+Both probes waited about 1.27–1.31 s on Polygon and 18–21 ms on
+Ethereum. A heavier Polygon history took 2.180–3.261 s, with waits of
+2.175–3.257 s.
+[Mainnet projection benchmark and lock measurements](METRICS.md#mainnet-first-catalogue-projection)
+
+Before commit, readers still see the previous committed ownership and
+rows. Catalogue reads can serve the proven mirror copy while mirror
+writes to that network wait for the lock. Without the mirror proof the
+catalogue answers `503 collections-index`. The NFT and Polygon sales
+walkers still use the collections mirror gate while ownership is unset.
+They wait when it cannot admit their address read, then use the standing
+projection once ownership commits. Catalogue readiness also checks the
+published fold and unresolved collections.
+
+An interruption before commit rolls back the entire projection, including
+ownership and the cursor publication. The committed event log and
+`fold_through` stay. On the next publishable pass the new owner starts
+the projection again from that log. The heavier Polygon retry took
+2.167 s.
+
+If publication is still running after two minutes, leave automatic releases
+paused. Find the publisher's transaction in `pg_stat_activity` and inspect
+its blockers with `pg_blocking_pids(pid)`. If aborting the switch, stop all
+catalogue writers sharing the database and confirm their transactions have
+ended before running the query in step 4. Use the committed `owned_at`
+value separately for each selected network.
+
+- If `owned_at` is null, restore that network's pre-cutover mirror settings
+  and leave it out of the explicit `MARKETPLACE_COLLECTIONS_INDEX_OWNS`
+  list. Keep the existing catalogue rows and mirror passes.
+- If `owned_at` is set and the network is returning to the mirror, follow
+  the hand-back below. Keep any network staying native in the ownership
+  list on every writer.
+
+Restart the writers after settling the settings and completing any required
+hand-back for each network.
+
+**Handing a network back to the mirror**
+
+Hand-back takes the advisory lock before touching the projection row.
+It can deadlock with Ethereum publication, which takes those locks in
+the opposite order when invalidating the row. Run hand-back only after
+ownership has committed and all catalogue writers have stopped and their
+transactions have ended.
+
+1. Stop the catalogue writers and wait for their transactions to end.
+   On each writer, explicitly set `MARKETPLACE_COLLECTIONS_INDEX_OWNS`
+   to the networks that stay owned,
+   or to an empty value if neither stays owned. Enable
+   `MARKETPLACE_MIRRORS_ENABLED=true` and restore the handed-back network's
+   subgraph URL. Unsetting an explicitly blank URL restores the default
+   under the mirror posture.
+2. Before restarting, run this transaction. It takes the exclusive
+   catalogue lock and removes the network's rows, pass markers and ownership
+   together. For Ethereum, replace `'matic'` with `'ethereum'` and use `1`
+   as the advisory lock's chain ID.
 
    ```sql
    BEGIN;
@@ -4105,14 +4416,25 @@ Deploys are manual, one process at a time:
    COMMIT;
    ```
 
-   Every statement acts only while the index still owns the network, so
-   running the transaction again (after a commit that went unconfirmed)
-   changes nothing the mirror wrote since.
+   For Ethereum, add the two deletes below inside the same transaction,
+   before the ownership update.
 
-Every read of the network then answers the unavailable envelope until the
-mirror's next complete collections and items passes, which rewrite it with
-the mirror's rows alone (`collections_projection::hand_back` runs the same
-statements).
+   ```sql
+   DELETE FROM shop.v1_royalty_item
+    WHERE EXISTS (SELECT 1 FROM shop.collection_projection
+                  WHERE network = 'ethereum' AND owned_at IS NOT NULL);
+   DELETE FROM shop.v1_royalty_collection
+    WHERE EXISTS (SELECT 1 FROM shop.collection_projection
+                  WHERE network = 'ethereum' AND owned_at IS NOT NULL);
+   ```
+
+   The ownership guard makes a retry safe after the mirror recovers.
+
+3. Restart the writers with the updated settings. The mirror's first
+   complete collections pass admits the NFT and sales address loads again.
+   Catalogue reads wait for their required collections and items passes.
+   On Ethereum, the hand-back clears the v1 royalty catalogue and the
+   mirror passes publish it again.
 
 ## Auth API relay state workload
 
@@ -5129,7 +5451,8 @@ profiles and the Registry's profile batches (`/lambdas/profiles`, `POST
 /profiles`), the wearable and emote lists (`/lambdas/users/{a}/wearables`,
 `/emotes`, `/lambdas/collections/*-by-owner`), the explorer backpack,
 `/v1/users/{a}/wearables` and `/emotes`, outfits, the `/v1/orders` owner
-guard and the wearable and emote pages of `/v1/nfts`. Content deployment
+guard, the wearable and emote pages of `/v1/nfts` and, where the node walks
+the NFT index, `/v1/owners`. Content deployment
 validation does not read it: it checks ownership by RPC at the entity's block
 and `shop.usage_grants`.
 
@@ -5167,9 +5490,11 @@ commits in between is never half-seen:
   orders"). The v3 proof uses the published land-authz fold for LAND and
   Estates and the published NFT fold for other tokens. Nodes using the
   configured graph for legacy orders use that same proof for v3 listings.
+  The Graph legacy leg tests raw seconds and milliseconds in disjoint
+  ranges in the same filter for pages and counts, using one request clock.
   Both routes emit `x-listings-owner-check: checked`.
 
-Queries, all bounded by one owner or one batch:
+Queries, all bounded by one owner, one batch, one item or one v1 collection:
 
 - an owner's copies: `shop.nft` by `owner` (`nft_owner_idx`), joined to
   `shop.items` by `(network, contract_address, item_id)` on Polygon and to
@@ -5185,7 +5510,34 @@ Queries, all bounded by one owner or one batch:
 - the orders guard: the shared open-trades query reads ownership by the
   exact contract and token primary key and checks for newer transfers
   with the per-token event index. Readers use the published snapshot on
-  any node that serves the route.
+  any node that serves the route;
+- `/v1/owners`, one item's held copies: the item is resolved first from
+  `shop.items` and `shop.collections` by its primary key on each network
+  whose catalogue names it, in the scope of the `/v1/nfts` collection
+  candidates. As the subgraph reader does, the first network (Ethereum, then
+  Polygon) whose page holds copies answers that page and its own total. A
+  page past every network's copies keeps the total of the first network that
+  holds any. A Polygon item's page walks the primary key's token range
+  `[item << 216, (item + 1) << 216)`. The token order within an item is its
+  issue order, so the page reads `first + skip` rows instead of sorting every
+  copy. An Ethereum v1 item's page reads its collection's tokens with the
+  item's `wearable_id`, by `issued_id`, so it is bounded by one v1 collection
+  rather than one item. The total is the same predicate counted up to 5,000,
+  or 25,000 for a deeper window. The snapshot takes the reads' statement
+  bound first. Then, for both networks, it needs the NFT folds fresh and
+  acknowledged by their publication, the items' proof, and the collection
+  membership the lookup joins (`catalogue::require_collections_on`: the
+  native catalogue's publication, or the collections mirror's complete pass).
+  On a lean seed (3.3M tokens, one Polygon item of 100,030 copies;
+  PostgreSQL 17, warm cache), the item's first page took 0.05 ms and its
+  deepest page (`skip` 24,900) 6.1 ms. Its total took 1.0 ms capped at 5,000
+  and 4.8 ms at 25,000. Ordering the same item by `issued_id` over
+  `nft_item_idx` sorted every copy in 37.5 ms. A v1 wearable of 2,000 copies
+  in a 40,000-token collection took about 5.6 ms for its page and its total.
+  One of 5,000 copies in a 200,000-token collection took 13 to 14 ms for its
+  first page, its deepest page and its total. A partial index on
+  `(network, contract_address, wearable_id, issued_id)` would make the v1
+  page a range walk too if a larger collection ever needs it.
 
 Measured on a seeded database (3.0M Polygon tokens over 100,000 items with a
 skewed popularity, 300,000 owners of whom 20 hold about 30,000 tokens each,
@@ -5204,8 +5556,21 @@ skewed popularity, 300,000 owners of whom 20 hold about 30,000 tokens each,
   131 ms for the 30,000-token owner, under 1 ms for a typical owner (with the
   names leg when no category is named).
 
-On a configured NFT walker, a LAND or estate `/v1/nfts` page reads the LAND
-publication and the required NFT publications in one repeatable-read snapshot.
+A LAND or estate `/v1/nfts` page on a configured NFT walker reads the LAND
+publication and any required NFT publications in one repeatable-read snapshot.
+An order-dependent LAND or estate page also uses this snapshot on a node
+that reads publications without running the walkers. The sale filter joins
+backed v3 listings and open legacy orders before counting and paging. An
+order-dependent NAME page uses the published NFT and trade sources on its
+page snapshot. These pages require every order projection they read to be
+acknowledged by its NFT publication, plus the NFT ownership rows for
+collections and NAMEs. The schema object pass adds the `nft_order` write
+and cursor triggers. After an upgrade, the next NFT publication establishes
+the order proof, including on an empty network. Until then, order-dependent
+reads that need that projection return `nft-index`.
+A mixed non-walking page checks its optional LAND and NAME publications
+on that same snapshot. Polygon-only filters leave out Ethereum registries
+and keep the requested Polygon collections.
 Both owner searches and ownerless catalogue pages read the collections, NAME
 and LAND sources that their filters can include. This includes unfiltered
 browsing, search, sale filters and sorting. A missing required publication returns its source's 503
@@ -5270,7 +5635,11 @@ listings of that token through `trade_assets_erc721_token_idx` on
 every row. The index is 432 kB on 4,900 listing assets (the table 528 kB);
 each ERC-721 asset that the trades mirror or a local signed trade inserts
 adds one entry, and the migrate object pass builds it. Planning such a
-statement takes about 9 ms.
+statement takes about 9 ms. The lateral orders by `shop.trades.created_at`,
+a `timestamp(3)`, so the tie-break matches the wire's millisecond value
+without applying an epoch expression to the indexed sort column. A
+32,000-token owner's listed page took 211–221 ms on the
+[focused fixture](METRICS.md#nft-listing-publication-and-page-reads).
 
 Measured on a second seeded database (2,999,100 Polygon tokens over 100,000
 items of 5,000 collections, item popularity cubic-skewed so one collection
@@ -5302,8 +5671,8 @@ windows below are a lower bound for a table folded in another order.
 | newest, `itemRarity=mythic` (85,000 tokens) | 204 ms | 222 ms | walks `nft_mint_order_idx` |
 | name, `category=wearable` | 380 ms | 78 ms | the items sorted by name, then `nft_item_idx` |
 | name, no category | 0.7 to 1.2 s | 96 ms | the same, and 300,000 names sorted |
-| recently sold, `category=wearable` | 1.6 to 3.3 s | 80 ms | every held token read and sorted: no index orders `sold_at` (before `shop.nft_last_sale`; see [Latest sale per token](#latest-sale-per-token)) |
-| recently sold, no category | 2.1 to 2.9 s | 94 ms | the same |
+| recently sold, `category=wearable` | 28 to 31 ms | 80 ms | walks the latest sales and the legacy orders newest first ([Recently sold](METRICS.md#recently-sold), measured with `shop.nft_last_sale` on a later seed, where sorting every held token takes 1.9 s) |
+| recently sold, no category | 123 to 142 ms | 94 ms | the same, over four sources (2.4 s sorted whole) |
 | cheapest or recently listed, `category=wearable` | 736 to 740 ms | 65 ms | the listed part (8,200 listed tokens with their lookups); the unlisted part reads 24 rows |
 | the same, no category | 791 ms | 82 ms | the same, with names and LAND |
 | the same, `category=wearable`, `skip=1,000` | 749 to 755 ms | 65 ms | 1,024 unlisted rows of each source added |
@@ -5364,6 +5733,26 @@ index. A failed concurrent build leaves an invalid index of that name: drop it
 before retrying. Each nft fold maintains the index beside `nft_owner_idx` and
 `nft_item_idx`.
 
+The recently sold walk's indexes come the same way: the object pass builds
+them in the migrate transaction, which blocks writes to `shop.nft` and
+`shop.nft_last_sale` while they build. They took 1.4 s and 1.2 s on the
+3.5M-token seed in [Recently sold](METRICS.md#recently-sold); production's
+build time is unmeasured. Whenever production's `shop.nft` is larger than
+that seed, build them before the release with the same definitions as
+`schemas/30_shop.sql`:
+
+```sql
+CREATE INDEX CONCURRENTLY nft_last_sale_recent_idx
+    ON shop.nft_last_sale (network, sold_at DESC, contract_address, token_id);
+CREATE INDEX CONCURRENTLY nft_sold_order_idx
+    ON shop.nft (network, sold_at DESC, contract_address, token_id)
+    WHERE sold_at IS NOT NULL AND owner IS NOT NULL;
+```
+
+The sales fold maintains the first beside `nft_last_sale_block`; the nft
+fold maintains the second, which holds only the held tokens with a legacy
+`OrderSuccessful`.
+
 The DCL NAME owner read (`services/catalyst/shop/src/market/names.rs`) looks
 a label up lowercased, through `nft_ens_label_idx`, which only the
 DCLRegistrar's rows enter (`ens_subdomain` set). The object pass builds it the
@@ -5376,48 +5765,57 @@ CREATE INDEX CONCURRENTLY nft_ens_label_idx
 
 Its size and the lookup time on production data are unmeasured.
 
-## Polygon legacy bids
+## Legacy bids
 
 On a node that walks the nft and sales indexes, `/v1/bids` and the activity
-feed's bids legs read Polygon's legacy bids (ERC721BidV2) from
-`shop.nft_bid`, the sales fold's table, in
-`services/catalyst/shop/src/market/bids.rs`. Ethereum's legacy bids still
-come from the collections subgraph reader.
+feed's bids legs read the legacy bids of both networks (ERC721BidV2 on
+Polygon, ERC721Bid on Ethereum) from `shop.nft_bid`, the sales folds' table,
+in `services/catalyst/shop/src/market/bids.rs`. No legacy bid read asks the
+subgraph there.
 
 Each read runs on one `REPEATABLE READ, READ ONLY` snapshot, at one instant
 taken once the snapshot is established: the trades mirror's bids are read on
-it too, and the subgraph's Ethereum bids are filtered at that instant. Each
-statement is bounded by the `/v1/nfts` statement timeout. The snapshot
-checks:
+it too. The native Ethereum book checks the ready land-authz publication
+for its served registries on that snapshot. An unavailable LAND fold
+returns the `land-authz-index` envelope. Each statement is bounded by the
+`/v1/nfts` statement timeout.
+For each network read, the snapshot checks:
 
 - the trades mirror and its trade-events verdicts are ready (otherwise their
   envelopes);
 
-- the Polygon `sales` cursor is published: its whole history, a fold
-  within 30 minutes, bound to the chain the node serves on Polygon
-  (`IndexSettings::chain_id`), out of quarantine. Otherwise the read answers
+- the network's `sales` cursor is published: its whole history, a fold
+  within 30 minutes, bound to the chain the node serves there
+  (`Settings::catalogue`), out of quarantine. Otherwise the read answers
   the `sales-index` envelope. `folded_block` is not compared with
   `last_block`, as for the nft index's readers: a pass advances the latter
   before it folds;
-- the bid book holds that published fold. The shared `shop.projection_write`
-  triggers mark changed bid rows pending in the writer's transaction and
-  acknowledge them when the sales cursor publishes. This includes legacy
-  writers and writes at an unchanged height. A walk advance without book
-  writes keeps serving. A pending write returns `sales-index` 503 until
-  publication and increments `catalyst_shop_bid_book_unpublished_fold_reads_total`;
-- the nft index is fresh on Polygon, on that same chain (otherwise the
+- the network's bid book holds that published fold. The shared
+  `shop.projection_write` triggers mark changed bid rows pending in the
+  writer's transaction and acknowledge them when the sales cursor publishes.
+  This includes legacy writers, the Ethereum bid history repair and writes at
+  an unchanged height. A walk advance without book writes keeps serving. A
+  pending write answers the `sales-index` envelope until publication and
+  increments `catalyst_shop_bid_book_unpublished_fold_reads_total` for the
+  network;
+- on Ethereum mainnet, the `ethereum_bid_history` repair complete and
+  explaining the cursor (otherwise the `sales-index` envelope);
+- the nft index is fresh on the network, on that same chain (otherwise the
   `nft-index` envelope);
-- the catalogue supplying Polygon membership has published. The reader
-  uses the native collections fold while it owns Polygon and waits for a
-  complete collections mirror pass after hand-back;
+- the catalogue supplying the network's collection membership has
+  published. The reader uses the native collections fold while it owns the
+  network and waits for a complete collections mirror pass after hand-back,
+  even while the mirror's copy is empty;
 - every bid in the request's scope (its filters but the seller's) has a
   seller.
 
 The scope, the page and the total hold only bids on the catalogue the nft
 index walks on the served chain: a `shop.collections` row of that
-`chain_id`, `testnet_verified` on a testnet. The bid contract takes any
-ERC721, and the collections subgraph kept no bid on an asset it had not
-catalogued; the nft walk never reads such a token's transfers.
+`chain_id`, `testnet_verified` on a testnet, and on Ethereum that chain's
+LAND, Estate and names registrar. The bid contracts take any ERC721, and the
+subgraphs kept no bid on an asset they had not catalogued; the walks never
+read such a token's transfers. Each network's total is capped at the
+reader's cap, and the networks are summed.
 
 A bid's seller is the one the fold stored, unless an nft rewind the fold
 has not rechecked yet (`shop.bid_seller_recheck`) lies before the bid and
@@ -5426,9 +5824,28 @@ the bid in `shop.nft_event`, when the nft walk's log reaches the bid's block
 and no backfill of the contract below its walk is owed
 (`shop.nft_contract`, the fold's own rule): a transfer the backfill has yet
 to add may be the latest.
-A bid with neither fails the read closed with the `nft-index` envelope,
-rather than being served without its seller or left out of a `seller`
-filter. That happens while the sales walk is ahead of the nft walk.
+On Ethereum, a seller inferred from the NFT log needs a matching NFT and
+sales block hash at or after bid creation. The read compares each walk's
+tip and its retained checkpoints. The same proof covers both a seller
+stored by the sales fold and one looked up from a transfer on the read.
+An acceptance names its seller directly. A missing shared block returns
+`nft-index` before seller filtering or pagination.
+A LAND or estate bid's is the token's latest transfer before the bid in
+`land_authz.authz_event`, when the land index's published block reaches the
+bid's block (the nft walk does not read their transfers) and the land log is
+proven on the sales walk's branch through it: the highest block at which
+the land cursor's block or checkpoint hash equals the sales cursor's or one
+of its `shop.chain_checkpoint` hashes (two point lookups on their primary
+keys). The two walks trail the head by their confirmations only, so after a
+fork they can publish the same height on different branches.
+A bid with neither fails the read closed with the envelope of the index it
+waits on (`nft-index` or `land-authz-index`), rather than being served
+without its seller or left out of a `seller` filter. That happens while the
+sales walk is ahead of the other walk.
+
+An Ethereum bid carries its creation's fingerprint as 0x-prefixed hex (`0x`
+when empty or not kept) and the chain's ERC721Bid as `bidAddress`; a Polygon
+bid an empty fingerprint, as the collections subgraph had none.
 
 Statuses are the subgraph's: an acceptance reads `sold`, and a bid the
 contract dropped when another bid on its token was accepted reads
@@ -5447,6 +5864,11 @@ ownership publications the read needs to check.
 NFT-index 503s are counted by network in `catalyst_shop_bid_nft_unavailable_reads_total`.
 The check runs before any seller filter or pagination, so a pending owner
 change cannot move bids between seller pages or totals.
+
+The collections subgraph leg compares raw expiry in two disjoint ranges.
+Second values use the request cutoff in whole seconds. Millisecond values
+use the same cutoff in milliseconds. The Graph applies this filter to
+both the page and the count.
 
 Measured on 60,000 synthetic bids over 2,000 catalogued contracts, plus
 3,000 bids on 200 contracts outside the catalogue, with 2M transfers and
@@ -5475,12 +5897,14 @@ they took 48 ms and 46 ms respectively.
 ## Legacy Marketplace orders
 
 `shop.legacy_order` is the legacy on-chain order book of `/v1/orders`,
-`/v1/orders/open-by-items` (and credits pricing through it) and the activity
-feed's orders leg on a node that walks the nft index. It is one row per
+`/v1/orders/open-by-items` (and credits pricing through it), the activity
+feed's orders leg and the legacy listings of both catalog versions on a
+node that walks the NFT index. It is one row per
 `OrderCreated` of the Marketplace contracts the nft walk takes in, folded
-from `shop.nft_event` by `services/catalyst/shop/src/market/legacy_orders.rs`
-in the nft fold's transaction, so it is published with the ownership it is
-read beside. The shop writes and reads it; no other area does.
+from `shop.nft_event` by `services/catalyst/shop/src/market/legacy_orders.rs`.
+Incremental writes are part of the NFT fold. A full rebuild writes a private
+book first and publishes its differences under the NFT cursor lock. Shop
+owns this projection.
 
 Invariants:
 
@@ -5491,15 +5915,19 @@ Invariants:
   the log's normalised value.
 - A fold rewrites every order of each token an order event past its marker
   touched, over the token's whole history, and leaves an unchanged row
-  alone. A rebuild (`since = -1`) folds every token.
+  alone. A rebuild (`since = -1`) opens the private build.
 - A reorg rewind deletes the orders of the tokens whose events it deletes,
   in its own transaction, and clears the publish marker; the rebuild that
   follows restores the orders whose creation remains.
 - `transferred` is not stored: a reader derives it on its snapshot from the
   token's owner (`shop.nft`, or `land_authz.token_right` for LAND and
-  estates). An open order reads `open` only while that owner is its seller;
-  another owner, none (burned, dissolved) or no row reads `transferred`,
-  before the status filter, the total and the page. The reader serves only
+  estates). An open order reads `open` while the published fold proves its
+  seller holds it. An owner row or a raw transfer beyond the fold withholds
+  that proof, as does an unfinished NFT contract backfill or refold. A
+  testnet collection also needs an active watch and a verified collection
+  row on the served chain. The Ethereum NAME registrar uses its fixed
+  deployment. An unproven open order reads `transferred` before the status
+  filter, total and page. The reader serves only
   the orders of the catalogue the nft index walks on the served chain (a
   `shop.collections` row of that `chain_id`, `testnet_verified` on a
   testnet) and of that chain's LAND and Estate registries and DCLRegistrar,
@@ -5517,35 +5945,105 @@ Invariants:
   book's block in `shop.legacy_order_refold` (network, contract, token;
   primary key only), whichever binary wrote it, an earlier one's included.
   The next order fold refolds those tokens with the ones touched past its
-  marker, and deletes them in its own transaction; a rebuild clears the
-  network's. The queue holds a repair window's tokens until the next fold.
+  marker and deletes them in its own transaction. The queue holds a repair
+  window's tokens until the next fold or the shadow rebuild drains it.
   The trigger costs one primary-key read of `shop.legacy_order_cursor` per
   order event written; transfers do not fire it. While a network has a
-  refold queued, its book is not read (`legacy_orders::caught_up`, on the
-  read's snapshot): an earlier binary can republish the same height
-  without folding it. Another network's queue does not withhold it.
+  refold queued, its book is not read. The `nft-index` message names the
+  queued refold separately from a book behind its published fold, and
+  `catalyst_shop_order_book_readiness_refusals_total` counts them by
+  network, route and reason (`refold_queued` or `fold_behind`). The reader
+  reports a queued refold once the book reaches the published fold.
+  An earlier binary can republish that network
+  without draining the queue. Refusals can continue until a writer with
+  the order fold takes the walk and publishes. Another network's queue
+  does not withhold this one. Operators can inspect the queue with no read
+  traffic using `SELECT network, count(*) FROM shop.legacy_order_refold
+  GROUP BY network`.
 - The book stands only while the nft walk's recovery point at its block
   (`shop.chain_checkpoint`) carries its hash. Every binary's rewind drops the
   points past its target, so a branch republished at the same height carries
   another hash; a book left behind past the 64 kept points loses its point.
-  A fold over a book that does not stand, and every rebuild (`since = -1`),
-  deletes the network's orders and refolds them whole, in the nft fold's
-  transaction, so no order of a lost branch survives. This binary's rewind
-  lowers the block to its target and clears the hash.
-- A reader serves the book only while it stands and its block, written in
-  the nft fold's transaction, is the published nft fold (`folded_block`),
-  checked on the read's snapshot; otherwise the `nft-index` envelope. The
+  The NFT fold opens a private build for an unstanding book or a full NFT
+  fold. A rewind lowers the live marker and clears its hash. The build
+  verifies the opening checkpoint and moving anchor and uses the cursor's
+  rewind and rebuild counters to distinguish ordinary pruning from a
+  branch change.
+- A reader serves the book only while it stands and its marker is the
+  published NFT fold (`folded_block`) on the read's snapshot. An active
+  private build returns the `nft-index` envelope until it publishes,
+  including a `since = -1` rebuild over a previously served book. The
   walk publishes a fold only after it commits and reads the head, so between
   the two the rows hold an unpublished fold: a read then answers the
   envelope rather than rows past the published block. A walk that advanced
   without folding leaves the book at the published block, still read.
-- A database that predates the table gets it empty and with no marker. The
-  schema run reads no log: a whole book is one statement of minutes on a
-  real node, past the run's 60 s statement limit, and it would run inside
-  the run's single transaction. Without a marker the book does not stand, so
-  readers answer the `nft-index` envelope, and the first nft fold after the
-  upgrade refolds it whole in the fold's own transaction (its own statement
-  limit), then publishes it with the fold.
+- The full fold probes at most 513 raw events in primary-key order. With
+  at most 512 events, no order events, and no live rows or queued refolds,
+  it can publish an empty book immediately. Otherwise it opens
+  `shop.legacy_order_rebuild` with the NFT checkpoint at `upto`. It neither
+  clears the live book nor deletes queued repairs when opening. The NFT
+  walk publishes as usual and runs alone while the build or its cleanup
+  needs the lane.
+- Each step processes at most 4,096 rows or order keys. The initial scan
+  and tail seek by `(block_number, log_index)` on the source primary key.
+  Only order logs enter the indexed build input. One creation page uses
+  indexed next-creation and latest-terminal probes to materialize the
+  private book. Repairs behind the scanned position enter a revisioned
+  queue that a deployed writer cannot consume. Replay pages the input and
+  output for a token and repeats if its revision changed.
+- The lane sets its deadlines before locking the NFT cursor. The pass
+  allows two minutes, each transaction gets up to 15 seconds, and lock
+  waits get at most 10 seconds. The rows and their positions commit
+  together, so the next pass resumes after a timeout or crash. A step
+  that runs out of its full budget after acquiring the cursor halves the
+  page size for the current writer acquisition.
+- After the private book catches up, the lane marks only that network's
+  legacy order projection pending. Bounded pages of the live and shadow
+  primary keys discover deletions, insertions and changed rows. A separate
+  queue records live writes from a deployed writer during reconciliation
+  and shadow writes during catch-up after the keyset pass. The live
+  relation and its indexes stay in place.
+- Same-height NFT publications still acknowledge NFT ownership and
+  `nft_order`. The schema keeps `legacy_order` pending through
+  reconciliation and any branch restart. Under the NFT cursor lock, the
+  final step checks that the tail and the queues are caught up, then
+  records the certified book marker. The next ordinary NFT publication
+  acknowledges the complete book. A newer complete publication by a
+  deployed writer can retire the private build before it starts to write
+  live rows. Private cleanup runs in bounded steps. The schema object
+  pass creates the new objects without reading the log.
+- Order-event insert, update and delete triggers look up the shadow
+  scan position once per order event and queue covered tokens. Live
+  and shadow order statement triggers journal affected keys during
+  reconciliation. The legacy pending trigger checks the network's
+  rebuild row when an NFT publication tries to acknowledge it.
+  The lane reports a stalled rebuild after 30 minutes without progress.
+
+While the legacy book is unavailable, routes that require it report
+`503` with source `nft-index`. Unfiltered catalogue browsing can omit
+legacy listings. NFT ownership, `/v1/nfts`, direct v3 trade reads and
+reads scoped to the other network can continue publishing and serving.
+The rebuild row's `phase` and `progressed_at` show whether it is
+advancing, and the network's `legacy_order` row in
+`shop.projection_write` shows whether its completed book has been
+acknowledged.
+
+For the earlier full-replacement baseline on local PostgreSQL 17.6 with
+1M synthetic Matic shadow rows, 1,000
+Ethereum rows and the existing live indexes and projection write triggers,
+the cursor-locked publication transaction took **39.05 s** on an empty
+Matic book and **56.11 s** when replacing 1M visible Matic rows. The
+replacement insert took 53.56 s. Each transaction preserved the Ethereum
+rows and published exactly 1M Matic rows. This is one local measurement
+per case, without concurrent writer load.
+The earlier single-transaction differential publish took **40.71 s** on an empty Matic book and
+**4.79 s** on a successor with 10,000 changed rows, including 1,000
+replaced keys, with the same row counts. Both runs preserved the 1,000
+Ethereum rows. These are single local measurements without a competing
+writer. On the current lane, a local full rebuild of one million Polygon
+orders alongside 142,000 Ethereum rows reached the next acknowledgement
+in **120.03 s**. The shared legacy projection gate was pending for
+**52.40 s**. [Measured rebuild workload](METRICS.md#marketplace-legacy-book-publication)
 
 The page, count and readiness checks share a `REPEATABLE READ, READ ONLY`
 snapshot. An explicit network or chain-bound contract can narrow the NFT
@@ -5582,8 +6080,10 @@ at whatever height. Reads refused that way are counted by
 between a fold's commit and its publication. The denominator is
 `catalyst_shop_order_book_fold_read_checks_total`, incremented once for each
 attempted network's publication check. Both counters use `network` and
-`route` labels. The route is `orders`, `open_by_items` or `activity`.
-Each activity page takes its own book snapshot and counts its checks.
+`route` labels. The route is `orders`, `open_by_items`, `activity`, `catalog`,
+`nfts` or `owners` (`/v1/owners`, which checks the NFT fold alone). Each activity page takes its own book snapshot and counts its checks.
+For the catalog label this also counts a withheld book leg on an
+ordinary page that can still serve item metadata.
 
 ### Fold-written projections and their publication
 
@@ -5591,17 +6091,30 @@ Each activity page takes its own book snapshot and counts its checks.
 projection table, whether the projection holds a write no publication has
 acknowledged (`pending`), and the cursor's last block at the latest write.
 Statement-level triggers with transition tables on `shop.nft` and
-`shop.legacy_order` (the `nft` cursor) and `shop.nft_bid` (the `sales`
+`shop.nft_order` and `shop.legacy_order` (the `nft` cursor) and `shop.nft_bid` (the `sales`
 cursor) set `pending` for the networks a statement wrote; a no-op upsert or
 an empty statement sets nothing. A trigger on `shop.chain_cursor` clears it
 when a publication commits (`folded_block` and `folded_at` set by any
 binary's `mark_folded`, at the same height too). The table is created by the
-object pass and seeded pending for every existing cursor, so an upgraded
-node serves again from its next publication. Workload: one row per
-(cursor, projection), rewritten by each fold statement that writes and each
-publication; the triggers add one transition table per write statement,
-sized by the rows it changed. A reader calls
-`chain_walk::rows_published_on` on its snapshot.
+object pass. Initially existing cursors seed their ownership, legacy book and
+bid projections pending until the next publication. The `nft_order` proof
+starts at the first NFT publication after the object pass adds its triggers.
+Its cursor trigger also handles an empty projection and a publication from
+an older writer after upgrade. Each cursor and projection use one row. A
+write statement builds a transition table sized by the rows it changed.
+A reader checks the writes on the response snapshot. An order-dependent
+NFT page requires an explicit acknowledged `nft_order` row and checks the
+ownership projection for the collections or NAMEs it reads.
+
+The NFT fold commits before the head RPCs and a separate publication
+transaction. A read that sees one of its required projections pending
+returns `503 nft-index` until the publication acknowledges those rows. A
+failed head RPC can extend this gap to the next successful publication.
+In a local PostgreSQL test with two simulated Polygon RPCs at 25, 100 or
+250 ms each, the p95 gap was 57, 207 or 508 ms. With a row-changing fold
+every five seconds and uniform arrivals, those windows cover about
+1.1%, 4.1% or 10.2% of single-network checks. The `nfts` counters above
+measure the rate by network. See the [NFT listing measurements](METRICS.md#nft-listing-publication-and-page-reads).
 
 The NFT and sales folds, rewinds and rebuild clears lock the chain cursor
 before writing these projections. Rewind and clear take any notification
@@ -5618,7 +6131,9 @@ no network), `legacy_order_seller_idx` (an owner's orders newest first),
 `legacy_order_created_idx` and `legacy_order_updated_idx` (the newest-first
 and recently-updated windows with no filter), `legacy_order_open_idx` (a
 contract's open orders by price) and `legacy_order_open_price_idx` (every
-open order by price). `legacy_order_issued_idx` supports unscoped token
+open order by price). `legacy_order_open_expiry_idx` reads the next open
+order expiry on each network for the v1 catalog memo.
+`legacy_order_issued_idx` supports unscoped token
 ID sorts in either direction, with an incremental sort for order ID ties.
 `legacy_order_price_idx` sorts unscoped orders by price and order ID
 when the caller asks for every status. See the
@@ -5634,9 +6149,11 @@ CREATE INDEX CONCURRENTLY IF NOT EXISTS legacy_order_issued_idx
   ON shop.legacy_order (token_id);
 CREATE INDEX CONCURRENTLY IF NOT EXISTS legacy_order_price_idx
   ON shop.legacy_order (price, order_id);
+CREATE INDEX CONCURRENTLY IF NOT EXISTS legacy_order_open_expiry_idx
+  ON shop.legacy_order (network, expires_at) WHERE status = 'open';
 ```
 
-Schema status checks index names. Before migrating, verify that both indexes
+Schema status checks index names. Before migrating, verify that these indexes
 have `pg_index.indisvalid` set and that `pg_get_indexdef(indexrelid)` matches
 the canonical definitions. Drop and rebuild any invalid or mismatched index
 before relying on its name.

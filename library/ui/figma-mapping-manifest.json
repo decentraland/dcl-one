@@ -7611,6 +7611,867 @@
       ]
     },
     {
+      "setId": "16673:640",
+      "name": "bold/menu-item",
+      "page": "",
+      "kind": "set",
+      "properties": {
+        "icon#16673:80": {
+          "type": "INSTANCE_SWAP",
+          "default": "8727:4614"
+        },
+        "label#16673:0": {
+          "type": "TEXT",
+          "default": "Label"
+        },
+        "shortcut#18467:0": {
+          "type": "TEXT",
+          "default": "[X]"
+        },
+        "show-icon#16673:40": {
+          "type": "BOOLEAN",
+          "default": true
+        },
+        "state": {
+          "type": "VARIANT",
+          "default": "default",
+          "options": [
+            "default",
+            "hover",
+            "pressed",
+            "disabled",
+            "selected"
+          ]
+        },
+        "tone": {
+          "type": "VARIANT",
+          "default": "default",
+          "options": [
+            "default",
+            "destructive"
+          ]
+        },
+        "trailing": {
+          "type": "VARIANT",
+          "default": "none",
+          "options": [
+            "none",
+            "chevron",
+            "switch",
+            "checked",
+            "unchecked",
+            "shortcut"
+          ]
+        },
+        "type": {
+          "type": "VARIANT",
+          "default": "option",
+          "options": [
+            "option",
+            "section-title",
+            "divider"
+          ]
+        },
+        "viewport": {
+          "type": "VARIANT",
+          "default": "desktop",
+          "options": [
+            "desktop",
+            "mobile"
+          ]
+        }
+      },
+      "variants": [
+        {
+          "id": "16673:303",
+          "name": "type=option, state=default, tone=default, trailing=none, viewport=desktop",
+          "props": {
+            "state": "default",
+            "tone": "default",
+            "trailing": "none",
+            "type": "option",
+            "viewport": "desktop"
+          }
+        },
+        {
+          "id": "16673:311",
+          "name": "type=option, state=default, tone=default, trailing=chevron, viewport=desktop",
+          "props": {
+            "state": "default",
+            "tone": "default",
+            "trailing": "chevron",
+            "type": "option",
+            "viewport": "desktop"
+          }
+        },
+        {
+          "id": "16673:331",
+          "name": "type=option, state=default, tone=default, trailing=switch, viewport=desktop",
+          "props": {
+            "state": "default",
+            "tone": "default",
+            "trailing": "switch",
+            "type": "option",
+            "viewport": "desktop"
+          }
+        },
+        {
+          "id": "16673:342",
+          "name": "type=option, state=default, tone=destructive, trailing=none, viewport=desktop",
+          "props": {
+            "state": "default",
+            "tone": "destructive",
+            "trailing": "none",
+            "type": "option",
+            "viewport": "desktop"
+          }
+        },
+        {
+          "id": "16673:350",
+          "name": "type=option, state=hover, tone=default, trailing=none, viewport=desktop",
+          "props": {
+            "state": "hover",
+            "tone": "default",
+            "trailing": "none",
+            "type": "option",
+            "viewport": "desktop"
+          }
+        },
+        {
+          "id": "16673:358",
+          "name": "type=option, state=hover, tone=default, trailing=chevron, viewport=desktop",
+          "props": {
+            "state": "hover",
+            "tone": "default",
+            "trailing": "chevron",
+            "type": "option",
+            "viewport": "desktop"
+          }
+        },
+        {
+          "id": "16673:378",
+          "name": "type=option, state=hover, tone=default, trailing=switch, viewport=desktop",
+          "props": {
+            "state": "hover",
+            "tone": "default",
+            "trailing": "switch",
+            "type": "option",
+            "viewport": "desktop"
+          }
+        },
+        {
+          "id": "16673:389",
+          "name": "type=option, state=hover, tone=destructive, trailing=none, viewport=desktop",
+          "props": {
+            "state": "hover",
+            "tone": "destructive",
+            "trailing": "none",
+            "type": "option",
+            "viewport": "desktop"
+          }
+        },
+        {
+          "id": "16673:397",
+          "name": "type=option, state=pressed, tone=default, trailing=none, viewport=desktop",
+          "props": {
+            "state": "pressed",
+            "tone": "default",
+            "trailing": "none",
+            "type": "option",
+            "viewport": "desktop"
+          }
+        },
+        {
+          "id": "16673:405",
+          "name": "type=option, state=pressed, tone=default, trailing=chevron, viewport=desktop",
+          "props": {
+            "state": "pressed",
+            "tone": "default",
+            "trailing": "chevron",
+            "type": "option",
+            "viewport": "desktop"
+          }
+        },
+        {
+          "id": "16673:425",
+          "name": "type=option, state=pressed, tone=default, trailing=switch, viewport=desktop",
+          "props": {
+            "state": "pressed",
+            "tone": "default",
+            "trailing": "switch",
+            "type": "option",
+            "viewport": "desktop"
+          }
+        },
+        {
+          "id": "16673:436",
+          "name": "type=option, state=pressed, tone=destructive, trailing=none, viewport=desktop",
+          "props": {
+            "state": "pressed",
+            "tone": "destructive",
+            "trailing": "none",
+            "type": "option",
+            "viewport": "desktop"
+          }
+        },
+        {
+          "id": "16673:444",
+          "name": "type=option, state=disabled, tone=default, trailing=none, viewport=desktop",
+          "props": {
+            "state": "disabled",
+            "tone": "default",
+            "trailing": "none",
+            "type": "option",
+            "viewport": "desktop"
+          }
+        },
+        {
+          "id": "16673:452",
+          "name": "type=option, state=disabled, tone=default, trailing=chevron, viewport=desktop",
+          "props": {
+            "state": "disabled",
+            "tone": "default",
+            "trailing": "chevron",
+            "type": "option",
+            "viewport": "desktop"
+          }
+        },
+        {
+          "id": "16673:472",
+          "name": "type=option, state=disabled, tone=default, trailing=switch, viewport=desktop",
+          "props": {
+            "state": "disabled",
+            "tone": "default",
+            "trailing": "switch",
+            "type": "option",
+            "viewport": "desktop"
+          }
+        },
+        {
+          "id": "16673:483",
+          "name": "type=option, state=disabled, tone=destructive, trailing=none, viewport=desktop",
+          "props": {
+            "state": "disabled",
+            "tone": "destructive",
+            "trailing": "none",
+            "type": "option",
+            "viewport": "desktop"
+          }
+        },
+        {
+          "id": "16673:491",
+          "name": "type=section-title, state=default, tone=default, trailing=none, viewport=desktop",
+          "props": {
+            "state": "default",
+            "tone": "default",
+            "trailing": "none",
+            "type": "section-title",
+            "viewport": "desktop"
+          }
+        },
+        {
+          "id": "16673:493",
+          "name": "type=divider, state=default, tone=default, trailing=none, viewport=desktop",
+          "props": {
+            "state": "default",
+            "tone": "default",
+            "trailing": "none",
+            "type": "divider",
+            "viewport": "desktop"
+          }
+        },
+        {
+          "id": "16673:495",
+          "name": "type=option, state=default, tone=default, trailing=none, viewport=mobile",
+          "props": {
+            "state": "default",
+            "tone": "default",
+            "trailing": "none",
+            "type": "option",
+            "viewport": "mobile"
+          }
+        },
+        {
+          "id": "16673:503",
+          "name": "type=option, state=default, tone=default, trailing=chevron, viewport=mobile",
+          "props": {
+            "state": "default",
+            "tone": "default",
+            "trailing": "chevron",
+            "type": "option",
+            "viewport": "mobile"
+          }
+        },
+        {
+          "id": "16673:523",
+          "name": "type=option, state=default, tone=default, trailing=switch, viewport=mobile",
+          "props": {
+            "state": "default",
+            "tone": "default",
+            "trailing": "switch",
+            "type": "option",
+            "viewport": "mobile"
+          }
+        },
+        {
+          "id": "16673:534",
+          "name": "type=option, state=default, tone=destructive, trailing=none, viewport=mobile",
+          "props": {
+            "state": "default",
+            "tone": "destructive",
+            "trailing": "none",
+            "type": "option",
+            "viewport": "mobile"
+          }
+        },
+        {
+          "id": "16673:542",
+          "name": "type=option, state=pressed, tone=default, trailing=none, viewport=mobile",
+          "props": {
+            "state": "pressed",
+            "tone": "default",
+            "trailing": "none",
+            "type": "option",
+            "viewport": "mobile"
+          }
+        },
+        {
+          "id": "16673:550",
+          "name": "type=option, state=pressed, tone=default, trailing=chevron, viewport=mobile",
+          "props": {
+            "state": "pressed",
+            "tone": "default",
+            "trailing": "chevron",
+            "type": "option",
+            "viewport": "mobile"
+          }
+        },
+        {
+          "id": "16673:570",
+          "name": "type=option, state=pressed, tone=default, trailing=switch, viewport=mobile",
+          "props": {
+            "state": "pressed",
+            "tone": "default",
+            "trailing": "switch",
+            "type": "option",
+            "viewport": "mobile"
+          }
+        },
+        {
+          "id": "16673:581",
+          "name": "type=option, state=pressed, tone=destructive, trailing=none, viewport=mobile",
+          "props": {
+            "state": "pressed",
+            "tone": "destructive",
+            "trailing": "none",
+            "type": "option",
+            "viewport": "mobile"
+          }
+        },
+        {
+          "id": "16673:589",
+          "name": "type=option, state=disabled, tone=default, trailing=none, viewport=mobile",
+          "props": {
+            "state": "disabled",
+            "tone": "default",
+            "trailing": "none",
+            "type": "option",
+            "viewport": "mobile"
+          }
+        },
+        {
+          "id": "16673:597",
+          "name": "type=option, state=disabled, tone=default, trailing=chevron, viewport=mobile",
+          "props": {
+            "state": "disabled",
+            "tone": "default",
+            "trailing": "chevron",
+            "type": "option",
+            "viewport": "mobile"
+          }
+        },
+        {
+          "id": "16673:617",
+          "name": "type=option, state=disabled, tone=default, trailing=switch, viewport=mobile",
+          "props": {
+            "state": "disabled",
+            "tone": "default",
+            "trailing": "switch",
+            "type": "option",
+            "viewport": "mobile"
+          }
+        },
+        {
+          "id": "16673:628",
+          "name": "type=option, state=disabled, tone=destructive, trailing=none, viewport=mobile",
+          "props": {
+            "state": "disabled",
+            "tone": "destructive",
+            "trailing": "none",
+            "type": "option",
+            "viewport": "mobile"
+          }
+        },
+        {
+          "id": "16673:636",
+          "name": "type=section-title, state=default, tone=default, trailing=none, viewport=mobile",
+          "props": {
+            "state": "default",
+            "tone": "default",
+            "trailing": "none",
+            "type": "section-title",
+            "viewport": "mobile"
+          }
+        },
+        {
+          "id": "16673:638",
+          "name": "type=divider, state=default, tone=default, trailing=none, viewport=mobile",
+          "props": {
+            "state": "default",
+            "tone": "default",
+            "trailing": "none",
+            "type": "divider",
+            "viewport": "mobile"
+          }
+        },
+        {
+          "id": "16687:546",
+          "name": "type=option, state=default, tone=default, trailing=checked, viewport=desktop",
+          "props": {
+            "state": "default",
+            "tone": "default",
+            "trailing": "checked",
+            "type": "option",
+            "viewport": "desktop"
+          }
+        },
+        {
+          "id": "16687:555",
+          "name": "type=option, state=hover, tone=default, trailing=checked, viewport=desktop",
+          "props": {
+            "state": "hover",
+            "tone": "default",
+            "trailing": "checked",
+            "type": "option",
+            "viewport": "desktop"
+          }
+        },
+        {
+          "id": "16687:564",
+          "name": "type=option, state=pressed, tone=default, trailing=checked, viewport=desktop",
+          "props": {
+            "state": "pressed",
+            "tone": "default",
+            "trailing": "checked",
+            "type": "option",
+            "viewport": "desktop"
+          }
+        },
+        {
+          "id": "16687:573",
+          "name": "type=option, state=disabled, tone=default, trailing=checked, viewport=desktop",
+          "props": {
+            "state": "disabled",
+            "tone": "default",
+            "trailing": "checked",
+            "type": "option",
+            "viewport": "desktop"
+          }
+        },
+        {
+          "id": "16687:582",
+          "name": "type=option, state=default, tone=default, trailing=checked, viewport=mobile",
+          "props": {
+            "state": "default",
+            "tone": "default",
+            "trailing": "checked",
+            "type": "option",
+            "viewport": "mobile"
+          }
+        },
+        {
+          "id": "16687:591",
+          "name": "type=option, state=pressed, tone=default, trailing=checked, viewport=mobile",
+          "props": {
+            "state": "pressed",
+            "tone": "default",
+            "trailing": "checked",
+            "type": "option",
+            "viewport": "mobile"
+          }
+        },
+        {
+          "id": "16687:600",
+          "name": "type=option, state=disabled, tone=default, trailing=checked, viewport=mobile",
+          "props": {
+            "state": "disabled",
+            "tone": "default",
+            "trailing": "checked",
+            "type": "option",
+            "viewport": "mobile"
+          }
+        },
+        {
+          "id": "16691:591",
+          "name": "type=option, state=default, tone=default, trailing=unchecked, viewport=desktop",
+          "props": {
+            "state": "default",
+            "tone": "default",
+            "trailing": "unchecked",
+            "type": "option",
+            "viewport": "desktop"
+          }
+        },
+        {
+          "id": "16691:595",
+          "name": "type=option, state=hover, tone=default, trailing=unchecked, viewport=desktop",
+          "props": {
+            "state": "hover",
+            "tone": "default",
+            "trailing": "unchecked",
+            "type": "option",
+            "viewport": "desktop"
+          }
+        },
+        {
+          "id": "16691:599",
+          "name": "type=option, state=pressed, tone=default, trailing=unchecked, viewport=desktop",
+          "props": {
+            "state": "pressed",
+            "tone": "default",
+            "trailing": "unchecked",
+            "type": "option",
+            "viewport": "desktop"
+          }
+        },
+        {
+          "id": "16691:603",
+          "name": "type=option, state=disabled, tone=default, trailing=unchecked, viewport=desktop",
+          "props": {
+            "state": "disabled",
+            "tone": "default",
+            "trailing": "unchecked",
+            "type": "option",
+            "viewport": "desktop"
+          }
+        },
+        {
+          "id": "16691:607",
+          "name": "type=option, state=default, tone=default, trailing=unchecked, viewport=mobile",
+          "props": {
+            "state": "default",
+            "tone": "default",
+            "trailing": "unchecked",
+            "type": "option",
+            "viewport": "mobile"
+          }
+        },
+        {
+          "id": "16691:611",
+          "name": "type=option, state=pressed, tone=default, trailing=unchecked, viewport=mobile",
+          "props": {
+            "state": "pressed",
+            "tone": "default",
+            "trailing": "unchecked",
+            "type": "option",
+            "viewport": "mobile"
+          }
+        },
+        {
+          "id": "16691:615",
+          "name": "type=option, state=disabled, tone=default, trailing=unchecked, viewport=mobile",
+          "props": {
+            "state": "disabled",
+            "tone": "default",
+            "trailing": "unchecked",
+            "type": "option",
+            "viewport": "mobile"
+          }
+        },
+        {
+          "id": "18409:359",
+          "name": "type=option, state=selected, tone=default, trailing=none, viewport=desktop",
+          "props": {
+            "state": "selected",
+            "tone": "default",
+            "trailing": "none",
+            "type": "option",
+            "viewport": "desktop"
+          }
+        },
+        {
+          "id": "18409:362",
+          "name": "type=option, state=selected, tone=default, trailing=chevron, viewport=desktop",
+          "props": {
+            "state": "selected",
+            "tone": "default",
+            "trailing": "chevron",
+            "type": "option",
+            "viewport": "desktop"
+          }
+        },
+        {
+          "id": "18409:366",
+          "name": "type=option, state=selected, tone=default, trailing=switch, viewport=desktop",
+          "props": {
+            "state": "selected",
+            "tone": "default",
+            "trailing": "switch",
+            "type": "option",
+            "viewport": "desktop"
+          }
+        },
+        {
+          "id": "18409:370",
+          "name": "type=option, state=selected, tone=destructive, trailing=none, viewport=desktop",
+          "props": {
+            "state": "selected",
+            "tone": "destructive",
+            "trailing": "none",
+            "type": "option",
+            "viewport": "desktop"
+          }
+        },
+        {
+          "id": "18409:373",
+          "name": "type=option, state=selected, tone=default, trailing=none, viewport=mobile",
+          "props": {
+            "state": "selected",
+            "tone": "default",
+            "trailing": "none",
+            "type": "option",
+            "viewport": "mobile"
+          }
+        },
+        {
+          "id": "18409:376",
+          "name": "type=option, state=selected, tone=default, trailing=chevron, viewport=mobile",
+          "props": {
+            "state": "selected",
+            "tone": "default",
+            "trailing": "chevron",
+            "type": "option",
+            "viewport": "mobile"
+          }
+        },
+        {
+          "id": "18409:380",
+          "name": "type=option, state=selected, tone=default, trailing=switch, viewport=mobile",
+          "props": {
+            "state": "selected",
+            "tone": "default",
+            "trailing": "switch",
+            "type": "option",
+            "viewport": "mobile"
+          }
+        },
+        {
+          "id": "18409:384",
+          "name": "type=option, state=selected, tone=destructive, trailing=none, viewport=mobile",
+          "props": {
+            "state": "selected",
+            "tone": "destructive",
+            "trailing": "none",
+            "type": "option",
+            "viewport": "mobile"
+          }
+        },
+        {
+          "id": "18409:387",
+          "name": "type=option, state=selected, tone=default, trailing=checked, viewport=desktop",
+          "props": {
+            "state": "selected",
+            "tone": "default",
+            "trailing": "checked",
+            "type": "option",
+            "viewport": "desktop"
+          }
+        },
+        {
+          "id": "18409:390",
+          "name": "type=option, state=selected, tone=default, trailing=checked, viewport=mobile",
+          "props": {
+            "state": "selected",
+            "tone": "default",
+            "trailing": "checked",
+            "type": "option",
+            "viewport": "mobile"
+          }
+        },
+        {
+          "id": "18409:393",
+          "name": "type=option, state=selected, tone=default, trailing=unchecked, viewport=desktop",
+          "props": {
+            "state": "selected",
+            "tone": "default",
+            "trailing": "unchecked",
+            "type": "option",
+            "viewport": "desktop"
+          }
+        },
+        {
+          "id": "18409:396",
+          "name": "type=option, state=selected, tone=default, trailing=unchecked, viewport=mobile",
+          "props": {
+            "state": "selected",
+            "tone": "default",
+            "trailing": "unchecked",
+            "type": "option",
+            "viewport": "mobile"
+          }
+        },
+        {
+          "id": "18467:7546",
+          "name": "type=option, state=default, tone=default, trailing=shortcut, viewport=desktop",
+          "props": {
+            "state": "default",
+            "tone": "default",
+            "trailing": "shortcut",
+            "type": "option",
+            "viewport": "desktop"
+          }
+        },
+        {
+          "id": "18467:7550",
+          "name": "type=option, state=hover, tone=default, trailing=shortcut, viewport=desktop",
+          "props": {
+            "state": "hover",
+            "tone": "default",
+            "trailing": "shortcut",
+            "type": "option",
+            "viewport": "desktop"
+          }
+        },
+        {
+          "id": "18467:7554",
+          "name": "type=option, state=pressed, tone=default, trailing=shortcut, viewport=desktop",
+          "props": {
+            "state": "pressed",
+            "tone": "default",
+            "trailing": "shortcut",
+            "type": "option",
+            "viewport": "desktop"
+          }
+        },
+        {
+          "id": "18467:7558",
+          "name": "type=option, state=disabled, tone=default, trailing=shortcut, viewport=desktop",
+          "props": {
+            "state": "disabled",
+            "tone": "default",
+            "trailing": "shortcut",
+            "type": "option",
+            "viewport": "desktop"
+          }
+        },
+        {
+          "id": "18467:7562",
+          "name": "type=option, state=default, tone=default, trailing=shortcut, viewport=mobile",
+          "props": {
+            "state": "default",
+            "tone": "default",
+            "trailing": "shortcut",
+            "type": "option",
+            "viewport": "mobile"
+          }
+        },
+        {
+          "id": "18467:7566",
+          "name": "type=option, state=pressed, tone=default, trailing=shortcut, viewport=mobile",
+          "props": {
+            "state": "pressed",
+            "tone": "default",
+            "trailing": "shortcut",
+            "type": "option",
+            "viewport": "mobile"
+          }
+        },
+        {
+          "id": "18467:7570",
+          "name": "type=option, state=disabled, tone=default, trailing=shortcut, viewport=mobile",
+          "props": {
+            "state": "disabled",
+            "tone": "default",
+            "trailing": "shortcut",
+            "type": "option",
+            "viewport": "mobile"
+          }
+        },
+        {
+          "id": "18467:7574",
+          "name": "type=option, state=selected, tone=default, trailing=shortcut, viewport=desktop",
+          "props": {
+            "state": "selected",
+            "tone": "default",
+            "trailing": "shortcut",
+            "type": "option",
+            "viewport": "desktop"
+          }
+        },
+        {
+          "id": "18467:7578",
+          "name": "type=option, state=selected, tone=default, trailing=shortcut, viewport=mobile",
+          "props": {
+            "state": "selected",
+            "tone": "default",
+            "trailing": "shortcut",
+            "type": "option",
+            "viewport": "mobile"
+          }
+        }
+      ]
+    },
+    {
+      "setId": "16673:641",
+      "name": "bold/menu",
+      "page": "",
+      "kind": "component",
+      "properties": {
+        "Slot#16658:0": {
+          "type": "SLOT"
+        }
+      },
+      "variants": [
+        {
+          "id": "16673:641",
+          "name": "bold/menu",
+          "props": {}
+        }
+      ]
+    },
+    {
+      "setId": "16673:785",
+      "name": "bold/context-menu",
+      "page": "",
+      "kind": "set",
+      "properties": {
+        "type": {
+          "type": "VARIANT",
+          "default": "user",
+          "options": [
+            "user",
+            "chat"
+          ]
+        }
+      },
+      "variants": [
+        {
+          "id": "16690:618",
+          "name": "type=user",
+          "props": {
+            "type": "user"
+          }
+        },
+        {
+          "id": "16690:939",
+          "name": "type=chat",
+          "props": {
+            "type": "chat"
+          }
+        }
+      ]
+    },
+    {
       "setId": "16713:28842",
       "name": "checkbox-label",
       "page": "",

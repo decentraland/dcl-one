@@ -124,6 +124,45 @@ describe('settings panel unset controls', () => {
   })
 })
 
+// The engine's Microphone lists only System Default until the browser reveals the inputs.
+describe('settings panel microphone', () => {
+  const DEFAULT_ONLY = base({ name: 'Microphone', category: 'Audio', namedVariants: [{ name: 'System Default', description: '' }], maxValue: 1 })
+  const panel = (settings: SettingsState): React.JSX.Element => (
+    <SettingsPanel lobbyStage={{ preset: 'halloween-2026', set: vi.fn() }} settings={settings} bindings={fakeSession().bindings} profile={fakeProfileState()} onNavigate={vi.fn()} />
+  )
+
+  beforeEach(() => resetSettingsTab())
+
+  it('a lone choice opens as a list with it selected, and picking it sets it', async () => {
+    const settings: SettingsState = { ...fakeSession().settings, open: true, list: [DEFAULT_ONLY], set: vi.fn() }
+    render(panel(settings))
+    await userEvent.click(screen.getByRole('button', { name: 'Microphone' }))
+    const option = screen.getByRole('option', { name: 'System Default' })
+    expect(option).toHaveAttribute('aria-selected', 'true')
+    await userEvent.click(option)
+    expect(vi.mocked(settings.set)).toHaveBeenCalledWith('Microphone', 0)
+  })
+
+  it('choices re-read under the same value can be picked', async () => {
+    const settings: SettingsState = { ...fakeSession().settings, open: true, list: [DEFAULT_ONLY], set: vi.fn() }
+    const { rerender } = render(panel(settings))
+    const reported = { ...DEFAULT_ONLY, namedVariants: [...DEFAULT_ONLY.namedVariants, { name: 'USB Headset', description: '' }], maxValue: 2 }
+    rerender(panel({ ...settings, list: [reported] }))
+    await userEvent.click(screen.getByRole('button', { name: 'Microphone' }))
+    await userEvent.click(screen.getByRole('option', { name: 'USB Headset' }))
+    expect(vi.mocked(settings.set)).toHaveBeenCalledWith('Microphone', 1)
+  })
+
+  it('a choice renamed under the same value shows its new name', () => {
+    const headset = (name: string): Setting => ({ ...DEFAULT_ONLY, namedVariants: [...DEFAULT_ONLY.namedVariants, { name, description: '' }], maxValue: 2, value: 1 })
+    const settings: SettingsState = { ...fakeSession().settings, open: true, list: [headset('USB Headset')], set: vi.fn() }
+    const { rerender } = render(panel(settings))
+    expect(screen.getByRole('button', { name: 'Microphone' })).toHaveTextContent('USB Headset')
+    rerender(panel({ ...settings, list: [headset('USB Headset (unplugged)')] }))
+    expect(screen.getByRole('button', { name: 'Microphone' })).toHaveTextContent('USB Headset (unplugged)')
+  })
+})
+
 // A disabled setting keeps its value visible; its control does not change it.
 describe('settings panel disabled controls', () => {
   it('a disabled select keeps its value and does not set', async () => {
@@ -193,7 +232,7 @@ describe('ask before leaving the page', () => {
   beforeEach(() => resetSettingsTab())
 
   it('is off, only in the Gameplay tab, stored when turned on, and off again after the tab reset', async () => {
-    const settings: SettingsState = { ...fakeSession().settings, open: true, list: [SELECT, base({ name: 'chat_bubbles', category: 'Gameplay' })], set: vi.fn() }
+    const settings: SettingsState = { ...fakeSession().settings, open: true, list: [SELECT, base({ name: 'Constrain Scene Uis', category: 'Gameplay' })], set: vi.fn() }
     render(<SettingsPanel lobbyStage={{ preset: 'halloween-2026', set: vi.fn() }} settings={settings} bindings={fakeSession().bindings} profile={fakeProfileState()} onNavigate={vi.fn()} />)
     const name = 'Ask Before Leaving the Page'
     expect(screen.queryByRole('switch', { name })).toBeNull()

@@ -608,8 +608,9 @@ pub fn bn_add(a: &str, b: &str) -> String {
         carry = s / 10;
         out.push(b'0' + (s % 10) as u8);
     }
+    // Two digits and a carry sum to at most 19, so the last carry is 1.
     if carry > 0 {
-        out.push(b'0' + carry as u8);
+        out.push(b'1');
     }
     while out.len() > 1 && out.last() == Some(&b'0') {
         out.pop();

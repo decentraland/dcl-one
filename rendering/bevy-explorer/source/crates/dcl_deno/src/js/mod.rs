@@ -32,6 +32,7 @@ use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 #[cfg(not(feature = "inspect"))]
 pub struct InspectorServer;
 
+mod blob_slice;
 mod clock;
 mod errors;
 pub mod fetch;
@@ -215,6 +216,7 @@ fn scene_ops(super_user: bool) -> (Vec<OpDecl>, HashMap<&'static str, OpDecl>) {
         .into_iter()
         .chain(structured_clone::override_ops())
         .chain(rejections::override_ops())
+        .chain(blob_slice::override_ops())
     {
         op_map.insert(op.name, op);
     }
@@ -1071,6 +1073,31 @@ mod tests {
         let scene = r#"if (Object.keys(require("~system/BevyExplorerApi")).length === 0) { throw new Error("no exports"); }"#;
         run_scene_as(false, true, scene).unwrap();
         assert!(run_scene(false, scene).is_err());
+    }
+
+    /// Each module is evaluated under its own name, so a stack trace says where an error is.
+    #[test]
+    fn a_module_script_is_named_after_the_module() {
+        run_scene(
+            false,
+            r#"
+            const scene = new Error("x").stack;
+            if (!scene.includes("file://~scene.js/:")) { throw new Error(scene); }
+            // a setter the module's `exports.getRealm = ...` runs, from inside that module
+            let system = "the setter did not run";
+            Object.defineProperty(Object.prototype, "getRealm", {
+                set(value) {
+                    system = new Error("x").stack;
+                    Object.defineProperty(this, "getRealm", { value, writable: true });
+                },
+                configurable: true,
+            });
+            require("~system/Runtime");
+            delete Object.prototype.getRealm;
+            if (!system.includes("file://~system/Runtime:")) { throw new Error(system); }
+            "#,
+        )
+        .unwrap();
     }
 
     /// ...while the modules the scene is *supposed* to use still get it, via the `Deno`

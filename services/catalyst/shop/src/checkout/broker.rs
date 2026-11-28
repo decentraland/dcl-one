@@ -1116,7 +1116,7 @@ pub(crate) async fn release_dead_buy(
     .bind(key)
     .bind(tx_hash)
     .bind(crate::evm::now())
-    .bind(DEAD_CONFIRM_SECS as f64)
+    .bind(f64::from(DEAD_CONFIRM_SECS))
     .execute(&state.pool)
     .await?;
     if released.rows_affected() > 0 {
@@ -1128,7 +1128,7 @@ pub(crate) async fn release_dead_buy(
 /// How long apart two dead looks at a recorded leg must be before it is
 /// released: one lookup can be wrong (a lagging load-balanced backend), two
 /// minutes apart agreeing are taken as final.
-const DEAD_CONFIRM_SECS: i64 = 600;
+const DEAD_CONFIRM_SECS: u32 = 600;
 
 /// The oldest claim a dead look may release. Nodes may prune the lookup
 /// index of old transactions, so for an older claim a missing receipt is
@@ -1151,7 +1151,7 @@ async fn dead_look(state: &SharedState, key: &str, tx_hash: &str) -> Result<(), 
     .bind(key)
     .bind(tx_hash)
     .bind(now)
-    .bind(DEAD_CONFIRM_SECS as f64)
+    .bind(f64::from(DEAD_CONFIRM_SECS))
     .bind(DEAD_RELEASE_MAX_AGE_DAYS)
     .fetch_optional(&state.pool)
     .await?;
@@ -1206,7 +1206,7 @@ pub(crate) async fn release_dead_forward(
     .bind(key)
     .bind(fwd_tx)
     .bind(crate::evm::now())
-    .bind(DEAD_CONFIRM_SECS as f64)
+    .bind(f64::from(DEAD_CONFIRM_SECS))
     .execute(&state.pool)
     .await?;
     if released.rows_affected() > 0 {
@@ -1227,7 +1227,7 @@ async fn release_stale_pending(state: &SharedState, key: &str) -> Result<bool, A
     )
     .bind(key)
     .bind(crate::evm::now())
-    .bind(BROKER_PENDING_TAKEOVER_SECS as f64)
+    .bind(f64::from(BROKER_PENDING_TAKEOVER_SECS))
     .execute(&state.pool)
     .await?;
     Ok(released.rows_affected() > 0)

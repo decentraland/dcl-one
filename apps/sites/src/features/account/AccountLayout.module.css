@@ -63,40 +63,28 @@
   margin: 0;
 }
 
-.back,
-.close {
+.back {
+  composes: text626f64792f6c67 from '@dcl/one-ui/text-styles.module.css';
   display: inline-flex;
   align-items: center;
+  gap: var(--dcl-space-8);
   padding: 0;
   border: 0;
   border-radius: var(--dcl-radius-sm);
   background: none;
   color: var(--dcl-text-primary);
+  font-weight: 600;
+  text-decoration: none;
   cursor: pointer;
 }
 
-.back {
-  composes: text626f64792f6c67 from '@dcl/one-ui/text-styles.module.css';
-  gap: var(--dcl-space-8);
-  font-weight: 600;
-  text-decoration: none;
-}
-
-.close {
-  justify-content: center;
-  min-width: 44px;
-  min-height: 44px;
-}
-
 @media (hover: hover) {
-  .back:hover,
-  .close:hover {
+  .back:hover {
     color: var(--dcl-neutrals-gray);
   }
 }
 
-.back:focus-visible,
-.close:focus-visible {
+.back:focus-visible {
   outline: 2px solid var(--dcl-transparencies-white-60);
   outline-offset: 2px;
 }

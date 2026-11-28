@@ -21,30 +21,23 @@
 //! reads an open order whose ownership that source does not prove (another
 //! owner, none, no row) as `transferred`.
 //!
-//! The fold runs in `nft_index::fold`'s transaction, so the order book is
-//! published with the ownership it is read beside. It rewrites every order
-//! of each token an order event touched past the lower of the nft fold's
-//! marker and the book's own (`shop.legacy_order_cursor`), over the token's
-//! whole history (a new order supersedes the token's earlier ones), and
-//! records the nft walk's last block as the book's; `since = None`
-//! rebuilds. The book's own marker lets it catch up with nft folds that ran
-//! without it: a replica on an earlier binary folds the nft index during a
-//! rollout and never writes the book. A rewind deletes the orders of the
-//! tokens whose events it deletes and lowers the book's marker, and the
-//! rebuild that follows restores those that remain. A database that
-//! predates the table gets it empty and with no marker: the book does not
-//! stand, readers refuse it, and the first nft fold after the upgrade
-//! refolds it whole in its own transaction (the schema run reads no log: a
-//! whole book is a statement of minutes, past the run's statement limit).
-//! The marker also names the branch: the hash of the nft walk's
-//! recovery point at its block. Every binary's rewind drops the recovery
-//! points past its target, so a branch an earlier binary rewound and
-//! republished at the same height brings another hash. A book whose point no
-//! longer has its hash does not stand: a reader does not serve it, and the
-//! next fold deletes the network's orders and refolds them whole, as it does
-//! on a rebuild, so no order of a lost branch survives. A reader serves the
-//! book only while it stands and its marker reaches the published nft fold
-//! ([`caught_up`]).
+//! The incremental fold runs in the NFT fold's transaction. It catches up
+//! from the older of the NFT and book markers and consumes repairs queued
+//! for the live book. An initial load, a lost book checkpoint, or a rebuild
+//! of the NFT fold opens a private build instead. The NFT walk runs it in
+//! resumable steps alongside ordinary publication. Older binaries see the
+//! same live table and marker. The legacy projection stays unpublished while
+//! the lane reconciles the live rows.
+//!
+//! A reader requires the book's checkpoint hash, an empty live repair
+//! queue, and the NFT publication on the same snapshot ([`readiness_on`]).
+
+#[path = "legacy_order_rebuild.rs"]
+mod rebuild;
+
+pub(crate) use rebuild::{RebuildLane, run_rebuild};
+#[cfg(test)]
+pub use rebuild::{RebuildStep, rebuild_batch};
 
 use sqlx::PgConnection;
 
@@ -118,13 +111,41 @@ const STANDS_SQL: &str = "SELECT b.folded_through FROM shop.legacy_order_cursor 
          AND k.block_number = b.folded_through AND k.block_hash = b.through_hash \
      WHERE b.network = $1";
 
-/// Folds `net`'s orders on the nft fold's transaction and records the nft
-/// walk's last block and hash as the book's marker; the rows written. The
-/// nft fold's `since` (`-1`: a rebuild) is lowered to the book's marker
-/// while the book stands. A rebuild, or a book that does not stand (never
-/// folded, rewound, or on a branch the nft walk no longer has), deletes the
-/// network's orders first and refolds them whole.
+// Read a bounded prefix of the primary key. The lane scans any remaining history.
+const CHEAP_EMPTY_SQL: &str = "
+SELECT count(*) < 513
+       AND NOT coalesce(bool_or(kind IN ('order_created', 'order_successful', 'order_cancelled')), false)
+       AND (SELECT network FROM shop.legacy_order WHERE network = $1
+            ORDER BY marketplace_address, order_id LIMIT 1) IS NULL
+       AND (SELECT network FROM shop.legacy_order_refold WHERE network = $1
+            ORDER BY contract_address, token_id LIMIT 1) IS NULL
+FROM (
+    SELECT kind FROM shop.nft_event WHERE network = $1
+    ORDER BY block_number, log_index LIMIT 513
+) prefix";
+
+async fn building(conn: &mut PgConnection, net: ChainNet) -> sqlx::Result<bool> {
+    sqlx::query_scalar(
+        "SELECT EXISTS (SELECT 1 FROM shop.legacy_order_rebuild WHERE network = $1 AND phase <> 'cleanup')",
+    )
+    .bind(net.db_name())
+    .fetch_one(conn)
+    .await
+}
+
+/// Folds `net`'s orders on the nft fold's transaction while the book stands:
+/// the orders touched past the lower of the nft fold's `since` and the
+/// book's marker, and the queued refolds, then the nft walk's last block and
+/// hash as the marker; the rows written. It never refolds the book whole in
+/// the nft fold's transaction: a book that does not stand (never folded,
+/// rewound, on a branch the nft walk no longer has) or a rebuild of the nft
+/// index (`since = -1`) opens a rebuild instead, which
+/// the nft walk's pass runs a batch at a time ([`rebuild::rebuild_batch`]); while one
+/// is open this folds nothing.
 pub async fn fold(conn: &mut PgConnection, net: ChainNet, since: i64) -> sqlx::Result<u64> {
+    if building(conn, net).await? {
+        return Ok(0);
+    }
     let stands: Option<i64> = sqlx::query_scalar(STANDS_SQL)
         .bind(net.db_name())
         .bind(super::chain_walk::INDEXER_NFT)
@@ -132,30 +153,18 @@ pub async fn fold(conn: &mut PgConnection, net: ChainNet, since: i64) -> sqlx::R
         .await?;
     let since = match stands {
         Some(through) if since >= 0 => since.min(through),
-        _ => -1,
-    };
-    // A whole refold reads every token: the nft fold may have turned hash
-    // and merge joins off for its own few touched rows (a transaction-local
-    // setting), so they are on for this statement and restored after it.
-    let planner: Option<(String, String)> = if since < 0 {
-        sqlx::query("DELETE FROM shop.legacy_order WHERE network = $1")
-            .bind(net.db_name())
-            .execute(&mut *conn)
-            .await?;
-        let saved = sqlx::query_as(
-            "SELECT current_setting('enable_hashjoin'), current_setting('enable_mergejoin')",
-        )
-        .fetch_one(&mut *conn)
-        .await?;
-        sqlx::query("SET LOCAL enable_hashjoin = on")
-            .execute(&mut *conn)
-            .await?;
-        sqlx::query("SET LOCAL enable_mergejoin = on")
-            .execute(&mut *conn)
-            .await?;
-        Some(saved)
-    } else {
-        None
+        _ => {
+            let empty: bool = sqlx::query_scalar(CHEAP_EMPTY_SQL)
+                .bind(net.db_name())
+                .fetch_one(&mut *conn)
+                .await?;
+            if empty {
+                write_marker(conn, net).await?;
+            } else if rebuild::open(conn, net).await? {
+                tracing::info!(network = net.db_name(), "legacy order book rebuild opened");
+            }
+            return Ok(0);
+        }
     };
     let written = sqlx::query(FOLD_SQL)
         .bind(net.db_name())
@@ -164,13 +173,12 @@ pub async fn fold(conn: &mut PgConnection, net: ChainNet, since: i64) -> sqlx::R
         .execute(&mut *conn)
         .await?
         .rows_affected();
-    if let Some((hash, merge)) = planner {
-        sqlx::query("SELECT set_config('enable_hashjoin', $1, true), set_config('enable_mergejoin', $2, true)")
-            .bind(hash)
-            .bind(merge)
-            .execute(&mut *conn)
-            .await?;
-    }
+    write_marker(conn, net).await?;
+    Ok(written)
+}
+
+/// The book's marker: the nft walk's last block and its hash.
+async fn write_marker(conn: &mut PgConnection, net: ChainNet) -> sqlx::Result<()> {
     sqlx::query(
         "INSERT INTO shop.legacy_order_cursor (network, folded_through, through_hash) \
          SELECT network, last_block, last_block_hash FROM shop.chain_cursor WHERE indexer = $2 AND network = $1 \
@@ -180,55 +188,75 @@ pub async fn fold(conn: &mut PgConnection, net: ChainNet, since: i64) -> sqlx::R
     .bind(super::chain_walk::INDEXER_NFT)
     .execute(&mut *conn)
     .await?;
-    Ok(written)
+    Ok(())
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum Readiness {
+    Published,
+    Behind,
+    RefoldQueued,
 }
 
 /// Whether `net`'s order book may be read beside the published nft fold on
 /// `conn`'s snapshot: it stands (its marker's recovery point keeps the hash
 /// it recorded) and its marker, written in the fold's transaction, is the
-/// nft cursor's published `folded_block`. False while the book has not
+/// nft cursor's published `folded_block`. It is behind while the book has not
 /// caught up with nft folds that ran without it, when an earlier binary
 /// rewound the walk under it, and between a fold's commit and its
 /// publication: the rows then already hold the next fold, which is not
 /// published yet (the walk publishes only after its head reads, which can
 /// stall). A walk that advanced without folding leaves the book at the
-/// published block, which stays readable. Also false while `net` has a
+/// published block, which stays readable. A separate outcome names a
 /// refold queued (`shop.legacy_order_refold`): a writer changed an order
 /// event the book has already folded, and an earlier binary can republish
 /// the same height without folding it, so the book is read again only once
 /// a fold of this binary has taken it. Another network's queue does not
 /// withhold this one.
-pub async fn caught_up(conn: &mut PgConnection, net: ChainNet) -> sqlx::Result<bool> {
-    let stands: Option<i64> = sqlx::query_scalar(STANDS_SQL)
+pub(super) async fn readiness_on(
+    conn: &mut PgConnection,
+    net: ChainNet,
+) -> sqlx::Result<Readiness> {
+    if building(conn, net).await? {
+        return Ok(Readiness::Behind);
+    }
+    visible_readiness_on(conn, net).await
+}
+
+async fn visible_readiness_on(conn: &mut PgConnection, net: ChainNet) -> sqlx::Result<Readiness> {
+    let through: Option<i64> = sqlx::query_scalar(STANDS_SQL)
         .bind(net.db_name())
         .bind(super::chain_walk::INDEXER_NFT)
         .fetch_optional(&mut *conn)
         .await?;
-    let Some(through) = stands else {
-        return Ok(false);
-    };
+    if through.is_none()
+        || !super::chain_walk::holds_published_fold_on(
+            conn,
+            super::chain_walk::INDEXER_NFT,
+            net,
+            through,
+        )
+        .await?
+    {
+        return Ok(Readiness::Behind);
+    }
     let queued: bool = sqlx::query_scalar(
         "SELECT EXISTS (SELECT 1 FROM shop.legacy_order_refold WHERE network = $1)",
     )
     .bind(net.db_name())
-    .fetch_one(&mut *conn)
+    .fetch_one(conn)
     .await?;
-    if queued {
-        return Ok(false);
-    }
-    super::chain_walk::holds_published_fold_on(
-        conn,
-        super::chain_walk::INDEXER_NFT,
-        net,
-        Some(through),
-    )
-    .await
+    Ok(if queued {
+        Readiness::RefoldQueued
+    } else {
+        Readiness::Published
+    })
 }
 
 /// Deletes `net`'s orders of the tokens (`contracts[i]`, `tokens[i]`) a
 /// rewind to `to` deleted events of, and lowers the book's marker to `to`
 /// with no hash, in the rewind's transaction: the book does not stand until
-/// the rebuild that follows refolds it whole.
+/// a new private build covers the surviving branch.
 pub async fn rewind(
     conn: &mut PgConnection,
     net: ChainNet,
@@ -241,6 +269,12 @@ pub async fn rewind(
     )
     .bind(net.db_name())
     .bind(to)
+    .execute(&mut *conn)
+    .await?;
+    sqlx::query(
+        "UPDATE shop.legacy_order_rebuild SET anchor_hash = '' WHERE network = $1 AND phase <> 'cleanup'",
+    )
+    .bind(net.db_name())
     .execute(&mut *conn)
     .await?;
     sqlx::query(
@@ -258,7 +292,7 @@ pub async fn rewind(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::market::chain_walk::ChainIndex;
+    use crate::market::chain_walk::{self, ChainIndex};
     use crate::market::nft_index::{self, NftIndex};
     use sqlx::PgPool;
 
@@ -379,7 +413,7 @@ mod tests {
 
     async fn stands(pool: &PgPool) -> bool {
         let mut tx = pool.begin().await.unwrap();
-        let caught = caught_up(&mut tx, ChainNet::Matic).await.unwrap();
+        let caught = readiness_on(&mut tx, ChainNet::Matic).await.unwrap() == Readiness::Published;
         tx.rollback().await.unwrap();
         caught
     }
@@ -393,11 +427,27 @@ mod tests {
         .unwrap()
     }
 
+    /// The nft fold's book fold, then any rebuild it opened run to the end,
+    /// with small row pages committed in separate transactions.
     async fn fold_matic(pool: &PgPool, since: i64) -> u64 {
         let mut tx = pool.begin().await.unwrap();
         let n = fold(&mut tx, ChainNet::Matic, since).await.unwrap();
         tx.commit().await.unwrap();
+        finish_rebuild(pool).await;
         n
+    }
+
+    async fn finish_rebuild(pool: &PgPool) -> usize {
+        let mut batches = 0;
+        loop {
+            let mut tx = pool.begin().await.unwrap();
+            let step = rebuild_batch(&mut tx, ChainNet::Matic, 2).await.unwrap();
+            tx.commit().await.unwrap();
+            match step {
+                RebuildStep::Batched => batches += 1,
+                RebuildStep::Idle | RebuildStep::Finished => return batches,
+            }
+        }
     }
 
     /// The log of the rules: an order a later one on its token supersedes
@@ -547,6 +597,1203 @@ mod tests {
         db.drop().await;
     }
 
+    /// The nft fold never refolds the book: over a book that does not stand
+    /// it opens a rebuild and writes nothing, so the nft index publishes
+    /// while the book is refused. The rebuild then runs a batch of contracts
+    /// a transaction (here one, over two contracts), and a sale a repair
+    /// writes below the open rebuild's block meanwhile is queued by the
+    /// trigger and taken by the last step; the book then stands.
+    #[tokio::test]
+    async fn a_rebuild_runs_outside_the_nft_fold_a_batch_at_a_time() {
+        let Some(db) = crate::market::tests::support::OwnDb::create("legacy_orders_batches").await
+        else {
+            return;
+        };
+        seed_log(&db.pool, 41).await;
+        // Include a second contract in the same block as an order for the first.
+        sqlx::query(
+            "INSERT INTO shop.nft_event (network, block_number, log_index, block_time, kind, emitter, contract_address, token_id, from_address, to_address, amount, expires_at, detail) \
+             SELECT network, block_number, log_index + 1, block_time, kind, emitter, '0x00000000000000000000000000000000000000c2', token_id, from_address, to_address, amount, expires_at, \
+                    '0x' || repeat('f', 64) \
+             FROM shop.nft_event WHERE contract_address = $1 AND kind = 'order_created' AND detail = $2",
+        )
+        .bind(C)
+        .bind(id(0xc))
+        .execute(&db.pool)
+        .await
+        .unwrap();
+        nft_cursor(&db.pool, 50, Some(50), Some(50)).await;
+        let mut tx = db.pool.begin().await.unwrap();
+        assert_eq!(fold(&mut tx, ChainNet::Matic, 50).await.unwrap(), 0);
+        tx.commit().await.unwrap();
+        assert_eq!(
+            book(&db.pool).await,
+            Vec::new(),
+            "the nft fold wrote no order"
+        );
+        assert!(!stands(&db.pool).await);
+        let open: (i64, String, i64) = sqlx::query_as(
+            "SELECT upto, upto_hash, scan_block FROM shop.legacy_order_rebuild WHERE network = 'matic'",
+        )
+        .fetch_one(&db.pool)
+        .await
+        .unwrap();
+        assert_eq!(open, (50, hash(0, 50), -1));
+        assert!(
+            NftIndex::new(ChainNet::Matic)
+                .walks_alone(&db.pool)
+                .await
+                .unwrap(),
+            "an open rebuild walks alone, so a shared pass never skips its lane"
+        );
+        // Another nft fold while it is open folds nothing.
+        let mut tx = db.pool.begin().await.unwrap();
+        assert_eq!(fold(&mut tx, ChainNet::Matic, 50).await.unwrap(), 0);
+        tx.commit().await.unwrap();
+        // Materialize the initial input, then repair e's missed sale at 42.
+        while build_phase(&db.pool).await != "tail" {
+            assert_eq!(step_matic(&db.pool, 1).await, RebuildStep::Batched);
+        }
+        assert!(!stands(&db.pool).await, "still rebuilding");
+        let before: String =
+            sqlx::query_scalar("SELECT status FROM shop.legacy_order_build WHERE order_id = $1")
+                .bind(id(0xe))
+                .fetch_one(&db.pool)
+                .await
+                .unwrap();
+        assert_ne!(before, "sold");
+        let (m1, _) = markets();
+        let mut tx = db.pool.begin().await.unwrap();
+        nft_index::insert_events(
+            &mut tx,
+            ChainNet::Matic,
+            &[nft_index::NftEvent {
+                block_number: 42,
+                log_index: 0,
+                block_time: 420,
+                kind: "order_successful",
+                emitter: m1.to_string(),
+                contract_address: C.to_string(),
+                token_id: "4".to_string(),
+                from_address: Some(SELLER.to_string()),
+                to_address: Some(BUYER.to_string()),
+                amount: Some("500".to_string()),
+                expires_at: None,
+                detail: Some(id(0xe)),
+                tx_hash: Some(format!("0x{:064x}", 42)),
+            }],
+        )
+        .await
+        .unwrap();
+        tx.commit().await.unwrap();
+        let queued: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM shop.legacy_order_build_dirty WHERE network = 'matic'",
+        )
+        .fetch_one(&db.pool)
+        .await
+        .unwrap();
+        assert_eq!(queued, 1, "the repair lies behind the shadow scan");
+        while build_phase(&db.pool).await != "repair_build" {
+            assert_eq!(step_matic(&db.pool, 2).await, RebuildStep::Batched);
+        }
+        // Even if another writer drains the live queue, a revision made
+        // after this replay read the token forces a second replay.
+        sqlx::query(
+            "UPDATE shop.nft_event SET amount = 501 WHERE network = 'matic' AND block_number = 42",
+        )
+        .execute(&db.pool)
+        .await
+        .unwrap();
+        finish_rebuild(&db.pool).await;
+        let price: String =
+            sqlx::query_scalar("SELECT price::text FROM shop.legacy_order WHERE order_id = $1")
+                .bind(id(0xe))
+                .fetch_one(&db.pool)
+                .await
+                .unwrap();
+        assert_eq!(price, "501");
+        let rows = book(&db.pool).await;
+        let mut repaired = expected()[4].clone();
+        repaired.3 = "501".into();
+        assert!(rows.contains(&repaired), "the repaired sale: {rows:?}");
+        assert_eq!(rows.len(), expected().len() + 1, "both contracts' orders");
+        assert_eq!(book_through(&db.pool).await, Some(50));
+        assert!(stands(&db.pool).await);
+        assert!(
+            !NftIndex::new(ChainNet::Matic)
+                .walks_alone(&db.pool)
+                .await
+                .unwrap(),
+            "back in the shared group once finished"
+        );
+        let left: i64 = sqlx::query_scalar("SELECT count(*) FROM shop.legacy_order_rebuild")
+            .fetch_one(&db.pool)
+            .await
+            .unwrap();
+        assert_eq!(left, 0);
+        db.drop().await;
+    }
+
+    /// A rewind discards a shadow that already materialized the sale. The
+    /// new scan restores the surviving creation as an open order.
+    #[tokio::test]
+    async fn a_rewind_during_a_rebuild_keeps_the_surviving_orders_of_its_tokens() {
+        let Some(db) =
+            crate::market::tests::support::OwnDb::create("legacy_orders_rewind_open").await
+        else {
+            return;
+        };
+        let (m1, _) = markets();
+        order_event(
+            &db.pool,
+            10,
+            "order_created",
+            m1,
+            1,
+            0xa,
+            SELLER,
+            None,
+            Some(100),
+        )
+        .await;
+        order_event(
+            &db.pool,
+            40,
+            "order_successful",
+            m1,
+            1,
+            0xa,
+            SELLER,
+            Some(BUYER),
+            Some(100),
+        )
+        .await;
+        nft_cursor(&db.pool, 50, Some(50), Some(50)).await;
+        let mut tx = db.pool.begin().await.unwrap();
+        assert_eq!(fold(&mut tx, ChainNet::Matic, 50).await.unwrap(), 0);
+        tx.commit().await.unwrap();
+        // Commit the input and a materialized sale to the private build.
+        let mut tx = db.pool.begin().await.unwrap();
+        for _ in 0..3 {
+            assert_eq!(
+                rebuild_batch(&mut tx, ChainNet::Matic, 100).await.unwrap(),
+                RebuildStep::Batched
+            );
+        }
+        tx.commit().await.unwrap();
+        let status = |rows: Vec<Row>| rows.into_iter().map(|r| r.1).collect::<Vec<_>>();
+        let shadow: String = sqlx::query_scalar("SELECT status FROM shop.legacy_order_build")
+            .fetch_one(&db.pool)
+            .await
+            .unwrap();
+        assert_eq!(shadow, "sold");
+        assert!(book(&db.pool).await.is_empty());
+        // A rewind to 30: the sale goes, and with it the token's orders.
+        sqlx::query("DELETE FROM shop.nft_event WHERE network = 'matic' AND block_number > 30")
+            .execute(&db.pool)
+            .await
+            .unwrap();
+        let mut tx = db.pool.begin().await.unwrap();
+        rewind(
+            &mut tx,
+            ChainNet::Matic,
+            30,
+            &[C.to_string()],
+            &["1".to_string()],
+        )
+        .await
+        .unwrap();
+        tx.commit().await.unwrap();
+        assert_eq!(book(&db.pool).await, Vec::new());
+        nft_cursor(&db.pool, 50, Some(50), Some(50)).await;
+        finish_rebuild(&db.pool).await;
+        assert_eq!(
+            status(book(&db.pool).await),
+            vec!["open"],
+            "the order created at 10 survives"
+        );
+        assert!(stands(&db.pool).await);
+        db.drop().await;
+    }
+
+    async fn step_matic(pool: &PgPool, rows: i64) -> RebuildStep {
+        let mut tx = pool.begin().await.unwrap();
+        let step = rebuild_batch(&mut tx, ChainNet::Matic, rows).await.unwrap();
+        tx.commit().await.unwrap();
+        step
+    }
+
+    async fn open_matic(pool: &PgPool) {
+        let mut tx = pool.begin().await.unwrap();
+        assert_eq!(fold(&mut tx, ChainNet::Matic, -1).await.unwrap(), 0);
+        tx.commit().await.unwrap();
+    }
+
+    async fn build_phase(pool: &PgPool) -> String {
+        sqlx::query_scalar("SELECT phase FROM shop.legacy_order_rebuild WHERE network = 'matic'")
+            .fetch_one(pool)
+            .await
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn an_earlier_writer_rewind_discards_an_open_build_on_the_lost_branch() {
+        let Some(db) =
+            crate::market::tests::support::OwnDb::create("legacy_orders_old_rewind").await
+        else {
+            return;
+        };
+        let (market, _) = markets();
+        order_event(
+            &db.pool,
+            10,
+            "order_created",
+            market,
+            1,
+            1,
+            SELLER,
+            None,
+            Some(100),
+        )
+        .await;
+        order_event(
+            &db.pool,
+            40,
+            "order_successful",
+            market,
+            1,
+            1,
+            SELLER,
+            Some(BUYER),
+            Some(100),
+        )
+        .await;
+        nft_cursor(&db.pool, 50, Some(50), Some(50)).await;
+        open_matic(&db.pool).await;
+        for _ in 0..3 {
+            assert_eq!(step_matic(&db.pool, 4).await, RebuildStep::Batched);
+        }
+        let sold: Option<String> = sqlx::query_scalar("SELECT buyer FROM shop.legacy_order_build")
+            .fetch_one(&db.pool)
+            .await
+            .unwrap();
+        assert_eq!(sold.as_deref(), Some(BUYER));
+
+        // An older writer never calls legacy_orders::rewind or writes rebuild progress.
+        sqlx::query("DELETE FROM shop.nft_event WHERE network = 'matic' AND block_number > 30")
+            .execute(&db.pool)
+            .await
+            .unwrap();
+        sqlx::query("DELETE FROM shop.chain_checkpoint WHERE indexer = 'nft' AND network = 'matic' AND block_number > 30")
+            .execute(&db.pool).await.unwrap();
+        nft_on(&db.pool, 1, 50, Some(50), Some(50)).await;
+        assert_eq!(step_matic(&db.pool, 4).await, RebuildStep::Batched);
+        assert_eq!(build_phase(&db.pool).await, "reset");
+        let opening: String = sqlx::query_scalar("SELECT upto_hash FROM shop.legacy_order_rebuild")
+            .fetch_one(&db.pool)
+            .await
+            .unwrap();
+        assert_eq!(opening, hash(1, 50));
+        finish_rebuild(&db.pool).await;
+        assert_eq!(book(&db.pool).await[0].1, "open");
+        assert!(stands(&db.pool).await);
+        db.drop().await;
+    }
+
+    #[tokio::test]
+    async fn checkpoint_pruning_keeps_a_build_on_the_same_branch() {
+        let Some(db) = crate::market::tests::support::OwnDb::create("legacy_orders_prune").await
+        else {
+            return;
+        };
+        let (market, _) = markets();
+        order_event(
+            &db.pool,
+            10,
+            "order_created",
+            market,
+            1,
+            1,
+            SELLER,
+            None,
+            Some(100),
+        )
+        .await;
+        nft_cursor(&db.pool, 50, Some(50), Some(50)).await;
+        open_matic(&db.pool).await;
+        assert_eq!(step_matic(&db.pool, 1).await, RebuildStep::Batched);
+
+        for block in 51..=114 {
+            nft_cursor(&db.pool, block, Some(block), Some(block)).await;
+        }
+        sqlx::query("DELETE FROM shop.chain_checkpoint WHERE indexer = 'nft' AND network = 'matic' AND block_number <= 50")
+            .execute(&db.pool).await.unwrap();
+        assert_eq!(step_matic(&db.pool, 1).await, RebuildStep::Batched);
+        assert_eq!(build_phase(&db.pool).await, "build");
+        let anchor: (i64, i64) =
+            sqlx::query_as("SELECT upto, anchor_block FROM shop.legacy_order_rebuild")
+                .fetch_one(&db.pool)
+                .await
+                .unwrap();
+        assert_eq!(anchor, (50, 114));
+        finish_rebuild(&db.pool).await;
+        assert_eq!(book_through(&db.pool).await, Some(114));
+        assert_eq!(book(&db.pool).await.len(), 1);
+        db.drop().await;
+    }
+
+    async fn deployed_full_fold(pool: &PgPool) {
+        // The deployed full fold knows only the live table and marker.
+        let mut old = pool.begin().await.unwrap();
+        sqlx::query("SELECT 1 FROM shop.chain_cursor WHERE indexer = 'nft' AND network = 'matic' FOR UPDATE")
+            .execute(&mut *old).await.unwrap();
+        sqlx::query("DELETE FROM shop.legacy_order WHERE network = 'matic'")
+            .execute(&mut *old)
+            .await
+            .unwrap();
+        sqlx::query(FOLD_SQL)
+            .bind("matic")
+            .bind(-1_i64)
+            .bind(nft_index::ZERO_ADDRESS)
+            .execute(&mut *old)
+            .await
+            .unwrap();
+        write_marker(&mut old, ChainNet::Matic).await.unwrap();
+        old.commit().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_deployed_writer_and_reconciliation_publish_complete_reader_snapshots() {
+        let Some(db) = crate::market::tests::support::OwnDb::create("legacy_orders_handover").await
+        else {
+            return;
+        };
+        let (market, _) = markets();
+        order_event(
+            &db.pool,
+            10,
+            "order_created",
+            market,
+            1,
+            1,
+            SELLER,
+            None,
+            Some(100),
+        )
+        .await;
+        order_event(
+            &db.pool,
+            15,
+            "order_created",
+            market,
+            2,
+            2,
+            SELLER,
+            None,
+            Some(100),
+        )
+        .await;
+        nft_cursor(&db.pool, 50, Some(50), Some(50)).await;
+        open_matic(&db.pool).await;
+        assert_eq!(step_matic(&db.pool, 1).await, RebuildStep::Batched);
+
+        deployed_full_fold(&db.pool).await;
+        nft_cursor(&db.pool, 50, Some(50), Some(50)).await;
+
+        let mut reader = db.pool.begin().await.unwrap();
+        sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
+            .execute(&mut *reader)
+            .await
+            .unwrap();
+        let marker: i64 = sqlx::query_scalar(STANDS_SQL)
+            .bind("matic")
+            .bind("nft")
+            .fetch_one(&mut *reader)
+            .await
+            .unwrap();
+        assert_eq!(marker, 50);
+        assert!(
+            visible_readiness_on(&mut reader, ChainNet::Matic)
+                .await
+                .unwrap()
+                == Readiness::Published
+        );
+        assert!(
+            chain_walk::rows_published_on(
+                &mut reader,
+                "nft",
+                ChainNet::Matic,
+                &["nft", "legacy_order"],
+                None,
+            )
+            .await
+            .unwrap()
+        );
+        assert_eq!(book(&db.pool).await.len(), 2);
+
+        // The newer walk gets ahead of that publication before the lane
+        // resumes, so the lane must reconcile the newer book.
+        order_event(
+            &db.pool,
+            51,
+            "order_created",
+            market,
+            3,
+            3,
+            SELLER,
+            None,
+            Some(100),
+        )
+        .await;
+        nft_cursor(&db.pool, 51, Some(51), Some(51)).await;
+        assert_eq!(step_matic(&db.pool, 1).await, RebuildStep::Batched);
+        assert_eq!(book(&db.pool).await.len(), 2);
+        finish_rebuild(&db.pool).await;
+        assert_eq!(book(&db.pool).await.len(), 3);
+        assert_eq!(book_through(&db.pool).await, Some(51));
+
+        let still_old: i64 =
+            sqlx::query_scalar("SELECT count(*) FROM shop.legacy_order WHERE network = 'matic'")
+                .fetch_one(&mut *reader)
+                .await
+                .unwrap();
+        assert_eq!(still_old, 2);
+        assert!(
+            visible_readiness_on(&mut reader, ChainNet::Matic)
+                .await
+                .unwrap()
+                == Readiness::Published
+        );
+        reader.commit().await.unwrap();
+
+        let mut fresh = db.pool.acquire().await.unwrap();
+        assert!(
+            !chain_walk::rows_published_on(
+                &mut fresh,
+                "nft",
+                ChainNet::Matic,
+                &["nft", "legacy_order"],
+                None,
+            )
+            .await
+            .unwrap()
+        );
+        drop(fresh);
+        // The ordinary same-height NFT publication acknowledges the new book.
+        nft_cursor(&db.pool, 51, Some(51), Some(51)).await;
+        let mut fresh = db.pool.acquire().await.unwrap();
+        assert!(
+            chain_walk::rows_published_on(
+                &mut fresh,
+                "nft",
+                ChainNet::Matic,
+                &["nft", "legacy_order"],
+                None,
+            )
+            .await
+            .unwrap()
+        );
+        drop(fresh);
+        db.drop().await;
+    }
+
+    #[tokio::test]
+    async fn a_large_token_and_the_tail_both_advance_in_small_steps() {
+        let Some(db) =
+            crate::market::tests::support::OwnDb::create("legacy_orders_large_token").await
+        else {
+            return;
+        };
+        let (market, _) = markets();
+        for n in 1..=20_u8 {
+            order_event(
+                &db.pool,
+                i64::from(n),
+                "order_created",
+                market,
+                1,
+                n,
+                SELLER,
+                None,
+                Some(100),
+            )
+            .await;
+        }
+        nft_cursor(&db.pool, 20, Some(20), Some(20)).await;
+        open_matic(&db.pool).await;
+        for n in 21..=40_u8 {
+            order_event(
+                &db.pool,
+                i64::from(n),
+                "order_created",
+                market,
+                1,
+                n,
+                SELLER,
+                None,
+                Some(100),
+            )
+            .await;
+        }
+        nft_cursor(&db.pool, 40, Some(40), Some(40)).await;
+
+        let counts = || {
+            sqlx::query_as::<_, (i64, i64)>(
+                "SELECT
+            (SELECT count(*) FROM shop.legacy_order_build_event),
+            (SELECT count(*) FROM shop.legacy_order_build)",
+            )
+            .fetch_one(&db.pool)
+        };
+        let mut before = (0, 0);
+        let mut steps = 0;
+        loop {
+            let step = step_matic(&db.pool, 2).await;
+            let after = counts().await.unwrap();
+            assert!(
+                (after.0 - before.0).abs() <= 2,
+                "raw work: {before:?} to {after:?}"
+            );
+            assert!(
+                (after.1 - before.1).abs() <= 2,
+                "order work: {before:?} to {after:?}"
+            );
+            before = after;
+            steps += 1;
+            assert!(steps < 200, "bounded replay must finish");
+            if step != RebuildStep::Batched {
+                assert_eq!(step, RebuildStep::Finished);
+                break;
+            }
+        }
+        let shadow_result = book(&db.pool).await;
+        assert_eq!(shadow_result.len(), 40);
+        let mut tx = db.pool.begin().await.unwrap();
+        sqlx::query("DELETE FROM shop.legacy_order WHERE network = 'matic'")
+            .execute(&mut *tx)
+            .await
+            .unwrap();
+        sqlx::query(FOLD_SQL)
+            .bind("matic")
+            .bind(-1_i64)
+            .bind(nft_index::ZERO_ADDRESS)
+            .execute(&mut *tx)
+            .await
+            .unwrap();
+        tx.commit().await.unwrap();
+        assert_eq!(book(&db.pool).await, shadow_result);
+        db.drop().await;
+    }
+
+    #[tokio::test]
+    async fn an_empty_book_is_only_published_from_a_bounded_probe() {
+        let Some(db) =
+            crate::market::tests::support::OwnDb::create("legacy_orders_empty_probe").await
+        else {
+            return;
+        };
+        nft_cursor(&db.pool, 1000, Some(1000), Some(1000)).await;
+        open_matic(&db.pool).await;
+        assert!(stands(&db.pool).await);
+        let insert = "INSERT INTO shop.nft_event
+            (network,block_number,log_index,kind,block_time,emitter,contract_address,token_id)
+            SELECT 'matic', n, 0, 'transfer', n, $1, $1, 1 FROM generate_series($2::bigint, $3::bigint) n";
+        sqlx::query(insert)
+            .bind(C)
+            .bind(1_i64)
+            .bind(512_i64)
+            .execute(&db.pool)
+            .await
+            .unwrap();
+        open_matic(&db.pool).await;
+        assert!(stands(&db.pool).await);
+        sqlx::query(insert)
+            .bind(C)
+            .bind(513_i64)
+            .bind(513_i64)
+            .execute(&db.pool)
+            .await
+            .unwrap();
+        open_matic(&db.pool).await;
+        assert_eq!(build_phase(&db.pool).await, "scan");
+        assert!(!stands(&db.pool).await);
+        loop {
+            if step_matic(&db.pool, 128).await != RebuildStep::Batched {
+                break;
+            }
+        }
+        assert!(stands(&db.pool).await);
+        assert!(book(&db.pool).await.is_empty());
+        db.drop().await;
+    }
+
+    #[tokio::test]
+    async fn the_rebuild_deadline_includes_waiting_for_the_cursor_lock() {
+        let Some(db) = crate::market::tests::support::OwnDb::create("legacy_orders_lock").await
+        else {
+            return;
+        };
+        let (market, _) = markets();
+        order_event(
+            &db.pool,
+            10,
+            "order_created",
+            market,
+            1,
+            1,
+            SELLER,
+            None,
+            Some(100),
+        )
+        .await;
+        nft_cursor(&db.pool, 50, Some(50), Some(50)).await;
+        open_matic(&db.pool).await;
+        let index = NftIndex::new(ChainNet::Matic);
+        let owner =
+            chain_walk::test_owner(&db.pool, &index, &chain_walk::IndexSettings::default()).await;
+        let mut blocker = db.pool.begin().await.unwrap();
+        owner.check(&mut blocker).await.unwrap();
+
+        let lane = RebuildLane::default();
+        let start = std::time::Instant::now();
+        let outcome = tokio::time::timeout(
+            std::time::Duration::from_secs(2),
+            run_rebuild(
+                &db.pool,
+                ChainNet::Matic,
+                &owner,
+                start + std::time::Duration::from_millis(150),
+                &lane,
+            ),
+        )
+        .await
+        .expect("lane releases the caller while the cursor is still held");
+        assert!(outcome.is_err());
+        assert_eq!(build_phase(&db.pool).await, "scan");
+        blocker.rollback().await.unwrap();
+        assert!(
+            run_rebuild(
+                &db.pool,
+                ChainNet::Matic,
+                &owner,
+                start + std::time::Duration::from_secs(100),
+                &lane,
+            )
+            .await
+            .unwrap()
+        );
+        assert!(stands(&db.pool).await);
+        db.drop().await;
+    }
+
+    #[tokio::test]
+    async fn slow_private_pages_shrink_and_keep_their_size_across_passes() {
+        let Some(db) =
+            crate::market::tests::support::OwnDb::create("legacy_orders_slow_page").await
+        else {
+            return;
+        };
+        use std::time::{Duration, Instant};
+        let (market, _) = markets();
+        for n in 1..=64_u8 {
+            order_event(
+                &db.pool,
+                i64::from(n),
+                "order_created",
+                market,
+                1,
+                n,
+                SELLER,
+                None,
+                Some(100),
+            )
+            .await;
+        }
+        nft_cursor(&db.pool, 70, Some(70), Some(70)).await;
+        open_matic(&db.pool).await;
+        sqlx::raw_sql(
+            "CREATE FUNCTION shop.test_slow_shadow_insert() RETURNS trigger LANGUAGE plpgsql AS $$
+             BEGIN PERFORM pg_sleep(0.05); RETURN NEW; END $$;
+             CREATE TRIGGER test_slow_shadow_insert BEFORE INSERT ON shop.legacy_order_build_event
+             FOR EACH ROW EXECUTE FUNCTION shop.test_slow_shadow_insert();",
+        )
+        .execute(&db.pool)
+        .await
+        .unwrap();
+        let index = NftIndex::new(ChainNet::Matic);
+        let owner =
+            chain_walk::test_owner(&db.pool, &index, &chain_walk::IndexSettings::default()).await;
+        let lane =
+            RebuildLane::with_limits(rebuild::REBUILD_ROWS_PER_STEP, Duration::from_millis(200));
+        let initial = lane.rows();
+
+        assert!(
+            !run_rebuild(
+                &db.pool,
+                ChainNet::Matic,
+                &owner,
+                Instant::now() + Duration::from_millis(600),
+                &lane
+            )
+            .await
+            .unwrap()
+        );
+        let reduced = lane.rows();
+        assert!(
+            reduced < initial,
+            "the application timeout must shrink the page"
+        );
+        let position: i64 = sqlx::query_scalar("SELECT scan_block FROM shop.legacy_order_rebuild")
+            .fetch_one(&db.pool)
+            .await
+            .unwrap();
+        assert_eq!(position, -1);
+
+        assert!(
+            !run_rebuild(
+                &db.pool,
+                ChainNet::Matic,
+                &owner,
+                Instant::now() + Duration::from_millis(3300),
+                &lane
+            )
+            .await
+            .unwrap()
+        );
+        let position: i64 = sqlx::query_scalar("SELECT scan_block FROM shop.legacy_order_rebuild")
+            .fetch_one(&db.pool)
+            .await
+            .unwrap();
+        assert!(position > 0, "a smaller page must commit: {position}");
+        assert!(lane.rows() < reduced);
+        db.drop().await;
+    }
+
+    async fn legacy_rows_published(pool: &PgPool) -> bool {
+        let mut conn = pool.acquire().await.unwrap();
+        chain_walk::rows_published_on(
+            &mut conn,
+            "nft",
+            ChainNet::Matic,
+            &["nft", "legacy_order"],
+            None,
+        )
+        .await
+        .unwrap()
+    }
+
+    #[tokio::test]
+    async fn sustained_slow_live_writes_make_progress_at_the_same_deadline() {
+        let Some(db) =
+            crate::market::tests::support::OwnDb::create("legacy_orders_slow_apply").await
+        else {
+            return;
+        };
+        use std::time::{Duration, Instant};
+
+        let (market, _) = markets();
+        for n in 1..=12_u8 {
+            order_event(
+                &db.pool,
+                i64::from(n),
+                "order_created",
+                market,
+                i64::from(n),
+                n,
+                SELLER,
+                None,
+                Some(100),
+            )
+            .await;
+        }
+        nft_cursor(&db.pool, 50, Some(50), Some(50)).await;
+        open_matic(&db.pool).await;
+        while build_phase(&db.pool).await != "reconcile" {
+            assert_eq!(step_matic(&db.pool, 12).await, RebuildStep::Batched);
+        }
+        sqlx::raw_sql(
+            "CREATE FUNCTION shop.test_slow_live_write() RETURNS trigger LANGUAGE plpgsql AS $$
+             BEGIN PERFORM pg_sleep(0.07); RETURN NEW; END $$;
+             CREATE TRIGGER test_slow_live_write BEFORE INSERT ON shop.legacy_order
+             FOR EACH ROW EXECUTE FUNCTION shop.test_slow_live_write();",
+        )
+        .execute(&db.pool)
+        .await
+        .unwrap();
+        let index = NftIndex::new(ChainNet::Matic);
+        let owner =
+            chain_walk::test_owner(&db.pool, &index, &chain_walk::IndexSettings::default()).await;
+        let lane = RebuildLane::with_limits(12, Duration::from_millis(300));
+        let pass = |duration| {
+            run_rebuild(
+                &db.pool,
+                ChainNet::Matic,
+                &owner,
+                Instant::now() + duration,
+                &lane,
+            )
+        };
+
+        assert!(!pass(Duration::from_millis(980)).await.unwrap());
+        let first_page = book(&db.pool).await;
+        assert!(
+            !first_page.is_empty() && first_page.len() < 12,
+            "{first_page:?}"
+        );
+        assert!(
+            lane.rows() < 12,
+            "the first page exceeded the fixed deadline"
+        );
+        assert!(book_through(&db.pool).await.is_none());
+        assert!(!legacy_rows_published(&db.pool).await);
+
+        // The previous binary acknowledges every projection at the same
+        // height, even while some of this book's live rows have committed.
+        nft_cursor(&db.pool, 50, Some(50), Some(50)).await;
+        assert!(!legacy_rows_published(&db.pool).await);
+        assert!(pass(Duration::from_secs(8)).await.unwrap());
+        assert_eq!(book(&db.pool).await.len(), 12);
+        assert_eq!(book_through(&db.pool).await, Some(50));
+        assert!(!legacy_rows_published(&db.pool).await);
+        nft_cursor(&db.pool, 50, Some(50), Some(50)).await;
+        assert!(legacy_rows_published(&db.pool).await);
+        db.drop().await;
+    }
+
+    #[tokio::test]
+    async fn old_live_writes_and_shadow_repairs_behind_the_apply_cursor_are_replayed() {
+        let Some(db) =
+            crate::market::tests::support::OwnDb::create("legacy_orders_apply_dirty").await
+        else {
+            return;
+        };
+        let (market, _) = markets();
+        for n in 1..=3_u8 {
+            order_event(
+                &db.pool,
+                i64::from(n),
+                "order_created",
+                market,
+                i64::from(n),
+                n,
+                SELLER,
+                None,
+                Some(100),
+            )
+            .await;
+        }
+        nft_cursor(&db.pool, 50, Some(50), Some(50)).await;
+        open_matic(&db.pool).await;
+        while build_phase(&db.pool).await != "reconcile" {
+            assert_eq!(step_matic(&db.pool, 1).await, RebuildStep::Batched);
+        }
+        assert_eq!(step_matic(&db.pool, 2).await, RebuildStep::Batched);
+        assert_eq!(book(&db.pool).await.len(), 2);
+
+        let mut old = db.pool.begin().await.unwrap();
+        sqlx::query("SELECT 1 FROM shop.chain_cursor WHERE indexer = 'nft' AND network = 'matic' FOR UPDATE")
+            .execute(&mut *old).await.unwrap();
+        sqlx::query("UPDATE shop.legacy_order SET price = 9 WHERE order_id = $1")
+            .bind(id(1))
+            .execute(&mut *old)
+            .await
+            .unwrap();
+        sqlx::query("DELETE FROM shop.legacy_order WHERE order_id = $1")
+            .bind(id(2))
+            .execute(&mut *old)
+            .await
+            .unwrap();
+        sqlx::query(
+            "INSERT INTO shop.legacy_order
+             SELECT network, marketplace_address, '', contract_address, token_id,
+                    seller, buyer, price, expires_at, status, created_block, created_log,
+                    created_at, updated_block, updated_log, updated_at
+             FROM shop.legacy_order WHERE order_id = $1",
+        )
+        .bind(id(1))
+        .execute(&mut *old)
+        .await
+        .unwrap();
+        write_marker(&mut old, ChainNet::Matic).await.unwrap();
+        old.commit().await.unwrap();
+        nft_cursor(&db.pool, 50, Some(50), Some(50)).await;
+        assert!(!legacy_rows_published(&db.pool).await);
+
+        // A newly walked sale changes a key already passed in the live scan.
+        order_event(
+            &db.pool,
+            51,
+            "order_successful",
+            market,
+            1,
+            1,
+            SELLER,
+            Some(BUYER),
+            Some(321),
+        )
+        .await;
+        nft_cursor(&db.pool, 51, Some(51), Some(51)).await;
+        finish_rebuild(&db.pool).await;
+        let after = book(&db.pool).await;
+        assert_eq!(after.len(), 3);
+        assert_eq!(
+            after[0],
+            (
+                id(1),
+                "sold".into(),
+                Some(BUYER.into()),
+                "321".into(),
+                51,
+                510
+            )
+        );
+        assert_eq!(after[1].0, id(2));
+        assert_eq!(after[2].0, id(3));
+        assert_eq!(book_through(&db.pool).await, Some(51));
+        assert!(!legacy_rows_published(&db.pool).await);
+        nft_cursor(&db.pool, 51, Some(51), Some(51)).await;
+        assert!(legacy_rows_published(&db.pool).await);
+        db.drop().await;
+    }
+
+    #[tokio::test]
+    async fn a_rewind_keeps_a_partially_applied_book_withheld_until_the_new_branch_is_ready() {
+        let Some(db) =
+            crate::market::tests::support::OwnDb::create("legacy_orders_apply_rewind").await
+        else {
+            return;
+        };
+        let (market, _) = markets();
+        for n in 1..=2_u8 {
+            order_event(
+                &db.pool,
+                i64::from(n),
+                "order_created",
+                market,
+                i64::from(n),
+                n,
+                SELLER,
+                None,
+                Some(100),
+            )
+            .await;
+        }
+        nft_cursor(&db.pool, 50, Some(50), Some(50)).await;
+        open_matic(&db.pool).await;
+        while build_phase(&db.pool).await != "reconcile" {
+            assert_eq!(step_matic(&db.pool, 1).await, RebuildStep::Batched);
+        }
+        assert_eq!(step_matic(&db.pool, 1).await, RebuildStep::Batched);
+        assert_eq!(book(&db.pool).await[0].0, id(1));
+
+        sqlx::raw_sql(
+            "DELETE FROM shop.nft_event WHERE network = 'matic' AND block_number = 1;
+             UPDATE shop.chain_cursor SET reorg_rewinds = reorg_rewinds + 1
+             WHERE indexer = 'nft' AND network = 'matic'",
+        )
+        .execute(&db.pool)
+        .await
+        .unwrap();
+        nft_on(&db.pool, 1, 50, Some(50), Some(50)).await;
+        assert_eq!(step_matic(&db.pool, 1).await, RebuildStep::Batched);
+        assert_eq!(build_phase(&db.pool).await, "reset");
+        nft_on(&db.pool, 1, 50, Some(50), Some(50)).await;
+        assert!(!legacy_rows_published(&db.pool).await);
+        finish_rebuild(&db.pool).await;
+        assert_eq!(
+            book(&db.pool)
+                .await
+                .iter()
+                .map(|row| &row.0)
+                .collect::<Vec<_>>(),
+            [&id(2)]
+        );
+        nft_on(&db.pool, 1, 50, Some(50), Some(50)).await;
+        assert!(legacy_rows_published(&db.pool).await);
+        db.drop().await;
+    }
+
+    #[tokio::test]
+    async fn a_rollback_invalidates_the_partial_book_until_the_older_writer_refolds_it() {
+        let Some(db) = crate::market::tests::support::OwnDb::create("legacy_orders_rollback").await
+        else {
+            return;
+        };
+        let (market, _) = markets();
+        for n in 1..=2_u8 {
+            order_event(
+                &db.pool,
+                i64::from(n),
+                "order_created",
+                market,
+                i64::from(n),
+                n,
+                SELLER,
+                None,
+                Some(100),
+            )
+            .await;
+        }
+        nft_cursor(&db.pool, 50, Some(50), Some(50)).await;
+        fold_matic(&db.pool, -1).await;
+        nft_cursor(&db.pool, 50, Some(50), Some(50)).await;
+        assert!(stands(&db.pool).await);
+        assert!(legacy_rows_published(&db.pool).await);
+        sqlx::query("UPDATE shop.nft_event SET amount = 200 WHERE kind = 'order_created'")
+            .execute(&db.pool)
+            .await
+            .unwrap();
+        open_matic(&db.pool).await;
+        while build_phase(&db.pool).await != "reconcile" {
+            assert_eq!(step_matic(&db.pool, 1).await, RebuildStep::Batched);
+        }
+        assert_eq!(step_matic(&db.pool, 1).await, RebuildStep::Batched);
+        let partial = book(&db.pool).await;
+        assert_eq!(
+            (partial[0].3.as_str(), partial[1].3.as_str()),
+            ("200", "100")
+        );
+        assert!(!legacy_rows_published(&db.pool).await);
+
+        // An earlier writer can leave work in the apply journal. Run the
+        // documented hand-back with the index writers stopped.
+        let mut old = db.pool.begin().await.unwrap();
+        sqlx::query("SELECT 1 FROM shop.chain_cursor WHERE indexer = 'nft' AND network = 'matic' FOR UPDATE")
+            .execute(&mut *old).await.unwrap();
+        sqlx::query("UPDATE shop.legacy_order SET price = 201 WHERE order_id = $1")
+            .bind(id(1))
+            .execute(&mut *old)
+            .await
+            .unwrap();
+        write_marker(&mut old, ChainNet::Matic).await.unwrap();
+        old.commit().await.unwrap();
+        {
+            let mut conn = db.pool.acquire().await.unwrap();
+            assert_eq!(
+                visible_readiness_on(&mut conn, ChainNet::Matic)
+                    .await
+                    .unwrap(),
+                Readiness::Published,
+                "the old marker alone would admit the partial book"
+            );
+        }
+        assert!(!legacy_rows_published(&db.pool).await);
+        let journal_size = || {
+            sqlx::query_scalar::<_, i64>(
+                "SELECT count(*) FROM shop.legacy_order_apply_dirty WHERE network = 'matic'",
+            )
+            .fetch_one(&db.pool)
+        };
+        assert_eq!(journal_size().await.unwrap(), 1);
+        sqlx::raw_sql(
+            "BEGIN;
+             SELECT 1 FROM shop.chain_cursor
+             WHERE indexer = 'nft' AND network = 'matic' FOR UPDATE;
+
+             WITH abandoned AS (
+                 UPDATE shop.legacy_order_rebuild
+                 SET phase = 'cleanup', applying = false
+                 WHERE network = 'matic' AND applying AND phase <> 'cleanup'
+                 RETURNING network
+             )
+             UPDATE shop.legacy_order_cursor AS book
+             SET through_hash = NULL
+             FROM abandoned WHERE book.network = abandoned.network;
+             COMMIT;",
+        )
+        .execute(&db.pool)
+        .await
+        .unwrap();
+        assert!(!legacy_rows_published(&db.pool).await);
+        assert_eq!(build_phase(&db.pool).await, "cleanup");
+
+        // The former reader's marker proof refuses a raw same-height
+        // acknowledgement until the writer has replaced the complete book.
+        nft_cursor(&db.pool, 50, Some(50), Some(50)).await;
+        let mut conn = db.pool.acquire().await.unwrap();
+        assert_eq!(
+            visible_readiness_on(&mut conn, ChainNet::Matic)
+                .await
+                .unwrap(),
+            Readiness::Behind
+        );
+        drop(conn);
+        deployed_full_fold(&db.pool).await;
+        assert!(!legacy_rows_published(&db.pool).await);
+        nft_cursor(&db.pool, 50, Some(50), Some(50)).await;
+        assert!(legacy_rows_published(&db.pool).await);
+        assert!(stands(&db.pool).await);
+        let full = book(&db.pool).await;
+        assert_eq!((full[0].3.as_str(), full[1].3.as_str()), ("200", "200"));
+
+        finish_rebuild(&db.pool).await;
+        assert_eq!(journal_size().await.unwrap(), 0);
+        assert_eq!(book(&db.pool).await, full);
+        db.drop().await;
+    }
+
+    #[tokio::test]
+    async fn the_object_pass_installs_the_build_over_an_existing_book() {
+        let Some(db) = crate::market::tests::support::OwnDb::create("legacy_orders_upgrade").await
+        else {
+            return;
+        };
+        let (market, _) = markets();
+        order_event(
+            &db.pool,
+            10,
+            "order_created",
+            market,
+            1,
+            1,
+            SELLER,
+            None,
+            Some(100),
+        )
+        .await;
+        nft_cursor(&db.pool, 50, Some(50), Some(50)).await;
+        fold_matic(&db.pool, -1).await;
+        let live = book(&db.pool).await;
+        assert_eq!(live.len(), 1);
+        // The deployed layout has the live book and its cursor but none of
+        // these objects. Simulate that layout in this isolated database.
+        sqlx::raw_sql(
+            "DROP TRIGGER nft_event_order_build_insert ON shop.nft_event;
+             DROP TRIGGER nft_event_order_build_update ON shop.nft_event;
+             DROP TRIGGER nft_event_order_build_delete ON shop.nft_event;
+             DROP FUNCTION shop.capture_legacy_order_build_change();
+             DROP FUNCTION shop.note_legacy_order_build_change(text,varchar,numeric,bigint,integer);
+             DROP TRIGGER legacy_order_publication_gate ON shop.projection_write;
+             DROP FUNCTION shop.keep_legacy_order_pending();
+             DROP TRIGGER legacy_order_apply_insert ON shop.legacy_order;
+             DROP TRIGGER legacy_order_apply_update ON shop.legacy_order;
+             DROP TRIGGER legacy_order_apply_delete ON shop.legacy_order;
+             DROP TRIGGER legacy_order_build_apply_insert ON shop.legacy_order_build;
+             DROP TRIGGER legacy_order_build_apply_update ON shop.legacy_order_build;
+             DROP TRIGGER legacy_order_build_apply_delete ON shop.legacy_order_build;
+             DROP FUNCTION shop.capture_legacy_order_apply_change();
+             DROP TABLE shop.legacy_order_rebuild, shop.legacy_order_build,
+                        shop.legacy_order_build_event, shop.legacy_order_build_dirty,
+                        shop.legacy_order_apply_dirty;",
+        )
+        .execute(&db.pool)
+        .await
+        .unwrap();
+        crate::db::schema_migrate::migrate(
+            &db.pool,
+            crate::db::SCHEMA_SQL,
+            crate::db::MIGRATIONS_SQL,
+        )
+        .await
+        .unwrap();
+        assert_eq!(book(&db.pool).await, live);
+        assert_eq!(book_through(&db.pool).await, Some(50));
+        open_matic(&db.pool).await;
+        finish_rebuild(&db.pool).await;
+        assert_eq!(book(&db.pool).await, live);
+        db.drop().await;
+    }
+
     /// A rollout where an earlier binary, which never writes the book,
     /// rewinds the nft walk to 90 and republishes another branch at the same
     /// height, without the order a sale closed at 97. The book's recovery
@@ -651,8 +1898,9 @@ mod tests {
         seed_log(&db.pool, 100).await;
         nft_cursor(&db.pool, 100, Some(40), Some(40)).await;
         let mut tx = db.pool.begin().await.unwrap();
-        assert!(
-            !caught_up(&mut tx, ChainNet::Matic).await.unwrap(),
+        assert_eq!(
+            readiness_on(&mut tx, ChainNet::Matic).await.unwrap(),
+            Readiness::Behind,
             "the book (20) trails the published fold (40)"
         );
         tx.rollback().await.unwrap();
@@ -796,7 +2044,34 @@ mod tests {
             stands(&db.pool).await,
             "the walk advanced to 120 without folding: the book stays at the published 100"
         );
-        fold_matic(&db.pool, 100).await;
+        let (market, _) = markets();
+        order_event(
+            &db.pool,
+            110,
+            "order_created",
+            market,
+            11,
+            11,
+            SELLER,
+            None,
+            Some(100),
+        )
+        .await;
+        let mut tx = db.pool.begin().await.unwrap();
+        assert_eq!(fold(&mut tx, ChainNet::Matic, 100).await.unwrap(), 1);
+        tx.commit().await.unwrap();
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>("SELECT count(*) FROM shop.legacy_order_rebuild")
+                .fetch_one(&db.pool)
+                .await
+                .unwrap(),
+            0,
+            "a standing book's normal fold opens no rebuild or sticky gate"
+        );
+        assert!(
+            !legacy_rows_published(&db.pool).await,
+            "ordinary publication is still required after a write"
+        );
         assert_eq!(book_through(&db.pool).await, Some(120));
         assert!(
             !stands(&db.pool).await,
@@ -804,6 +2079,10 @@ mod tests {
         );
         nft_cursor(&db.pool, 120, Some(120), Some(120)).await;
         assert!(stands(&db.pool).await, "published at 120");
+        assert!(
+            legacy_rows_published(&db.pool).await,
+            "the first publication acknowledges the normal fold"
+        );
         db.drop().await;
     }
 
@@ -826,6 +2105,7 @@ mod tests {
                 crate::market::chain_walk::INDEXER_NFT,
                 ChainNet::Matic,
                 &["nft"],
+                None,
             )
             .await
             .unwrap();

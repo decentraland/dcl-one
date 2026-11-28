@@ -20,6 +20,11 @@ pub use crate::{
 /// One 300 s poll, CoinGecko's ~90 s `source_updated_at` lag and one missed
 /// poll (`Config::price_staleness_warning`).
 pub const DEFAULT_MANA_PRICE_MAX_STALENESS_SECS: i64 = 900;
+
+/// Default burst and number of tokens refilled per minute for a Wert signer.
+pub const DEFAULT_WERT_SIGN_REQUESTS_PER_MINUTE: std::num::NonZeroU32 =
+    std::num::NonZeroU32::new(10).unwrap();
+
 /// The one fulfilment source the payment rule admits: credits pay for
 /// CollectionStore mints (SHOP.md, "Purchase experience and payment rules").
 /// The legacy `secondary`/`auto` values fulfilled a credits debit from resale
@@ -705,6 +710,15 @@ impl Config {
     pub fn parse_env_for_tests<K: Into<String>, V: Into<String>>(
         vars: impl IntoIterator<Item = (K, V)>,
     ) -> Result<Self, clap::Error> {
+        Self::parse_env_with_flags_for_tests(vars, &[])
+    }
+
+    /// As above, with explicit `--name=value` flags taking precedence.
+    pub(crate) fn parse_env_with_flags_for_tests<K: Into<String>, V: Into<String>>(
+        vars: impl IntoIterator<Item = (K, V)>,
+        flags: &[&str],
+    ) -> Result<Self, clap::Error> {
+        let flags: Vec<String> = flags.iter().map(|flag| flag.to_string()).collect();
         let vars: Vec<(String, String)> = vars
             .into_iter()
             .map(|(k, v)| (k.into(), v.into()))
@@ -718,6 +732,13 @@ impl Config {
                     .find(|a| a.get_env().is_some_and(|e| e == key.as_str()))
                     .unwrap_or_else(|| panic!("{key} is not a serve variable"));
                 let long = arg.get_long().expect("every Config arg has a long flag");
+                if flags.iter().any(|flag| {
+                    flag.strip_prefix("--")
+                        .and_then(|flag| flag.split_once('='))
+                        .is_some_and(|(name, _)| name == long)
+                }) {
+                    continue;
+                }
                 if matches!(arg.get_action(), clap::ArgAction::SetTrue) {
                     if value == "true" {
                         argv.push(format!("--{long}"));
@@ -726,6 +747,7 @@ impl Config {
                     argv.push(format!("--{long}={value}"));
                 }
             }
+            argv.extend(flags);
             argv
         });
         let argv: Vec<&str> = argv.iter().map(String::as_str).collect();
@@ -796,6 +818,24 @@ mod tests {
 
     fn parse(args: &[&str]) -> Result<Config, clap::Error> {
         Config::parse_for_tests(args)
+    }
+
+    #[test]
+    fn wert_sign_requests_per_minute_defaults_to_ten_and_must_be_positive() {
+        let vars = [("DATABASE_URL", "postgres:///catalyst")];
+        let default = Config::parse_env_for_tests(vars).unwrap();
+        assert_eq!(default.marketplace.wert_sign_requests_per_minute.get(), 10);
+        let with_limit = |limit| {
+            Config::parse_env_for_tests([vars[0], ("WERT_SIGN_REQUESTS_PER_MINUTE", limit)])
+        };
+        let configured = with_limit("3").unwrap();
+        assert_eq!(
+            configured.marketplace.wert_sign_requests_per_minute.get(),
+            3
+        );
+        for bad in ["0", "-1", "invalid", "4294967296"] {
+            assert!(with_limit(bad).is_err(), "{bad}");
+        }
     }
 
     /// `--help` prints the value of an env-backed arg unless it hides it, so

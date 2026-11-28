@@ -10,6 +10,10 @@ use bevy::{
     ecs::{relationship::Relationship, system::SystemParam},
     prelude::*,
 };
+#[cfg(target_arch = "wasm32")]
+use common::structs::AppConfig;
+#[cfg(any(target_arch = "wasm32", test))]
+use common::structs::MicrophoneDevices;
 use common::structs::{AudioSettings, ClientWindowFocus, MicState, SystemAudio};
 use tokio::{sync::oneshot, task::JoinHandle};
 use web_time::Instant;
@@ -120,6 +124,11 @@ impl Plugin for MicPlugin {
             tear_down_microphone,
         );
 
+        #[cfg(target_arch = "wasm32")]
+        app.add_systems(
+            Update,
+            follow_microphone_choice.after(reconcile_publications),
+        );
         app.add_systems(Startup, add_ping_systems);
         app.add_systems(Update, transmission_state);
         app.add_systems(
@@ -188,6 +197,9 @@ struct PublicationControl {
     draining: bool,
     transmitting: bool,
     retry: RetryState,
+    /// The input last asked of the live track; not asked again until the inputs change.
+    #[cfg(target_arch = "wasm32")]
+    switching_to: Option<String>,
 }
 
 /// Dropping a participant or changing its route revokes its async work, including work which
@@ -695,6 +707,7 @@ fn reconcile_publications(
     livekit_runtime: LivekitRuntimeRes,
     #[cfg(not(target_arch = "wasm32"))] source: Res<LocalAudioSource>,
     #[cfg(not(target_arch = "wasm32"))] format: Option<Res<CaptureFormat>>,
+    #[cfg(target_arch = "wasm32")] config: Res<AppConfig>,
 ) {
     let enabled = microphone_routes_open(focus.get(), &mic, *permission.get(), *availability.get());
     let eligible = |room: Entity, participant: &LivekitParticipant| {
@@ -759,6 +772,14 @@ fn reconcile_publications(
         let receiver = source.subscribe();
         #[cfg(not(target_arch = "wasm32"))]
         let (sample_rate, channels) = (format.sample_rate, format.channels);
+        // starts on the chosen input when it is present, else on the system default, which the
+        // browser lists as "default", as livekit's fallback does
+        #[cfg(target_arch = "wasm32")]
+        let task_device = config
+            .audio
+            .microphone
+            .clone()
+            .unwrap_or_else(|| "default".to_owned());
 
         let task = livekit_runtime.spawn(async move {
             if installed.await.is_err() || task_revoked.load(Ordering::SeqCst) {
@@ -775,7 +796,7 @@ fn reconcile_publications(
             )
             .await;
             #[cfg(target_arch = "wasm32")]
-            let track = match build_audio_local_track().await {
+            let track = match build_audio_local_track(task_device).await {
                 Ok(Ok(track)) => track,
                 Ok(Err(err)) => {
                     warn!("microphone creation failed: {err}");
@@ -981,9 +1002,60 @@ async fn build_audio_local_track(
     (local_audio_track, capture)
 }
 
+/// The input a live track should capture from: the chosen one while the page lists it, the
+/// browser's `"default"` without a choice, and none (leave the track where livekit restarted it)
+/// while the chosen input is unplugged.
+#[cfg(any(target_arch = "wasm32", test))]
+fn input_to_follow<'a>(choice: Option<&'a str>, devices: &MicrophoneDevices) -> Option<&'a str> {
+    match choice {
+        Some(id) if devices.offers(id) => Some(id),
+        Some(_) => None,
+        None => Some("default"),
+    }
+}
+
+/// Keeps each live route's track on the chosen input, in place. A new choice moves the track;
+/// once an unplugged choice is listed again, the track moves back from the system default livekit
+/// restarted it on.
 #[cfg(target_arch = "wasm32")]
-async fn build_audio_local_track() -> super::web::RoomResult<Result<LocalAudioTrack, String>> {
+fn follow_microphone_choice(
+    config: Res<AppConfig>,
+    devices: Res<MicrophoneDevices>,
+    inputs: Res<super::web::MicrophoneTrackInputs>,
+    routes: Query<&MicrophonePublication>,
+) {
+    let choice = config.audio.microphone.as_deref();
+    let wanted = input_to_follow(choice, &devices);
+    for route in &routes {
+        let mut state = route.state.lock_ignore_poison();
+        if devices.is_changed() {
+            state.switching_to = None;
+        }
+        // a restart enables the capture, so only a published, unmuted track is switched
+        if state.revoked || !state.transmitting {
+            continue;
+        }
+        let (Some(wanted), Some(track)) = (wanted, state.track.clone()) else {
+            continue;
+        };
+        let Some(input) = inputs.get(track.id()) else {
+            continue;
+        };
+        if input.device == wanted {
+            state.switching_to = None;
+        } else if state.switching_to.as_deref() != Some(wanted) {
+            state.switching_to = Some(wanted.to_owned());
+            track.set_device(choice.map(str::to_owned));
+        }
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+async fn build_audio_local_track(
+    device_id: String,
+) -> super::web::RoomResult<Result<LocalAudioTrack, String>> {
     LocalAudioTrack::new(AudioCaptureOptions {
+        device_id: Some(device_id),
         echo_cancellation: Some(true),
         noise_suppression: Some(true),
         auto_gain_control: Some(true),
@@ -1030,6 +1102,23 @@ mod routing_tests {
             drain: drain.clone(),
             task: runtime.spawn(std::future::pending()),
         }
+    }
+
+    #[test]
+    fn a_track_follows_the_choice_while_listed_and_stays_on_the_default_while_it_is_unplugged() {
+        let mut devices = MicrophoneDevices::default();
+        let headset = common::structs::MicrophoneInput {
+            id: "headset".to_owned(),
+            label: "Headset".to_owned(),
+        };
+        assert_eq!(input_to_follow(None, &devices), Some("default"));
+        assert_eq!(input_to_follow(Some("headset"), &devices), None);
+        devices.replace(vec![headset.clone()]);
+        assert_eq!(input_to_follow(Some("headset"), &devices), Some("headset"));
+        devices.replace(Vec::new());
+        assert_eq!(input_to_follow(Some("headset"), &devices), None);
+        devices.replace(vec![headset]);
+        assert_eq!(input_to_follow(Some("headset"), &devices), Some("headset"));
     }
 
     #[test]

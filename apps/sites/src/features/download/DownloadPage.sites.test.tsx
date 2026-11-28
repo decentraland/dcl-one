@@ -11,10 +11,11 @@ import { googlePlayHref } from "./google-play";
 import { dclLogoUrl as sitesLogo } from "@dcl/one-ui";
 
 vi.hoisted(() => Object.assign(window, { __vite_plugin_react_preamble_installed__: true }));
+const onSignIn = vi.hoisted(() => vi.fn());
 vi.mock("../components/chrome/SitesLayout", () => ({ default: ({ children }: { children: ReactNode }) => <>{children}</> }));
 vi.mock("@dcl/one-ui", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@dcl/one-ui")>()),
-  useChromeAuth: () => ({ signedIn: false, account: null, name: null, onSignIn: () => {} }),
+  useChromeAuth: () => ({ signedIn: false, account: null, name: null, onSignIn }),
 }));
 
 // A document whose analytics is ready: its page view has been sent.
@@ -31,6 +32,7 @@ vi.mock("@/data/lib/download/mac-chip", async (importOriginal) => ({
 afterEach(() => {
   cleanup();
   vi.mocked(track).mockReset();
+  onSignIn.mockReset();
 });
 
 it("links home through the decorative 48px Decentraland logo", () => {
@@ -44,6 +46,16 @@ it("links home through the decorative 48px Decentraland logo", () => {
 
 const WINDOWS = { os: "windows", arch: "amd64", url: "https://installers.test/Decentraland_installer.exe" } as const;
 const MACOS = { os: "macos", arch: "arm64", url: "https://installers.test/Decentraland_installer.dmg" } as const;
+
+it("starts sign-in from the signed-out page's Sign In button, which submits nothing", async () => {
+  render(<DownloadPage primary={WINDOWS} secondary={MACOS} android={false} downloads={null} sid="s1" />);
+  const signIn = screen.getByRole("button", { name: "Sign In" });
+  expect(signIn.getAttribute("type")).toBe("button");
+
+  await userEvent.click(signIn);
+
+  expect(onSignIn).toHaveBeenCalledOnce();
+});
 
 it("names the page with level 1 headings only, one for each layout", () => {
   render(<DownloadPage primary={WINDOWS} secondary={MACOS} android={false} downloads="+438K" sid="s1" />);

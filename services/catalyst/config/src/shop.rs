@@ -1,8 +1,10 @@
 //! The shop's settings: the marketplace, the economy, credits and the shop fold.
 
+use std::num::NonZeroU32;
+
 use clap::Args;
 
-use crate::config::DEFAULT_MANA_PRICE_MAX_STALENESS_SECS;
+use crate::config::{DEFAULT_MANA_PRICE_MAX_STALENESS_SECS, DEFAULT_WERT_SIGN_REQUESTS_PER_MINUTE};
 
 /// The marketplace's upstreams: the subgraph readers, the trades mirror and the profile CDN.
 #[derive(Args, Clone, Debug)]
@@ -137,6 +139,10 @@ pub struct MarketplaceConfig {
     /// are default and publicationFees.
     #[arg(long, env = "WERT_EXTRA_CONTRACTS")]
     pub wert_extra_contracts: Option<String>,
+
+    /// Wert signing budget per verified wallet and replica, with a 60-second refill window.
+    #[arg(long, env = "WERT_SIGN_REQUESTS_PER_MINUTE", default_value_t = DEFAULT_WERT_SIGN_REQUESTS_PER_MINUTE)]
+    pub wert_sign_requests_per_minute: NonZeroU32,
 
     // The Transak card on-ramp (`/v1/transak/*`): all six, or none (the routes
     // then answer 503 naming them).
@@ -526,10 +532,11 @@ pub struct ShopConfig {
     #[arg(long, env = "CREDITS_WRITE_ADMIN_ADDRESSES", default_value = "")]
     pub credits_write_admin_addresses: String,
 
-    /// Refuse a write admin's wallet-signed change that does not sign its
-    /// body's SHA-256 (`bodySha256` in the signed metadata). Off, such a change
-    /// is accepted with a warning, as the old server accepted it; a signed hash
-    /// that does not match the body is refused either way.
+    /// Refuse a write admin's wallet-signed change, and a studio operator's
+    /// grant, that does not sign its body's SHA-256 (`bodySha256` in the
+    /// signed metadata). Off, such a change is accepted with a warning, as the
+    /// old server accepted it; a signed hash that does not match the body is
+    /// refused either way.
     #[arg(long, env = "CREDITS_ADMIN_WRITES_REQUIRE_BOUND_BODY", default_value_t = false, action = clap::ArgAction::Set)]
     pub credits_admin_writes_require_bound_body: bool,
 
@@ -592,6 +599,11 @@ pub struct ShopConfig {
         default_value_t = 3600
     )]
     pub credits_usd_pegged_feed_max_age_secs: u64,
+
+    /// The UTC hour from which the credits daily summary reports yesterday,
+    /// 0 to 23 (upstream SHOP_DAILY_SUMMARY_HOUR_UTC).
+    #[arg(long, env = "CREDITS_DAILY_SUMMARY_HOUR_UTC", default_value_t = 9)]
+    pub credits_daily_summary_hour_utc: u32,
 
     /// primary (the legacy secondary | auto run as primary: credits pay for
     /// CollectionStore mints only, SHOP.md).

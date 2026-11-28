@@ -5,6 +5,9 @@ import {
   GeneralControls,
   GeneralFilters,
   GeneralGraphics,
+  MenusDelete,
+  MenusNotifications,
+  MenusTranslate,
   NavBar,
   NavCreditsBalance,
   NavMenuItem,
@@ -19,6 +22,7 @@ import {
   decentralandPublicNavSections,
   type TitleBarProps,
   type TitleBarSection,
+  PagedRail,
   Pager,
   BrowseControl,
   BrowseLoading,
@@ -569,7 +573,8 @@ export const navigationEntries: GalleryEntry[] = [
   {
     name: 'ContextMenu',
     group: 'Navigation',
-    summary: 'A stacked menu of rows, with the forms that open it from a kebab button or a point.',
+    summary:
+      "The design system's context menu: a stacked menu of rows, with the forms that open it from a kebab button or a point.",
     components: ['ContextMenu', 'Submenu', 'KebabMenu', 'AnchoredMenu'],
     examples: [
       {
@@ -593,28 +598,52 @@ export const navigationEntries: GalleryEntry[] = [
         )
       },
       {
-        id: 'sheet',
-        title: 'The flat sheet, with taller rows',
+        id: 'chat',
+        title:
+          "A chat's conversation menu, 260px wide: point at Notification Ping to open its list",
         render: () => (
-          <ContextMenu
-            variant="sheet"
-            aria-label="Conversation options"
-            items={[
-              { label: 'View profile' },
-              { kind: 'toggle', label: 'Notifications', checked: false },
-              { kind: 'separator' },
-              { label: 'Delete chat history', danger: true }
-            ]}
-          />
+          <div style={{ minHeight: 150 }}>
+            <ContextMenu
+              aria-label="Conversation options"
+              width={260}
+              items={[
+                {
+                  kind: 'submenu',
+                  label: 'Notification Ping',
+                  icon: <MenusNotifications size={20} />,
+                  items: [
+                    { kind: 'option', label: 'All Messages', checked: true },
+                    { kind: 'option', label: 'Mentions Only', checked: false },
+                    { kind: 'option', label: 'None', checked: false }
+                  ]
+                },
+                {
+                  kind: 'toggle',
+                  label: 'Auto-Translate',
+                  icon: <MenusTranslate size={20} />,
+                  checked: true
+                },
+                { kind: 'separator' },
+                { label: 'Delete Chat History', icon: <MenusDelete size={20} />, danger: true }
+              ]}
+            />
+          </div>
         )
       },
       {
         id: 'submenu',
-        title: 'A row that opens a list beside it, on hover or press',
+        title: 'A row that opens a list beside it, on hover or press; a long name wraps',
         render: () => (
           <div style={{ width: 240, minHeight: 150 }}>
             <Submenu label="Invite to Community">
-              <ContextMenu items={[{ label: 'Pixel Builders' }, { label: 'Neon Club' }]} scroll />
+              <ContextMenu
+                items={[
+                  { label: 'Pixel Builders' },
+                  { label: 'Neon Club' },
+                  { label: 'The Northern District Builders and Friends of Genesis Plaza' }
+                ]}
+                scroll
+              />
             </Submenu>
           </div>
         )
@@ -683,6 +712,52 @@ export const navigationEntries: GalleryEntry[] = [
     ]
   },
   {
+    name: 'PagedRail',
+    group: 'Navigation',
+    summary:
+      'A row of cards paged a whole page at a time, with arrows on hover or focus and a dot per page.',
+    components: ['PagedRail'],
+    examples: [
+      {
+        id: 'pages',
+        title: 'Eight cards, three to a page',
+        note: 'Point at the row, or move the focus into it, for its arrows. The last page ends on the last card.',
+        render: () => (
+          <div className={layout.railRoom}>
+            <PagedRail perPage={3} gap={8}>
+              {railCards(8)}
+            </PagedRail>
+          </div>
+        )
+      },
+      {
+        id: 'shop',
+        title: 'The shop variant, with room for a card that grows, and a row without dots',
+        render: () => (
+          <div className={`${layout.railRoom} ${layout.rows}`}>
+            <PagedRail variant="shop" perPage={3} gap={8} bleed={12}>
+              {railCards(7)}
+            </PagedRail>
+            <PagedRail perPage={3} gap={8} dots={false}>
+              {railCards(5)}
+            </PagedRail>
+          </div>
+        )
+      },
+      {
+        id: 'fits',
+        title: 'Every card fits: no arrows and no dots',
+        render: () => (
+          <div className={layout.railRoom}>
+            <PagedRail perPage={3} gap={8}>
+              {railCards(2)}
+            </PagedRail>
+          </div>
+        )
+      }
+    ]
+  },
+  {
     name: 'Pager',
     group: 'Navigation',
     summary: 'Previous and next arrows around a window of page numbers.',
@@ -696,6 +771,14 @@ export const navigationEntries: GalleryEntry[] = [
     ]
   }
 ]
+
+function railCards(count: number) {
+  return Array.from({ length: count }, (_, index) => (
+    <div key={index} className={layout.railCard}>
+      Card {index + 1}
+    </div>
+  ))
+}
 
 function PagerExample() {
   const [page, setPage] = useState(2)

@@ -1,4 +1,8 @@
-import { forwardRef, useId, useState, type ReactNode, type SVGProps } from 'react'
+import { forwardRef, useState, type ReactNode, type SVGProps } from 'react'
+import { Button } from '../../../components/Button/Button'
+import { CloseButton } from '../../../components/CloseButton/CloseButton'
+import { Dropdown } from '../../../components/Dropdown/Dropdown'
+import { InputWebCreatorTools } from '../../../components/InputWebCreatorTools/InputWebCreatorTools'
 import { GeneralClose } from '../../../foundations/icons'
 import { Dialog } from './Dialog'
 import styles from './ExploreBand.module.css'
@@ -129,10 +133,10 @@ function TuneGlyph(props: SVGProps<SVGSVGElement>) {
   )
 }
 
-/* The reference's magnifier and select arrow, inline so they measure as it does. */
-function SearchGlyph({ className }: { className?: string }) {
+/* The reference's magnifier, inline so it measures as it does. */
+function SearchGlyph() {
   return (
-    <svg className={className} viewBox="0 0 24 24" fill="none" aria-hidden="true" focusable="false">
+    <svg viewBox="0 0 24 24" fill="none" aria-hidden="true" focusable="false">
       <path
         d="M10.5781 4C14.2111 4.00002 17.1562 6.94512 17.1562 10.5781C17.1562 11.8863 16.7734 13.1049 16.115 14.1293C16.0912 14.1662 16.1018 14.2102 16.1328 14.2412L19.6084 17.7178C20.1304 18.2399 20.1305 19.0863 19.6084 19.6084C19.0862 20.1305 18.2399 20.1304 17.7178 19.6084L14.2412 16.1328C14.2102 16.1018 14.1662 16.0912 14.1293 16.115C13.1049 16.7734 11.8863 17.1562 10.5781 17.1562C6.94517 17.1562 4.00002 14.211 4 10.5781C4 6.94515 6.94515 4 10.5781 4ZM10.5781 6.28027C8.20458 6.28027 6.28028 8.20452 6.28027 10.5781C6.28027 12.9517 8.20451 14.876 10.5781 14.876C12.9516 14.8759 14.876 12.9517 14.876 10.5781C14.876 8.2046 12.9516 6.2803 10.5781 6.28027Z"
         fill="currentColor"
@@ -141,22 +145,7 @@ function SearchGlyph({ className }: { className?: string }) {
   )
 }
 
-function ArrowDropDownGlyph({ className }: { className?: string }) {
-  return (
-    <svg
-      className={className}
-      viewBox="0 0 24 24"
-      fill="currentColor"
-      aria-hidden="true"
-      focusable="false"
-      data-testid="ArrowDropDownIcon"
-    >
-      <path d="M7 10l5 5 5-5z" />
-    </svg>
-  )
-}
-
-/** TODO(figma-ds): a native select in the toolbar's dark pill, until the design system ships a Select. */
+/** The shared dark Dropdown, in a box of the toolbar's width so its frame does not fill the row. */
 function CategorySelect({
   value,
   options,
@@ -170,26 +159,17 @@ function CategorySelect({
   onChange: (value: string) => void
   className?: string
 }) {
-  const selected = options.find((option) => option.value === value) ?? options[0]
   return (
-    <span className={`${styles.selectWrap} ${className ?? ''}`}>
-      <span className={styles.selectLabel} aria-hidden="true">
-        {selected?.label ?? value}
-      </span>
-      <ArrowDropDownGlyph className={styles.selectIcon} />
-      <select
-        className={styles.select}
-        aria-label={label}
+    <div className={`${styles.selectBox} ${className ?? ''}`}>
+      <Dropdown
+        variant="dark"
+        label={label}
+        labelHidden
+        options={options}
         value={value}
-        onChange={(event) => onChange(event.target.value)}
-      >
-        {options.map((option) => (
-          <option key={option.value} value={option.value}>
-            {option.label}
-          </option>
-        ))}
-      </select>
-    </span>
+        onChange={onChange}
+      />
+    </div>
   )
 }
 
@@ -212,7 +192,6 @@ const ExploreBand = forwardRef<HTMLDivElement, ExploreBandProps>(function Explor
   },
   ref
 ) {
-  const searchId = useId()
   const [filtersOpen, setFiltersOpen] = useState(false)
   const filtering = section === 'all'
   const categoryLabel = categories.find((option) => option.value === category)?.label ?? category
@@ -240,21 +219,17 @@ const ExploreBand = forwardRef<HTMLDivElement, ExploreBandProps>(function Explor
           </div>
           {filtering ? (
             <div className={styles.controls}>
-              <div className={styles.search}>
-                <label htmlFor={searchId} className={styles.visuallyHidden}>
-                  {labels.search}
-                </label>
-                <SearchGlyph className={styles.searchIcon} />
-                <input
-                  id={searchId}
-                  className={styles.searchInput}
-                  type="search"
-                  autoComplete="off"
-                  placeholder={labels.searchPlaceholder}
-                  value={search}
-                  onChange={(event) => onSearch(event.target.value)}
-                />
-              </div>
+              <InputWebCreatorTools
+                className={styles.search}
+                type="search"
+                label={labels.search}
+                labelHidden
+                autoComplete="off"
+                placeholder={labels.searchPlaceholder}
+                value={search}
+                onChange={(event) => onSearch(event.target.value)}
+                leadingIcon={<SearchGlyph />}
+              />
               <CategorySelect
                 className={styles.desktopOnly}
                 value={category}
@@ -262,29 +237,31 @@ const ExploreBand = forwardRef<HTMLDivElement, ExploreBandProps>(function Explor
                 label={labels.category}
                 onChange={onCategory}
               />
-              <button
-                type="button"
+              <Button
+                iconOnly
+                variant="dark"
+                size="sm"
                 className={styles.filterButton}
                 aria-label={labels.filters}
                 aria-haspopup="dialog"
                 onClick={() => setFiltersOpen(true)}
               >
                 <TuneGlyph aria-hidden="true" data-testid="TuneRoundedIcon" />
-              </button>
+              </Button>
             </div>
           ) : null}
         </div>
         {filtering && category !== allCategory ? (
           <div className={styles.chips}>
-            <button
-              type="button"
-              className={styles.chip}
+            <Button
+              variant="inverse"
+              size="sm"
               aria-label={labels.removeFilter(categoryLabel)}
+              trailingIcon={<GeneralClose size={16} />}
               onClick={() => onCategory(allCategory)}
             >
               {categoryLabel}
-              <GeneralClose size={16} aria-hidden="true" />
-            </button>
+            </Button>
           </div>
         ) : null}
         {children}
@@ -293,14 +270,11 @@ const ExploreBand = forwardRef<HTMLDivElement, ExploreBandProps>(function Explor
         <Dialog label={labels.filters} placement="drawer" onClose={() => setFiltersOpen(false)}>
           <div className={styles.drawerHeader}>
             <h2 className={styles.drawerTitle}>{labels.filters}</h2>
-            <button
-              type="button"
-              className={styles.drawerClose}
+            <CloseButton
+              variant="plain"
               aria-label={labels.closeFilters}
               onClick={() => setFiltersOpen(false)}
-            >
-              <GeneralClose size={24} aria-hidden="true" />
-            </button>
+            />
           </div>
           <div className={styles.drawerSection}>
             <span className={styles.drawerLabel} aria-hidden="true">

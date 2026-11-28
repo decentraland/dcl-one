@@ -10,11 +10,11 @@
 // components/Table/{TableContainer,TableContent}/*.tsx; icons vendored from webapp/src/images into landbranch-assets/.
 // Copyright 2020 Metaverse Holdings Ltd. (marketplace), Apache-2.0.
 
+import { ShopManaMark } from "@dcl/one-ui";
 import { useContext, useMemo, useState, type ReactNode } from "react";
 import { Link } from "react-router";
 import { QueryClientContext } from "@tanstack/react-query";
 
-import ManaMark from "../../../atoms/ManaMark";
 import type { NftResult } from "@catalyst-api/market/NftResult";
 import { landTokenId } from "../../../data/catalyst/landListing";
 import { EstateUpgradeWarning } from "../../land/LandSections";
@@ -389,7 +389,7 @@ function SaleRentBox({ result, land, account, onSignIn, onChanged }: SaleRentBox
             <div className="shop-landtoken__price">
               <div className="shop-landtoken__price-title">Price</div>
               <div className="shop-landtoken__price-value">
-                <ManaMark size={18} network="ethereum" />
+                <ShopManaMark size={18} network="ethereum" />
                 <span className="shop-landtoken__price-mana">{manaText(maxPrice)}</span>
                 <span className="shop-landtoken__per-day">/day</span>
                 <FiatPrice wei={maxPrice} suffix="/day" />
@@ -415,7 +415,7 @@ function SaleRentBox({ result, land, account, onSignIn, onChanged }: SaleRentBox
               <div className="shop-landtoken__price">
                 <div className="shop-landtoken__price-title">Price</div>
                 <div className="shop-landtoken__price-value" data-testid="land-price">
-                  <ManaMark size={18} network={order.network === "MATIC" ? "polygon" : "ethereum"} />
+                  <ShopManaMark size={18} network={order.network === "MATIC" ? "polygon" : "ethereum"} />
                   <span className="shop-landtoken__price-mana">{manaText(order.price)}</span>
                   <FiatPrice wei={order.price} />
                 </div>
@@ -450,7 +450,7 @@ function SaleRentBox({ result, land, account, onSignIn, onChanged }: SaleRentBox
                 <div className="shop-landtoken__sale-buttons">
                   {buyable ? (
                     <button type="button" className="shop-landtoken__primary" onClick={() => (account ? setBuying(true) : onSignIn?.())} data-testid="land-buy">
-                      <ManaMark size={16} network="ethereum" />
+                      <ShopManaMark size={16} network="ethereum" />
                       <span>Buy with MANA</span>
                     </button>
                   ) : null}
@@ -633,7 +633,7 @@ function LinkedProfile({ address }: { address: string }) {
 function InlineMana({ wei, network }: { wei: string; network?: string }) {
   return (
     <span className="shop-landtoken__inline-mana">
-      <ManaMark size={14} network={network === "MATIC" || network === "polygon" ? "polygon" : "ethereum"} />
+      <ShopManaMark size={14} network={network === "MATIC" || network === "polygon" ? "polygon" : "ethereum"} />
       {manaText(wei)}
     </span>
   );

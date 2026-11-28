@@ -88,6 +88,8 @@ pub async fn get_world_limits(
                 "Could not determine owner for world {}",
                 world.key()
             )),
+            // Answered as this route's own owner lookup above answers it.
+            CapError::Authority(why) => why.into(),
             CapError::Unavailable(reason) => {
                 tracing::warn!(world = %world, %reason, "world limits: allowance unavailable");
                 ApiError::service_unavailable(

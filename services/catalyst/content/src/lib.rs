@@ -150,6 +150,8 @@ pub struct Settings {
     pub profile_images_public_url: String,
     pub realm_name: Option<String>,
     pub entities_cache_control_max_age: u64,
+    /// False when `SYNC_ENTITY_TYPES` leaves scenes out: the node holds only the scenes it was asked for.
+    pub syncs_scenes: bool,
     /// nginx `X-Accel-Redirect` prefix for GET /contents; `None` streams the blob itself.
     pub storage_x_accel_base: Option<String>,
     /// `MAP_SATELLITE_BASE_URL`; unset, /about advertises no satellite view.
@@ -277,6 +279,10 @@ impl Settings {
             profile_images_public_url: format!("{public_url}/profile-images/"),
             realm_name: non_empty(&config.node.realm_name),
             entities_cache_control_max_age: config.node.entities_cache_control_max_age,
+            syncs_scenes: sync::parse_entity_types(&config.content.sync_entity_types)
+                .ok()
+                .flatten()
+                .is_none_or(|types| types.contains("scene")),
             storage_x_accel_base: non_empty(&config.node.storage_x_accel_base),
             map_satellite_base_url: map.satellite_base,
             map_parcel_view_url: map.parcel_view,
@@ -356,6 +362,7 @@ impl Settings {
             profile_images_public_url: "http://localhost/profile-images/".to_string(),
             realm_name: None,
             entities_cache_control_max_age: 10,
+            syncs_scenes: true,
             storage_x_accel_base: None,
             map_satellite_base_url: Some("http://127.0.0.1:5162/satellite".to_string()),
             map_parcel_view_url: "http://127.0.0.1:5162/v1/minimap.png".to_string(),
@@ -735,6 +742,14 @@ impl ContentState {
         }
     }
 
+    /// Whether the scenes in the database are all the scenes there are: synced, not a partial
+    /// copy of a peer, and not a node that syncs other types only.
+    pub fn holds_every_scene(&self) -> bool {
+        self.settings.syncs_scenes
+            && self.sync.is_type_ready("scene")
+            && !self.sync.is_unsynced_copy()
+    }
+
     pub fn challenge(&self) -> String {
         self.challenge.read().clone()
     }
@@ -850,6 +865,10 @@ fn content_routes(state: &SharedState, max_deploy_body: usize) -> Router<SharedS
         .route(
             "/entities/active/collections/{collectionUrn}",
             get(active_entities::get_entities_by_collection),
+        )
+        .route(
+            "/entities/active/scenes",
+            get(active_entities::get_active_scenes),
         )
         .route(
             "/entities/active",

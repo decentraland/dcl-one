@@ -21,7 +21,7 @@ use sqlx::Row;
 
 use crate::comms::world_identity::WorldName;
 use crate::policy::WorldLimits;
-use crate::shared::identity::Address;
+use crate::shared::identity::{Address, AuthorityNotEstablished};
 
 use super::CoreState;
 
@@ -167,7 +167,10 @@ pub async fn wallet_usage<'e>(
 pub enum CapError {
     /// Nobody holds the world's NAME (the old `WorldOwnerNotFoundError`).
     OwnerNotFound,
-    /// The allowance or the owner could not be read right now.
+    /// The NAME authority could not establish the world's owner or the
+    /// NAMEs that owner holds: refused as the permission check refuses it.
+    Authority(AuthorityNotEstablished),
+    /// The allowance could not be read right now.
     Unavailable(String),
 }
 
@@ -240,11 +243,18 @@ impl CoreState {
         conn: Option<&mut sqlx::PgConnection>,
         wallet: &Address,
     ) -> Result<Option<Vec<String>>, String> {
-        let labels = self
-            .policy
-            .held_name_labels_using(conn, wallet)
+        self.held_world_keys_using(conn, wallet)
             .await
-            .map_err(|e| e.to_string())?;
+            .map_err(|e| e.to_string())
+    }
+
+    /// [`Self::held_worlds_using`] with the authority's own refusal.
+    async fn held_world_keys_using(
+        &self,
+        conn: Option<&mut sqlx::PgConnection>,
+        wallet: &Address,
+    ) -> Result<Option<Vec<String>>, AuthorityNotEstablished> {
+        let labels = self.policy.held_name_labels_using(conn, wallet).await?;
         Ok(labels.map(|labels| labels.iter().map(|l| format!("{l}.dcl.eth")).collect()))
     }
 
@@ -306,7 +316,7 @@ impl CoreState {
                 Some(conn) => self.policy.current_owner_on(conn, world).await,
                 None => self.policy.current_owner(world).await,
             }
-            .map_err(|e| CapError::Unavailable(e.to_string()))?
+            .map_err(CapError::Authority)?
             .ok_or(CapError::OwnerNotFound)?,
         };
         // No allowance source: nothing to re-check, so no wallet lock.
@@ -322,9 +332,9 @@ impl CoreState {
             .await
             .map_err(CapError::Unavailable)?;
         let mut held = self
-            .held_worlds_using(conn.as_deref_mut(), &owner)
+            .held_world_keys_using(conn.as_deref_mut(), &owner)
             .await
-            .map_err(CapError::Unavailable)?;
+            .map_err(CapError::Authority)?;
         // `owner` was resolved as this world's holder.
         if let Some(held) = held.as_mut()
             && !held.iter().any(|h| h == world.key())
