@@ -13,7 +13,8 @@ _spec.loader.exec_module(_contract)
 WEB = 'rendering/bevy-explorer/source/react-web/'
 MANIFEST = WEB + 'shared-inputs.json'
 SHARED = ('library/shop/model/money.ts', 'library/catalyst-api/credits/BalanceOut.ts',
-          'library/ui/foundations/index.ts', 'library/ui/foundations/colors/colors.css')
+          'library/ui/foundations/index.ts', 'library/ui/foundations/colors/colors.css',
+          'library/explorer-core/lib/gateway.ts')
 CONTROLS = tuple(WEB + name for name in ('package.json', 'pnpm-lock.yaml', 'tsconfig.json',
                                        'vite.config.ts', 'vitest.config.ts', 'vite.shared.ts',
                                        'scripts/shared-inputs.mjs')) + ('library/ui/package.json', 'library/ui/foundations/typography/font-source.json')

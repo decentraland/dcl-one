@@ -1,6 +1,7 @@
-//! Trusted native gateway configuration. The deployment's gateway virtual host
-//! preserves service identities. Its apex serves the same APIs at canonical paths.
-use system_api_types::services::{Service, ServiceValue};
+//! The gateway launch option (`--gateway`, `?gateway=`, a link's `gateway=`): under a `gateway.`
+//! virtual host each service keeps its host label as a path segment; under any other host the
+//! services take canonical paths.
+use system_api_types::services::Service;
 use url::Url;
 
 #[derive(Debug, PartialEq)]
@@ -11,8 +12,8 @@ pub struct Gateway {
 
 impl Gateway {
     pub fn parse(raw: &str) -> Result<Self, String> {
-        let url =
-            Url::parse(raw.trim()).map_err(|_| "--gateway expects an absolute HTTP(S) URL")?;
+        let url = Url::parse(raw.trim())
+            .map_err(|_| "the gateway must be an absolute HTTP(S) URL".to_owned())?;
         if !matches!(url.scheme(), "https" | "http")
             || url.host().is_none()
             || !url.username().is_empty()
@@ -21,7 +22,7 @@ impl Gateway {
             || url.fragment().is_some()
         {
             return Err(
-                "--gateway expects an HTTP(S) base URL without credentials, query or fragment"
+                "the gateway must be an HTTP(S) base URL without credentials, query or fragment"
                     .into(),
             );
         }
@@ -33,22 +34,34 @@ impl Gateway {
         })
     }
 
-    // API vhosts use their service host label. Direct origins expose the peer at
-    // the root, preview on the main gatekeeper, and community thumbnails through social.
-    fn segment(&self, service: Service) -> Option<&'static str> {
-        match service {
-            Service::Catalyst if !self.virtual_host => Some(""),
-            Service::PreviewGatekeeper if !self.virtual_host => Some("comms-gatekeeper"),
-            Service::AssetsCdn if !self.virtual_host => Some("social-api"),
-            // Site links and storage delegations use their own public destinations.
-            Service::AuthPage | Service::Reels | Service::Storage => None,
-            // Not through the gateway yet: its `/ab-cdn` route serves the asset-bundle CDN and
-            // refuses `bevy/` paths, so abgen's CDN is reached directly until it has its own
-            // route.
-            Service::AbgenCdn => None,
-            service if service.value() == ServiceValue::Http => Some(service.composition().1),
-            _ => None,
+    /// A `decentraland://` link's gateway for a session on `base_domain`: only
+    /// `https://gateway.<base_domain>`, with no port or path, when `base_domain` is one of
+    /// Decentraland's own deployments. The apex and any path are refused.
+    pub fn parse_link(raw: &str, base_domain: &str) -> Result<Self, String> {
+        let gateway = Self::parse(raw).map_err(|e| format!("the link's gateway `{raw}`: {e}"))?;
+        let url = Url::parse(&gateway.prefix).map_err(|e| e.to_string())?;
+        let host = url.host_str().unwrap_or_default();
+        let trusted = url.scheme() == "https"
+            && url.port().is_none()
+            && url.path() == "/"
+            && crate::base_domain::DECENTRALAND_DOMAINS.contains(&base_domain)
+            && host.strip_prefix("gateway.") == Some(base_domain);
+        if !trusted {
+            return Err(format!(
+                "a link's gateway must be https://gateway.{base_domain} on a Decentraland \
+                 deployment; pass --gateway for `{raw}`"
+            ));
         }
+        Ok(gateway)
+    }
+
+    /// The base url, without a trailing slash.
+    pub fn prefix(&self) -> &str {
+        &self.prefix
+    }
+
+    fn segment(&self, service: Service) -> Option<&'static str> {
+        service.gateway_segment(self.virtual_host)
     }
 
     pub fn service(&self, service: Service) -> Option<String> {
@@ -358,6 +371,50 @@ mod gateway_tests {
                 .unwrap(),
             None
         );
+    }
+
+    #[test]
+    fn a_link_selects_only_its_decentraland_deployments_gateway() {
+        for (raw, domain) in [
+            ("https://gateway.decentraland.org", "decentraland.org"),
+            ("https://gateway.decentraland.zone/", "decentraland.zone"),
+        ] {
+            assert_eq!(
+                Gateway::parse_link(raw, domain),
+                Gateway::parse(raw),
+                "{raw}"
+            );
+        }
+        for raw in [
+            "http://gateway.decentraland.org",
+            "https://gateway.decentraland.org:8443",
+            "https://gateway.decentraland.org/_scene/x",
+            "https://decentraland.org/mount",
+            // the apex is the website, not a gateway
+            "https://decentraland.org",
+            "https://cdn.decentraland.org",
+            "https://gateway.decentraland.zone",
+            "https://gateway.example.test",
+            "https://decentraland.org.example.test",
+            "https://evil-decentraland.org",
+            "https://user@gateway.decentraland.org",
+        ] {
+            assert!(
+                Gateway::parse_link(raw, "decentraland.org").is_err(),
+                "{raw}"
+            );
+        }
+        // a malformed link names the link, not a flag the user never passed
+        let malformed =
+            Gateway::parse_link("ftp://gateway.decentraland.org", "decentraland.org").unwrap_err();
+        assert!(
+            malformed.starts_with("the link's gateway") && !malformed.contains("--gateway"),
+            "{malformed}"
+        );
+        // a session on another deployment takes its gateway by --gateway only
+        for raw in ["https://gateway.example.test", "https://evil.example"] {
+            assert!(Gateway::parse_link(raw, "example.test").is_err(), "{raw}");
+        }
     }
 
     #[test]

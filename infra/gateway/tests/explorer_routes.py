@@ -12,29 +12,95 @@ from urllib.parse import urlsplit
 from test_routing import route
 
 
-def check(rows, root):
-    # Only the browser location and the generated barrel import need a harness. Both the
-    # service table and serviceUrl/engineServiceOptions execute their production source.
-    result = subprocess.run(["node", "--input-type=module", "-e", """
-        import { registerHooks } from 'node:module';
-        import { pathToFileURL } from 'node:url';
-        import { resolve } from 'node:path';
-        const root = process.argv[1];
-        const play = resolve(root, 'apps/ui3/src/play');
-        const generated = resolve(root, 'library/explorer-core/engine/generated');
-        registerHooks({ resolve(specifier, context, next) {
-            if (specifier === '@explorer-core/engine/generated') {
-                return { url: pathToFileURL(resolve(generated, 'serviceTable.ts')).href, shortCircuit: true };
-            }
-            return next(specifier, context);
-        }});
-        globalThis.window = { location: new URL('https://example.test/play'), __DCL_PUBLIC__: {} };
-        const hud = await import(pathToFileURL(resolve(play, 'lib/baseDomain.ts')));
-        const { SERVICES } = await import(pathToFileURL(resolve(generated, 'serviceTable.ts')));
-        console.log(JSON.stringify({ services: SERVICES, options: hud.engineServiceOptions() }));
-    """, str(root)], text=True, capture_output=True)
+HUD = """
+    import { registerHooks } from 'node:module';
+    import { pathToFileURL } from 'node:url';
+    import { extname, resolve } from 'node:path';
+    const [root, page, sites, host] = process.argv.slice(1);
+    const core = resolve(root, 'library/explorer-core');
+    registerHooks({ resolve(specifier, context, next) {
+        if (specifier === '@explorer-core/engine/generated') {
+            return { url: pathToFileURL(resolve(core, 'engine/generated/serviceTable.ts')).href, shortCircuit: true };
+        }
+        if (specifier.startsWith('@explorer-core/')) {
+            const path = resolve(core, specifier.slice('@explorer-core/'.length) + '.ts');
+            return { url: pathToFileURL(path).href, shortCircuit: true };
+        }
+        if (specifier.startsWith('.') && extname(specifier) === '') {
+            return next(specifier + '.ts', context);
+        }
+        return next(specifier, context);
+    }});
+    globalThis.window = { location: new URL(page), ...(sites === 'sites' ? { __DCL_PUBLIC__: {} } : {}) };
+    globalThis.location = globalThis.window.location;
+    const module = host === 'react-web'
+        ? resolve(root, 'rendering/bevy-explorer/source/react-web/src/lib/baseDomain.ts')
+        : resolve(root, 'apps/ui3/src/play/lib/baseDomain.ts');
+    const hud = await import(pathToFileURL(module));
+    const { SERVICES } = await import(pathToFileURL(resolve(core, 'engine/generated/serviceTable.ts')));
+    const urls = Object.fromEntries(SERVICES.map((s) => [s.name, hud.serviceUrl(s.name)]));
+    const options = hud.engineServiceOptions?.() ?? null;
+    // what the HUD signs for the same probes the engine signs (gateway_routes_match_deployment)
+    const signing = Object.fromEntries(SERVICES.map((s) => [s.name, Object.fromEntries(
+        ['', '/', '/child?query=x/y'].map((suffix) => [urls[s.name] + suffix, hud.gatewaySignedPath(urls[s.name] + suffix)]))]));
+    console.log(JSON.stringify({ services: SERVICES, options, urls, signing }));
+"""
+
+
+def run_hud(root, page, sites, host="play"):
+    # Only the browser location and the module specifiers need a harness. The service table and
+    # each host's serviceUrl (and /play's engineServiceOptions) execute their production source.
+    result = subprocess.run(
+        ["node", "--input-type=module", "-e", HUD, str(root), page, "sites" if sites else "", host],
+        text=True,
+        capture_output=True,
+    )
     assert result.returncode == 0, result.stderr
-    hud = json.loads(result.stdout)
+    return json.loads(result.stdout)
+
+
+def check_gateway_option(rows, root):
+    """The page's ?gateway= reaches the endpoints the engine's --gateway does. The engine takes
+    the gateway itself; a service the gateway leaves keeps the page's own destination, which a
+    dcl-one page hands its engine explicitly."""
+    for gateway, key in (("https://gateway.example.test", "vhost"), ("https://example.test", "direct")):
+        page = f"https://play.decentraland.org/play?gateway={gateway}"
+        hud = run_hud(root, page, False)
+        assert hud["options"] == {"gateway": gateway, "baseDomain": "decentraland.org"}, hud["options"]
+        # react-web's urls and signed paths are checked against the same rows
+        react_web = run_hud(root, page, False, "react-web")
+        for row in rows:
+            if row["web"]:
+                expected = row[key] if row[key] is not None else row["fallback"]
+                for name, urls in (("play", hud["urls"]), ("react-web", react_web["urls"])):
+                    assert urls[row["name"]] == expected, (name, gateway, row["name"], urls[row["name"]], expected)
+                if key != "vhost" or row[key] is None:
+                    continue
+                # each host's signed path equals the path the nginx route forwards
+                for probe in row["signing"]:
+                    target = urlsplit(probe["target"])
+                    request_uri = target.path + ("?" + target.query if target.query else "")
+                    _, original = route(target.hostname, request_uri)
+                    for name, signing in (("play", hud["signing"]), ("react-web", react_web["signing"])):
+                        signed = signing[row["name"]][probe["target"]]
+                        assert signed == probe["signed"] == original.split("?")[0], (name, probe, signed, original)
+
+        node = run_hud(root, f"https://node.example.test/play?gateway={gateway}", True)
+        assert node["options"]["gateway"] == gateway, node["options"]
+        for row in rows:
+            if not row["web"]:
+                continue
+            name = row["name"]
+            if row[key] is not None:
+                assert node["urls"][name] == row[key], (gateway, name, node["urls"][name])
+                assert name not in node["options"], (gateway, name)
+            else:
+                assert node["options"][name] == node["urls"][name], (gateway, name)
+
+
+def check(rows, root):
+    check_gateway_option(rows, root)
+    hud = run_hud(root, "https://example.test/play", True)
     web = {row["name"]: row for row in hud["services"]}
     assert set(web) == {row["name"] for row in rows if row["web"]}, "HUD service table is stale"
     # Not served by the gateway yet, so the engine and the web page both reach the public host
@@ -57,7 +123,17 @@ def check(rows, root):
         fallback = f'{row["scheme"]}://{host}{row["path"]}' if row["scheme"] else host
         assert row["fallback"] == fallback, row
         if row["web"]:
-            assert web[name] == {key: row[key] for key in ("name", "value", "scheme", "sub", "path")}, row
+            assert {key: web[name][key] for key in ("name", "value", "scheme", "sub", "path")} == {
+                key: row[key] for key in ("name", "value", "scheme", "sub", "path")
+            }, row
+            # the generated gateway segments compose the rows' gateway bases
+            for key, base, column in (
+                ("gatewayVirtualHost", "https://gateway.example.test", "vhost"),
+                ("gatewayDirect", "https://example.test", "direct"),
+            ):
+                segment = web[name][key]
+                composed = None if segment is None else (base if segment == "" else f"{base}/{segment}")
+                assert composed == row[column], (name, key, composed, row[column])
             hud_base = hud["options"][name]
             if name == "pulseServer":
                 assert hud_base == "example.test", hud_base

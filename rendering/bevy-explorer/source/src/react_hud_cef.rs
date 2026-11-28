@@ -266,6 +266,7 @@ fn spawn_hud(
         url.push_str("&nativeProfileImageBase=");
         url.push_str(&urlencoding::encode(&base));
     }
+    append_gateway(&mut url, common::base_domain::gateway());
     // and so does each explicit service override the HUD has a param for (it resolves its own
     // service urls); a native-only service is not in its table, so it would land in the page's
     // unrecognised-parameter dialog
@@ -992,6 +993,33 @@ fn push_text_focus(
             },
             state.hud,
         );
+    }
+}
+
+/// Append the latched gateway to the HUD url as `gateway=`, url-encoded.
+fn append_gateway(url: &mut String, gateway: Option<&str>) {
+    if let Some(gateway) = gateway {
+        url.push_str(if url.contains('?') { "&" } else { "?" });
+        url.push_str("gateway=");
+        url.push_str(&urlencoding::encode(gateway));
+    }
+}
+
+#[cfg(test)]
+mod hud_url_tests {
+    use super::append_gateway;
+
+    #[test]
+    fn the_hud_url_carries_the_latched_gateway() {
+        let mut url = "file:///hud/index.html?native=1".to_owned();
+        append_gateway(&mut url, Some("https://gateway.decentraland.org"));
+        assert_eq!(
+            url,
+            "file:///hud/index.html?native=1&gateway=https%3A%2F%2Fgateway.decentraland.org"
+        );
+        let mut without = "file:///hud/index.html".to_owned();
+        append_gateway(&mut without, None);
+        assert_eq!(without, "file:///hud/index.html");
     }
 }
 

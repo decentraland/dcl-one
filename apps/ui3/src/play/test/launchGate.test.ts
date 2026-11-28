@@ -57,3 +57,40 @@ describe('the launch gate behind the gateway', () => {
     expect(m.untrustedLaunchParams({ native: false })).toEqual([])
   })
 })
+
+describe('the gateway option', () => {
+  it("gates a foreign gateway and passes Decentraland's own or this page's host", async () => {
+    const foreign = await load(false, '/?gateway=https://gateway.example.test')
+    const [p, ...rest] = foreign.untrustedLaunchParams({ native: false })
+    expect(rest).toEqual([])
+    expect(p.name).toBe('gateway')
+    expect(p.value).toBe('https://gateway.example.test')
+    expect(foreign.untrustedLaunchParams({ native: true })).toEqual([])
+
+    for (const gateway of ['https://gateway.decentraland.org', window.location.origin]) {
+      const m = await load(false, `/?gateway=${encodeURIComponent(gateway)}`)
+      expect(m.untrustedLaunchParams({ native: false }), gateway).toEqual([])
+    }
+    for (const gateway of [
+      'http://gateway.decentraland.org',
+      'https://gateway.decentraland.org/_scene/x',
+      'https://gateway.decentraland.org:8443',
+      // a decentraland.org session never moves onto zone's gateway unprompted
+      'https://gateway.decentraland.zone',
+      // the apex is the website, not a gateway
+      'https://decentraland.org',
+      `${window.location.origin}/_scene/game.example`
+    ]) {
+      const m = await load(false, `/?gateway=${encodeURIComponent(gateway)}`)
+      expect(m.untrustedLaunchParams({ native: false }).map((p) => p.name), gateway).toEqual(['gateway'])
+    }
+  })
+
+  it('puts a value the engine would refuse to the user instead of dropping it silently', async () => {
+    const m = await load(false, `/?gateway=${encodeURIComponent('ftp://gateway.decentraland.org')}`)
+    expect(m.GATEWAY).toBe(null)
+    expect(m.untrustedLaunchParams({ native: false }).map((p) => [p.name, p.value])).toEqual([
+      ['gateway', 'ftp://gateway.decentraland.org']
+    ])
+  })
+})

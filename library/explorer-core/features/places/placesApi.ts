@@ -2,7 +2,7 @@
 // Plain fetch; the pure helpers below derive card fields from a DiscoverPlace and
 // are kept side-effect free so they're unit-testable.
 
-import { serviceUrl } from '@hud-host'
+import { gatewaySignedPath, serviceUrl } from '@hud-host'
 import { inShell, shellRequest } from '../../lib/shell'
 import type { StoredLogin } from '../auth/sso'
 
@@ -57,7 +57,7 @@ async function getPlaces(path: string, params: URLSearchParams, login?: StoredLo
     const sign = inShell
       ? (address: string, message: string) => shellRequest<string>('sign', { signer: address, message })
       : localSigner(login.identity)
-    headers = await signFetch(login.identity, 'GET', url, sign, {})
+    headers = await signFetch(login.identity, 'GET', url, sign, {}, gatewaySignedPath(url) ?? undefined)
   }
   const res = await fetch(url, { headers })
   if (!res.ok) throw new Error(`places API ${path} failed: ${res.status}`)

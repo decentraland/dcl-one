@@ -462,6 +462,8 @@ export const ServiceDefSchema = z.object({
   scheme: z.string(),
   sub: z.string(),
   path: z.string(),
+  gatewayVirtualHost: z.string().nullable(),
+  gatewayDirect: z.string().nullable(),
 });
 
 export const SetAvatarBasePayloadSchema = z.object({

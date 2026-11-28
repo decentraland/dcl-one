@@ -1,7 +1,8 @@
 // The HUD host module (`@hud-host`) for the Sites /play host: the shared HUD in library/ui/apps/hud
 // reads these through the contract in its hostContract.ts.
 import type { HudHost } from '@explorer-core/hostContract'
-import { BASE_DOMAIN, checkoutSiteUrl, DEFAULT_REALM, ONE_GATEWAY_HOST, serviceUrl, siteUrl } from './lib/baseDomain'
+import { BASE_DOMAIN, checkoutSiteUrl, DEFAULT_REALM, ENGINE_BASE_DOMAIN, gatewaySignedPath, GATEWAY, ONE_GATEWAY_HOST, serviceUrl, siteUrl } from './lib/baseDomain'
+import { gatewayProfileImage } from '@explorer-core/lib/gateway'
 import { bootMode, isNativeHud } from './lib/bootMode'
 import { acceptedEntryParams, entryRealm, unrecognisedEntryParams } from './lib/entryParams'
 import { untrustedLaunchParams } from './lib/launchGate'
@@ -11,8 +12,9 @@ import { IN_WORLD_SHOP } from '@dcl/one-ui/apps/shop/entry'
 import { donations } from './lib/donations'
 import { gifting } from './lib/gifting'
 
-/** Sites loads profile images as given: it has no native image proxy. */
-const nativeProfileImage = (raw: string | undefined): string | undefined => raw
+/** A profile image through the entry url's ?gateway= (for ENGINE_BASE_DOMAIN), else as given. */
+const nativeProfileImage = (raw: string | undefined): string | undefined =>
+  GATEWAY == null || raw == null ? raw : (gatewayProfileImage(GATEWAY, raw, ENGINE_BASE_DOMAIN) ?? raw)
 /** dcl-one's Shop serves a collection item at /shop/item/<contract>/<item>; the Foundation's
  *  deployments (`?baseDomain=decentraland.org`) keep the marketplace's own page. */
 const ownShopItemUrl = (contract: string, item: string): string | null =>
@@ -42,7 +44,7 @@ const CAN_ASK_BEFORE_LEAVING = true
 const siteRevision: HudHost['siteRevision'] = () =>
   typeof window.__DCL_PUBLIC__ === 'object' ? window.__DCL_PUBLIC__.commitHash ?? '' : null
 
-export { acceptedEntryParams, BUILD_VERSION, exitUrl, hostEntryParams, unrecognisedEntryParams, untrustedLaunchParams, BASE_DOMAIN, bootMode, engineExited, engineLaunch, seedBridgeSession, DEFAULT_REALM, entryRealm, IN_WORLD_SHOP, CAN_ASK_BEFORE_LEAVING, donations, gifting, siteRevision, isNativeHud, nativeProfileImage, ownShopItemUrl, PAGE_DIR, publicUrl, serviceUrl, siteUrl, checkoutSiteUrl, unattendedRun }
+export { acceptedEntryParams, BUILD_VERSION, exitUrl, hostEntryParams, unrecognisedEntryParams, untrustedLaunchParams, BASE_DOMAIN, bootMode, engineExited, engineLaunch, seedBridgeSession, DEFAULT_REALM, entryRealm, IN_WORLD_SHOP, CAN_ASK_BEFORE_LEAVING, donations, gifting, siteRevision, isNativeHud, nativeProfileImage, ownShopItemUrl, PAGE_DIR, publicUrl, serviceUrl, gatewaySignedPath, siteUrl, checkoutSiteUrl, unattendedRun }
 
-const host: HudHost = { acceptedEntryParams, BUILD_VERSION, exitUrl, hostEntryParams, unrecognisedEntryParams, untrustedLaunchParams, BASE_DOMAIN, bootMode, engineExited, engineLaunch, seedBridgeSession, DEFAULT_REALM, entryRealm, IN_WORLD_SHOP, CAN_ASK_BEFORE_LEAVING, donations, gifting, siteRevision, isNativeHud, nativeProfileImage, ownShopItemUrl, PAGE_DIR, publicUrl, serviceUrl, siteUrl, checkoutSiteUrl, unattendedRun }
+const host: HudHost = { acceptedEntryParams, BUILD_VERSION, exitUrl, hostEntryParams, unrecognisedEntryParams, untrustedLaunchParams, BASE_DOMAIN, bootMode, engineExited, engineLaunch, seedBridgeSession, DEFAULT_REALM, entryRealm, IN_WORLD_SHOP, CAN_ASK_BEFORE_LEAVING, donations, gifting, siteRevision, isNativeHud, nativeProfileImage, ownShopItemUrl, PAGE_DIR, publicUrl, serviceUrl, gatewaySignedPath, siteUrl, checkoutSiteUrl, unattendedRun }
 void host

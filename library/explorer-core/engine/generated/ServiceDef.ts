@@ -18,4 +18,12 @@ scheme: string,
 /**
  * Empty = the apex domain
  */
-sub: string, path: string, };
+sub: string, path: string, 
+/**
+ * Its segment under a `gateway.` virtual host; null = not through a gateway
+ */
+gatewayVirtualHost: string | null, 
+/**
+ * Its segment under a gateway's direct origin; null = not through a gateway
+ */
+gatewayDirect: string | null, };

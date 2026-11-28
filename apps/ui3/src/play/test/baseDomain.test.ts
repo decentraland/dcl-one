@@ -169,3 +169,49 @@ describe('the site a link opens', () => {
     expect(m.checkoutSiteUrl('/shop/credits')).toBe(m.siteUrl('/shop/credits'))
   })
 })
+
+describe('?gateway=', () => {
+  afterEach(() => {
+    window.history.replaceState(null, '', '/')
+  })
+
+  it("routes the APIs the engine's gateway routes, hands the engine the gateway, and an explicit service wins", async () => {
+    window.history.replaceState(null, '', '/?gateway=https://gateway.example.test/&places=https://places.example.test')
+    vi.resetModules()
+    const m = await import('../lib/baseDomain')
+    expect(m.serviceUrl('events')).toBe('https://gateway.example.test/events')
+    expect(m.serviceUrl('catalyst')).toBe('https://gateway.example.test/peer')
+    expect(m.serviceUrl('places')).toBe('https://places.example.test')
+    expect(m.serviceUrl('storage')).toBe('https://storage.decentraland.org')
+    expect(m.engineServiceOptions()).toEqual({
+      places: 'https://places.example.test',
+      gateway: 'https://gateway.example.test',
+      baseDomain: 'decentraland.org'
+    })
+    // the path after the service alias
+    expect(m.gatewaySignedPath('https://gateway.example.test/events/api/events?x=1')).toBe('/api/events')
+    expect(m.gatewaySignedPath('https://places.example.test/api/places')).toBe(null)
+  })
+
+  it("on the node's own host: the engine gets the gateway and none of the services it routes", async () => {
+    window.history.replaceState(null, '', '/?gateway=https://gateway.example.test')
+    vi.resetModules()
+    ;(window as { __DCL_PUBLIC__?: unknown }).__DCL_PUBLIC__ = {}
+    try {
+      const m = await import('../lib/baseDomain')
+      const { SERVICES } = await import('@explorer-core/engine/generated')
+      const { gatewayServiceUrl } = await import('@explorer-core/lib/gateway')
+      expect(m.BASE_DOMAIN).toBe(window.location.host)
+      // a dev host is not a base domain: the default applies
+      expect(m.ENGINE_BASE_DOMAIN).toBe('decentraland.org')
+      const options = m.engineServiceOptions()
+      expect(options.gateway).toBe('https://gateway.example.test')
+      for (const s of SERVICES) {
+        const routed = gatewayServiceUrl(m.GATEWAY!, s) != null
+        expect(s.name in options, s.name).toBe(!routed)
+      }
+    } finally {
+      delete (window as { __DCL_PUBLIC__?: unknown }).__DCL_PUBLIC__
+    }
+  })
+})

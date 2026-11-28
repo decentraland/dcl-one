@@ -83,10 +83,25 @@ the intended storage origin explicitly. The authentication page and public Reels
 also keep their configured destinations, set with `--auth-page https://example.org/auth`
 and `--reels https://example.org/reels` when needed.
 
+The web client takes the same gateway as `?gateway=<url>`. Both HUD hosts route their own requests
+with the segments from the engine's service table (`library/explorer-core/lib/gateway.ts`) and
+hand the gateway to the engine; both sign the paths a `gateway.` host forwards. A link with any
+gateway other than `https://gateway.<base>`, with no port or path, for a
+session on `decentraland.org` or `decentraland.zone`, stops on the untrusted-launch prompt; on
+`/play`, the page's own origin outside those domains is trusted too. A gateway with a path is never trusted,
+since a node proxies other hosts under `/_scene/<host>`. A `decentraland://` link selects one with
+`gateway=<url>`. The native client accepts from a link only such a gateway of its base domain,
+since a link reaches it without a prompt, and refuses to start with any other. An explicit `--gateway` takes precedence over the link's.
+A gateway also carries feature flags, as `--gateway` does: its `/feature-flags` is one document
+for everyone, so a session with a gateway has no per-player A/B or rollout group. `/play` without
+`?gateway=` reads the flags service directly, keeping them; pass `--feature-flags` (or
+`?featureFlags=`) to keep them with a gateway.
+
 With Python 3 and Node.js 24 installed, run
 `cargo test --locked -p common gateway_routes_match_deployment -- --ignored` from the
 Explorer workspace to compare its resolved routes with the HUD resolver and the rendered nginx maps.
-This also checks signature paths and the intentionally separate RPC and storage defaults.
+This also checks signature paths, the intentionally separate RPC and storage defaults, and that
+the HUD's `?gateway=` resolves to the same endpoints as `--gateway`.
 
 To package, follow the [desktop workflow](../../../../.github/workflows/bevy-explorer-desktop.yml):
 pinned Rust, protoc, CEF and platform libraries, including `CEF_PATH`. With those installed:

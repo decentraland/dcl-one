@@ -3,8 +3,8 @@
 //! launcher does (docs/guidelines/running.md, "Test commands").
 //!
 //! No running client receives a place link today. A link reaches a client as its `--deep-link`
-//! at launch (main.rs), where `realm`, `position` and `dclenv` become launch options. The only
-//! link a running client reads is the sign-in one, from the launcher's bridge file
+//! at launch (main.rs), where `realm`, `position`, `dclenv` and `gateway` become launch options.
+//! The only link a running client reads is the sign-in one, from the launcher's bridge file
 //! (`platform::deeplink::await_signin`, which leaves any other link there); where the client is
 //! the scheme handler, the OS starts a new client for a place link. So there is no hand-over to
 //! exercise: the command parses the link as the launch does
@@ -62,10 +62,32 @@ mod place {
     /// A place link's destination, checked as the launch checks it: the link must be a
     /// `decentraland://` one, its `dclenv` known, its `position` a parcel. The base domain is
     /// fixed once the client starts (`common::base_domain`), so a `dclenv` other than the running
-    /// one cannot be applied and is refused rather than dropped. A link that names neither realm
-    /// nor position has nowhere to send the player, which a test that mistyped a key should hear.
+    /// one cannot be applied and is refused rather than dropped; so is a `gateway` other than the
+    /// running one. A link that names neither realm nor position has nowhere to send the player,
+    /// which a test that mistyped a key should hear.
     pub fn destination(link: &str, base_domain: &str) -> Result<Destination, String> {
+        destination_on(link, base_domain, common::base_domain::gateway())
+    }
+
+    fn destination_on(
+        link: &str,
+        base_domain: &str,
+        gateway: Option<&str>,
+    ) -> Result<Destination, String> {
         let place = platform::deeplink::parse_place_link(link).map_err(|e| e.to_string())?;
+        if let Some(raw) = &place.gateway {
+            // a link may name only the latched gateway
+            let link_gateway = common::gateway::Gateway::parse(raw)
+                .map_err(|e| format!("the link's gateway `{raw}`: {e}"))?;
+            if Some(link_gateway.prefix()) != gateway {
+                return Err(format!(
+                    "the link is for gateway {}, but this client runs {} (fixed when the client \
+                     starts)",
+                    link_gateway.prefix(),
+                    gateway.map_or("without one".to_owned(), |g| format!("through {g}"))
+                ));
+            }
+        }
         if let Some(link_domain) = &place.base_domain {
             if link_domain != base_domain {
                 return Err(format!(
@@ -208,6 +230,25 @@ mod place {
             // the parse's own refusal passes through
             let unknown = destination("decentraland://open?dclenv=prod", ORG).unwrap_err();
             assert!(unknown.contains("prod"), "{unknown}");
+        }
+
+        #[test]
+        fn the_gateway_must_be_the_one_running() {
+            let link = "decentraland://open?position=1,2&gateway=https://gateway.decentraland.org/";
+            let running = Some("https://gateway.decentraland.org");
+            assert!(destination_on(link, ORG, running).is_ok());
+            let without = destination_on(link, ORG, None).unwrap_err();
+            assert!(without.contains("without one"), "{without}");
+            let other =
+                destination_on(link, ORG, Some("https://gateway.decentraland.zone")).unwrap_err();
+            assert!(other.contains("gateway.decentraland.zone"), "{other}");
+            // a client launched with --gateway accepts a link naming that same gateway
+            assert!(destination_on(
+                "decentraland://open?position=1,2&gateway=https://gateway.example.test",
+                ORG,
+                Some("https://gateway.example.test"),
+            )
+            .is_ok());
         }
 
         #[test]

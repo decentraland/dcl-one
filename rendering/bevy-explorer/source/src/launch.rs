@@ -32,6 +32,9 @@ pub fn latch(launch: &LaunchOptions) -> Result<(), String> {
     if let Some(domain) = &launch.base_domain {
         common::base_domain::set(domain)?;
     }
+    if let Some(gateway) = &launch.gateway {
+        common::base_domain::set_gateway(gateway)?;
+    }
     common::base_domain::set_services(launch.services.iter())
 }
 
@@ -48,6 +51,7 @@ pub fn apply(app: &mut App, launch: &LaunchOptions, config: &AppConfig, boot_ser
         portables: _,
         // latch
         base_domain: _,
+        gateway: _,
         services: _,
         preview,
         log_fps,

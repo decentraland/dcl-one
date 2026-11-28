@@ -4,10 +4,11 @@
 // scene, this app trusts its bundled bridge scene and Decentraland's own deployments.
 
 import { SERVICES, type ServiceDef } from '@explorer-core/engine/generated'
-import { BASE_DOMAIN, derivedServiceUrl, entryServiceUrl, hostBaseDomain, isTrustedBaseDomain } from './baseDomain'
+import { BASE_DOMAIN, GATEWAY, derivedServiceUrl, entryServiceUrl, hostBaseDomain, isTrustedBaseDomain } from './baseDomain'
 import { bootMode } from './bootMode'
 import { isTrustedSystemScene } from './systemScene'
 import { webParam } from '@explorer-core/lib/webParams'
+import { gatewayLaunchValue, gatewayLaunchWarning, isTrustedGatewayLaunchValue } from '@explorer-core/lib/gateway'
 import type { UntrustedParam } from '@explorer-core/hostContract'
 
 export type { UntrustedParam }
@@ -39,6 +40,14 @@ const GATES: Record<string, Gate> = {
       'Points every backend service — sign-in, content, comms — at servers under this domain. Whoever runs them would see your session and control what you play.',
     read: (native) => (native ? null : BASE_DOMAIN),
     isTrusted: isTrustedBaseDomain
+  },
+  // Not read on native. The value is the parsed prefix, or the raw value the parse refuses.
+  // Trusted: this page's origin outside Decentraland's domains, or `https://gateway.<base>` of
+  // the session's Decentraland deployment (isTrustedGatewayPrefix).
+  gateway: {
+    warning: gatewayLaunchWarning(GATEWAY),
+    read: (native) => (native ? null : gatewayLaunchValue(new URLSearchParams(location.search).get('gateway'), GATEWAY)),
+    isTrusted: (value) => isTrustedGatewayLaunchValue(value, GATEWAY, BASE_DOMAIN, location.origin)
   },
   // Repoints every scene and asset fetch at one server while everything else looks normal.
   contentServer: {

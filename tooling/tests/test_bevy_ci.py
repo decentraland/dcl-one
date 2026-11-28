@@ -823,6 +823,9 @@ class SelectionTest(unittest.TestCase):
 
     def test_shared_hud_sources_validate_web_only(self):
         for name in SHARED:
+            if name in ci.GATEWAY_HUD_INPUTS:
+                # the route contract also reads it (test_the_web_hud_gateway_resolvers_select_...)
+                continue
             with self.subTest(path=name):
                 before = self.git('rev-parse', 'HEAD')
                 self.write(name, 'changed')
@@ -1040,6 +1043,17 @@ class SelectionTest(unittest.TestCase):
                 selected = ci.plan('pull_request', before, self.commit(), '')
                 self.assertEqual({lane for lane in (*ci.LANES, 'native-matrix', 'scenes')
                                   if selected[lane]}, {'test'})
+
+    def test_the_web_hud_gateway_resolvers_select_the_route_contract_and_the_web_lane(self):
+        for name in ('rendering/bevy-explorer/source/react-web/src/lib/baseDomain.ts',
+                     'rendering/bevy-explorer/source/react-web/src/lib/bootMode.ts',
+                     'library/explorer-core/lib/gateway.ts'):
+            with self.subTest(path=name):
+                before = self.git('rev-parse', 'HEAD')
+                self.write(name, 'changed')
+                selected = ci.plan('pull_request', before, self.commit(), '')
+                self.assertEqual({lane for lane in (*ci.LANES, 'native-matrix', 'scenes') if selected[lane]},
+                                 {'test', 'web'})
 
     def test_upstream_watch_and_manual_packaging_are_not_ci_build_inputs(self):
         for name in ('upstream', 'desktop', 'rollout-manual'):

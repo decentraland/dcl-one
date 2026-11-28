@@ -18,10 +18,11 @@
 // url sync exactly as the HUD does.
 
 import { SERVICES, type ServiceDef } from '@explorer-core/engine/generated'
+import { DECENTRALAND_DOMAINS, gatewayServiceUrl, gatewaySignedPath as signedPathThrough, parseGateway } from '@explorer-core/lib/gateway'
 
 // Decentraland's own deployments — the hosting origins we derive from, and the only domains a
 // LINK may point the session at without the UntrustedLaunchGate (lib/launchGate.ts).
-const TRUSTED_BASE_DOMAINS = ['decentraland.org', 'decentraland.zone']
+const TRUSTED_BASE_DOMAINS = DECENTRALAND_DOMAINS
 
 /** The apex deployment domain a hosting origin implies, or null for unrecognised hosts. */
 export function hostBaseDomain(hostname: string): string | null {
@@ -89,6 +90,7 @@ const GATEWAY_PREFIXES: Readonly<Record<string, string>> = {
 //   request carries, so every player's engine asks it directly. The node's `/feature-flags` copy
 //   is one document for everyone. The service has to allow this page's origin (CORS); where it
 //   does not, every flag reads off.
+// The set applies to the hosted gateway's composition only, not to an explicit ?gateway=.
 const NOT_THROUGH_GATEWAY: ReadonlySet<string> = new Set(['abgen-cdn', 'feature-flags'])
 // The imposter store (distant-scene tiles) is a launch option, not a service table row; the
 // node serves it under this prefix (services/catalyst/src/serve_routes.rs, explore::imposters).
@@ -121,6 +123,9 @@ export function checkoutSiteUrl(path: string): string {
 
 export const BASE_DOMAIN =
   normaliseBaseDomain(new URLSearchParams(window.location.search).get('baseDomain')) ?? DEFAULT_BASE_DOMAIN
+
+/** BASE_DOMAIN when normaliseBaseDomain accepts it, else decentraland.org. */
+export const ENGINE_BASE_DOMAIN = normaliseBaseDomain(BASE_DOMAIN) ?? 'decentraland.org'
 
 // Pulse is UDP, which an HTTP front cannot carry: behind the gateway the deployment names its host.
 const PULSE_SERVER = BASE_DOMAIN === ONE_GATEWAY_HOST ? configuredPulseServer() : null
@@ -176,6 +181,9 @@ export function normaliseServiceUrl(s: ServiceDef, raw: string | null): string |
   }
 }
 
+/** The entry url's ?gateway=, parsed as the engine's --gateway (parseGateway); null when absent or refused. */
+export const GATEWAY = parseGateway(new URLSearchParams(window.location.search).get('gateway'))
+
 /** The entry url's override; a `pulseServer` equal to this page's host is a stale engine write-back once Pulse is named. */
 export function entryServiceUrl(s: ServiceDef): string | null {
   const url = normaliseServiceUrl(s, new URLSearchParams(window.location.search).get(s.name))
@@ -191,7 +199,7 @@ for (const s of SERVICES) {
 
 /**
  * A service's base url (an authority service: its host) by its table name: the entry url's
- * override, else composed from the base domain, e.g. serviceUrl('places') →
+ * override, else its ?gateway= route, else composed from the base domain, e.g. serviceUrl('places') →
  * "https://places.decentraland.org".
  */
 export function serviceUrl(name: string): string {
@@ -206,6 +214,8 @@ export function serviceUrl(name: string): string {
  */
 export function derivedServiceUrl(name: string): string {
   const s = service(name)
+  const routed = GATEWAY == null ? null : gatewayServiceUrl(GATEWAY, s)
+  if (routed != null) return routed
   if (BASE_DOMAIN === ONE_GATEWAY_HOST && !NOT_THROUGH_GATEWAY.has(s.sub)) {
     const prefix = GATEWAY_PREFIXES[s.sub]
     if (prefix == null) throw new Error(`serviceUrl: '${name}' (${s.sub}) has no gateway prefix`)
@@ -223,6 +233,11 @@ export function derivedServiceUrl(name: string): string {
 }
 window.__serviceUrl = serviceUrl
 
+/** The path a signed request to `url` signs through the entry url's gateway, or null (hostContract). */
+export function gatewaySignedPath(url: string): string | null {
+  return GATEWAY == null ? null : signedPathThrough(GATEWAY, url, SERVICES.map((s) => serviceUrl(s.name)))
+}
+
 /**
  * The service options the ENGINE boots with (EngineHost's boot config). Upstream the engine composes
  * every service from a bare base domain; behind the dcl-one gateway the services live under path
@@ -233,13 +248,15 @@ window.__serviceUrl = serviceUrl
 export function engineServiceOptions(): Record<string, string> {
   const options: Record<string, string> = {}
   if (BASE_DOMAIN === ONE_GATEWAY_HOST) {
-    for (const s of SERVICES) options[s.name] = serviceUrl(s.name)
+    // a service the gateway maps is left to the `gateway` option
+    for (const s of SERVICES) if (GATEWAY == null || gatewayServiceUrl(GATEWAY, s) == null) options[s.name] = serviceUrl(s.name)
     // the node's own imposter store, not the engine's built-in one; an entry ?imposterSource= wins
     if (!new URLSearchParams(window.location.search).get('imposterSource')) {
       options.imposterSource = `${window.location.origin}${IMPOSTER_PREFIX}`
     }
   }
   Object.assign(options, SERVICE_OVERRIDES)
+  if (GATEWAY != null) options.gateway = GATEWAY.prefix
   const bare = normaliseBaseDomain(BASE_DOMAIN)
   if (bare != null) options.baseDomain = bare
   return options

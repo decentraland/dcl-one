@@ -184,6 +184,24 @@ impl Service {
             _ => ServiceValue::Http,
         }
     }
+
+    /// The path segment under a gateway base url for this service (empty = the base itself), or
+    /// None when the service is not routed through a gateway. An HTTP API takes its host label,
+    /// except under a direct origin: the root for the peer, `comms-gatekeeper` for preview and
+    /// `social-api` for community thumbnails.
+    pub fn gateway_segment(self, virtual_host: bool) -> Option<&'static str> {
+        match self {
+            Service::Catalyst if !virtual_host => Some(""),
+            Service::PreviewGatekeeper if !virtual_host => Some("comms-gatekeeper"),
+            Service::AssetsCdn if !virtual_host => Some("social-api"),
+            // Site links and storage delegations: not routed.
+            Service::AuthPage | Service::Reels | Service::Storage => None,
+            // abgen's CDN: not routed.
+            Service::AbgenCdn => None,
+            service if service.value() == ServiceValue::Http => Some(service.composition().1),
+            _ => None,
+        }
+    }
 }
 
 use crate::launch_options::help_heading::SERVICES as HELP_HEADING;
@@ -369,6 +387,10 @@ pub struct ServiceDef {
     /// Empty = the apex domain
     pub sub: String,
     pub path: String,
+    /// Its segment under a `gateway.` virtual host; null = not through a gateway
+    pub gateway_virtual_host: Option<String>,
+    /// Its segment under a gateway's direct origin; null = not through a gateway
+    pub gateway_direct: Option<String>,
 }
 
 pub fn service_table() -> Vec<ServiceDef> {
@@ -382,6 +404,8 @@ pub fn service_table() -> Vec<ServiceDef> {
                 scheme: scheme.to_owned(),
                 sub: sub.to_owned(),
                 path: path.to_owned(),
+                gateway_virtual_host: service.gateway_segment(true).map(str::to_owned),
+                gateway_direct: service.gateway_segment(false).map(str::to_owned),
             }
         })
         .collect()

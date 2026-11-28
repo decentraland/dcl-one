@@ -23,6 +23,10 @@ HELD_ON_DRAFT = ('test', 'headless')
 ENGINE_LABEL = 'ci:engine'
 NATIVE_JOBS = {'Test Suite (ubuntu-24.04)', 'Test Suite (windows-2025)', 'Test Suite (macos-15)'}
 GATEWAY_HUD_INPUTS = ('apps/ui3/src/play/lib/baseDomain.ts',
+                      'rendering/bevy-explorer/source/react-web/src/lib/baseDomain.ts',
+                      'rendering/bevy-explorer/source/react-web/src/lib/bootMode.ts',
+                      'rendering/bevy-explorer/source/react-web/src/lib/loopbackHost.ts',
+                      'library/explorer-core/lib/gateway.ts',
                       'library/explorer-core/engine/generated/serviceTable.ts')
 # Sources the web HUD compiles from library/: the ones tooling/play-artifact.py fingerprints with it.
 _ARTIFACT = importlib.util.spec_from_file_location('play_artifact', Path(__file__).with_name('play-artifact.py'))
@@ -359,8 +363,9 @@ def select(base, head):
             # build takes a patched source by the revision that Cargo.lock names.
             affected = ('test', 'clippy', 'native-matrix')
         elif path.startswith('infra/gateway/') or path in GATEWAY_HUD_INPUTS:
-            # The Linux Test Suite compares Explorer and HUD routing with the nginx map.
-            affected = ('test',)
+            # Gateway inputs select the Test Suite; shared or Explorer source paths select the web
+            # lane too.
+            affected = ('test', 'web') if path in shared_paths or path.startswith(SOURCE) else ('test',)
         elif path in HARNESS_WEB_READS:
             # The web lane builds and tests these files; the Test Suite runs the harness tests,
             # which read them (the sender the benchmark runner's receiver must accept, the guest's

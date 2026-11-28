@@ -18,11 +18,12 @@
 // url sync exactly as the HUD does.
 
 import { SERVICES, type ServiceDef } from '@explorer-core/engine/generated'
+import { DECENTRALAND_DOMAINS, gatewayProfileImage, gatewayServiceUrl, gatewaySignedPath as signedPathThrough, parseGateway, profileImageUnder } from '@explorer-core/lib/gateway'
 import { isNativeHud } from './bootMode'
 
 // Decentraland's own deployments — the hosting origins we derive from, and the only domains a
 // LINK may point the session at without the UntrustedLaunchGate (lib/launchGate.ts).
-const TRUSTED_BASE_DOMAINS = ['decentraland.org', 'decentraland.zone']
+const TRUSTED_BASE_DOMAINS = DECENTRALAND_DOMAINS
 
 /** The apex deployment domain a hosting origin implies, or null for unrecognised hosts. */
 export function hostBaseDomain(hostname: string): string | null {
@@ -48,6 +49,9 @@ export const DEFAULT_BASE_DOMAIN = hostBaseDomain(window.location.hostname) ?? '
 export const BASE_DOMAIN =
   normaliseBaseDomain(new URLSearchParams(window.location.search).get('baseDomain')) ?? DEFAULT_BASE_DOMAIN
 
+/** The entry url's ?gateway=, parsed as the engine's --gateway (parseGateway); null when absent or refused. */
+export const GATEWAY = parseGateway(new URLSearchParams(window.location.search).get('gateway'))
+
 /** Only the native CEF document receives this image base from its engine. Apply it at
  * display time, leaving the profile, scene HTTP and all other service URLs untouched. */
 const cef = (window as Window & { cef?: { emit?: unknown; listen?: unknown } }).cef
@@ -56,17 +60,9 @@ const nativeHostParams = isNativeHud() && typeof cef?.emit === 'function' && typ
   : null
 const nativeImageBase = nativeHostParams?.get('nativeProfileImageBase')
 export function nativeProfileImage(raw: string | undefined): string | undefined {
+  if (GATEWAY != null && raw != null && !nativeImageBase) return gatewayProfileImage(GATEWAY, raw, BASE_DOMAIN) ?? raw
   if (!nativeImageBase || raw == null) return raw
-  const authority = /^https:\/\/([^/?#]+)/i.exec(raw)?.[1]
-  if (authority?.toLowerCase() !== `profile-images.${BASE_DOMAIN}`) return raw
-  try {
-    const image = new URL(raw)
-    // The proxy decodes escaped separators before normalizing the service path.
-    if (decodeURIComponent(image.pathname).split(/[\\/]/).some(part => part === '.' || part === '..')) return raw
-    return nativeImageBase + image.href.slice(image.origin.length)
-  } catch {
-    return raw
-  }
+  return profileImageUnder(nativeImageBase, raw, BASE_DOMAIN) ?? raw
 }
 
 declare global {
@@ -125,15 +121,22 @@ export const SERVICE_OVERRIDES: Readonly<Record<string, string>> = {}
 
 /**
  * A service's base url (an authority service: its host) by its table name: the entry url's
- * override, else composed from the base domain, e.g. serviceUrl('places') →
+ * override, else its ?gateway= route, else composed from the base domain, e.g. serviceUrl('places') →
  * "https://places.decentraland.org".
  */
 export function serviceUrl(name: string): string {
   const s = service(name)
+  const routed = SERVICE_OVERRIDES[name] ?? (GATEWAY == null ? null : gatewayServiceUrl(GATEWAY, s))
+  if (routed != null) return routed
   const host = s.sub === '' ? BASE_DOMAIN : `${s.sub}.${BASE_DOMAIN}`
-  return SERVICE_OVERRIDES[name] ?? (s.value === 'authority' ? host : `${s.scheme}://${host}${s.path}`)
+  return s.value === 'authority' ? host : `${s.scheme}://${host}${s.path}`
 }
 window.__serviceUrl = serviceUrl
+
+/** The path a signed request to `url` signs through the entry url's gateway, or null (hostContract). */
+export function gatewaySignedPath(url: string): string | null {
+  return GATEWAY == null ? null : signedPathThrough(GATEWAY, url, SERVICES.map((s) => serviceUrl(s.name)))
+}
 
 /**
  * The main (Genesis City) realm: the realm provider's `/main`, composed exactly as the engine's

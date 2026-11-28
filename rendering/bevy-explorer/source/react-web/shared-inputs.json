@@ -666,6 +666,10 @@
           "kind": "regular"
         },
         {
+          "name": "gateway.ts",
+          "kind": "regular"
+        },
+        {
           "name": "gpu.test.ts",
           "kind": "regular"
         },
@@ -836,6 +840,10 @@
           "kind": "regular"
         },
         {
+          "name": "gateway.test.ts",
+          "kind": "regular"
+        },
+        {
           "name": "giftItem.test.ts",
           "kind": "regular"
         },
@@ -917,6 +925,10 @@
         },
         {
           "name": "places.test.ts",
+          "kind": "regular"
+        },
+        {
+          "name": "placesSigning.test.ts",
           "kind": "regular"
         },
         {
@@ -10286,11 +10298,11 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/host.ts",
-      "sha256": "7f76388bed735791a78c1ea3bc9a68a075a87bfc4a8b1fda167b14491a696620"
+      "sha256": "4a9ff42ffd7738d2aa0d8ace2b88bc9bbd2641fbb91e781aa2c0e8b989a0f8eb"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/lib/baseDomain.ts",
-      "sha256": "8ed3436c664504fe1b3013d8c3d125e706b5f7f41c65791f42d47e5acc96548e"
+      "sha256": "4e764e486b37bcaab10d7031aff3c68b6c64476e310f3317a02152b2e446ae00"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/lib/bootMode.ts",
@@ -10298,7 +10310,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/lib/engineLaunch.ts",
-      "sha256": "3ac514c6e866a99955bae55a3b5b4e59205feec33bb8a2ef41552b6db17dd3e7"
+      "sha256": "176410ad30ab1550a8b0f1aa502de61a2eff51408064fc404789b152c8f7d30c"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/lib/entryParams.ts",
@@ -10310,7 +10322,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/lib/launchGate.ts",
-      "sha256": "6dc5381a4441ebd546fae46a020222da03c48f9bf5304f16660abb67e2cd515c"
+      "sha256": "3f28f5204be4b2c03bd691ea568f650ee2279edf5815e10088d57f444e26989b"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/lib/loopbackHost.ts",
@@ -10358,7 +10370,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/baseDomain.test.ts",
-      "sha256": "638f726eb0d4ca75d3ce8db9f7584516fe918b8c602b2a30c3a1f6cacd15b02a"
+      "sha256": "d365aec10f9284a5f5521e5b00c96d4ffd61545afdaa023441ce90f026386949"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/benchmarkSwitches.test.tsx",
@@ -10952,7 +10964,7 @@
     },
     {
       "path": "library/explorer-core/features/editorHost/host/sign.ts",
-      "sha256": "54b24738878a4fef016caf5abfec87a9881239d73ecb0f4392380b6bcbf75677"
+      "sha256": "ab1e1a8cbe030ff3dfd7ac6c6f70e2ec288a56b4b54c36aeb788bf6e6583235a"
     },
     {
       "path": "library/explorer-core/features/editorHost/host/signer.ts",
@@ -11108,7 +11120,7 @@
     },
     {
       "path": "library/explorer-core/features/places/placesApi.ts",
-      "sha256": "f3b387ac63ff4637757fb12b4696c085a8b4a667e74fd5c80c3d8a2ee9c152b4"
+      "sha256": "cfa536d6fb1f0b4fd2d47614e13c636dd5b904b825dfe2d9db10266de5abdcbc"
     },
     {
       "path": "library/explorer-core/features/pointer/cursorStore.ts",
@@ -11140,7 +11152,7 @@
     },
     {
       "path": "library/explorer-core/hostContract.ts",
-      "sha256": "3933a1dc05b51d0e0351fa2795960899eb808a50f3758a57bf069582367e50ca"
+      "sha256": "cf12cf0e75dbd123be9b93b740476ac5dd27844deac90d6b959bdf9849fd3c78"
     },
     {
       "path": "library/explorer-core/lib/analytics.ts",
@@ -11173,6 +11185,10 @@
     {
       "path": "library/explorer-core/lib/debugPanelLauncher.ts",
       "sha256": "ee0e0a9c62e867993505d3390bc49b1fdaf4a03bdb2c7942036ba89dfaf37f95"
+    },
+    {
+      "path": "library/explorer-core/lib/gateway.ts",
+      "sha256": "aac44319c9e0cef1c14adcbfeae57516bbee4bf236591d18c3fff5a722eda79b"
     },
     {
       "path": "library/explorer-core/lib/gpu.test.ts",
@@ -11335,6 +11351,10 @@
       "sha256": "765c89962851ec95ecf78507a1943e98c90a6665ee141da57d639eec198b9866"
     },
     {
+      "path": "library/explorer-core/test/gateway.test.ts",
+      "sha256": "75e635970ece57db561b1640a0c7a8447482d76d6d278052b483db44a23eb587"
+    },
+    {
       "path": "library/explorer-core/test/giftItem.test.ts",
       "sha256": "d4b5042fe474ef446674e6ddcdd42b7132d6dae2bac0dbbe23ba20613b00b242"
     },
@@ -11417,6 +11437,10 @@
     {
       "path": "library/explorer-core/test/places.test.ts",
       "sha256": "df6392935605273413a08756d05057cd7cf9d142c3aca90e8110a74bcbbf9160"
+    },
+    {
+      "path": "library/explorer-core/test/placesSigning.test.ts",
+      "sha256": "bbb4b9ddd58b4763031e06e547155c2e6192d6d9ad9ed26cdf5d146d36757aa8"
     },
     {
       "path": "library/explorer-core/test/pointerKeys.test.ts",
@@ -14552,7 +14576,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/host.ts",
-      "sha256": "7d80a20c27fcf830ca51c6944831cb15d89f0089f2bf124fc805d51132d45831"
+      "sha256": "80d5adf63025c3b277152e93d0e75fbbd4d10ce68ae8bccd6a95e850e0b3b378"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/analytics.session.test.tsx",
@@ -19654,6 +19678,21 @@
       "kind": "test:runtime"
     },
     {
+      "from": "library/explorer-core/test/gateway.test.ts",
+      "to": "library/explorer-core/lib/gateway.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/explorer-core/test/gateway.test.ts",
+      "to": "library/explorer-core/lib/gateway.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/explorer-core/test/gateway.test.ts",
+      "to": "library/explorer-core/lib/gateway.ts",
+      "kind": "test:runtime"
+    },
+    {
       "from": "library/explorer-core/test/giftItem.test.ts",
       "to": "library/explorer-core/features/gifting/giftItem.ts",
       "kind": "native:runtime"
@@ -20357,6 +20396,21 @@
       "from": "library/explorer-core/test/places.test.ts",
       "to": "library/explorer-core/features/places/placesApi.ts",
       "kind": "test:runtime"
+    },
+    {
+      "from": "library/explorer-core/test/placesSigning.test.ts",
+      "to": "library/explorer-core/features/places/placesApi.ts",
+      "kind": "native:dynamic"
+    },
+    {
+      "from": "library/explorer-core/test/placesSigning.test.ts",
+      "to": "library/explorer-core/features/places/placesApi.ts",
+      "kind": "production:dynamic"
+    },
+    {
+      "from": "library/explorer-core/test/placesSigning.test.ts",
+      "to": "library/explorer-core/features/places/placesApi.ts",
+      "kind": "test:dynamic"
     },
     {
       "from": "library/explorer-core/test/pointerKeys.test.ts",
@@ -67079,6 +67133,21 @@
       "kind": "test:runtime"
     },
     {
+      "from": "rendering/bevy-explorer/source/react-web/src/lib/baseDomain.ts",
+      "to": "library/explorer-core/lib/gateway.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/src/lib/baseDomain.ts",
+      "to": "library/explorer-core/lib/gateway.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/src/lib/baseDomain.ts",
+      "to": "library/explorer-core/lib/gateway.ts",
+      "kind": "test:runtime"
+    },
+    {
       "from": "rendering/bevy-explorer/source/react-web/src/lib/engineLaunch.ts",
       "to": "library/explorer-core/lib/webParams.ts",
       "kind": "native:runtime"
@@ -67166,6 +67235,21 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/src/lib/entryParams.ts",
       "to": "library/explorer-core/lib/debugPanelLauncher.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/src/lib/launchGate.ts",
+      "to": "library/explorer-core/lib/gateway.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/src/lib/launchGate.ts",
+      "to": "library/explorer-core/lib/gateway.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/src/lib/launchGate.ts",
+      "to": "library/explorer-core/lib/gateway.ts",
       "kind": "test:runtime"
     },
     {
@@ -68240,6 +68324,11 @@
     },
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/explorer-core/lib/gateway.ts",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/explorer-core/lib/gpu.test.ts",
       "kind": "type"
     },
@@ -68440,6 +68529,11 @@
     },
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/explorer-core/test/gateway.test.ts",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/explorer-core/test/giftItem.test.ts",
       "kind": "type"
     },
@@ -68541,6 +68635,11 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/explorer-core/test/places.test.ts",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/explorer-core/test/placesSigning.test.ts",
       "kind": "type"
     },
     {
