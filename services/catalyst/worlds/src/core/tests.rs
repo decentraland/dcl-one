@@ -9165,6 +9165,7 @@ async fn a_quota_block_follows_the_live_name_holder() {
         .unwrap();
 }
 
+mod names_unavailable;
 mod partial_uploads;
 mod reprocess_ab;
 

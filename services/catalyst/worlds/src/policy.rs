@@ -377,6 +377,20 @@ fn names_unavailable(e: &NamesError) -> AuthorityNotEstablished {
 /// undetermined, and short-lived.
 const NAMES_NOT_CURRENT: &str = "DCL NAME source (not established)";
 
+/// The names index's reason when `why` is its transient "cannot establish an
+/// owner now" ([`NAMES_NOT_CURRENT`]); `None` for every other refusal. A
+/// write answers this case as the names index being unavailable, a
+/// retryable 503, not as a denial.
+pub fn names_not_current(why: &AuthorityNotEstablished) -> Option<&str> {
+    match why {
+        AuthorityNotEstablished::UndeterminedStoreUnavailable {
+            store: NAMES_NOT_CURRENT,
+            reason_for_operators,
+        } => Some(reason_for_operators),
+        _ => None,
+    }
+}
+
 fn reader_unavailable(store: &'static str, reason: &str) -> AuthorityNotEstablished {
     AuthorityNotEstablished::UndeterminedStoreUnavailable {
         store,

@@ -74,8 +74,9 @@ fn parse_uuid(raw: &str) -> Result<Uuid, ApiError> {
 }
 
 /// The curation queue: the committee's current members from the Polygon
-/// committee index (empty until it is published) and the collections under
-/// review from the collections subgraphs (empty without a reader).
+/// committee index (503 while it is unpublished or stale, never an empty
+/// committee) and the collections under review from the collections
+/// subgraphs (empty without a reader).
 pub async fn get_curation_collections(
     State(state): State<SharedState>,
     OriginalUri(original): OriginalUri,
@@ -85,7 +86,13 @@ pub async fn get_curation_collections(
     admin(&state, &headers, "get", &original, &uri).await?;
 
     let committee = match crate::committee::current_members(state.items.pool()).await {
-        Ok(members) => onchain::shape_committee(members.unwrap_or_default()),
+        Ok(Some(members)) => onchain::shape_committee(members),
+        Ok(None) => {
+            return Err(ApiError::http(
+                503,
+                "the curation committee index is not published (catching up, stale, or MARKETPLACE_COMMITTEE_INDEX_ENABLED off)",
+            ));
+        }
         Err(error) => {
             tracing::warn!(error = %error, "committee read failed");
             return Err(ApiError::http(503, "committee unavailable"));

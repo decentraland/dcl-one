@@ -808,8 +808,8 @@ mod tests {
     }
 
     /// The curation console lists the published index's current members,
-    /// an empty committee while the index is unpublished, and answers 503
-    /// when the index cannot be read.
+    /// and answers 503 while the index is unpublished or stale (never an
+    /// empty committee) and when the index cannot be read.
     #[tokio::test]
     async fn curation_console_lists_the_indexed_committee() {
         let Some(pool) = crate::db::scratch::isolated_pool(4).await else {
@@ -850,9 +850,18 @@ mod tests {
                 .unwrap_or_default()
         };
 
+        let unpublished = |body: &Value| {
+            body["message"]
+                .as_str()
+                .is_some_and(|m| m.starts_with("the curation committee index is not published"))
+        };
         let (status, body) = get(&app, "/v1/collections/curation", Some(OWNER_KEY)).await;
-        assert_eq!(status, StatusCode::OK, "{body}");
-        assert!(committee(&body).is_empty(), "unpublished index: {body}");
+        assert_eq!(
+            status,
+            StatusCode::SERVICE_UNAVAILABLE,
+            "unpublished index: {body}"
+        );
+        assert!(unpublished(&body), "{body}");
 
         sqlx::query(
             "INSERT INTO shop.chain_cursor (indexer, network, start_block, last_block, folded_block, fold_through, folded_at, full_history, chain_id) \
@@ -864,6 +873,22 @@ mod tests {
         let (status, body) = get(&app, "/v1/collections/curation", Some(OWNER_KEY)).await;
         assert_eq!(status, StatusCode::OK, "{body}");
         assert_eq!(committee(&body), vec![member.to_string()], "{body}");
+
+        sqlx::query("UPDATE shop.chain_cursor SET folded_at = timezone('UTC', now()) - interval '2 hours' WHERE indexer = 'committee'")
+            .execute(&pool)
+            .await
+            .unwrap();
+        let (status, body) = get(&app, "/v1/collections/curation", Some(OWNER_KEY)).await;
+        assert_eq!(
+            status,
+            StatusCode::SERVICE_UNAVAILABLE,
+            "stale index: {body}"
+        );
+        assert!(unpublished(&body), "{body}");
+        sqlx::query("UPDATE shop.chain_cursor SET folded_at = timezone('UTC', now()) WHERE indexer = 'committee'")
+            .execute(&pool)
+            .await
+            .unwrap();
 
         sqlx::query("ALTER TABLE shop.committee_event RENAME TO committee_event_gone")
             .execute(&pool)

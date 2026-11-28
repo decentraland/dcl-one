@@ -36,6 +36,7 @@ use serde::Serialize;
 use serde_json::{Value, json};
 
 use crate::auth::{AuthChain, AuthError, AuthLinkType, is_eth_address};
+use crate::chain_index::source::Source;
 use crate::comms::world_identity::{DCL_ETH_SUFFIX, ParcelSet, WorldName};
 use crate::content::entity::is_ipfs_v2;
 use crate::policy::Deploy;
@@ -120,12 +121,21 @@ pub(super) fn payload_too_large(message: impl Into<String>) -> Response {
     upload_limits::too_large(message).into_response()
 }
 
-/// A refused publish: its status and message.
-pub(super) struct Refusal(pub(super) StatusCode, pub(super) String);
+/// A refused publish: its status and message, and, when the refusal is a
+/// source this node reads being unavailable, that source (the shared 503
+/// envelope, with `source`, `configure` and `Retry-After`).
+pub(super) struct Refusal(
+    pub(super) StatusCode,
+    pub(super) String,
+    pub(super) Option<Source>,
+);
 
 impl IntoResponse for Refusal {
     fn into_response(self) -> Response {
-        rejection(self.0, self.1)
+        match self.2 {
+            Some(source) => crate::chain_index::source::unavailable(source, &self.1),
+            None => rejection(self.0, self.1),
+        }
     }
 }
 
@@ -134,19 +144,29 @@ pub(super) fn failed(message: impl std::fmt::Display) -> Refusal {
     Refusal(
         StatusCode::BAD_REQUEST,
         format!("Deployment failed: {message}"),
+        None,
     )
 }
 
 pub(super) fn forbidden(message: impl Into<String>) -> Refusal {
-    Refusal(StatusCode::FORBIDDEN, message.into())
+    Refusal(StatusCode::FORBIDDEN, message.into(), None)
 }
 
 pub(super) fn internal(message: impl Into<String>) -> Refusal {
-    Refusal(StatusCode::INTERNAL_SERVER_ERROR, message.into())
+    Refusal(StatusCode::INTERNAL_SERVER_ERROR, message.into(), None)
 }
 
 pub(super) fn unavailable(message: impl Into<String>) -> Refusal {
-    Refusal(StatusCode::SERVICE_UNAVAILABLE, message.into())
+    Refusal(StatusCode::SERVICE_UNAVAILABLE, message.into(), None)
+}
+
+/// `source` is not ready to answer the publish: a retryable 503 naming it.
+pub(super) fn source_unavailable(source: Source, message: impl Into<String>) -> Refusal {
+    Refusal(
+        StatusCode::SERVICE_UNAVAILABLE,
+        message.into(),
+        Some(source),
+    )
 }
 
 /// Upstream's newer-scene refusal, checked before anything is stored or staged: an overlapping
@@ -608,13 +628,18 @@ async fn authenticate(
     partial: bool,
 ) -> Result<Address, Refusal> {
     let schema = |ajv: String| match partial {
-        true => Refusal(StatusCode::BAD_REQUEST, "Invalid auth chain.".to_string()),
+        true => Refusal(
+            StatusCode::BAD_REQUEST,
+            "Invalid auth chain.".to_string(),
+            None,
+        ),
         false => failed(ajv),
     };
     let refused = |reason: String| match partial {
         true => Refusal(
             StatusCode::BAD_REQUEST,
             format!("Invalid auth chain: {reason}"),
+            None,
         ),
         false => failed(reason),
     };
@@ -661,7 +686,9 @@ fn chain_refusal(
         AuthError::Eip1654ValidationFailed(e) => unavailable(format!(
             "The auth chain could not be verified right now: {e}"
         )),
-        e @ AuthError::Eip1654RateLimited => Refusal(StatusCode::TOO_MANY_REQUESTS, e.to_string()),
+        e @ AuthError::Eip1654RateLimited => {
+            Refusal(StatusCode::TOO_MANY_REQUESTS, e.to_string(), None)
+        }
         e => refused(crypto_message(chain, entity_id, &e)),
     }
 }
@@ -836,6 +863,15 @@ pub(super) async fn validate(
                     ))
                 });
             }
+            // The names index cannot establish the NAME's holder right now
+            // (not current, or a registrar event walked past its fold): a
+            // transient readiness condition, refused as the names index being
+            // unavailable, never as a denial a client would not retry.
+            Err(undetermined) if crate::policy::names_not_current(&undetermined).is_some() => {
+                let reason = crate::policy::names_not_current(&undetermined).unwrap_or_default();
+                tracing::warn!(world = %world, signer = %signer.as_str(), %reason, "deploy deferred: the names index cannot establish the NAME's holder");
+                return Err(source_unavailable(Source::NftIndex, reason));
+            }
             Err(undetermined) => {
                 tracing::warn!(world = %world, signer = %signer.as_str(), error = %undetermined, "deploy denied: authority undetermined (fail-closed)");
                 return Err(forbidden(
@@ -876,6 +912,7 @@ pub(super) async fn validate(
                         "Cannot deploy scene \"{entity_id}\" to world \"{}\": owner address could not be resolved.",
                         world.display()
                     ),
+                    None,
                 ));
             }
             Err(e) => {
@@ -1315,7 +1352,7 @@ mod tests {
     #[test]
     fn a_chain_refusal_keeps_unverifiable_and_rate_limited_apart() {
         let refusal = |err: AuthError| {
-            let Refusal(status, message) = chain_refusal(err, &AuthChain::new(), "bafy", failed);
+            let Refusal(status, message, _) = chain_refusal(err, &AuthChain::new(), "bafy", failed);
             (status, message)
         };
         assert_eq!(
