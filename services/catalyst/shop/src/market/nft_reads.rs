@@ -151,21 +151,32 @@ fn page_networks(f: &NftFilters, sources: Sources) -> Vec<ChainNet> {
     nets
 }
 
+/// A NAME page on a walker: read from the index, or the envelope of the
+/// index source that kept it from being read.
+pub(super) enum NamesPage {
+    Served(Vec<NftResult>, i64, ReadConn),
+    /// The names index or the Ethereum latest sales are confirmed not ready:
+    /// the envelope naming that source. The caller reads the marketplace
+    /// graph instead where one is configured, and answers this otherwise.
+    NotAdmitted(Response),
+}
+
 /// A page that reads only names, on a walker, at the request clock `now`:
 /// the index's page when the Ethereum latest sales are admitted on the
-/// snapshot that supplies its rows (`Some`); `None` when the names index or
-/// those latest sales are confirmed not ready there (the caller keeps the
-/// graph); the read's error when a check cannot run. An admitted page is
-/// held to the index path's rules: the `first + skip` window, and the trades
-/// mirror's readiness on the same snapshot when it filters or sorts on
-/// orders. The snapshot carries the reads' statement timeout.
+/// snapshot that supplies its rows ([`NamesPage::Served`]);
+/// [`NamesPage::NotAdmitted`] when the names index or those latest sales are
+/// confirmed not ready there; the read's error when a check cannot run. An
+/// admitted page is held to the index path's rules: the `first + skip`
+/// window, and the trades mirror's readiness on the same snapshot when it
+/// filters or sorts on orders. The snapshot carries the reads' statement
+/// timeout.
 pub(super) async fn names_page_if_admitted(
     state: &MarketplaceState,
     f: &NftFilters,
     first: i64,
     skip: i64,
     now: chrono::DateTime<Utc>,
-) -> Result<Option<(Vec<NftResult>, i64, ReadConn)>, Response> {
+) -> Result<NamesPage, Response> {
     if first.saturating_add(skip) > MAX_WINDOW {
         return Err(
             ApiError::bad_request(format!("first + skip may not exceed {MAX_WINDOW}"))
@@ -178,12 +189,20 @@ pub(super) async fn names_page_if_admitted(
     };
     let mut conn = match open_read_conn(&state.pool, state.land_network(), f, sources).await {
         Ok(conn) => conn,
-        Err(ReadConnError::NftUnavailable(..) | ReadConnError::LandUnavailable) => return Ok(None),
+        Err(ReadConnError::NftUnavailable(source, m)) => {
+            return Ok(NamesPage::NotAdmitted(unavailable(source, &m)));
+        }
+        Err(ReadConnError::LandUnavailable) => {
+            return Ok(NamesPage::NotAdmitted(land_unavailable()));
+        }
         Err(ReadConnError::Pool(e)) => return Err(index_read_error(e)),
     };
     let admitted = admitted_last_sales(&mut conn, &[ChainNet::Ethereum], now).await?;
     if !admitted.contains(&ChainNet::Ethereum) {
-        return Ok(None);
+        return Ok(NamesPage::NotAdmitted(unavailable(
+            Source::SalesIndex,
+            "NAME pages read their latest sales from the ethereum sales index, which is not published (catching up, stale, or MARKETPLACE_SALES_INDEX_ENABLED off)",
+        )));
     }
     if needs_orders(f) {
         require_listing_sources(state, &mut conn, f, sources, now).await?;
@@ -199,7 +218,7 @@ pub(super) async fn names_page_if_admitted(
         LastSale::of(&admitted),
     )
     .await?;
-    Ok(Some((data, total, conn)))
+    Ok(NamesPage::Served(data, total, conn))
 }
 
 /// The networks the collection source reads for `f`.

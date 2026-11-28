@@ -25,17 +25,23 @@
 //!   contract and target, with the reason on refusal. Wallets, calldata and
 //!   session fields stay out of the logs.
 //!
-//! With none of the four `WERT_*` settings, the route answers the unavailable
+//! The allow-list and both wallet matches precede the per-signer budget.
+//! Both mounts share it for all allowed contracts, networks and targets.
+//! An exhausted wallet receives 429 with `Retry-After` before using a
+//! partner key. The continuously refilled budget is local to this process.
+//!
+//! With none of the four partner settings, the route answers the unavailable
 //! envelope naming them.
 
 use std::collections::HashSet;
+use std::num::NonZeroU32;
 use std::sync::Arc;
 use std::time::Duration;
 
 use axum::Json;
 use axum::body::Bytes;
 use axum::extract::State;
-use axum::http::{HeaderMap, StatusCode};
+use axum::http::{HeaderMap, StatusCode, header::RETRY_AFTER};
 use axum::response::{IntoResponse, Response};
 use ed25519_dalek::{Signer as _, SigningKey};
 use serde::Deserialize;
@@ -46,6 +52,7 @@ use super::wire::ApiError;
 use super::{SharedState, Source, check_upstream, listings, unavailable};
 use crate::credits::batch::collection_store;
 use crate::evm::contracts_addrs::{DclContracts, NameContracts};
+use crate::shared::limits::{RateLimitDenial, RateLimiter};
 use crate::types::{ChainId, EvmAddress};
 
 /// The route, as `DataWrites` sees it: it writes nothing here.
@@ -53,6 +60,7 @@ pub(super) const PATH: &str = "/v1/wert/sign";
 
 /// How long Wert's API may take to create a session.
 const SESSION_TIMEOUT: Duration = Duration::from_secs(10);
+const SIGN_WINDOW: Duration = Duration::from_secs(60);
 
 /// The variables, in the order the startup error names a missing one.
 const VARIABLES: [&str; 4] = [
@@ -160,7 +168,7 @@ impl WertPolicy {
     }
 }
 
-/// The partner keys, API and signing policy. Debug omits the credentials.
+/// The partner keys, API, signing policy and budget. Debug omits the credentials.
 #[derive(Clone)]
 pub struct WertSettings {
     default_key: Arc<SigningKey>,
@@ -168,6 +176,7 @@ pub struct WertSettings {
     api_url: String,
     api_key: String,
     policy: Arc<WertPolicy>,
+    signer_budget: Arc<RateLimiter>,
 }
 
 impl std::fmt::Debug for WertSettings {
@@ -187,6 +196,7 @@ impl WertSettings {
         publication_fees_private_key: Option<&str>,
         api_url: Option<&str>,
         api_key: Option<&str>,
+        requests_per_minute: NonZeroU32,
         self_hosts: &[String],
         policy: impl FnOnce() -> anyhow::Result<WertPolicy>,
     ) -> anyhow::Result<Option<Self>> {
@@ -227,6 +237,7 @@ impl WertSettings {
             api_url: api_url.to_string(),
             api_key: api_key.to_string(),
             policy: Arc::new(policy()?),
+            signer_budget: Arc::new(RateLimiter::new(requests_per_minute.get(), SIGN_WINDOW)),
         }))
     }
 
@@ -379,6 +390,17 @@ pub async fn sign(State(state): State<SharedState>, headers: HeaderMap, body: By
             return ApiError::bad_request("Invalid contract").into_response();
         }
     };
+    if let Err(denial) = wert.signer_budget.reserve(&signer, 1) {
+        let delay = match denial {
+            RateLimitDenial::RetryAfter(delay) => delay,
+            RateLimitDenial::CostExceedsCapacity => SIGN_WINDOW,
+        };
+        return (
+            [(RETRY_AFTER, retry_after_seconds(delay).to_string())],
+            ApiError::http(429, "Wert signing rate limit exceeded").into_response(),
+        )
+            .into_response();
+    }
     let signature = sign_text(wert.key(target), &text);
     let session_id = match create_session(&state, wert, &request.session).await {
         Ok(session_id) => session_id,
@@ -404,6 +426,13 @@ pub async fn sign(State(state): State<SharedState>, headers: HeaderMap, body: By
         Json(json!({ "ok": true, "data": { "signature": signature, "sessionId": session_id } })),
     )
         .into_response()
+}
+
+fn retry_after_seconds(delay: Duration) -> u64 {
+    delay
+        .as_secs()
+        .saturating_add(u64::from(delay.subsec_nanos() != 0))
+        .max(1)
 }
 
 fn log_refusal(network: Option<&str>, contract: Option<EvmAddress>, target: Target, reason: &str) {

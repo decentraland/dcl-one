@@ -43,7 +43,7 @@ use super::auth::{ModeratorMode, authorize_moderator, verify_wallet_signed_fetch
 use super::errors::{ApiError, forbidden};
 use super::moderation::handlers::moderator_creds;
 use super::{CommsState, SharedState};
-use crate::limits::{RateLimitDecision, RateLimiter};
+use crate::limits::{RateLimitReceipt, RateLimiter};
 use crate::shared::identity::is_valid_eth_address;
 use crate::shared::signed_fetch::SignedPath;
 use crate::shared::{cors, nul_guard};
@@ -143,32 +143,41 @@ struct ReportsState {
 
 type Shared = Arc<ReportsState>;
 
+impl ReportsState {
+    fn new(comms: SharedState, storage: Arc<Storage>) -> Self {
+        Self {
+            comms,
+            storage,
+            source_slots: RateLimiter::new(SOURCE_SLOTS_PER_DAY, SOURCE_WINDOW),
+            source_kib: RateLimiter::new(SOURCE_KIB_PER_DAY, SOURCE_WINDOW),
+        }
+    }
+
+    fn routes(self) -> Router {
+        Router::new()
+            .route(
+                "/api/reports/players/presign",
+                post(presign).layer(DefaultBodyLimit::max(JSON_BODY_LIMIT)),
+            )
+            .route(
+                "/api/reports/players",
+                post(create).layer(DefaultBodyLimit::max(JSON_BODY_LIMIT)),
+            )
+            .route(
+                "/api/reports/players/{id}/evidence/{key}",
+                put(upload).layer(DefaultBodyLimit::max(MAX_FILE_BYTES + 1)),
+            )
+            .route("/api/reports", get(list))
+            .route("/api/reports/{id}/evidence/{key}", get(evidence))
+            .layer(axum::middleware::from_fn(nul_guard::nul_guard_middleware))
+            .layer(axum::middleware::from_fn(cors::cors_middleware))
+            .with_state(Arc::new(self))
+    }
+}
+
 /// The area's router, for `serve` to nest at `/report-user`.
 pub fn router(comms: SharedState, storage: Arc<Storage>) -> Router {
-    let state = Arc::new(ReportsState {
-        comms,
-        storage,
-        source_slots: RateLimiter::new(SOURCE_SLOTS_PER_DAY, SOURCE_WINDOW),
-        source_kib: RateLimiter::new(SOURCE_KIB_PER_DAY, SOURCE_WINDOW),
-    });
-    Router::new()
-        .route(
-            "/api/reports/players/presign",
-            post(presign).layer(DefaultBodyLimit::max(JSON_BODY_LIMIT)),
-        )
-        .route(
-            "/api/reports/players",
-            post(create).layer(DefaultBodyLimit::max(JSON_BODY_LIMIT)),
-        )
-        .route(
-            "/api/reports/players/{id}/evidence/{key}",
-            put(upload).layer(DefaultBodyLimit::max(MAX_FILE_BYTES + 1)),
-        )
-        .route("/api/reports", get(list))
-        .route("/api/reports/{id}/evidence/{key}", get(evidence))
-        .layer(axum::middleware::from_fn(nul_guard::nul_guard_middleware))
-        .layer(axum::middleware::from_fn(cors::cors_middleware))
-        .with_state(state)
+    ReportsState::new(comms, storage).routes()
 }
 
 fn upload_path(id: Uuid, key: &str) -> String {
@@ -267,14 +276,18 @@ fn source_of(headers: &HeaderMap) -> String {
 }
 
 /// Spends `cost` of the address's budget, or refuses with `429`.
-fn spend(budget: &RateLimiter, source: &str, cost: u32, what: &str) -> Result<(), ApiError> {
-    match budget.check_cost(source, cost) {
-        RateLimitDecision::Allow => Ok(()),
-        RateLimitDecision::Deny => Err(ApiError::http(
+fn spend<'a>(
+    budget: &'a RateLimiter,
+    source: &str,
+    cost: u32,
+    what: &str,
+) -> Result<RateLimitReceipt<'a>, ApiError> {
+    budget.reserve(source, cost).map_err(|_| {
+        ApiError::http(
             429,
             format!("Too many {what} from this address, try again later"),
-        )),
-    }
+        )
+    })
 }
 
 /// A file's cost in the byte budget: its size in whole KiB, rounded up.
@@ -526,12 +539,12 @@ async fn presign(
         ));
     }
     let source = source_of(&headers);
-    spend(
+    drop(spend(
         &state.source_slots,
         &source,
         slots.len() as u32,
         "evidence files",
-    )?;
+    )?);
     check_node_bound(
         &mut tx,
         state.comms.settings.report_evidence_daily_bytes,
@@ -741,12 +754,12 @@ async fn upload(
 
     let source = source_of(&headers);
     let cost = kib(body.len());
-    spend(&state.source_kib, &source, cost, "evidence bytes")?;
+    let spend = spend(&state.source_kib, &source, cost, "evidence bytes")?;
     let hash = crate::auth::hash_bytes_v1(&body);
     if let Err(refused) = store_once(state.clone(), id, key.clone(), hash, body).await {
         // A failure of the node gives the bytes back; a refusal keeps the spend.
         if refused.code >= 500 {
-            state.source_kib.refund(&source, cost);
+            spend.refund();
         }
         return Err(refused);
     }
@@ -1086,6 +1099,14 @@ mod tests {
     }
 
     async fn app_over(pool: PgPool, daily_bytes: i64) -> (Router, std::path::PathBuf, PgPool) {
+        app_with_source_cap(pool, daily_bytes, None).await
+    }
+
+    async fn app_with_source_cap(
+        pool: PgPool,
+        daily_bytes: i64,
+        source_cap: Option<usize>,
+    ) -> (Router, std::path::PathBuf, PgPool) {
         let dir = std::env::temp_dir().join(format!(
             "catalyst-player-reports-{}",
             Uuid::new_v4().simple()
@@ -1110,7 +1131,11 @@ mod tests {
             Arc::new(crate::presence::Presence::new()),
             Arc::new(StubDirectory::default()),
         ));
-        (Router::new().nest(MOUNT, router(comms, storage)), dir, pool)
+        let mut state = ReportsState::new(comms, storage);
+        if let Some(cap) = source_cap {
+            state.source_slots = state.source_slots.with_max_buckets(cap);
+        }
+        (Router::new().nest(MOUNT, state.routes()), dir, pool)
     }
 
     /// One presigned file of `size` bytes, by a fresh wallet at `address`.
@@ -1601,6 +1626,37 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn fresh_sources_at_capacity_keep_an_exhausted_sources_daily_limit() {
+        let Some(pool) = crate::db::scratch::isolated_pool(4).await else {
+            eprintln!("SKIP: player reports need CATALYST_TEST_DATABASE_URL");
+            return;
+        };
+        let daily_bytes = Settings::for_tests().report_evidence_daily_bytes;
+        let (app, dir, _) = app_with_source_cap(pool, daily_bytes, Some(2)).await;
+        let tracked = "203.0.113.7";
+        for _ in 0..SOURCE_SLOTS_PER_DAY as usize / MAX_FILES {
+            let (status, value) = presign_full(&app, &random_key(), tracked).await;
+            assert_eq!(status, StatusCode::OK, "{value}");
+        }
+        let (status, _) = presign_full(&app, &random_key(), tracked).await;
+        assert_eq!(status, StatusCode::TOO_MANY_REQUESTS);
+
+        let mut served = 0;
+        for i in 1..=64 {
+            let (status, value) = presign_sized(&app, &format!("198.51.100.{i}"), 1).await;
+            if status == StatusCode::OK {
+                served += 1;
+            } else {
+                assert_eq!(status, StatusCode::TOO_MANY_REQUESTS, "{value}");
+            }
+            let (status, value) = presign_full(&app, &random_key(), tracked).await;
+            assert_eq!(status, StatusCode::TOO_MANY_REQUESTS, "{value}");
+        }
+        assert!(served > 0);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[tokio::test]
     async fn the_node_bounds_a_day_of_evidence_from_all_wallets_and_addresses() {
         let cap = 2 * MAX_FILE_BYTES as i64 + NODE_SLOT_FLOOR_BYTES;
         let Some((app, dir, pool)) = app_alone(cap).await else {
@@ -1871,12 +1927,18 @@ mod tests {
         assert_eq!(kib(1024), 1);
         assert_eq!(kib(1025), 2);
         let spent = |source, cost| spend(&budget, source, cost, "evidence bytes").is_ok();
-        assert!(spent("203.0.113.7", kib(MAX_FILE_BYTES)));
+        let charge = spend(
+            &budget,
+            "203.0.113.7",
+            kib(MAX_FILE_BYTES),
+            "evidence bytes",
+        )
+        .unwrap();
         assert!(spent("203.0.113.7", kib(MAX_FILE_BYTES)));
         assert!(!spent("203.0.113.7", 1));
         assert!(spent("203.0.113.8", 1));
         // A failed store gives the bytes back.
-        budget.refund("203.0.113.7", 1);
+        charge.refund();
         assert!(spent("203.0.113.7", 1));
     }
 

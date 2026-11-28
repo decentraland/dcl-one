@@ -1006,12 +1006,13 @@ async fn list_page(
     // whatever its sort, as its deep pages do: the graph's `soldAt` counts
     // other sales. The admission is checked on the snapshot that supplies
     // the rows; a check that cannot run is the page's error.
+    let mut not_admitted = None;
     if super::owned_items::walks_here(state) && names_only(state, f) {
+        use super::nft_reads::NamesPage;
         let (first, skip) = index_page(f);
-        if let Some((data, total, conn)) =
-            super::nft_reads::names_page_if_admitted(state, f, first, skip, now).await?
-        {
-            return Ok((data, total, Some(conn)));
+        match super::nft_reads::names_page_if_admitted(state, f, first, skip, now).await? {
+            NamesPage::Served(data, total, conn) => return Ok((data, total, Some(conn))),
+            NamesPage::NotAdmitted(why) => not_admitted = Some(why),
         }
     }
     let reader_page = readers::reader_page(f.first, f.skip, DEFAULT_FIRST);
@@ -1037,7 +1038,10 @@ async fn list_page(
             "the published NFT index serves order sorts",
         ));
     };
-    let url = readers::require_marketplace(state)?;
+    // A NAME page the index did not admit names the index source it waits
+    // for where no marketplace graph can read it instead.
+    let url =
+        readers::require_marketplace(state).map_err(|missing| not_admitted.unwrap_or(missing))?;
     let page = GraphPage {
         entity: "nfts",
         filter_type: "NFT_filter",

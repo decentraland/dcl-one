@@ -24,7 +24,7 @@ use axum::extract::{Path, Request, State};
 use axum::response::{IntoResponse, Response};
 use serde_json::{Map, Value, json};
 
-use crate::shared::cache::TtlMap;
+use crate::shared::cache::{Coalesce, TtlMap};
 use crate::shared::http_util::lambdas_internal_error;
 use crate::shared::query_params::{parse_int_js, parse_query_string, qs_get_array, qs_get_string};
 
@@ -61,7 +61,15 @@ pub struct Caches {
     /// networks it needed stop being fresh (a hit past it reads again).
     outfits:
         TtlMap<(String, super::owned_items::Publications), (Value, Option<chrono::NaiveDateTime>)>,
+    /// `(address, publications)` -> the outfits read in flight: concurrent
+    /// misses of one address under one publication share it.
+    pub(super) outfit_flights: Coalesce<(String, super::owned_items::Publications), OutfitsRead>,
 }
+
+/// What one outfits read answers the callers that joined it: the outfits
+/// entity and what its ownership read observed, or `None` when it failed
+/// (a joiner then reads again; the failure answers only the read's caller).
+pub(super) type OutfitsRead = Option<(Value, Option<super::owned_items::Observed>)>;
 
 impl Default for Caches {
     fn default() -> Self {
@@ -71,6 +79,7 @@ impl Default for Caches {
             catalog_urns: TtlMap::bounded(CATALOG_TTL, 4096),
             base_wearables: TtlMap::bounded(BASE_WEARABLES_TTL, 1),
             outfits: TtlMap::bounded(OUTFITS_TTL, 50_000),
+            outfit_flights: Coalesce::new(),
         }
     }
 }
@@ -1212,6 +1221,17 @@ pub async fn outfits(State(state): State<SharedState>, Path(id): Path<String>) -
             return super::lambdas_internal_error();
         }
     };
+    outfits_under(&state, &address, looked_up).await
+}
+
+/// [`outfits`] for a request that looked up `looked_up`: the memo, else a
+/// read in flight under those publications, else a read of its own.
+pub(super) async fn outfits_under(
+    state: &MarketplaceState,
+    address: &str,
+    looked_up: super::owned_items::Publications,
+) -> Response {
+    let address = address.to_string();
     let answer = |v: Value| {
         if v.is_null() {
             not_found("Outfits not found")
@@ -1228,10 +1248,47 @@ pub async fn outfits(State(state): State<SharedState>, Path(id): Path<String>) -
     {
         return answer(v);
     }
-    match fill_outfits(&state, &address, looked_up).await {
-        Ok(v) => answer(v),
-        Err(resp) => resp,
+    // A miss another request is reading under the same publications joins
+    // that read, and takes its answer only as a memo hit would; a joined
+    // failure (perhaps transient) is read again rather than spread.
+    let mut failure = None;
+    let read = state
+        .lambdas
+        .outfit_flights
+        .run_accepting(
+            (address.clone(), looked_up),
+            || async {
+                fill_outfits(state, &address, looked_up)
+                    .await
+                    .map_err(|resp| failure = Some(resp))
+                    .ok()
+            },
+            |read| async move {
+                read.is_some_and(|(_, observed)| {
+                    serves_lookup(observed, looked_up, chrono::Utc::now().naive_utc())
+                })
+            },
+        )
+        .await;
+    match read {
+        Some((v, _)) => answer(v),
+        // Only this caller's own read answers a failure.
+        None => failure.unwrap_or_else(super::lambdas_internal_error),
     }
+}
+
+/// Whether an outfits answer whose ownership read observed `observed` may
+/// answer a request that looked up `looked_up` at `now`, as a memo hit
+/// would: read under those publications (or depending on none) and within
+/// the freshness of the networks it needed.
+fn serves_lookup(
+    observed: Option<super::owned_items::Observed>,
+    looked_up: super::owned_items::Publications,
+    now: chrono::NaiveDateTime,
+) -> bool {
+    observed.is_none_or(|observed| {
+        observed.publications == looked_up && observed.fresh_until.is_none_or(|until| now <= until)
+    })
 }
 
 /// Reads the address's outfits and files them under what the ownership
@@ -1242,7 +1299,7 @@ pub(super) async fn fill_outfits(
     state: &MarketplaceState,
     address: &str,
     looked_up: super::owned_items::Publications,
-) -> Result<Value, Response> {
+) -> Result<(Value, Option<super::owned_items::Observed>), Response> {
     let (v, observed) = read_outfits(state, address).await?;
     let key = observed.map_or(looked_up, |o| o.publications);
     let fresh_until = observed.and_then(|o| o.fresh_until);
@@ -1250,7 +1307,7 @@ pub(super) async fn fill_outfits(
         .lambdas
         .outfits
         .insert((address.to_string(), key), (v.clone(), fresh_until));
-    Ok(v)
+    Ok((v, observed))
 }
 
 /// The address's outfits entity, sanitized and named (`Null`: none), and
@@ -1297,6 +1354,8 @@ async fn read_outfits(
         )
         .await
         .map_err(|e| e.into_response(|m| super::third_party::fetch_error(address, m)))?;
+        #[cfg(test)]
+        state.test_hold_after_ownership().await;
         sanitize_outfits(state, address, &mut entity, Some(owned)).await?;
         let owned_names: Vec<String> = names
             .remove(&owner)

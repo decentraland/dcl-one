@@ -57,6 +57,9 @@ IMAGES_INPUTS = (
     'flake.*',
     'rendering/bevy-explorer/source/**',
     'rendering/bevy-explorer/vendor/**',
+    # Sites serves the avatar preview from the same Explorer build (infra/packages/sites.nix), so a
+    # change to its page or crate alone has to rebuild the image too.
+    'rendering/avatar-preview/**',
     'apps/bevy-explorer/build-web.py',
     'apps/bevy-explorer/install-*',
     '.github/workflows/bevy-explorer-ci.yml',
@@ -65,6 +68,7 @@ IMAGES_INPUTS = (
     'tooling/bevy-ci.py',
     'tooling/play-artifact.py',
     'tooling/hud_shared_inputs.py',
+    'tooling/check-local-hashing.mjs',
     'tooling/tests/hud_manifest_fixture.py',
     'tooling/tests/hud_manifest_invalid_cases.json',
     'tooling/tests/check_hud_manifest_nix.py',

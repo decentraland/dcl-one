@@ -38,6 +38,15 @@ pub enum ApiError {
     /// `{error: <crypto-middleware message>, message: SIGNED_FETCH_MESSAGE}`.
     #[error("{error}")]
     SignedFetch { status: u16, error: String },
+
+    /// 503 naming the `index` source that cannot answer yet: the shared
+    /// unavailable envelope (`source`, `configure`, `Retry-After`). Not
+    /// `source`: thiserror reads a field of that name as the error's cause.
+    #[error("{message}")]
+    SourceUnavailable {
+        index: crate::chain_index::source::Source,
+        message: String,
+    },
 }
 
 /// The `message` of every signed-fetch refusal on the worlds routes.
@@ -99,7 +108,7 @@ impl ApiError {
             ApiError::Http { status, .. } | ApiError::SignedFetch { status, .. } => *status,
             ApiError::Internal(_) => 500,
             ApiError::TooManyRequests { .. } => 429,
-            ApiError::UploadShed(_) => 503,
+            ApiError::UploadShed(_) | ApiError::SourceUnavailable { .. } => 503,
             ApiError::RequestTimeout(_) => 408,
         }
     }
@@ -111,6 +120,7 @@ impl ApiError {
             ApiError::Internal(_) => "internal error".to_string(),
             ApiError::TooManyRequests { message, .. } => message.clone(),
             ApiError::UploadShed(m) | ApiError::RequestTimeout(m) => m.clone(),
+            ApiError::SourceUnavailable { message, .. } => message.clone(),
         }
     }
 }
@@ -210,6 +220,9 @@ impl IntoResponse for ApiError {
                 .into_response(),
             ApiError::UploadShed(m) => shed_response(&m),
             ApiError::RequestTimeout(m) => timeout_response(&m),
+            ApiError::SourceUnavailable { index, message } => {
+                crate::chain_index::source::unavailable(index, &message)
+            }
             ApiError::SignedFetch { status, error } => (
                 StatusCode::from_u16(status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR),
                 Json(json!({ "error": error, "message": SIGNED_FETCH_MESSAGE })),

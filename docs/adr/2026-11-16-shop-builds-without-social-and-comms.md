@@ -26,6 +26,10 @@ Shop depends on neither `catalyst-social` nor `catalyst-comms`.
   both generated from it, so a type cannot gain a delivery row without a template, or the
   reverse.
 - **The rate limiter is `shared::limits`.** Comms re-exports it as `comms::limits`.
+  Each `RateLimiter` keeps exact and fixed overflow buckets within one process-local cap.
+  It reclaims fully refilled exact buckets and uses shared overflow for new keys at capacity.
+  Keys with outstanding overflow debt stay on that bucket until it fully refills.
+  Refunds use a one-shot receipt for the bucket and generation that accepted the debit.
 - **`serve` connects the rest** (`src/serve_adapters.rs`). Shop owns two small traits:
   `subscriptions::AvailabilityMailer` (one `send_html`, with the item-available email built on
   it) and `market::ProfileFaces`. `serve` implements them over Social's SendGrid sender and
