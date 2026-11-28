@@ -166,6 +166,9 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
     install_metrics(&config.node.serve_metrics_bind)?;
     shop::market::lambdas_metrics::record_build_info(&config.commit_hash().unwrap_or_default());
     tracing::info!("{}", catalyst_config::posture::startup_line(&config));
+    if let Some(line) = catalyst_config::posture::subgraph_fallbacks_line(&config) {
+        tracing::info!("{line}");
+    }
     if let Ok(Some(warning)) = catalyst_config::posture::worlds_names_reader(&config) {
         tracing::warn!("{warning}");
     }

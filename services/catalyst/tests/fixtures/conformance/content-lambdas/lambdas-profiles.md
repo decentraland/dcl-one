@@ -392,7 +392,7 @@ LP-06. **Profiles: `hasClaimedName` is always computed.**
 LP-07. **Profiles: serving without ownership readers.**
 - Status: MATCH, no work.
 - Upstream: always filters.
-- dcl-one: a mainnet mirror refuses to start with `MARKETPLACE_NFT_INDEX_ENABLED` off, with a `TRADE_RPC_URLS` that names no chain 137 endpoint, or with `MARKETPLACE_SUBGRAPH_URL` set empty `services/catalyst/config/src/posture.rs` (`refuse_unfiltered_profiles`). Island and journey have no ownership source by design and serve the items as deployed, as a testnet node does until its chains are walked (the index reads chains 1 and 137 only) `services/catalyst/shop/src/market/owned_items.rs` (`walks_here`). A mainnet node whose index is not complete yet fails the profile reads (503) instead of serving them unchecked.
+- dcl-one: a mainnet mirror refuses to start with `MARKETPLACE_NFT_INDEX_ENABLED` off or with a `TRADE_RPC_URLS` that names no chain 137 endpoint, and a testnet mirror that does not walk the index refuses it with `MARKETPLACE_SUBGRAPH_URL` set empty `services/catalyst/config/src/posture.rs` (`refuse_unfiltered_profiles`). Island and journey have no ownership source by design and serve the items as deployed, as a testnet node does until its chains are walked (the index reads chains 1 and 137 only) `services/catalyst/shop/src/market/owned_items.rs` (`walks_here`). A mainnet node whose index is not complete yet fails the profile reads (503) instead of serving them unchecked.
 - Severity: none (closed).
 
 LP-08. **Profiles: snapshot URLs.**

@@ -11,16 +11,20 @@ use crate::config::{DEFAULT_MANA_PRICE_MAX_STALENESS_SECS, DEFAULT_WERT_SIGN_REQ
 pub struct MarketUpstreamsConfig {
     // marketplace: subgraph readers, the trades mirror and the profile CDN.
     /// L1 collections subgraph; unset answers owned wearables/emotes unfiltered.
+    /// `NODE_POSTURE=mirror` sets it off mainnet, and on mainnet only while
+    /// the collections index leaves Ethereum to the mirror or on the creator
+    /// plane (`CREATE_WRITES_ENABLED=true`, for the Builder's on-chain routes).
     #[arg(long, env = "ETH_COLLECTIONS_SUBGRAPH_URL")]
     pub eth_collections_subgraph_url: Option<String>,
 
-    /// L2 collections subgraph.
+    /// L2 collections subgraph; `NODE_POSTURE=mirror` sets it as it sets
+    /// the L1 one, for Polygon.
     #[arg(long, env = "MATIC_COLLECTIONS_SUBGRAPH_URL")]
     pub matic_collections_subgraph_url: Option<String>,
 
     /// L1 marketplace subgraph (LAND before the indexes publish, and DCL
     /// NAMEs on a node that does not walk the nft index);
-    /// `NODE_POSTURE=mirror` sets lamb2's default. A node that walks the
+    /// `NODE_POSTURE=mirror` sets lamb2's default off mainnet. A node that walks the
     /// index reads its NAMEs there and never asks it. Without either, the
     /// NAME routes answer the 503 envelope, profiles and outfits claim no
     /// name, and `WORLDS_WRITES_ENABLED=true` refuses to start unless
@@ -86,6 +90,7 @@ pub struct MarketplaceConfig {
     // collections and items mirrors, the ownership RPCs of POST /v1/trades,
     // the operator bearer, the catalog page cache and the MANA/USD fallback.
     /// Run the collections and items mirrors over the configured collections subgraphs.
+    /// `NODE_POSTURE=mirror` turns it on unless the collections index owns both networks.
     #[arg(long, env = "MARKETPLACE_MIRRORS_ENABLED", default_value_t = false, action = clap::ArgAction::Set)]
     pub marketplace_mirrors_enabled: bool,
 

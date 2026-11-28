@@ -35,8 +35,14 @@ fn parsed_with_flags(pairs: &[(&str, &str)], flags: &[&str]) -> Config {
     Config::parse_env_with_flags_for_tests(all, flags).unwrap()
 }
 
+/// The posture expands from the environment before the arguments are
+/// parsed. A command-line override that hands a network back to the mirror
+/// after the posture took it as owned (mirror and source left off) would
+/// leave that catalogue with no writer: refused, naming the way out. The
+/// same hand-back in the environment keeps the mirror, as does passing the
+/// mirror and its source along with it.
 #[test]
-fn cli_ownership_overrides_keep_a_catalogue_writer() {
+fn a_cli_hand_back_without_its_mirror_is_refused() {
     let env_pairs = [(ENV, "mirror"), ("DATABASE_URL", "postgres:///catalyst")];
     for (flag, ownership, index_enabled) in [
         ("--marketplace-collections-index-owns=matic", "matic", true),
@@ -57,22 +63,61 @@ fn cli_ownership_overrides_keep_a_catalogue_writer() {
             market.marketplace_collections_index_enabled, index_enabled,
             "{flag}"
         );
-        assert!(market.marketplace_mirrors_enabled, "{flag}");
+        assert!(!market.marketplace_mirrors_enabled, "{flag}");
+        let error = check(&config, &lookup(&env(&env_pairs)))
+            .unwrap_err()
+            .to_string();
         assert!(
-            Config::non_empty(&config.market_upstreams.eth_collections_subgraph_url).is_some(),
-            "{flag}"
+            error.contains("nothing would fill its catalogue"),
+            "{flag}: {error}"
         );
         assert!(
-            Config::non_empty(&config.market_upstreams.matic_collections_subgraph_url).is_some(),
-            "{flag}"
+            error.contains("ETH_COLLECTIONS_SUBGRAPH_URL"),
+            "{flag}: {error}"
+        );
+        let config = parsed_with_flags(
+            &env_pairs,
+            &[
+                flag,
+                "--marketplace-mirrors-enabled=true",
+                "--eth-collections-subgraph-url=https://subgraph.decentraland.org/collections-ethereum-mainnet",
+                "--matic-collections-subgraph-url=https://subgraph.decentraland.org/collections-matic-mainnet",
+            ],
         );
         check(&config, &lookup(&env(&env_pairs))).unwrap();
+    }
+    for owns in ["matic", ""] {
+        let pairs = [
+            (ENV, "mirror"),
+            ("DATABASE_URL", "postgres:///catalyst"),
+            ("MARKETPLACE_COLLECTIONS_INDEX_OWNS", owns),
+        ];
+        let config = parsed(&pairs);
+        assert!(config.marketplace.marketplace_mirrors_enabled, "{owns:?}");
+        assert!(
+            Config::non_empty(&config.market_upstreams.eth_collections_subgraph_url).is_some(),
+            "{owns:?}"
+        );
+        check(&config, &lookup(&env(&pairs))).unwrap();
     }
 }
 
 #[test]
 fn a_bounded_mainnet_walk_retains_its_mirror() {
-    for (chain, owned) in [("MATIC", "ethereum"), ("ETHEREUM", "matic")] {
+    for (chain, owned, mirrored_url, owned_url) in [
+        (
+            "MATIC",
+            "ethereum",
+            "MATIC_COLLECTIONS_SUBGRAPH_URL",
+            "ETH_COLLECTIONS_SUBGRAPH_URL",
+        ),
+        (
+            "ETHEREUM",
+            "matic",
+            "ETH_COLLECTIONS_SUBGRAPH_URL",
+            "MATIC_COLLECTIONS_SUBGRAPH_URL",
+        ),
+    ] {
         for bound in ["START", "STOP"] {
             let key = format!("MARKETPLACE_INDEX_{bound}_BLOCK_{chain}");
             let values = [
@@ -83,8 +128,10 @@ fn a_bounded_mainnet_walk_retains_its_mirror() {
             let vars = expanded(Posture::Mirror, &values);
             assert_eq!(vars["MARKETPLACE_COLLECTIONS_INDEX_OWNS"], owned, "{key}");
             assert_eq!(vars["MARKETPLACE_MIRRORS_ENABLED"], "true", "{key}");
-            assert!(vars.contains_key("ETH_COLLECTIONS_SUBGRAPH_URL"), "{key}");
-            assert!(vars.contains_key("MATIC_COLLECTIONS_SUBGRAPH_URL"), "{key}");
+            // The bounded network keeps its mirror's source; the owned one
+            // reads no subgraph.
+            assert!(vars.contains_key(mirrored_url), "{key}");
+            assert!(!vars.contains_key(owned_url), "{key}");
             check(&parsed(&values), &lookup(&env(&values))).unwrap();
         }
     }
@@ -114,51 +161,70 @@ fn a_parsed_replay_bound_with_ownership_and_no_mirror_is_refused() {
     );
 }
 
+/// On mainnet the collections index owns both networks by default, so the
+/// mirror posture reads no collections subgraph and runs no mirror: the
+/// subgraphs stay settable fallbacks. A network handed back to the mirror
+/// (in the environment) gets its source and the mirror, as does a disabled
+/// projection. The creator plane (`CREATE_WRITES_ENABLED=true`) keeps both
+/// sources for the Builder's on-chain routes, with the mirror still off.
+/// A testnet chain pair reads its own subgraphs and mirrors them.
 #[test]
 fn the_mirror_sources_follow_the_catalogue_chain_pair() {
+    const ETH_MAIN: &str = "https://subgraph.decentraland.org/collections-ethereum-mainnet";
+    const MATIC_MAIN: &str = "https://subgraph.decentraland.org/collections-matic-mainnet";
     let main = expanded(Posture::Mirror, &[]);
     assert_eq!(main["MARKETPLACE_COLLECTIONS_INDEX_OWNS"], "matic,ethereum");
-    assert_eq!(main["MARKETPLACE_MIRRORS_ENABLED"], "true");
+    assert_eq!(main["MARKETPLACE_MIRRORS_ENABLED"], "false");
+    assert!(!main.contains_key("ETH_COLLECTIONS_SUBGRAPH_URL"));
+    assert!(!main.contains_key("MATIC_COLLECTIONS_SUBGRAPH_URL"));
+    let pairs = [(ENV, "mirror"), ("DATABASE_URL", "postgres:///catalyst")];
+    check(&parsed(&pairs), &lookup(&env(&pairs))).unwrap();
+
     let hand_back = expanded(
         Posture::Mirror,
         &[("MARKETPLACE_COLLECTIONS_INDEX_OWNS", "")],
     );
     assert_eq!(hand_back["MARKETPLACE_MIRRORS_ENABLED"], "true");
-    assert_eq!(
-        hand_back["ETH_COLLECTIONS_SUBGRAPH_URL"],
-        "https://subgraph.decentraland.org/collections-ethereum-mainnet"
-    );
-    assert_eq!(
-        hand_back["MATIC_COLLECTIONS_SUBGRAPH_URL"],
-        "https://subgraph.decentraland.org/collections-matic-mainnet"
-    );
+    assert_eq!(hand_back["ETH_COLLECTIONS_SUBGRAPH_URL"], ETH_MAIN);
+    assert_eq!(hand_back["MATIC_COLLECTIONS_SUBGRAPH_URL"], MATIC_MAIN);
     let partial = expanded(
         Posture::Mirror,
         &[("MARKETPLACE_COLLECTIONS_INDEX_OWNS", " polygon ")],
     );
     assert_eq!(partial["MARKETPLACE_MIRRORS_ENABLED"], "true");
-    assert_eq!(
-        partial["ETH_COLLECTIONS_SUBGRAPH_URL"],
-        hand_back["ETH_COLLECTIONS_SUBGRAPH_URL"]
-    );
-    assert_eq!(
-        main["ETH_COLLECTIONS_SUBGRAPH_URL"],
-        hand_back["ETH_COLLECTIONS_SUBGRAPH_URL"]
-    );
-    assert_eq!(
-        main["MATIC_COLLECTIONS_SUBGRAPH_URL"],
-        hand_back["MATIC_COLLECTIONS_SUBGRAPH_URL"]
-    );
-    assert_eq!(
-        partial["MATIC_COLLECTIONS_SUBGRAPH_URL"],
-        hand_back["MATIC_COLLECTIONS_SUBGRAPH_URL"]
-    );
+    assert_eq!(partial["ETH_COLLECTIONS_SUBGRAPH_URL"], ETH_MAIN);
+    assert!(!partial.contains_key("MATIC_COLLECTIONS_SUBGRAPH_URL"));
     let disabled = expanded(
         Posture::Mirror,
         &[("MARKETPLACE_COLLECTIONS_INDEX_ENABLED", "false")],
     );
     assert_eq!(disabled["MARKETPLACE_COLLECTIONS_INDEX_OWNS"], "");
     assert_eq!(disabled["MARKETPLACE_MIRRORS_ENABLED"], "true");
+    assert_eq!(disabled["ETH_COLLECTIONS_SUBGRAPH_URL"], ETH_MAIN);
+    assert_eq!(disabled["MATIC_COLLECTIONS_SUBGRAPH_URL"], MATIC_MAIN);
+
+    let creator = expanded(Posture::Mirror, &[("CREATE_WRITES_ENABLED", "true")]);
+    assert_eq!(creator["MARKETPLACE_MIRRORS_ENABLED"], "false");
+    assert_eq!(creator["ETH_COLLECTIONS_SUBGRAPH_URL"], ETH_MAIN);
+    assert_eq!(creator["MATIC_COLLECTIONS_SUBGRAPH_URL"], MATIC_MAIN);
+    let pairs = [
+        (ENV, "mirror"),
+        ("DATABASE_URL", "postgres:///catalyst"),
+        ("CREATE_WRITES_ENABLED", "true"),
+    ];
+    check(&parsed(&pairs), &lookup(&env(&pairs))).unwrap();
+
+    // An explicit value wins: the fallback turned back on.
+    let fallback = expanded(
+        Posture::Mirror,
+        &[
+            ("MATIC_COLLECTIONS_SUBGRAPH_URL", MATIC_MAIN),
+            ("MARKETPLACE_MIRRORS_ENABLED", "true"),
+        ],
+    );
+    assert!(!fallback.contains_key("MATIC_COLLECTIONS_SUBGRAPH_URL"));
+    assert!(!fallback.contains_key("MARKETPLACE_MIRRORS_ENABLED"));
+
     for posture in [Posture::Island, Posture::Journey] {
         let local = expanded(posture, &[]);
         assert_eq!(local["MARKETPLACE_COLLECTIONS_INDEX_OWNS"], "");
@@ -181,6 +247,81 @@ fn the_mirror_sources_follow_the_catalogue_chain_pair() {
         cfg["MATIC_COLLECTIONS_SUBGRAPH_URL"],
         "https://subgraph.decentraland.org/collections-matic-amoy"
     );
+}
+
+/// The startup line names each mainnet subgraph fallback still on and why:
+/// none by default, the Builder's on the creator plane, the mirror's for a
+/// network handed back, and the environment's for anything the posture
+/// would leave off. Off mainnet there is no such line.
+#[test]
+fn the_startup_line_names_each_subgraph_fallback_and_why() {
+    let line = |pairs: &[(&str, &str)]| {
+        let mut all = vec![(ENV, "mirror"), ("DATABASE_URL", "postgres:///catalyst")];
+        all.extend_from_slice(pairs);
+        subgraph_fallbacks_line(&parsed(&all))
+    };
+    assert_eq!(
+        line(&[]).unwrap(),
+        "mainnet subgraph fallbacks: none; the marketplace reads its own indexes"
+    );
+    let creator = line(&[("CREATE_WRITES_ENABLED", "true")]).unwrap();
+    assert!(
+        creator.contains(&format!(
+            "ETH_COLLECTIONS_SUBGRAPH_URL ({BUILDER_READS_COLLECTIONS})"
+        )),
+        "{creator}"
+    );
+    assert!(
+        creator.contains(&format!(
+            "MATIC_COLLECTIONS_SUBGRAPH_URL ({BUILDER_READS_COLLECTIONS})"
+        )),
+        "{creator}"
+    );
+    let handed = line(&[("MARKETPLACE_COLLECTIONS_INDEX_OWNS", "matic")]).unwrap();
+    assert!(
+        handed.contains(
+            "ETH_COLLECTIONS_SUBGRAPH_URL (the collections mirror fills the ethereum catalogue)"
+        ),
+        "{handed}"
+    );
+    assert!(
+        !handed.contains("MATIC_COLLECTIONS_SUBGRAPH_URL"),
+        "{handed}"
+    );
+    let inherited = line(&[
+        (
+            "MARKETPLACE_SUBGRAPH_URL",
+            "https://subgraph.decentraland.org/marketplace",
+        ),
+        ("MARKETPLACE_MIRRORS_ENABLED", "true"),
+        (
+            "MATIC_COLLECTIONS_SUBGRAPH_URL",
+            "https://subgraph.decentraland.org/collections-matic-mainnet",
+        ),
+    ])
+    .unwrap();
+    for named in [
+        "MARKETPLACE_SUBGRAPH_URL (set in the environment)",
+        "MATIC_COLLECTIONS_SUBGRAPH_URL (set in the environment)",
+        "MARKETPLACE_MIRRORS_ENABLED (set in the environment",
+    ] {
+        assert!(inherited.contains(named), "{inherited}");
+    }
+    assert!(line(&[("ETH_NETWORK", "sepolia")]).is_none());
+}
+
+/// Island and journey refuse the mirrors switched on, although the mirror
+/// posture now computes it.
+#[test]
+fn the_computed_mirrors_switch_is_still_a_follower() {
+    assert!(followers().any(|key| key == "MARKETPLACE_MIRRORS_ENABLED"));
+    for posture in ["island", "journey"] {
+        let map = env(&[(ENV, posture), ("MARKETPLACE_MIRRORS_ENABLED", "true")]);
+        let error = refuse_followers(Posture::parse(posture).unwrap(), &lookup(&map))
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("MARKETPLACE_MIRRORS_ENABLED"), "{error}");
+    }
 }
 
 #[test]
@@ -218,13 +359,17 @@ fn an_explicit_variable_or_its_file_wins_even_empty() {
     assert_eq!(got["EXPLORER_MIRRORS_ENABLED"], "true");
 }
 
+/// A testnet mirror reads the marketplace subgraph lamb2 defaults to; a
+/// mainnet one reads LAND and DCL NAMEs from its own indexes, the subgraph a
+/// settable fallback.
 #[test]
 fn a_mirror_reads_the_subgraphs_lamb2_defaults_to() {
-    let mirror = expanded(Posture::Mirror, &[]);
+    let testnet = expanded(Posture::Mirror, &[("ETH_NETWORK", "sepolia")]);
     assert_eq!(
-        mirror["MARKETPLACE_SUBGRAPH_URL"].as_str(),
+        testnet["MARKETPLACE_SUBGRAPH_URL"].as_str(),
         "https://subgraph.decentraland.org/marketplace"
     );
+    assert!(!expanded(Posture::Mirror, &[]).contains_key("MARKETPLACE_SUBGRAPH_URL"));
     // LAND rights read the land-authz index alone: no posture names the
     // land-manager subgraph (a value left in an environment is no Config
     // variable, so the process never reads it).

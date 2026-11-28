@@ -418,18 +418,51 @@ mod tests {
     }
 
     async fn state_with(pool: sqlx::PgPool, settings: crate::Settings) -> SharedState {
+        state_reading(pool, settings, None).await
+    }
+
+    /// [`state_with`] over `market`, the collections subgraphs it reads.
+    async fn state_reading(
+        pool: sqlx::PgPool,
+        settings: crate::Settings,
+        market: Option<Arc<crate::chain_index::ChainIndex>>,
+    ) -> SharedState {
         Arc::new(
             crate::State::new(
                 pool,
                 temp_storage().await,
                 Arc::default(),
                 dcl_http::Outbound::for_tests(),
-                None,
+                market,
                 None,
                 settings,
             )
             .unwrap(),
         )
+    }
+
+    /// A collections subgraph with nothing under review.
+    async fn empty_review_queue() -> Arc<crate::chain_index::ChainIndex> {
+        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .unwrap();
+        let url = format!("http://{}/", listener.local_addr().unwrap());
+        let graph = axum::Router::new().route(
+            "/",
+            axum::routing::post(|| async {
+                Json(serde_json::json!({ "data": { "collections": [], "curations": [] } }))
+            }),
+        );
+        tokio::spawn(async move { axum::serve(listener, graph).await.unwrap() });
+        let market = crate::chain_index::ChainIndex::new(
+            dcl_http::Outbound::for_tests(),
+            crate::chain_index::IndexSettings {
+                matic_collections_subgraph_url: Some(url),
+                ..crate::chain_index::IndexSettings::for_tests()
+            },
+        );
+        market.allow_loopback_for_tests();
+        Arc::new(market)
     }
 
     async fn get(app: &Router, path: &str, key: Option<&str>) -> (StatusCode, Value) {
@@ -827,17 +860,35 @@ mod tests {
             return;
         };
         let admin = address_of(OWNER_KEY);
-        let state = state_with(
+        let graph = empty_review_queue().await;
+        let state = state_reading(
             pool.clone(),
             crate::Settings {
                 admin_addresses: vec![admin.clone()],
                 committee_index_walked: true,
                 ..Default::default()
             },
+            Some(graph.clone()),
         )
         .await;
         let app = crate::router(state);
-        let index_off = crate::router(state_on(pool.clone(), &admin).await);
+        let index_off = crate::router(
+            state_reading(
+                pool.clone(),
+                crate::Settings {
+                    admin_addresses: vec![admin.clone()],
+                    ..Default::default()
+                },
+                Some(graph),
+            )
+            .await,
+        );
+        // Without a collections subgraph the queue cannot be listed: 503,
+        // never an empty queue.
+        let no_reader = crate::router(state_on(pool.clone(), &admin).await);
+        let (status, body) = get(&no_reader, "/v1/collections/curation", Some(OWNER_KEY)).await;
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body}");
+        assert_eq!(body["message"], crate::onchain::MARKETPLACE_DOWN, "{body}");
         let (removed, member) = (
             "0x00000000000000000000000000000000000000aa",
             "0x00000000000000000000000000000000000000bb",

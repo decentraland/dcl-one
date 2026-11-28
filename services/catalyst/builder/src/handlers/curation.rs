@@ -75,7 +75,9 @@ fn parse_uuid(raw: &str) -> Result<Uuid, ApiError> {
 
 /// The curation queue: the committee's current members from the Polygon
 /// committee index, and the collections under review from the collections
-/// subgraphs (empty without a reader). A current committee publication is
+/// subgraphs. A node with no collections subgraph configured cannot list
+/// the queue: 503 "marketplace data unavailable", never an empty queue. A
+/// current committee publication is
 /// listed whichever process maintains it. Without one, a deployment that
 /// walks the index ([`crate::Settings::committee_index_walked`]) answers 503,
 /// never an empty committee, since the publication is its own lag; one that
@@ -87,6 +89,13 @@ pub async fn get_curation_collections(
     headers: HeaderMap,
 ) -> Result<Json<ApiData<CurationCollectionsOut>>, ApiError> {
     admin(&state, &headers, "get", &original, &uri).await?;
+    let Some(market) = state
+        .market
+        .as_deref()
+        .filter(|m| onchain::configured(Some(m)))
+    else {
+        return Err(ApiError::service_unavailable(onchain::MARKETPLACE_DOWN));
+    };
 
     let committee = match crate::committee::current_members(state.items.pool()).await {
         Ok(Some(members)) => onchain::shape_committee(members),
@@ -102,14 +111,7 @@ pub async fn get_curation_collections(
             return Err(ApiError::http(503, "committee unavailable"));
         }
     };
-    let collections = match state
-        .market
-        .as_deref()
-        .filter(|m| onchain::configured(Some(m)))
-    {
-        Some(market) => onchain::collections_under_review(market).await?,
-        None => Vec::new(),
-    };
+    let collections = onchain::collections_under_review(market).await?;
 
     Ok(Json(ApiData::ok(CurationCollectionsOut {
         collections,

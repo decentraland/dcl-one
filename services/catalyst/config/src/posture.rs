@@ -199,26 +199,78 @@ fn can_default_to_projection(lookup: &Lookup, network: CollectionsNetwork) -> bo
         && set(lookup, network.replay_stop).is_none()
 }
 
+/// Whether the collections index owns `network` here: it walks mainnet
+/// collections and `MARKETPLACE_COLLECTIONS_INDEX_OWNS` (expanded before the
+/// rows that ask) names the network.
+fn collections_owned(lookup: &Lookup, network: CollectionsNetwork) -> bool {
+    walks_mainnet_collections(lookup)
+        && lookup("MARKETPLACE_COLLECTIONS_INDEX_OWNS")
+            .is_some_and(|owns| owns_collections(&owns, network.names))
+}
+
+/// Why this node keeps the collections subgraphs although the collections
+/// index owns both networks: the Builder's on-chain routes
+/// (`builder/src/onchain.rs`) read them, and the creator plane
+/// (`CREATE_WRITES_ENABLED=true`) is the deployment the Builder serves from.
+pub const BUILDER_READS_COLLECTIONS: &str =
+    "the Builder on-chain routes read the collections subgraphs (CREATE_WRITES_ENABLED=true)";
+
+fn builder_reads_collections(lookup: &Lookup) -> bool {
+    lookup("CREATE_WRITES_ENABLED").is_some_and(|value| switched_on(&value))
+}
+
+/// A mainnet collections subgraph is read while the mirror fills that
+/// network's catalogue (the collections index does not own it) or the
+/// Builder reads it; a testnet chain always reads its own.
+fn collections_source(
+    lookup: &Lookup,
+    network: CollectionsNetwork,
+    testnet: Option<&'static str>,
+    mainnet_url: &'static str,
+) -> Option<String> {
+    if let Some(testnet) = testnet {
+        return Some(testnet.into());
+    }
+    (!collections_owned(lookup, network) || builder_reads_collections(lookup))
+        .then(|| mainnet_url.into())
+}
+
 fn eth_collections_source(lookup: &Lookup) -> Option<String> {
-    Some(
-        if set(lookup, "MARKETPLACE_INDEX_CHAIN_ID_ETHEREUM").as_deref() == Some("11155111") {
-            "https://subgraph.decentraland.org/collections-ethereum-sepolia"
-        } else {
-            "https://subgraph.decentraland.org/collections-ethereum-mainnet"
-        }
-        .into(),
+    let testnet = (set(lookup, "MARKETPLACE_INDEX_CHAIN_ID_ETHEREUM").as_deref()
+        == Some("11155111"))
+    .then_some("https://subgraph.decentraland.org/collections-ethereum-sepolia");
+    collections_source(
+        lookup,
+        ETH_COLLECTIONS,
+        testnet,
+        "https://subgraph.decentraland.org/collections-ethereum-mainnet",
     )
 }
 
 fn matic_collections_source(lookup: &Lookup) -> Option<String> {
-    Some(
-        if set(lookup, "MARKETPLACE_INDEX_CHAIN_ID_MATIC").as_deref() == Some("80002") {
-            "https://subgraph.decentraland.org/collections-matic-amoy"
-        } else {
-            "https://subgraph.decentraland.org/collections-matic-mainnet"
-        }
-        .into(),
+    let testnet = (set(lookup, "MARKETPLACE_INDEX_CHAIN_ID_MATIC").as_deref() == Some("80002"))
+        .then_some("https://subgraph.decentraland.org/collections-matic-amoy");
+    collections_source(
+        lookup,
+        MATIC_COLLECTIONS,
+        testnet,
+        "https://subgraph.decentraland.org/collections-matic-mainnet",
     )
+}
+
+/// The collections and items mirrors run unless the collections index owns
+/// both networks, which then fills the whole catalogue itself.
+fn mirrors_default(lookup: &Lookup) -> Option<String> {
+    let owned = [ETH_COLLECTIONS, MATIC_COLLECTIONS]
+        .into_iter()
+        .all(|network| collections_owned(lookup, network));
+    Some((!owned).to_string())
+}
+
+/// Decentraland's marketplace subgraph, off mainnet: a mainnet node reads
+/// LAND and DCL NAMEs from its own indexes.
+fn marketplace_subgraph(lookup: &Lookup) -> Option<String> {
+    (!mainnet(lookup)).then(|| "https://subgraph.decentraland.org/marketplace".into())
 }
 
 fn third_party_registry_subgraph(lookup: &Lookup) -> Option<String> {
@@ -369,7 +421,6 @@ const ROWS: &[Row] = &[
         "WORLD_MANIFEST_UPSTREAM_URL",
         "https://places-dcf8abb.s3.amazonaws.com/WorldManifest.json",
     ),
-    mirrored("mirrors", "MARKETPLACE_MIRRORS_ENABLED"),
     upstream(
         "mirrors",
         "TRADES_SYNC_UPSTREAM_URL",
@@ -409,7 +460,7 @@ const ROWS: &[Row] = &[
         "mirrors",
         "ETH_COLLECTIONS_SUBGRAPH_URL",
         From(
-            "collections subgraph of the served ethereum chain",
+            "collections subgraph of the served ethereum chain; on mainnet only while the collections index leaves it to the mirror or CREATE_WRITES_ENABLED=true",
             eth_collections_source,
         ),
         Is(""),
@@ -419,16 +470,32 @@ const ROWS: &[Row] = &[
         "mirrors",
         "MATIC_COLLECTIONS_SUBGRAPH_URL",
         From(
-            "collections subgraph of the served matic chain",
+            "collections subgraph of the served matic chain; on mainnet only while the collections index leaves it to the mirror or CREATE_WRITES_ENABLED=true",
             matic_collections_source,
         ),
         Is(""),
         Is(""),
     ),
-    upstream(
+    // After the ownership and the sources it follows.
+    row(
+        "mirrors",
+        "MARKETPLACE_MIRRORS_ENABLED",
+        From(
+            "on, unless the collections index owns both networks",
+            mirrors_default,
+        ),
+        Is("false"),
+        Is("false"),
+    ),
+    row(
         "mirrors",
         "MARKETPLACE_SUBGRAPH_URL",
-        "https://subgraph.decentraland.org/marketplace",
+        From(
+            "Decentraland's marketplace subgraph off mainnet",
+            marketplace_subgraph,
+        ),
+        Is(""),
+        Is(""),
     ),
     upstream(
         "mirrors",
@@ -818,6 +885,83 @@ pub fn startup_line(config: &Config) -> String {
     }
 }
 
+/// The line a mainnet `serve` logs at startup about the subgraph fallbacks
+/// it still reads: each one set and why it stayed on, or that none is.
+/// The mirror posture sets a mainnet collections subgraph only while the
+/// collections index leaves that network to the mirror, or for the Builder
+/// on the creator plane; it sets no marketplace or registry subgraph and no
+/// mirror over owned networks. Anything else on was set in the environment
+/// (or the arguments). `None` off mainnet, where the subgraphs are the
+/// sources.
+pub fn subgraph_fallbacks_line(config: &Config) -> Option<String> {
+    if ChainPair::from_eth_network(&config.node.eth_network) != Some(ChainPair::Mainnet) {
+        return None;
+    }
+    let market = &config.marketplace;
+    let projects = market.marketplace_collections_index_enabled
+        && market.marketplace_index_chain_id_ethereum == 1
+        && market.marketplace_index_chain_id_matic == 137;
+    let owned = |network: CollectionsNetwork| {
+        projects && owns_collections(&market.marketplace_collections_index_owns, network.names)
+    };
+    let upstreams = &config.market_upstreams;
+    let mut kept: Vec<String> = Vec::new();
+    for (key, url, network) in [
+        (
+            "ETH_COLLECTIONS_SUBGRAPH_URL",
+            &upstreams.eth_collections_subgraph_url,
+            ETH_COLLECTIONS,
+        ),
+        (
+            "MATIC_COLLECTIONS_SUBGRAPH_URL",
+            &upstreams.matic_collections_subgraph_url,
+            MATIC_COLLECTIONS,
+        ),
+    ] {
+        if Config::non_empty(url).is_none() {
+            continue;
+        }
+        let why = if !owned(network) {
+            format!(
+                "the collections mirror fills the {} catalogue",
+                network.names[0]
+            )
+        } else if config.create.create_writes_enabled {
+            BUILDER_READS_COLLECTIONS.to_string()
+        } else {
+            "set in the environment".to_string()
+        };
+        kept.push(format!("{key} ({why})"));
+    }
+    for (key, url) in [
+        (
+            "MARKETPLACE_SUBGRAPH_URL",
+            &upstreams.marketplace_subgraph_url,
+        ),
+        (
+            "THIRD_PARTY_REGISTRY_L2_SUBGRAPH_URL",
+            &config.validator.third_party_registry_l2_subgraph_url,
+        ),
+    ] {
+        if Config::non_empty(url).is_some() {
+            kept.push(format!("{key} (set in the environment)"));
+        }
+    }
+    if market.marketplace_mirrors_enabled
+        && [ETH_COLLECTIONS, MATIC_COLLECTIONS].into_iter().all(owned)
+    {
+        kept.push(
+            "MARKETPLACE_MIRRORS_ENABLED (set in the environment: the collections index owns both networks)"
+                .to_string(),
+        );
+    }
+    Some(if kept.is_empty() {
+        "mainnet subgraph fallbacks: none; the marketplace reads its own indexes".to_string()
+    } else {
+        format!("mainnet subgraph fallbacks on: {}", kept.join("; "))
+    })
+}
+
 /// The combinations serve and the indexer refuse to start with. `env` is the
 /// process environment.
 pub fn check(config: &Config, env: &Lookup) -> anyhow::Result<()> {
@@ -992,6 +1136,23 @@ fn refuse_unfiltered_profiles(config: &Config, env: &Lookup) -> anyhow::Result<(
                  MARKETPLACE_COLLECTIONS_INDEX_OWNS, enable MARKETPLACE_MIRRORS_ENABLED and set {key}"
             );
         }
+        // The posture expanded from the environment's ownership: a network it
+        // took as owned got no mirror and no source. A command-line override
+        // that hands the network back leaves it with no catalogue writer.
+        let assumed_owned = walks_mainnet_collections(env)
+            && env("MARKETPLACE_COLLECTIONS_INDEX_OWNS")
+                .or_else(|| default_collections_ownership(env))
+                .is_some_and(|owns| owns_collections(&owns, network.names));
+        if assumed_owned && !owns && !(market.marketplace_mirrors_enabled && has_url) {
+            let [name, _] = network.names;
+            anyhow::bail!(
+                "{ENV}=mirror expanded from an environment in which the collections index owns \
+                 {name}, so it left {name}'s mirror off, but the arguments hand {name} back \
+                 (MARKETPLACE_COLLECTIONS_INDEX_OWNS or MARKETPLACE_COLLECTIONS_INDEX_ENABLED on \
+                 the command line): nothing would fill its catalogue. Set them in the environment \
+                 instead, or also pass MARKETPLACE_MIRRORS_ENABLED=true and {key}"
+            );
+        }
         if market.marketplace_mirrors_enabled && !owns && !has_url {
             anyhow::bail!(
                 "{ENV}=mirror walks the nft index over the contracts its collections mirror finds, \
@@ -1053,8 +1214,16 @@ fn refuse_unwalkable_polygon(config: &Config) -> anyhow::Result<()> {
 /// The follower switches, in table order: the keys island and journey
 /// refuse switched on.
 pub fn followers() -> impl Iterator<Item = &'static str> {
-    ROWS.iter().filter(|row| follows(row)).map(|row| row.key)
+    ROWS.iter()
+        .filter(|row| follows(row))
+        .map(|row| row.key)
+        .chain(COMPUTED_FOLLOWERS.iter().copied())
 }
+
+/// Follower switches whose mirror value is computed (on unless something
+/// else fills their data) rather than a plain `true`: island and journey
+/// refuse them switched on all the same.
+const COMPUTED_FOLLOWERS: &[&str] = &["MARKETPLACE_MIRRORS_ENABLED"];
 
 /// A follower switch: on under mirror, off under island and journey.
 fn follows(row: &Row) -> bool {
@@ -1081,6 +1250,7 @@ fn refuse_followers(posture: Posture, env: &Lookup) -> anyhow::Result<()> {
         .iter()
         .filter(|row| follows(row))
         .map(|row| row.key)
+        .chain(COMPUTED_FOLLOWERS.iter().copied())
         .chain(["MARKETPLACE_MANA_TRANSFERS_INDEX_ENABLED"])
         .filter(|key| env(key).is_some_and(|v| switched_on(&v)))
         .collect();

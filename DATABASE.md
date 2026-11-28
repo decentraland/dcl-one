@@ -137,12 +137,13 @@ writes already in progress when it asks for the row. A publish that arrives
 during a fold waits for that fold's commit, and then reads its publication. The
 whole wait is bounded by `HOLD_WAIT` (5 s, as the share statement's
 `statement_timeout`, restored after it; a caller already under a shorter bound
-keeps it), including a wait queued behind another fold. Past it the publish answers the names index's retryable 503, so it never
-holds the world and store locks behind a long refold. A transient database fault
-reading the names index (a lost connection, a deadlock or serialization failure,
-a cancelled statement) is the same retryable 503, with a fixed message; any other
-failed read is the fail-closed 403. Personal and ENS worlds, and a node reading
-NAMEs from the subgraph, hold nothing.
+keeps it), including a wait queued behind another fold. Past it the publish
+answers the names index's retryable 503, so it never holds the world and store
+locks behind a long refold. A transient database fault reading the names index
+(a lost connection, a deadlock or serialization failure, a cancelled statement)
+is the same retryable 503, with a fixed message; any other failed read is the
+fail-closed 403. Personal and ENS worlds, and a node reading NAMEs from the
+subgraph, hold nothing.
 
 Partial batches for one entity hold a session advisory lock from their first
 pending-upload/replay read through the staging or committed-publication decision.
@@ -4277,27 +4278,47 @@ they predate the live window.
 ### Mainnet catalogue cutover
 
 On the mainnet mirror posture the collections index takes `matic,ethereum`
-by default. The collections and items jobs mirror each network until the
-index publishes its ownership. A start or stop block override excludes
-that network from default ownership. An explicit list can keep either
-network mirrored. Both collections subgraph URLs also serve direct readers
-such as `/v1/trendings`, and `/v1/owners` on a node that does not walk the
-NFT index. They stay configured after the
-projection takes over. Sepolia and Amoy keep both mirrors. Island and
-journey leave ownership empty and their mirrors off.
+by default. A start or stop block override excludes that network from
+default ownership, and an explicit list can keep either network mirrored.
+
+The posture derives the mirror's settings from that ownership:
+- A network the index owns gets no collections subgraph URL.
+- `MARKETPLACE_MIRRORS_ENABLED` is off while the index owns both networks.
+- A network left to the mirror gets its subgraph URL, with the mirrors on.
+- The creator plane (`CREATE_WRITES_ENABLED=true`) keeps both URLs for the
+  Builder's on-chain routes (`builder/src/onchain.rs`), with the mirrors
+  still off.
+- `MARKETPLACE_SUBGRAPH_URL` is set off mainnet only: a mainnet node reads
+  LAND and DCL NAMEs from its own indexes.
+
+Every one of these stays settable as a fallback, and an explicit value wins.
+At startup a mainnet `serve` logs one line naming each subgraph fallback
+still on and why ("mainnet subgraph fallbacks"). Sepolia and Amoy keep both
+mirrors and their subgraphs. Island and journey leave ownership empty and
+their mirrors off.
 
 Until a configured native network first publishes, a scoped or combined
 read needs the mirror proof for that network. A read without its required
 mirror copy returns `503 collections-index`. A priced read also needs the
-items pass within its money budget.
+items pass within its money budget. A brand-new mainnet database with the
+default settings has no mirror copy. It therefore serves the catalogue only
+after the collections index's first publication.
+
+The posture expands from the environment before the arguments are parsed. A
+command-line `MARKETPLACE_COLLECTIONS_INDEX_OWNS` or
+`MARKETPLACE_COLLECTIONS_INDEX_ENABLED` that hands a network back is refused
+at startup unless that network's mirror and URL are passed too. Set ownership
+in the environment instead.
 
 **Before switching an existing database**
 
 1. Run the owner-aware NFT and sales walkers on the database before handing
    over the catalogue. To warm the collections walks with the mirror still
-   serving, explicitly set `MARKETPLACE_COLLECTIONS_INDEX_OWNS=` and
-   `MARKETPLACE_MIRRORS_ENABLED=true`. Preserve the two previous subgraph
-   URLs if the deployment overrides them.
+   serving, explicitly set `MARKETPLACE_COLLECTIONS_INDEX_OWNS=`. Under the
+   mirror posture that turns both mirrors and their subgraph URLs back on.
+   Without the posture, also set `MARKETPLACE_MIRRORS_ENABLED=true` and both
+   URLs. Preserve the two previous subgraph URLs if the deployment overrides
+   them.
 2. Verify `shop.chain_cursor` rows for `indexer='collections'` and the
    networks being handed over. Polygon is chain 137 from block 15,202,000.
    Ethereum is chain 1 from block 8,828,687. Each cursor needs full history,
@@ -4308,9 +4329,12 @@ items pass within its money budget.
    window. Stop the catalogue writers sharing the database and use the
    same ownership list on each replacement writer. Set
    `MARKETPLACE_COLLECTIONS_INDEX_OWNS=matic,ethereum`, or let the
-   mainnet mirror posture choose it. Keep both collections subgraph URLs
-   for direct reads. Keep the replacement writers running through the
-   first publication on every network being handed over.
+   mainnet mirror posture choose it. Remove the warming phase's explicit
+   `MARKETPLACE_MIRRORS_ENABLED` and subgraph URLs. With both networks
+   owned, the posture leaves the mirrors and the collections subgraphs off,
+   and the startup line names anything still on. Keep the replacement
+   writers running through the first publication on every network being
+   handed over.
 4. Check ownership and publication for every network being handed over.
    Edit the `VALUES` list to match the cutover scope. A network still
    appears if its cursor or projection row is missing.
@@ -4371,9 +4395,12 @@ catalogue writers sharing the database and confirm their transactions have
 ended before running the query in step 4. Use the committed `owned_at`
 value separately for each selected network.
 
-- If `owned_at` is null, restore that network's pre-cutover mirror settings
-  and leave it out of the explicit `MARKETPLACE_COLLECTIONS_INDEX_OWNS`
-  list. Keep the existing catalogue rows and mirror passes.
+- If `owned_at` is null, leave that network out of the explicit
+  `MARKETPLACE_COLLECTIONS_INDEX_OWNS` list. Under the mirror posture this
+  restores its mirror and subgraph URL. Without the posture, restore the
+  pre-cutover `MARKETPLACE_MIRRORS_ENABLED=true` and the network's
+  `*_COLLECTIONS_SUBGRAPH_URL`. Keep the existing catalogue rows and mirror
+  passes.
 - If `owned_at` is set and the network is returning to the mirror, follow
   the hand-back below. Keep any network staying native in the ownership
   list on every writer.
@@ -4391,11 +4418,13 @@ transactions have ended.
 
 1. Stop the catalogue writers and wait for their transactions to end.
    On each writer, explicitly set `MARKETPLACE_COLLECTIONS_INDEX_OWNS`
-   to the networks that stay owned,
-   or to an empty value if neither stays owned. Enable
-   `MARKETPLACE_MIRRORS_ENABLED=true` and restore the handed-back network's
-   subgraph URL. Unsetting an explicitly blank URL restores the default
-   under the mirror posture.
+   to the networks that stay owned, or to an empty value if neither stays
+   owned. Set it in the environment, not on the command line. Under the
+   mirror posture that turns `MARKETPLACE_MIRRORS_ENABLED` on and restores
+   the handed-back network's subgraph URL (unset an explicitly blank one).
+   The startup line names both. Without the posture, set
+   `MARKETPLACE_MIRRORS_ENABLED=true` and the network's
+   `*_COLLECTIONS_SUBGRAPH_URL` explicitly.
 2. Before restarting, run this transaction. It takes the exclusive
    catalogue lock and removes the network's rows, pass markers and ownership
    together. For Ethereum, replace `'matic'` with `'ethereum'` and use `1`

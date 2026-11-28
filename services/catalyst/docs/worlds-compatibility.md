@@ -262,7 +262,7 @@ A difference not listed here is a gap, not a decision.
   transfer and publishing it, and while the index is behind, owner writes
   and admission answer 503); elsewhere from `MARKETPLACE_SUBGRAPH_URL`
   (upstream's marketplace subgraph), which has no default and only the
-  `mirror` posture sets. Without either a DCL NAME world has no owner for writes: publishes,
+  `mirror` posture sets, off mainnet. Without either a DCL NAME world has no owner for writes: publishes,
   the owner-gated permission, settings, undeploy and storage routes, and
   the owner's scene-admin rights (admins, bans, stream key, Cast) are
   refused (upstream reads the stored owner first, which keeps naming a
