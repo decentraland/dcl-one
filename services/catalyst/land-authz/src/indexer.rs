@@ -49,8 +49,9 @@ use crate::chain_index::rpc::{BlockHeader, HEADER_BATCH, RpcLog, hex_to_i64};
 use crate::chain_index::rpc::{Rpc, RpcError};
 use crate::shared::casts::{RowCount, len_i64, saturating_i64};
 
-/// A block height as its `bigint` column. Every height is at most the chain
-/// head, which a pass checks against the `i64` range, so this never saturates.
+/// A block height as its `bigint` column, saturated. Heights read from the
+/// chain are at most the head, which a pass checks against the `i64` range;
+/// only a `LAND_AUTHZ_REPLAY_FROM_BLOCK` past it can saturate.
 fn row_block(n: u64) -> i64 {
     saturating_i64(n)
 }
