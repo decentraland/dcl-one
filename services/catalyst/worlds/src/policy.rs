@@ -419,8 +419,9 @@ pub struct Policy {
     admission_refreshes: Coalesce<(String, Observation), MemoizedOwner>,
     /// A publication -> whether it still stands and is current, the check in
     /// flight: concurrent memo hits under one publication share one read.
-    /// Nothing is kept past the check (no window in which a withdrawn
-    /// publication is still served).
+    /// Nothing is kept past the check, so a withdrawal is seen by the next
+    /// check; a hit that joins a check already in flight takes its answer
+    /// (at most one check's duration behind its own).
     admission_checks: Coalesce<Observation, bool>,
     /// The DAO name deny list and `BLOCKED_WORLD_NAMES`, which
     /// [`AccessPolicy::world_admission`](crate::comms::interfaces::AccessPolicy::world_admission)
@@ -927,9 +928,16 @@ impl Policy {
             self.admission_refreshes
                 .run_accepting(
                     (key.clone(), observed),
+                    // The shared re-read has its own budget, not its
+                    // leader's remaining one: each caller's deadline bounds
+                    // its own wait, and a leader that gives up drops the
+                    // re-read for its joiners to read again.
                     || async {
-                        let (fresh, not_current) =
-                            timed_owner_lookup(self.name_owner_lookup(world), left()).await;
+                        let (fresh, not_current) = timed_owner_lookup(
+                            self.name_owner_lookup(world),
+                            ADMISSION_OWNER_TIMEOUT,
+                        )
+                        .await;
                         if !not_current {
                             self.admission_owners.insert(key.clone(), fresh.clone());
                         }
@@ -953,7 +961,8 @@ impl Policy {
 
     /// Whether an answer read under `observed` may still authorize: the
     /// publication stands and is current. Concurrent checks of one
-    /// publication share one read, and none is kept past it.
+    /// publication share one read (a caller joining one in flight takes its
+    /// answer), and none is kept past it.
     async fn publication_stands(&self, observed: Observation) -> bool {
         let Some(names) = self.names_reader() else {
             return false;

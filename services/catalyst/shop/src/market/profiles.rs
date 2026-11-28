@@ -816,8 +816,9 @@ pub(super) async fn profiles_under(
         }
     }
     if !missing.is_empty() {
+        let asked: HashSet<&String> = missing.iter().collect();
         let mut keep = |pointer: &String, profile: &Value| {
-            if missing.contains(pointer) && !profile.is_null() {
+            if asked.contains(pointer) && !profile.is_null() {
                 found
                     .entry(pointer.clone())
                     .or_insert_with(|| profile.clone());

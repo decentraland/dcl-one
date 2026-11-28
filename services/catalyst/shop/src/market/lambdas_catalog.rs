@@ -66,37 +66,10 @@ pub struct Caches {
     pub(super) outfit_flights: Coalesce<(String, super::owned_items::Publications), OutfitsRead>,
 }
 
-/// What one outfits read answers every caller that joined it: the outfits
-/// entity and what its ownership read observed, or the read's failure.
-pub(super) type OutfitsRead = Result<(Value, Option<super::owned_items::Observed>), SharedFailure>;
-
-/// A failed read's response, buffered, so every caller that joined the read
-/// answers with it.
-#[derive(Clone)]
-pub(super) struct SharedFailure {
-    status: axum::http::StatusCode,
-    headers: axum::http::HeaderMap,
-    body: bytes::Bytes,
-}
-
-impl SharedFailure {
-    async fn of(response: Response) -> Self {
-        let (parts, body) = response.into_parts();
-        Self {
-            status: parts.status,
-            headers: parts.headers,
-            body: axum::body::to_bytes(body, usize::MAX)
-                .await
-                .unwrap_or_default(),
-        }
-    }
-}
-
-impl IntoResponse for SharedFailure {
-    fn into_response(self) -> Response {
-        (self.status, self.headers, self.body).into_response()
-    }
-}
+/// What one outfits read answers the callers that joined it: the outfits
+/// entity and what its ownership read observed, or `None` when it failed
+/// (a joiner then reads again; the failure answers only the read's caller).
+pub(super) type OutfitsRead = Option<(Value, Option<super::owned_items::Observed>)>;
 
 impl Default for Caches {
     fn default() -> Self {
@@ -1276,32 +1249,31 @@ pub(super) async fn outfits_under(
         return answer(v);
     }
     // A miss another request is reading under the same publications joins
-    // that read, and takes its answer only as a memo hit would.
+    // that read, and takes its answer only as a memo hit would; a joined
+    // failure (perhaps transient) is read again rather than spread.
+    let mut failure = None;
     let read = state
         .lambdas
         .outfit_flights
         .run_accepting(
             (address.clone(), looked_up),
             || async {
-                match fill_outfits(state, &address, looked_up).await {
-                    Ok(read) => Ok(read),
-                    Err(resp) => Err(SharedFailure::of(resp).await),
-                }
+                fill_outfits(state, &address, looked_up)
+                    .await
+                    .map_err(|resp| failure = Some(resp))
+                    .ok()
             },
             |read| async move {
-                match read {
-                    // The same read of the same address failing.
-                    Err(_) => true,
-                    Ok((_, observed)) => {
-                        serves_lookup(observed, looked_up, chrono::Utc::now().naive_utc())
-                    }
-                }
+                read.is_some_and(|(_, observed)| {
+                    serves_lookup(observed, looked_up, chrono::Utc::now().naive_utc())
+                })
             },
         )
         .await;
     match read {
-        Ok((v, _)) => answer(v),
-        Err(failure) => failure.into_response(),
+        Some((v, _)) => answer(v),
+        // Only this caller's own read answers a failure.
+        None => failure.unwrap_or_else(super::lambdas_internal_error),
     }
 }
 
