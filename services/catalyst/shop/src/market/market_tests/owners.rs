@@ -28,6 +28,21 @@ fn router_over(pool: &PgPool, settings: Settings) -> Router {
     market_router(Arc::new(state))
 }
 
+/// The collections mirror's complete pass on both networks, beside the
+/// items pass `owned_items::test_support::publish` records: the item lookup
+/// joins the collections too.
+async fn record_collections_pass(pool: &PgPool) {
+    sqlx::query(
+        "INSERT INTO shop.mirror_state (mirror, network, source_url, last_complete_pass_at) \
+         SELECT 'collections', n, 'https://collections.example', timezone('UTC', now()) \
+         FROM unnest(ARRAY['ethereum', 'matic']) AS n \
+         ON CONFLICT (mirror, network) DO UPDATE SET last_complete_pass_at = EXCLUDED.last_complete_pass_at",
+    )
+    .execute(pool)
+    .await
+    .unwrap();
+}
+
 /// The collections, items and copies `fx` describes, in the catalogue and
 /// the nft index, with what a page must leave out around them: on Polygon a
 /// neighbouring item's copies on both sides of the item's token range and a
@@ -190,6 +205,7 @@ async fn owners_from_the_nft_index_answer_the_subgraph_pages() {
     seed(&pool, &fx).await;
     super::super::owned_items::test_support::publish(&pool, &ChainNet::ALL, true, Duration::ZERO)
         .await;
+    record_collections_pass(&pool).await;
     let (eth, matic) = (FakeGraph::new(), FakeGraph::new());
     eth.set("nfts", graph_nfts(&fx, "ethereum"));
     matic.set("nfts", graph_nfts(&fx, "matic"));
@@ -292,9 +308,34 @@ async fn owners_from_the_nft_index_wait_for_a_published_fresh_fold() {
     assert_eq!(source(&body).as_deref(), Some("items-mirror"), "{body}");
     super::super::owned_items::test_support::publish(&pool, &ChainNet::ALL, true, Duration::ZERO)
         .await;
+    // The items named, but the collection membership the lookup joins has
+    // no pass (with no subgraph configured, the catalogue names the source).
+    let (status, body) = get(walker.clone(), &uri).await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body}");
+    assert_eq!(
+        source(&body).as_deref(),
+        Some("collections-subgraph:ethereum"),
+        "{body}"
+    );
+    record_collections_pass(&pool).await;
     let (status, body) = get(walker.clone(), &uri).await;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(body["total"], 10);
+    // The pass withdrawn on one network, then recorded again.
+    sqlx::query("DELETE FROM shop.mirror_state WHERE mirror = 'collections' AND network = 'matic'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    let (status, body) = get(walker.clone(), &uri).await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body}");
+    assert_eq!(
+        source(&body).as_deref(),
+        Some("collections-subgraph:matic"),
+        "{body}"
+    );
+    record_collections_pass(&pool).await;
+    let (status, body) = get(walker.clone(), &uri).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
     // A fold write no publication has acknowledged yet.
     sqlx::query("UPDATE shop.nft SET owner = $1 WHERE network = 'ethereum' AND owner IS NOT NULL")
         .bind(WALLET_A)
@@ -326,9 +367,11 @@ async fn owners_from_the_nft_index_wait_for_a_published_fresh_fold() {
     let (status, body) = get(walker.clone(), &uri).await;
     assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body}");
     assert_eq!(source(&body).as_deref(), Some("nft-index"), "{body}");
-    // A catalogue row whose id no token id encodes (2^40: shifted by 216 bits
-    // it would wrap to item 0's range, where a copy is held), and the NAME
-    // registrar's tokens dressed as a v1 collection's: neither names copies.
+    // A catalogue row whose id no token id encodes (2^40, whose range
+    // `owners::token_range` refuses; were it shifted plainly it would wrap
+    // to item 0's range, where a copy is held, and the `item_id` predicate
+    // would still keep that copy out), and the NAME registrar's tokens
+    // dressed as a v1 collection's: neither names copies.
     let registrar = super::super::nft_index::DCL_REGISTRAR;
     sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
         "INSERT INTO shop.items (network, contract_address, item_id, chain_id, item_type, urn, creator, rarity, total_supply, max_supply, available, price, image, name, category, body_shapes, search_is_collection_approved, created_at, updated_at, reviewed_at, mirrored_at) \
@@ -384,6 +427,8 @@ async fn owners_from_the_nft_index_wait_for_a_published_fresh_fold() {
         // The parser alone reads an empty id as 0 and a padded one as 3.
         ("itemId=", "itemId must be a decimal item id"),
         ("itemId=03", "itemId must be a decimal item id"),
+        // The parser alone skips separators: `3_` would read item 3.
+        ("itemId=3_", "itemId must be a decimal item id"),
         (
             "itemId=3&first=100&skip=24901",
             "first + skip may not exceed 25000",
@@ -444,7 +489,9 @@ async fn owners_on_a_testnet_read_only_items_verified_on_its_chains() {
                 ('nft', 'matic', 1, 100, 100, 100, timezone('UTC', now()), true, 80002); \
          INSERT INTO shop.mirror_state (mirror, network, source_url, chain_id, last_complete_pass_at, marks_item_rows) \
          VALUES ('items', 'ethereum', 'graph', 11155111, timezone('UTC', now()), true), \
-                ('items', 'matic', 'graph', 80002, timezone('UTC', now()), true)"
+                ('items', 'matic', 'graph', 80002, timezone('UTC', now()), true), \
+                ('collections', 'ethereum', 'graph', 11155111, timezone('UTC', now()), true), \
+                ('collections', 'matic', 'graph', 80002, timezone('UTC', now()), true)"
     )))
     .execute(&pool)
     .await
@@ -466,5 +513,164 @@ async fn owners_on_a_testnet_read_only_items_verified_on_its_chains() {
             assert_eq!(body["data"][0]["ownerId"], WALLET_A, "{uri}: {body}");
         }
     }
+    own.drop().await;
+}
+
+/// A contract and item id both networks' catalogues name: as the subgraph
+/// reader does, the first network (Ethereum) whose page holds copies
+/// answers it with its own total, and a page past Ethereum's copies reads
+/// Polygon's. Past every network's copies the index keeps the first
+/// holding network's total, where the reader answers 0.
+#[tokio::test]
+async fn owners_of_a_contract_both_networks_name_follow_the_reader() {
+    let Some(own) = super::super::tests::support::OwnDb::create("owners_twin").await else {
+        return;
+    };
+    let pool = own.pool.clone();
+    let twin = "0x00000000000000000000000000000000000000b7";
+    let v2 = |issued: u64| {
+        ((alloy_primitives::U256::from(5u64) << 216usize) | alloy_primitives::U256::from(issued))
+            .to_string()
+    };
+    sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
+        "INSERT INTO shop.collections (network, contract_address, chain_id, name, creator, owner, urn, is_completed, is_approved, is_editable, created_at, updated_at, reviewed_at, mirrored_at) \
+         VALUES ('ethereum', '{twin}', 1, 'Twin v1', '{CREATOR}', '{CREATOR}', 'urn:decentraland:ethereum:collections-v1:twin', true, true, false, 1, 1, 1, now()), \
+                ('matic', '{twin}', 137, 'Twin v2', '{CREATOR}', '{CREATOR}', 'urn:decentraland:matic:collections-v2:{twin}', true, true, false, 1, 1, 1, now()); \
+         INSERT INTO shop.items (network, contract_address, item_id, chain_id, item_type, urn, creator, rarity, total_supply, max_supply, available, price, image, name, category, body_shapes, search_is_collection_approved, created_at, updated_at, reviewed_at, mirrored_at) \
+         VALUES ('ethereum', '{twin}', 5, 1, 'wearable_v1', 'urn:decentraland:ethereum:collections-v1:twin:boots', '{CREATOR}', 'mythic', 1, 1, 0, 0, 'i', 'Boots', 'feet', ARRAY['BaseMale'], true, 1, 1, 1, now()), \
+                ('matic', '{twin}', 5, 137, 'wearable_v2', 'urn:decentraland:matic:collections-v2:{twin}:5', '{CREATOR}', 'mythic', 2, 2, 0, 0, 'i', 'Boots', 'feet', ARRAY['BaseMale'], true, 1, 1, 1, now()); \
+         INSERT INTO shop.nft (network, contract_address, token_id, owner, item_id, issued_id, wearable_id, minted_block, minted_at, transferred_block, transferred_log, transferred_at) \
+         VALUES ('ethereum', '{twin}', 7, '{WALLET_A}', NULL, 1, 'boots', 10, 1, 10, 0, 1), \
+                ('matic', '{twin}', {one}, '{WALLET_B}', 5, 1, NULL, 10, 1, 10, 0, 1), \
+                ('matic', '{twin}', {two}, '{CREATOR}', 5, 2, NULL, 10, 1, 10, 0, 1)",
+        one = v2(1),
+        two = v2(2),
+    )))
+    .execute(&pool)
+    .await
+    .unwrap();
+    super::super::owned_items::test_support::publish(&pool, &ChainNet::ALL, true, Duration::ZERO)
+        .await;
+    record_collections_pass(&pool).await;
+    let nft = |token: String, issued: &str, owner: &str| {
+        json!({ "id": format!("{twin}-{token}"), "contractAddress": twin, "itemBlockchainId": "5",
+                "issuedId": issued, "tokenId": token, "owner": { "address": owner } })
+    };
+    let (eth, matic) = (FakeGraph::new(), FakeGraph::new());
+    eth.set("nfts", vec![nft("7".into(), "1", WALLET_A)]);
+    matic.set(
+        "nfts",
+        vec![nft(v2(1), "1", WALLET_B), nft(v2(2), "2", CREATOR)],
+    );
+    let reader = router_over(
+        &pool,
+        Settings {
+            eth_collections_subgraph_url: Some(serve_graph(eth).await),
+            matic_collections_subgraph_url: Some(serve_graph(matic).await),
+            ..Settings::for_tests()
+        },
+    );
+    let walker = router_over(
+        &pool,
+        super::super::owned_items::test_support::walking(Settings::for_tests()),
+    );
+    let owner = |issued: &str, owner: &str, token: String| json!({ "issuedId": issued, "ownerId": owner, "tokenId": token });
+    for (query, want) in [
+        (
+            "first=1&skip=0",
+            json!({ "data": [owner("1", WALLET_A, "7".into())], "total": 1 }),
+        ),
+        (
+            "first=1&skip=1",
+            json!({ "data": [owner("1", WALLET_B, v2(1))], "total": 2 }),
+        ),
+        (
+            "first=1&skip=1&orderDirection=asc",
+            json!({ "data": [owner("2", CREATOR, v2(2))], "total": 2 }),
+        ),
+        (
+            "first=20&skip=0",
+            json!({ "data": [owner("1", WALLET_A, "7".into())], "total": 1 }),
+        ),
+    ] {
+        let uri = format!("/v1/owners?contractAddress={twin}&itemId=5&{query}");
+        for (side, app) in [("index", walker.clone()), ("subgraph", reader.clone())] {
+            let (status, body) = get(app, &uri).await;
+            assert_eq!((status, &body), (StatusCode::OK, &want), "{side} {uri}");
+        }
+    }
+    let past = format!("/v1/owners?contractAddress={twin}&itemId=5&first=1&skip=2");
+    let (status, body) = get(walker, &past).await;
+    assert_eq!(
+        (status, body),
+        (StatusCode::OK, json!({ "data": [], "total": 1 }))
+    );
+    let (status, body) = get(reader, &past).await;
+    assert_eq!(
+        (status, body),
+        (StatusCode::OK, json!({ "data": [], "total": 0 }))
+    );
+    own.drop().await;
+}
+
+/// With every subgraph URL unset and the collections index owning both
+/// networks, the item lookup reads the native catalogue's publication: a
+/// withdrawn one answers 503 `collections-index`, a republished one serves
+/// again, and a published catalogue that no longer holds the item answers
+/// no holders.
+#[tokio::test]
+async fn owners_with_every_url_unset_follow_the_native_catalogue() {
+    use super::super::catalogue::owning;
+    let Some(own) = super::super::tests::support::OwnDb::create("owners_native").await else {
+        return;
+    };
+    let pool = own.pool.clone();
+    let fx = fixture();
+    seed(&pool, &fx).await;
+    owning::own(&pool, "ethereum", 1, 100, 0).await;
+    owning::own(&pool, "matic", 137, 100, 0).await;
+    super::super::owned_items::test_support::publish(&pool, &ChainNet::ALL, false, Duration::ZERO)
+        .await;
+    let mut settings = super::super::owned_items::test_support::walking(Settings::for_tests());
+    settings.market.indexes.collections_enabled = true;
+    settings.market.indexes.collections_owned = ChainNet::ALL.to_vec();
+    assert!(settings.eth_collections_subgraph_url.is_none());
+    assert!(settings.matic_collections_subgraph_url.is_none());
+    assert!(settings.marketplace_subgraph_url.is_none());
+    let walker = router_over(&pool, settings);
+    let polygon = &fx["items"][0];
+    let contract = text(polygon, "contractAddress");
+    let uri = format!(
+        "/v1/owners?contractAddress={contract}&itemId={}",
+        text(polygon, "itemId")
+    );
+    let (status, body) = get(walker.clone(), &uri).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["total"], 10, "{body}");
+    owning::rewind(&pool, "matic").await;
+    let (status, body) = get(walker.clone(), &uri).await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body}");
+    assert_eq!(body["source"], "collections-index", "{body}");
+    owning::own(&pool, "matic", 137, 100, 0).await;
+    let (status, body) = get(walker.clone(), &uri).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["total"], 10, "{body}");
+    // The republished catalogue no longer holds the collection.
+    sqlx::query("DELETE FROM shop.items WHERE network = 'matic' AND contract_address = $1")
+        .bind(&contract)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("DELETE FROM shop.collections WHERE network = 'matic' AND contract_address = $1")
+        .bind(&contract)
+        .execute(&pool)
+        .await
+        .unwrap();
+    owning::own(&pool, "matic", 137, 100, 0).await;
+    let (status, body) = get(walker.clone(), &uri).await;
+    assert_eq!(
+        (status, body),
+        (StatusCode::OK, json!({ "data": [], "total": 0 }))
+    );
     own.drop().await;
 }

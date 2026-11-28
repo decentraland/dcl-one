@@ -15,6 +15,7 @@ use alloy_primitives::U256;
 use axum::Json;
 use axum::extract::{Query, State};
 use axum::response::{IntoResponse, Response};
+use chrono::Utc;
 use serde::Serialize;
 use serde_json::{Value, json};
 use sqlx::{PgConnection, Row};
@@ -179,13 +180,15 @@ pub async fn get_owners(
 /// The bits of a v2 token id below its item id: `item << 216 | issued`.
 const V2_ISSUED_BITS: usize = 216;
 
-/// The item a page of [`indexed_owners`] lists, as the catalogue names it,
-/// in the scope `nft_reads::collection_source` reads (not the registrar; on
-/// a testnet, verified on the catalogue's chain), Ethereum first as the
-/// subgraph reader asks. An Ethereum (v1) item's copies carry its wearable
-/// id, the suffix of its URN after its collection's (`i.urn = c.urn || ':'
-/// || n.wearable_id`); a Polygon (v2) item's are the tokens its id encodes.
-const ITEM_SQL: &str = "\
+/// The items a page of [`indexed_owners`] may list, as the catalogue names
+/// them, in the scope `nft_reads::collection_source` reads (not the
+/// registrar; on a testnet, verified on the catalogue's chain), Ethereum
+/// first as the subgraph reader asks: one row per network whose catalogue
+/// holds the contract and item id. An Ethereum (v1) item's copies carry its
+/// wearable id, the suffix of its URN after its collection's (`i.urn =
+/// c.urn || ':' || n.wearable_id`); a Polygon (v2) item's are the tokens its
+/// id encodes.
+const ITEMS_SQL: &str = "\
 SELECT i.network, CASE WHEN i.network = 'ethereum' THEN substr(i.urn, length(c.urn) + 2) END AS wearable_id \
 FROM shop.items i \
 JOIN shop.collections c ON c.network = i.network AND c.contract_address = i.contract_address \
@@ -195,15 +198,14 @@ WHERE i.network IN ('ethereum', 'matic') AND i.contract_address = $1 AND i.item_
   AND (NOT $4 OR (c.testnet_verified AND i.testnet_verified \
        AND c.chain_id = CASE i.network WHEN 'ethereum' THEN $5 ELSE $6 END \
        AND i.chain_id = CASE i.network WHEN 'ethereum' THEN $5 ELSE $6 END)) \
-ORDER BY i.network = 'matic' \
-LIMIT 1";
+ORDER BY i.network = 'matic'";
 
 /// Which copies of the item a page reads.
 enum Copies {
-    /// A v2 item's held tokens: its token id range, the item id checked too.
-    /// Within one item the token order is the issue order (the fold decodes
-    /// `issued_id` from the token id), so a page walks the primary key's
-    /// range instead of sorting every copy.
+    /// A v2 item's held tokens: its token id range ([`token_range`]), the
+    /// item id checked too. Within one item the token order is the issue
+    /// order (the fold decodes `issued_id` from the token id), so a page
+    /// walks the primary key's range instead of sorting every copy.
     Polygon { low: U256, high: U256, item: U256 },
     /// A v1 wearable's held tokens in its collection, by issued id.
     Ethereum { wearable: String },
@@ -241,46 +243,112 @@ impl Copies {
             Self::Ethereum { wearable } => q.bind(wearable.clone()),
         }
     }
+
+    /// The held copies at `first`/`skip` in the page's order.
+    async fn page(
+        &self,
+        conn: &mut PgConnection,
+        contract: &str,
+        descending: bool,
+        first: i64,
+        skip: i64,
+    ) -> Result<Vec<Owner>, sqlx::Error> {
+        let (filter, order) = self.filter(descending);
+        let sql = format!(
+            "SELECT n.issued_id::text AS issued_id, n.owner, n.token_id::text AS token_id \
+             FROM shop.nft n WHERE {filter} ORDER BY {order} LIMIT $1 OFFSET $2"
+        );
+        let rows = self
+            .bind(
+                sqlx::query(sqlx::AssertSqlSafe(sql))
+                    .bind(first)
+                    .bind(skip)
+                    .bind(contract),
+            )
+            .fetch_all(conn)
+            .await?;
+        rows.iter()
+            .map(|r| {
+                Ok(Owner {
+                    issued_id: r
+                        .try_get::<Option<String>, _>("issued_id")?
+                        .unwrap_or_default(),
+                    owner_id: r.try_get("owner")?,
+                    token_id: r.try_get("token_id")?,
+                })
+            })
+            .collect()
+    }
+
+    /// The held copies counted up to `cap`, as the subgraph reader counts.
+    async fn count(
+        &self,
+        conn: &mut PgConnection,
+        contract: &str,
+        cap: i64,
+    ) -> Result<i64, sqlx::Error> {
+        let (filter, _) = self.filter(true);
+        let sql = format!(
+            "SELECT count(*) FROM (SELECT 1 FROM shop.nft n WHERE {filter} LIMIT $1 OFFSET $2) t"
+        );
+        self.bind(
+            sqlx::query(sqlx::AssertSqlSafe(sql))
+                .bind(cap)
+                .bind(0_i64)
+                .bind(contract),
+        )
+        .fetch_one(conn)
+        .await?
+        .try_get(0)
+    }
 }
 
-/// The copies of `item` on `contract` the catalogue names, or `None` when it
-/// names no such item.
+/// The token ids a v2 item's copies take, `item << 216` through `item << 216
+/// | (2^216 - 1)`; `None` for an id wider than the token id's top 40 bits,
+/// which encodes no token (a plain shift would drop its high bits and name
+/// another item's range).
+fn token_range(item: U256) -> Option<(U256, U256)> {
+    let low = item.checked_shl(V2_ISSUED_BITS)?;
+    Some((
+        low,
+        low | ((U256::from(1u8) << V2_ISSUED_BITS) - U256::from(1u8)),
+    ))
+}
+
+/// The copies of `item` on `contract` the catalogue names on each network,
+/// Ethereum first; empty when it names no such item.
 async fn copies_of(
     conn: &mut PgConnection,
     catalogue: Catalogue,
     contract: &str,
     item: U256,
-) -> Result<Option<Copies>, sqlx::Error> {
-    let row = sqlx::query(ITEM_SQL)
+) -> Result<Vec<Copies>, sqlx::Error> {
+    let rows = sqlx::query(ITEMS_SQL)
         .bind(contract)
         .bind(item.to_string())
         .bind(catalogue.registrar())
         .bind(catalogue == Catalogue::Testnet)
         .bind(catalogue.chain_id(ChainNet::Ethereum))
         .bind(catalogue.chain_id(ChainNet::Matic))
-        .fetch_optional(conn)
+        .fetch_all(conn)
         .await?;
-    let Some(row) = row else {
-        return Ok(None);
-    };
-    let network: String = row.try_get("network")?;
-    if network == ChainNet::Ethereum.db_name() {
-        return Ok(Some(Copies::Ethereum {
-            wearable: row.try_get("wearable_id")?,
-        }));
+    let mut copies = Vec::with_capacity(rows.len());
+    for row in rows {
+        let network: String = row.try_get("network")?;
+        if network == ChainNet::Ethereum.db_name() {
+            copies.push(Copies::Ethereum {
+                wearable: row.try_get("wearable_id")?,
+            });
+        } else if let Some((low, high)) = token_range(item) {
+            copies.push(Copies::Polygon { low, high, item });
+        }
     }
-    // An id wider than the token id's top 40 bits encodes no token: the
-    // shift would drop its high bits and name another item's range.
-    let Some(low) = item.checked_shl(V2_ISSUED_BITS) else {
-        return Ok(None);
-    };
-    let high = low | ((U256::from(1u8) << V2_ISSUED_BITS) - U256::from(1u8));
-    Ok(Some(Copies::Polygon { low, high, item }))
+    Ok(copies)
 }
 
 /// `raw` as an item's blockchain id, in the subgraph's spelling: decimal
 /// digits without a leading zero (`0` itself aside), nothing else, so an
-/// empty or padded id never names another item.
+/// empty, padded or separated id never names another item.
 fn item_id_of(raw: &str) -> Option<U256> {
     let canonical = !raw.is_empty()
         && raw.bytes().all(|b| b.is_ascii_digit())
@@ -290,10 +358,14 @@ fn item_id_of(raw: &str) -> Option<U256> {
         .flatten()
 }
 
-/// `/v1/owners` from the nft index: on one read-only snapshot, both
-/// networks' nft folds fresh ([`Rule::Fresh`]) and published (no fold write
-/// a publication has not acknowledged), and the catalogue able to name the
-/// item; then the item's held copies, paged and counted on it.
+/// `/v1/owners` from the nft index, on one read-only snapshot under the
+/// reads' statement bound: both networks' nft folds fresh ([`Rule::Fresh`])
+/// and published (no fold write a publication has not acknowledged), and
+/// both networks' catalogue able to name the item (the items' proof and the
+/// collection membership the lookup joins). Then, as the subgraph reader
+/// does, the first network (Ethereum, then Polygon) whose page holds copies
+/// answers its page and its total. A page past every network's copies keeps
+/// the total of the first network that holds any.
 async fn indexed_owners(
     state: &MarketplaceState,
     f: &OwnersFilters,
@@ -304,12 +376,22 @@ async fn indexed_owners(
     };
     let descending = f.order_direction.as_deref() != Some("asc");
     let catalogue = state.settings.catalogue();
-    let mut tx = owned_items::snapshot(&state.pool, catalogue, &ChainNet::ALL, Rule::Fresh, true)
+    let now = Utc::now();
+    let mut tx = state
+        .pool
+        .begin()
         .await
-        .map_err(readers::index_source_error)?;
+        .map_err(readers::index_read_error)?;
+    sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY")
+        .execute(&mut *tx)
+        .await
+        .map_err(readers::index_read_error)?;
     super::nft_reads::set_read_timeout(&mut tx)
         .await
         .map_err(readers::index_read_error)?;
+    owned_items::check(&mut tx, catalogue, &ChainNet::ALL, Rule::Fresh, true, now)
+        .await
+        .map_err(readers::index_source_error)?;
     for net in ChainNet::ALL {
         let published =
             chain_walk::rows_published_on(&mut tx, chain_walk::INDEXER_NFT, net, &["nft"], None)
@@ -321,53 +403,30 @@ async fn indexed_owners(
                 net.db_name()
             )));
         }
+        super::catalogue::require_collections_on(&mut tx, state, net, now)
+            .await
+            .map_err(readers::index_source_error)?;
     }
     let contract = f.contract_address.to_lowercase();
+    let cap = readers::count_cap(first, skip);
     let read = async {
-        let Some(copies) = copies_of(&mut tx, catalogue, &contract, item).await? else {
-            return Ok((Vec::new(), 0));
-        };
-        let (filter, order) = copies.filter(descending);
-        let page_sql = format!(
-            "SELECT n.issued_id::text AS issued_id, n.owner, n.token_id::text AS token_id \
-             FROM shop.nft n WHERE {filter} ORDER BY {order} LIMIT $1 OFFSET $2"
-        );
-        let rows = copies
-            .bind(
-                sqlx::query(sqlx::AssertSqlSafe(page_sql))
-                    .bind(first)
-                    .bind(skip)
-                    .bind(&contract),
-            )
-            .fetch_all(&mut *tx)
-            .await?;
-        // The capped total, as the subgraph reader counts.
-        let count_sql = format!(
-            "SELECT count(*) FROM (SELECT 1 FROM shop.nft n WHERE {filter} LIMIT $1 OFFSET $2) t"
-        );
-        let total: i64 = copies
-            .bind(
-                sqlx::query(sqlx::AssertSqlSafe(count_sql))
-                    .bind(readers::count_cap(first, skip))
-                    .bind(0_i64)
-                    .bind(&contract),
-            )
-            .fetch_one(&mut *tx)
-            .await?
-            .try_get(0)?;
-        let owners = rows
-            .iter()
-            .map(|r| {
-                Ok(Owner {
-                    issued_id: r
-                        .try_get::<Option<String>, _>("issued_id")?
-                        .unwrap_or_default(),
-                    owner_id: r.try_get("owner")?,
-                    token_id: r.try_get("token_id")?,
-                })
-            })
-            .collect::<Result<Vec<_>, sqlx::Error>>()?;
-        Ok::<_, sqlx::Error>((owners, total))
+        let candidates = copies_of(&mut tx, catalogue, &contract, item).await?;
+        for copies in &candidates {
+            let owners = copies
+                .page(&mut tx, &contract, descending, first, skip)
+                .await?;
+            if !owners.is_empty() {
+                let total = copies.count(&mut tx, &contract, cap).await?;
+                return Ok((owners, total));
+            }
+        }
+        for copies in &candidates {
+            let total = copies.count(&mut tx, &contract, cap).await?;
+            if total > 0 {
+                return Ok((Vec::new(), total));
+            }
+        }
+        Ok::<_, sqlx::Error>((Vec::new(), 0))
     };
     let answer = read.await.map_err(readers::index_read_error)?;
     tx.rollback().await.ok();
@@ -457,6 +516,25 @@ mod tests {
         ] {
             assert_eq!(item_id_of(raw), None, "{raw:?}");
         }
+    }
+
+    /// A v2 item's copies take `item << 216` through `item << 216 | (2^216 -
+    /// 1)`; an id wider than 40 bits names no range rather than a wrapped one.
+    #[test]
+    fn a_v2_item_id_names_its_token_range_or_none() {
+        let one = U256::from(1u8);
+        let range = |item: U256| (item << 216usize, ((item + one) << 216usize) - one);
+        for item in [
+            U256::ZERO,
+            U256::from(3u8),
+            (one << 40usize) - U256::from(2u8),
+        ] {
+            assert_eq!(token_range(item), Some(range(item)), "{item}");
+        }
+        let widest = (one << 40usize) - one;
+        assert_eq!(token_range(widest), Some((widest << 216usize, U256::MAX)));
+        assert_eq!(token_range(one << 40usize), None);
+        assert_eq!(token_range(U256::MAX), None);
     }
 
     #[test]

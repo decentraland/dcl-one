@@ -5421,7 +5421,7 @@ commits in between is never half-seen:
   ranges in the same filter for pages and counts, using one request clock.
   Both routes emit `x-listings-owner-check: checked`.
 
-Queries, all bounded by one owner, one batch or one item:
+Queries, all bounded by one owner, one batch, one item or one v1 collection:
 
 - an owner's copies: `shop.nft` by `owner` (`nft_owner_idx`), joined to
   `shop.items` by `(network, contract_address, item_id)` on Polygon and to
@@ -5439,21 +5439,32 @@ Queries, all bounded by one owner, one batch or one item:
   with the per-token event index. Readers use the published snapshot on
   any node that serves the route;
 - `/v1/owners`, one item's held copies: the item is resolved first from
-  `shop.items` and `shop.collections` by its primary key, in the scope of
-  the `/v1/nfts` collection candidates. A Polygon item's page walks the
-  primary key's token range `[item << 216, (item + 1) << 216)`. The token
-  order within an item is its issue order, so the page reads `first + skip`
-  rows instead of sorting every copy. An Ethereum v1 item's page reads its
-  collection's tokens with the item's `wearable_id`, by `issued_id`. The
-  total is the same predicate counted up to 5,000, or 25,000 for a deeper
-  window. Before reading, the snapshot needs both networks' NFT folds fresh
-  and acknowledged by their publication, and the catalogue's items proof.
-  On a lean seed (3.3M tokens, one Polygon item of 100,030 copies, one
-  40,000-token v1 collection of 20 wearables; PostgreSQL 17, warm cache),
-  the item's first page took 0.05 ms and its deepest page (`skip` 24,900)
-  6.1 ms. Its total took 1.0 ms capped at 5,000 and 4.8 ms at 25,000.
-  Ordering the same item by `issued_id` over `nft_item_idx` sorted every
-  copy in 37.5 ms. A v1 wearable's page and total took about 5.6 ms each.
+  `shop.items` and `shop.collections` by its primary key on each network
+  whose catalogue names it, in the scope of the `/v1/nfts` collection
+  candidates. As the subgraph reader does, the first network (Ethereum, then
+  Polygon) whose page holds copies answers that page and its own total. A
+  page past every network's copies keeps the total of the first network that
+  holds any. A Polygon item's page walks the primary key's token range
+  `[item << 216, (item + 1) << 216)`. The token order within an item is its
+  issue order, so the page reads `first + skip` rows instead of sorting every
+  copy. An Ethereum v1 item's page reads its collection's tokens with the
+  item's `wearable_id`, by `issued_id`, so it is bounded by one v1 collection
+  rather than one item. The total is the same predicate counted up to 5,000,
+  or 25,000 for a deeper window. The snapshot takes the reads' statement
+  bound first. Then, for both networks, it needs the NFT folds fresh and
+  acknowledged by their publication, the items' proof, and the collection
+  membership the lookup joins (`catalogue::require_collections_on`: the
+  native catalogue's publication, or the collections mirror's complete pass).
+  On a lean seed (3.3M tokens, one Polygon item of 100,030 copies;
+  PostgreSQL 17, warm cache), the item's first page took 0.05 ms and its
+  deepest page (`skip` 24,900) 6.1 ms. Its total took 1.0 ms capped at 5,000
+  and 4.8 ms at 25,000. Ordering the same item by `issued_id` over
+  `nft_item_idx` sorted every copy in 37.5 ms. A v1 wearable of 2,000 copies
+  in a 40,000-token collection took about 5.6 ms for its page and its total.
+  One of 5,000 copies in a 200,000-token collection took 13 to 14 ms for its
+  first page, its deepest page and its total. A partial index on
+  `(network, contract_address, wearable_id, issued_id)` would make the v1
+  page a range walk too if a larger collection ever needs it.
 
 Measured on a seeded database (3.0M Polygon tokens over 100,000 items with a
 skewed popularity, 300,000 owners of whom 20 hold about 30,000 tokens each,
