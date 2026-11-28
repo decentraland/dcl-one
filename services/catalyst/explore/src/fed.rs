@@ -181,7 +181,7 @@ impl TypedMessage for PlaceVote {
         out.extend_from_slice(Self::PRIMARY_TYPE.as_bytes());
         out.push(0);
         out.extend_from_slice(self.place_id.as_bytes());
-        out.push(self.score as u8);
+        out.extend_from_slice(&self.score.to_be_bytes());
         out.extend_from_slice(&self.signed_at.to_be_bytes());
         out
     }

@@ -304,9 +304,16 @@ pub fn bake_args(tile: TileKey, cfg: &BakeConfig, staging: &Path) -> Vec<String>
 #[cfg(unix)]
 #[allow(unsafe_code, reason = "libc killpg on the bake process group")]
 fn kill_group(pid: u32) {
+    let Ok(pgid) = i32::try_from(pid) else {
+        tracing::warn!(
+            pid,
+            "bake process id is out of range; not killing its group"
+        );
+        return;
+    };
     // SAFETY: killpg takes plain integers and touches no memory.
     unsafe {
-        libc::killpg(pid as i32, libc::SIGKILL);
+        libc::killpg(pgid, libc::SIGKILL);
     }
 }
 

@@ -225,7 +225,7 @@ pub async fn pass_body(state: &Shared) -> anyhow::Result<Counts> {
                  RETURNING fetched_at",
             )
             .bind(&cid)
-            .bind(body.len() as i64)
+            .bind(crate::casts::len_i64(body.len()))
             .bind(counts.occupied)
             .bind(counts.roads)
             .bind(counts.empty)

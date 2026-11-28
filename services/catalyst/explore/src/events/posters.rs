@@ -293,7 +293,7 @@ async fn upload(
     .bind(&name)
     .bind(&cid)
     .bind(mime)
-    .bind(size as i64)
+    .bind(crate::casts::len_i64(size))
     .execute(&mut *tx)
     .await?;
     tx.commit().await?;

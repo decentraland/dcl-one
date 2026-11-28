@@ -10,6 +10,7 @@ use uuid::Uuid;
 
 use crate::api::internal_error;
 use crate::auth::{AuthChain, AuthError};
+use crate::casts;
 use crate::shared::signed_fetch::{self, PayloadPolicy, Signer};
 
 use super::contract_checks::{Budgeted, Offline};
@@ -284,13 +285,13 @@ async fn admit_identity(
     admission_lock(&mut tx, IDENTITY_ADMISSION_LOCK).await?;
     let source = record.source.as_deref();
     let mut counts = identity_counts(&mut tx, source, now).await?;
-    if counts.0 >= MAX_PENDING_IDENTITIES as i64 {
+    if counts.0 >= casts::len_i64(MAX_PENDING_IDENTITIES) {
         sweep_expired_identities(&mut tx, now).await?;
         sweep_identity_tombstones(&mut tx, now).await?;
         counts = identity_counts(&mut tx, source, now).await?;
     }
     let (_, live, from_source) = counts;
-    if live >= MAX_PENDING_IDENTITIES as i64 {
+    if live >= casts::len_i64(MAX_PENDING_IDENTITIES) {
         return Ok(Some(
             (
                 StatusCode::SERVICE_UNAVAILABLE,
@@ -301,7 +302,7 @@ async fn admit_identity(
                 .into_response(),
         ));
     }
-    if source.is_some() && from_source >= MAX_IDENTITIES_PER_SOURCE as i64 {
+    if source.is_some() && from_source >= casts::len_i64(MAX_IDENTITIES_PER_SOURCE) {
         return Ok(Some(too_many_identities_from_network()));
     }
     insert_identity(&mut tx, record).await?;
@@ -312,7 +313,7 @@ async fn admit_identity(
     )
     .bind(&record.identity_id)
     .bind(naive(record.created_at))
-    .bind(MAX_IDENTITY_TOMBSTONES as i64)
+    .bind(casts::len_i64(MAX_IDENTITY_TOMBSTONES))
     .execute(&mut *tx)
     .await?;
     tx.commit().await?;
@@ -590,7 +591,7 @@ async fn pick_up_identity(
         .bind(id)
         .bind(naive(now))
         .bind(reason.as_str())
-        .bind(MAX_IDENTITY_TOMBSTONES as i64)
+        .bind(casts::len_i64(MAX_IDENTITY_TOMBSTONES))
         .execute(&mut *tx)
         .await?;
     }

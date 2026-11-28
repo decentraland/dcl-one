@@ -169,7 +169,8 @@ impl OnboardingState {
             wallet,
             metadata,
         } = payload;
-        let checkpoint = checkpoint_id as i16;
+        let checkpoint =
+            i16::try_from(checkpoint_id).map_err(|e| sqlx::Error::Encode(Box::new(e)))?;
         let mut wallet = wallet.map(|w| w.to_lowercase());
         let by_wallet = identifier_type == "wallet";
 
@@ -286,7 +287,7 @@ impl OnboardingState {
              FROM explore_api.onboarding_checkpoints WHERE user_id = $1 AND checkpoint = $2",
         )
         .bind(user_id)
-        .bind(checkpoint as i16)
+        .bind(i16::try_from(checkpoint).ok()?)
         .fetch_optional(&self.pool)
         .await
         .expect("reading an onboarding checkpoint");
@@ -303,7 +304,8 @@ impl OnboardingState {
         sequence: i64,
         now: DateTime<Utc>,
     ) -> sqlx::Result<Vec<PendingNudge>> {
-        let threshold = now - Duration::hours(SEQUENCE_HOURS[sequence as usize]);
+        let index = usize::try_from(sequence).map_err(|e| sqlx::Error::Encode(Box::new(e)))?;
+        let threshold = now - Duration::hours(SEQUENCE_HOURS[index]);
         sqlx::query_as(PENDING)
             .bind(threshold)
             .fetch_all(&self.pool)
@@ -564,7 +566,7 @@ mod tests {
             sqlx::query_as(
                 "SELECT user_id, email FROM explore_api.onboarding_checkpoints WHERE checkpoint = $1",
             )
-            .bind(checkpoint as i16)
+            .bind(i16::try_from(checkpoint).unwrap())
             .fetch_optional(&self.pool)
             .await
             .unwrap()

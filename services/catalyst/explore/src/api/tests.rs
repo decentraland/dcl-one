@@ -2472,7 +2472,7 @@ async fn map_grid_is_built_from_the_land_index_and_shop_and_waits_for_unpublishe
     let (stored_stamp, count, built_at) = stored_grid(&db.pool).await.unwrap();
     assert_eq!(stored_stamp, stamp);
     assert_eq!(
-        count as usize,
+        usize::try_from(count).unwrap(),
         node.state.map.snapshot().unwrap().tiles.len()
     );
     let (_, report) = call_json(&app, "GET", "/mirrors", None).await;
@@ -2768,7 +2768,10 @@ async fn an_older_build_never_replaces_a_newer_publication() {
     .unwrap();
     assert_eq!(
         marker,
-        (served.tiles.len() as i64, Some(y.0.to_string())),
+        (
+            i64::try_from(served.tiles.len()).unwrap(),
+            Some(y.0.to_string())
+        ),
         "the pass reports the revision it serves"
     );
 

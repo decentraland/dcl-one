@@ -32,6 +32,7 @@ use serde_json::{Value, json};
 
 use super::super::Shared;
 use super::{Grid, http_cache};
+use crate::casts;
 use crate::land_authz::DissolvedEstate;
 
 #[derive(Debug, Clone, Serialize)]
@@ -148,18 +149,22 @@ pub fn contributions_for(address: &str) -> Value {
 /// y in the low 128 (`land_authz::decode_land_token_id` is the inverse),
 /// as the decimal string the old squid rows carried.
 pub fn encode_land_token_id(x: i32, y: i32) -> String {
-    let hi = U256::from((x as i128) as u128).wrapping_shl(128);
-    let lo = U256::from((y as i128) as u128);
+    let hi = U256::from(i128::from(x).cast_unsigned()).wrapping_shl(128);
+    let lo = U256::from(i128::from(y).cast_unsigned());
     (hi | lo).to_string()
 }
 
 /// A decimal LAND token id back to its coordinates (the low 32 bits of
 /// each half carry the sign, as the SQL twin decodes them).
+#[allow(
+    clippy::cast_possible_truncation,
+    reason = "keeps the low 32 bits of each half by design"
+)]
 pub fn decode_land_token_id(decimal: &str) -> Option<(i32, i32)> {
     let v = U256::from_str_radix(decimal.trim(), 10).ok()?;
     let hi: u128 = v.wrapping_shr(128).to::<u128>();
     let lo: u128 = (v & U256::from(u128::MAX)).to::<u128>();
-    Some((hi as u32 as i32, lo as u32 as i32))
+    Some(((hi as u32).cast_signed(), (lo as u32).cast_signed()))
 }
 
 fn finalize(mut resp: Response, last: i64) -> Response {
@@ -271,7 +276,7 @@ pub(crate) fn dissolved_estate_nft(
 fn estate_document(state: &Shared, id: &str, name: String, coords: &[(i32, i32)]) -> NftMetadata {
     let mut attributes = vec![NftAttribute {
         trait_type: "Size".into(),
-        value: coords.len() as i64,
+        value: casts::len_i64(coords.len()),
         display_type: "number".into(),
     }];
     append_proximity(&mut attributes, coords);

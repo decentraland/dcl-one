@@ -77,7 +77,7 @@ fn to_records(event_id: &str, row: ListRow) -> Vec<EventAttendeeRecord> {
         }
     }
     out.sort_by_key(|b| std::cmp::Reverse(b.created_at));
-    out.truncate(LOCAL_LIMIT as usize);
+    out.truncate(crate::casts::page(LOCAL_LIMIT));
     out
 }
 

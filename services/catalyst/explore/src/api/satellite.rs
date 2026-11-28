@@ -47,6 +47,7 @@ use super::Shared;
 use super::map::Grid;
 use super::map::tiles::TileType;
 use super::mirror::{self, Conditional};
+use crate::casts;
 use crate::jobs::JobContext;
 use crate::storage::Storage;
 
@@ -101,11 +102,21 @@ const GRID_MIN_PX: f64 = 12.0;
 
 fn darken(c: [u8; 4]) -> [u8; 4] {
     [
-        (c[0] as u32 * 85 / 100) as u8,
-        (c[1] as u32 * 85 / 100) as u8,
-        (c[2] as u32 * 85 / 100) as u8,
+        mean_u8(u32::from(c[0]) * 85, 100),
+        mean_u8(u32::from(c[1]) * 85, 100),
+        mean_u8(u32::from(c[2]) * 85, 100),
         c[3],
     ]
+}
+
+/// `sum / n` as a channel, where `sum` is at most `n` times 255.
+#[inline]
+#[allow(
+    clippy::cast_possible_truncation,
+    reason = "a weighted mean of u8 channels is at most 255"
+)]
+fn mean_u8(sum: u32, n: u32) -> u8 {
+    (sum / n) as u8
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -481,26 +492,25 @@ fn render_tile(
 
     for (cx, cy, region) in regions {
         let (cx, cy) = (*cx, *cy);
-        let rx0 = (cx - REGION_HALF) as f64;
-        let ry_top = (cy + REGION_HALF + 1) as f64;
-        let ry_bot = (cy - REGION_HALF) as f64;
+        let rx0 = f64::from(cx - REGION_HALF);
+        let ry_top = f64::from(cy + REGION_HALF + 1);
+        let ry_bot = f64::from(cy - REGION_HALF);
 
-        let ox_lo = (((cx - REGION_HALF) as f64 - wx0) / ppp_out)
-            .floor()
-            .max(0.0) as i32;
-        let ox_hi = (((cx + REGION_HALF + 1) as f64 - wx0) / ppp_out).ceil() as i32;
-        let ox_hi = ox_hi.min(TILE_PX as i32);
-        let oy_lo = ((wy1 - ry_top) / ppp_out).floor().max(0.0) as i32;
-        let oy_hi = ((wy1 - ry_bot) / ppp_out).ceil() as i32;
-        let oy_hi = oy_hi.min(TILE_PX as i32);
+        // Bounds below 0 clamp to 0, which leaves the same (possibly empty) range.
+        let ox_lo = casts::f64_u32(((rx0 - wx0) / ppp_out).floor());
+        let ox_hi = casts::f64_u32(((f64::from(cx + REGION_HALF + 1) - wx0) / ppp_out).ceil());
+        let ox_hi = ox_hi.min(TILE_PX);
+        let oy_lo = casts::f64_u32(((wy1 - ry_top) / ppp_out).floor());
+        let oy_hi = casts::f64_u32(((wy1 - ry_bot) / ppp_out).ceil());
+        let oy_hi = oy_hi.min(TILE_PX);
 
         let fp = ppp_out * region.ppp;
-        let samples = (fp.round() as i32).clamp(1, MAX_SAMPLES);
+        let samples = casts::f64_i32(fp.round()).clamp(1, MAX_SAMPLES);
 
         for oy in oy_lo..oy_hi {
-            let world_y = wy1 - (oy as f64 + 0.5) * ppp_out;
+            let world_y = wy1 - (f64::from(oy) + 0.5) * ppp_out;
             for ox in ox_lo..ox_hi {
-                let world_x = wx0 + (ox as f64 + 0.5) * ppp_out;
+                let world_x = wx0 + (f64::from(ox) + 0.5) * ppp_out;
 
                 let sc = (world_x - rx0) * region.ppp;
                 let sr = (ry_top - world_y) * region.ppp;
@@ -511,18 +521,22 @@ fn render_tile(
                 let (mut r, mut g, mut b, mut a, mut hit, mut seen) =
                     (0u32, 0u32, 0u32, 0u32, 0u32, 0u32);
                 for sy in 0..samples {
-                    let fy = sr + (sy as f64 + 0.5) / samples as f64 * fp - fp / 2.0;
-                    let py = fy.floor() as i32;
-                    if py < 0 || py >= region.h as i32 {
+                    let fy = sr + (f64::from(sy) + 0.5) / f64::from(samples) * fp - fp / 2.0;
+                    let Ok(py) = u32::try_from(casts::f64_i32(fy.floor())) else {
+                        continue;
+                    };
+                    if py >= region.h {
                         continue;
                     }
                     for sx in 0..samples {
-                        let fx = sc + (sx as f64 + 0.5) / samples as f64 * fp - fp / 2.0;
-                        let px = fx.floor() as i32;
-                        if px < 0 || px >= region.w as i32 {
+                        let fx = sc + (f64::from(sx) + 0.5) / f64::from(samples) * fp - fp / 2.0;
+                        let Ok(px) = u32::try_from(casts::f64_i32(fx.floor())) else {
+                            continue;
+                        };
+                        if px >= region.w {
                             continue;
                         }
-                        let i = ((py as u32 * region.w + px as u32) * 4) as usize;
+                        let i = ((py * region.w + px) * 4) as usize;
                         seen += 1;
                         if region.data[i..i + 4] == VOID {
                             continue;
@@ -537,21 +551,21 @@ fn render_tile(
                 if hit == 0 {
                     continue;
                 }
-                let o = ((oy as u32 * TILE_PX + ox as u32) * 4) as usize;
+                let o = ((oy * TILE_PX + ox) * 4) as usize;
                 let src = [
-                    (r / hit) as u8,
-                    (g / hit) as u8,
-                    (b / hit) as u8,
-                    (a / hit) as u8,
+                    mean_u8(r, hit),
+                    mean_u8(g, hit),
+                    mean_u8(b, hit),
+                    mean_u8(a, hit),
                 ];
                 if hit == seen || out[o + 3] == 0 {
                     out[o..o + 4].copy_from_slice(&src);
                 } else {
                     // Coverage blend over whatever the base painted here.
                     for c in 0..4 {
-                        let under = out[o + c] as u32;
-                        let over = src[c] as u32;
-                        out[o + c] = ((over * hit + under * (seen - hit)) / seen) as u8;
+                        let under = u32::from(out[o + c]);
+                        let over = u32::from(src[c]);
+                        out[o + c] = mean_u8(over * hit + under * (seen - hit), seen);
                     }
                 }
             }
@@ -575,14 +589,14 @@ fn paint_base(out: &mut [u8], base: &Grid, wx0: f64, wy1: f64, ppp_out: f64) {
     let grid = px_per_parcel >= GRID_MIN_PX;
     let mut last: Option<LastParcel> = None;
     for oy in 0..TILE_PX {
-        let world_y = wy1 - (oy as f64 + 0.5) * ppp_out;
-        let py = world_y.floor() as i32;
+        let world_y = wy1 - (f64::from(oy) + 0.5) * ppp_out;
+        let py = casts::f64_i32(world_y.floor());
         // Top edge of the parcel is its highest world row: the first pixel row that
         // maps into it.
-        let top_edge = grid && ((wy1 - oy as f64 * ppp_out).floor() as i32 != py);
+        let top_edge = grid && (casts::f64_i32((wy1 - f64::from(oy) * ppp_out).floor()) != py);
         for ox in 0..TILE_PX {
-            let world_x = wx0 + (ox as f64 + 0.5) * ppp_out;
-            let px = world_x.floor() as i32;
+            let world_x = wx0 + (f64::from(ox) + 0.5) * ppp_out;
+            let px = casts::f64_i32(world_x.floor());
             let (color, top, left) = match last {
                 Some((coords, c, t, l)) if coords == (px, py) => (c, t, l),
                 _ => {
@@ -596,7 +610,7 @@ fn paint_base(out: &mut [u8], base: &Grid, wx0: f64, wy1: f64, ppp_out: f64) {
                     (c, tile.top, tile.left)
                 }
             };
-            let left_edge = grid && ((wx0 + ox as f64 * ppp_out).floor() as i32 != px);
+            let left_edge = grid && (casts::f64_i32((wx0 + f64::from(ox) * ppp_out).floor()) != px);
             let c = if (top_edge && !top) || (left_edge && !left) {
                 darken(color)
             } else {
@@ -675,7 +689,7 @@ pub fn parse_manifest(body: &[u8]) -> anyhow::Result<Vec<(i32, i32)>> {
                 && (-(COORD_BOUND as i64)..=COORD_BOUND as i64).contains(&cy),
             "manifest region {cx},{cy} is outside the world"
         );
-        out.push((cx as i32, cy as i32));
+        out.push((i32::try_from(cx)?, i32::try_from(cy)?));
     }
     out.sort_unstable();
     out.dedup();
@@ -826,7 +840,7 @@ pub async fn run_pass(state: &Shared, ctx: &JobContext, now: NaiveDateTime) -> a
             "{MIRROR}: {} regions listed, {} fetched, {} unchanged, {} resumed, {} thumbs absent, {} pruned",
             counts.listed, counts.fetched, counts.not_modified, counts.resumed_skips, counts.missing_thumbs, counts.pruned
         ));
-        Ok(mirror::PassOutcome { items: counts.listed as i64, cursor: None })
+        Ok(mirror::PassOutcome { items: casts::len_i64(counts.listed), cursor: None })
     })
     .await
 }
@@ -1017,6 +1031,10 @@ async fn mirror_region(
         } => {
             let (width, height) = png_dimensions(&body)
                 .with_context(|| format!("{} is not a PNG", mirror::shown(&url)))?;
+            let (width, height) = (i32::try_from(width), i32::try_from(height));
+            let (Ok(width), Ok(height)) = (width, height) else {
+                anyhow::bail!("{} is too large for a region", mirror::shown(&url));
+            };
             let body = Bytes::from(body);
             let (check, cid) = {
                 let body = body.clone();
@@ -1057,9 +1075,9 @@ async fn mirror_region(
             .bind(cy)
             .bind(variant.as_str())
             .bind(&cid)
-            .bind(body.len() as i64)
-            .bind(width as i32)
-            .bind(height as i32)
+            .bind(casts::len_i64(body.len()))
+            .bind(width)
+            .bind(height)
             .bind(last_modified)
             .bind(etag)
             .execute(&state.pool)

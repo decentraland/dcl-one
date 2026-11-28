@@ -33,6 +33,7 @@ use sqlx::PgPool;
 use tokio_util::sync::CancellationToken;
 
 use crate::MirrorSource;
+use crate::casts;
 use crate::http::read_body_capped;
 use crate::mirror_state::{self, PassEnd};
 
@@ -290,7 +291,7 @@ pub async fn run_pass(
         complete: !start.resumed,
         fetched_all: true,
         resumed_from: start.resumed.then_some(start.offset),
-        upserted: start.rows as usize,
+        upserted: casts::page(start.rows),
         ..Default::default()
     };
     let mut offset = start.offset;
@@ -323,10 +324,11 @@ pub async fn run_pass(
                 if events.is_empty() {
                     break;
                 }
-                let count = events.len() as i64;
+                let count = casts::len_i64(events.len());
                 upsert_page(pool, &events, &mut out).await;
                 offset += PAGE;
-                mirror_state::advance(pool, EVENTS_MIRROR, offset, out.upserted as i64).await?;
+                mirror_state::advance(pool, EVENTS_MIRROR, offset, casts::len_i64(out.upserted))
+                    .await?;
                 if count < PAGE {
                     break;
                 }
@@ -346,7 +348,8 @@ pub async fn run_pass(
                     break;
                 }
                 offset += PAGE;
-                mirror_state::advance(pool, EVENTS_MIRROR, offset, out.upserted as i64).await?;
+                mirror_state::advance(pool, EVENTS_MIRROR, offset, casts::len_i64(out.upserted))
+                    .await?;
             }
         }
     }
@@ -369,8 +372,8 @@ pub async fn run_pass(
         EVENTS_MIRROR,
         &PassEnd {
             complete: out.complete,
-            rows: out.upserted as i64,
-            swept: out.swept as i64,
+            rows: casts::len_i64(out.upserted),
+            swept: casts::count_i64(out.swept),
             error: (!out.complete).then(|| {
                 let mut reason = format!(
                     "{} failed pages, {} failed rows",
@@ -534,7 +537,7 @@ fn coord(event: &Value, idx: usize) -> Option<i32> {
         .and_then(Value::as_array)
         .and_then(|a| a.get(idx))
         .and_then(Value::as_i64)
-        .map(|v| v as i32)
+        .and_then(casts::coord_i32)
 }
 
 fn flag(event: &Value, key: &str) -> bool {
@@ -570,8 +573,18 @@ pub fn extract_fields(event: &Value) -> Option<EventFields<'_>> {
         attending: event.get("attending").and_then(Value::as_bool),
         community_id: event.get("community_id").and_then(Value::as_str),
         user: event.get("user").and_then(Value::as_str),
-        x: coord(event, 0).or_else(|| event.get("x").and_then(Value::as_i64).map(|v| v as i32)),
-        y: coord(event, 1).or_else(|| event.get("y").and_then(Value::as_i64).map(|v| v as i32)),
+        x: coord(event, 0).or_else(|| {
+            event
+                .get("x")
+                .and_then(Value::as_i64)
+                .and_then(casts::coord_i32)
+        }),
+        y: coord(event, 1).or_else(|| {
+            event
+                .get("y")
+                .and_then(Value::as_i64)
+                .and_then(casts::coord_i32)
+        }),
         description: event
             .get("description")
             .and_then(Value::as_str)
@@ -705,7 +718,7 @@ pub async fn sweep_removed(pool: &PgPool, cutoff: DateTime<Utc>) -> Result<Sweep
         .bind(cutoff.naive_utc())
         .fetch_one(pool)
         .await?;
-    Ok(SweepOutcome::Swept(swept as u64))
+    Ok(SweepOutcome::Swept(casts::count_u64(swept)))
 }
 
 #[cfg(test)]
@@ -780,8 +793,8 @@ mod tests {
         assert!(with_community > 0 && with_community < evs.len());
         let f = extract_fields(&evs[0]).unwrap();
         let coords = evs[0]["coordinates"].as_array().unwrap();
-        assert_eq!(f.x, coords[0].as_i64().map(|v| v as i32));
-        assert_eq!(f.y, coords[1].as_i64().map(|v| v as i32));
+        assert_eq!(f.x, coords[0].as_i64().map(|v| i32::try_from(v).unwrap()));
+        assert_eq!(f.y, coords[1].as_i64().map(|v| i32::try_from(v).unwrap()));
     }
 
     #[test]

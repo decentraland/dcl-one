@@ -21,6 +21,7 @@ use super::{
     live,
 };
 use crate::SharedState;
+use crate::casts;
 use crate::shared::errors::{ApiData, ApiDataTotal, ApiError};
 use crate::validate::{self, Flavour, QueryBody};
 
@@ -144,12 +145,16 @@ fn busiest_first(
     } else {
         rows.sort_by_key(count);
     }
-    let total = rows.len() as i64;
+    let total = casts::len_i64(rows.len());
     (rows.into_iter().skip(offset).take(limit).collect(), total)
 }
 
 /// `intParam` (`query-params.ts:27-32`): `Number(raw)` when that is a
 /// non-negative integer; blank or any other value is none.
+#[allow(
+    clippy::cast_precision_loss,
+    reason = "follows JavaScript's Number, which rounds above 2^53"
+)]
 fn js_uint(raw: &str) -> Option<i64> {
     let raw = raw.trim();
     let digits = |radix: u32| {
@@ -165,7 +170,7 @@ fn js_uint(raw: &str) -> Option<i64> {
         Some("0b") => digits(2),
         _ => raw.parse::<f64>().ok(),
     }?;
-    (n.is_finite() && n.fract() == 0.0 && n >= 0.0).then_some(n as i64)
+    (n.is_finite() && n.fract() == 0.0 && n >= 0.0).then_some(casts::f64_i64(n))
 }
 
 /// Explicit favorites requests must not disguise a failed signed login as an empty list.
@@ -253,7 +258,7 @@ pub async fn get_place_list(
     }
     let counts = state.live.live_user_counts().await;
     let most_active = matches!(filters.order_by, PlaceOrderBy::MostActive);
-    let page = (filters.offset as usize, filters.limit as usize);
+    let page = (casts::page(filters.offset), casts::page(filters.limit));
     let mut hot = None;
     if most_active {
         filters.active = if counts.snapshot {
@@ -796,7 +801,7 @@ pub async fn get_world_names_list(
     State(state): State<SharedState>,
 ) -> Result<Json<ApiDataTotal<String>>, ApiError> {
     let names = state.places.world_names().await?;
-    let total = names.len() as i64;
+    let total = casts::len_i64(names.len());
     Ok(Json(ApiDataTotal::ok(names, total)))
 }
 
@@ -960,8 +965,8 @@ mod tests {
                  FROM (SELECT g, ((g % 300) - 150)::text || ',' || ((g / 300) - 150)::text AS pos \
                        FROM generate_series($1::int, $2::int) g) s",
             )
-            .bind(from as i32)
-            .bind((from + 999).min(places) as i32)
+            .bind(i32::try_from(from).unwrap())
+            .bind(i32::try_from((from + 999).min(places)).unwrap())
             .execute(&pool)
             .await
             .unwrap();
@@ -977,8 +982,8 @@ mod tests {
         )
         .bind(&settings.land_registry)
         .bind(owner)
-        .bind(covered as i32)
-        .bind(parcels as i32)
+        .bind(i32::try_from(covered).unwrap())
+        .bind(i32::try_from(parcels).unwrap())
         .execute(&pool)
         .await
         .unwrap();

@@ -259,8 +259,9 @@ pub fn filter_tiles<'a>(
     let TileQuery { bbox, fields } = TileQuery::parse(q);
     let use_bbox = match bbox {
         Some((min_x, max_x, min_y, max_y)) => {
-            let w = (max_x as i64 - min_x as i64 + 1) as u64;
-            let h = (max_y as i64 - min_y as i64 + 1) as u64;
+            // The bbox is ordered (min <= max), so each side is at least 1.
+            let w = u64::from(max_x.abs_diff(min_x)) + 1;
+            let h = u64::from(max_y.abs_diff(min_y)) + 1;
             w.checked_mul(h)
                 .map(|area| area < tiles.len() as u64)
                 .unwrap_or(false)

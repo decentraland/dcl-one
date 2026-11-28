@@ -124,7 +124,7 @@ pub async fn run_pass(state: &Shared, ctx: &JobContext) -> anyhow::Result<()> {
             replace(&state.pool, list, &values)
                 .await
                 .with_context(|| format!("replacing explore_api.lists {list}"))?;
-            items += values.len() as i64;
+            items += crate::casts::len_i64(values.len());
         }
         Ok(mirror::PassOutcome {
             items,

@@ -26,6 +26,7 @@ use sqlx::PgPool;
 use tokio_util::sync::CancellationToken;
 
 use crate::MirrorSource;
+use crate::casts;
 use crate::http::read_body_capped;
 use crate::mirror_state::{self, PassEnd};
 
@@ -308,7 +309,9 @@ fn first_str<'a>(place: &'a Value, keys: &[&str]) -> Option<&'a str> {
 }
 
 fn int(place: &Value, key: &str) -> i32 {
-    place.get(key).and_then(Value::as_i64).unwrap_or(0) as i32
+    let v = place.get(key).and_then(Value::as_i64).unwrap_or(0);
+    // An upstream counter beyond `integer` saturates rather than wraps.
+    i32::try_from(v).unwrap_or(if v < 0 { i32::MIN } else { i32::MAX })
 }
 
 /// A place row: only an id is required, every other column tolerates absence.
@@ -385,7 +388,7 @@ pub async fn run_places_pass(
         complete: true,
         fetched_all: true,
         resumed_from: start.resumed.then_some(start.offset),
-        upserted: start.rows as usize,
+        upserted: casts::page(start.rows),
         ..Default::default()
     };
     let mut offset = start.offset;
@@ -436,9 +439,10 @@ pub async fn run_places_pass(
             return Err(e);
         }
         out.upserted += rows.len();
-        offset += data.len() as i64;
-        mirror_state::advance(pool, PLACES_MIRROR, offset, out.upserted as i64).await?;
-        if offset >= total || (data.len() as i64) < PAGE {
+        let fetched = casts::len_i64(data.len());
+        offset += fetched;
+        mirror_state::advance(pool, PLACES_MIRROR, offset, casts::len_i64(out.upserted)).await?;
+        if offset >= total || fetched < PAGE {
             break;
         }
         if offset >= MAX_OFFSET {
@@ -475,7 +479,7 @@ pub async fn run_places_pass(
         &PassEnd {
             complete: out.complete,
             rows: stamped,
-            swept: out.swept as i64,
+            swept: casts::count_i64(out.swept),
             error: ceiling_error,
         },
     )
@@ -583,7 +587,7 @@ pub async fn run_worlds_pass(
         complete: !start.resumed,
         fetched_all: true,
         resumed_from: start.resumed.then_some(start.offset),
-        upserted: start.rows as usize,
+        upserted: casts::page(start.rows),
         ..Default::default()
     };
     let mut offset = start.offset;
@@ -615,10 +619,11 @@ pub async fn run_worlds_pass(
                 if worlds.is_empty() {
                     break;
                 }
-                let count = worlds.len() as i64;
+                let count = casts::len_i64(worlds.len());
                 upsert_page_fail_open(pool, &worlds, extract_world, &mut out).await;
                 offset += PAGE;
-                mirror_state::advance(pool, WORLDS_MIRROR, offset, out.upserted as i64).await?;
+                mirror_state::advance(pool, WORLDS_MIRROR, offset, casts::len_i64(out.upserted))
+                    .await?;
                 if count < PAGE {
                     break;
                 }
@@ -638,7 +643,8 @@ pub async fn run_worlds_pass(
                     break;
                 }
                 offset += PAGE;
-                mirror_state::advance(pool, WORLDS_MIRROR, offset, out.upserted as i64).await?;
+                mirror_state::advance(pool, WORLDS_MIRROR, offset, casts::len_i64(out.upserted))
+                    .await?;
             }
         }
     }
@@ -650,8 +656,8 @@ pub async fn run_worlds_pass(
         WORLDS_MIRROR,
         &PassEnd {
             complete: out.complete,
-            rows: out.upserted as i64,
-            swept: out.swept as i64,
+            rows: casts::len_i64(out.upserted),
+            swept: casts::count_i64(out.swept),
             error: (!out.complete).then(|| {
                 let mut reason = format!(
                     "{} failed pages, {} failed rows",
@@ -832,7 +838,7 @@ pub async fn sweep_removed(pool: &PgPool, leg: Leg, cutoff: DateTime<Utc>) -> Re
     .bind(cutoff.naive_utc())
     .fetch_one(pool)
     .await?;
-    Ok(SweepOutcome::Swept(swept as u64))
+    Ok(SweepOutcome::Swept(casts::count_u64(swept)))
 }
 
 async fn sweep_after_pass(

@@ -191,8 +191,8 @@ fn is_date_time(value: &str) -> bool {
     let Some(caps) = TIME.captures(time) else {
         return false;
     };
-    let hour: u32 = caps[1].parse().unwrap_or(99);
-    let minute: u32 = caps[2].parse().unwrap_or(99);
+    let hour: i32 = caps[1].parse().unwrap_or(99);
+    let minute: i32 = caps[2].parse().unwrap_or(99);
     let second: f64 = caps[3].parse().unwrap_or(99.0);
     if hour > 23 || minute > 59 || second >= 61.0 {
         return false;
@@ -212,8 +212,7 @@ fn is_date_time(value: &str) -> bool {
         }
         _ => (0, 0),
     };
-    let utc_minutes =
-        (hour as i32 * 60 + minute as i32 - tz_hour * 60 - tz_minute).rem_euclid(24 * 60);
+    let utc_minutes = (hour * 60 + minute - tz_hour * 60 - tz_minute).rem_euclid(24 * 60);
     utc_minutes == 23 * 60 + 59
 }
 
@@ -466,7 +465,7 @@ fn regex_for(pattern: &'static str) -> &'static Regex {
 /// A schema number as JSON.stringify prints it: `0`, not `0.0`.
 fn number_json(n: f64) -> Value {
     if n.fract() == 0.0 && n.abs() < 1e15 {
-        json!(n as i64)
+        json!(crate::casts::f64_i64(n))
     } else {
         json!(n)
     }

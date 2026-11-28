@@ -59,6 +59,7 @@ use super::PlaceRow;
 use super::voting_power::MIN_USER_ACTIVITY;
 use crate::SharedState;
 use crate::auth::normalize_eth_address;
+use crate::casts;
 use crate::fed;
 use crate::shared::errors::{ApiData, ApiError};
 use crate::validate::{self, Flavour, ObjectSchema, UPDATE_FAVORITES_BODY, UPDATE_LIKE_BODY};
@@ -134,15 +135,18 @@ pub fn like_score(likes: i64, dislikes: i64) -> Option<f64> {
     if n <= 0 {
         return None;
     }
-    let n_f = n as f64;
-    let variance = ((likes * dislikes) / n) as f64 + 0.9604;
-    Some(((likes as f64 + 1.9208) / n_f - 1.96 * variance.sqrt() / n_f) / (1.0 + 3.8416 / n_f))
+    let n_f = casts::i64_f64(n);
+    let variance = casts::i64_f64((likes * dislikes) / n) + 0.9604;
+    Some(
+        ((casts::i64_f64(likes) + 1.9208) / n_f - 1.96 * variance.sqrt() / n_f)
+            / (1.0 + 3.8416 / n_f),
+    )
 }
 
 /// Upstream's `like_rate` (`shared/entityInteractions.ts:153-155`).
 pub fn like_rate(likes: i64, dislikes: i64) -> Option<f64> {
     let n = likes + dislikes;
-    (n > 0).then(|| likes as f64 / n as f64)
+    (n > 0).then(|| casts::i64_f64(likes) / casts::i64_f64(n))
 }
 
 /// What the mirror holds of upstream's votes on an entity.
@@ -167,18 +171,18 @@ pub fn upstream_qualified_votes(m: &MirroredVotes) -> (i64, i64) {
     };
     let total = (m.likes + m.dislikes).max(0);
     for n in 1..=total {
-        let likes = (rate * n as f64).round() as i64;
+        let likes = casts::f64_i64((rate * casts::i64_f64(n)).round());
         if likes < 0 || likes > n {
             continue;
         }
         let dislikes = n - likes;
-        let rate_matches = (likes as f64 / n as f64 - rate).abs() < 1e-9;
+        let rate_matches = (casts::i64_f64(likes) / casts::i64_f64(n) - rate).abs() < 1e-9;
         let score_matches = like_score(likes, dislikes).is_some_and(|s| (s - score).abs() < 1e-6);
         if rate_matches && score_matches {
             return (likes, dislikes);
         }
     }
-    let likes = (rate.clamp(0.0, 1.0) * total as f64).round() as i64;
+    let likes = casts::f64_i64((rate.clamp(0.0, 1.0) * casts::i64_f64(total)).round());
     (likes, total - likes)
 }
 
@@ -293,15 +297,21 @@ async fn recount(tx: &mut PgConnection, entity_id: &str) -> Result<(), ApiError>
     let local = local_votes(&mut *tx, entity_id).await?;
     let mirrored = mirrored_votes(&mut *tx, entity_id).await?;
     let (rate, score) = combined_rates(&mirrored, &local);
+    let column = |n: i64| i32::try_from(n).map_err(|e| sqlx::Error::Encode(Box::new(e)));
+    let (favorites, likes, dislikes) = (
+        column(local.favorites)?,
+        column(local.likes)?,
+        column(local.dislikes)?,
+    );
     sqlx::query(
         "UPDATE explore.place_interaction_counts \
          SET favorites = $2, likes = $3, dislikes = $4, like_rate = $5, like_score = $6, updated_at = $7 \
          WHERE entity_id = $1",
     )
     .bind(entity_id)
-    .bind(local.favorites as i32)
-    .bind(local.likes as i32)
-    .bind(local.dislikes as i32)
+    .bind(favorites)
+    .bind(likes)
+    .bind(dislikes)
     .bind(rate)
     .bind(score)
     .bind(now())
@@ -435,7 +445,7 @@ pub async fn import_upstream_likes(
             "UPDATE explore.place_interaction_counts SET imported = GREATEST(imported, $2) WHERE entity_id = $1",
         )
         .bind(entity_id)
-        .bind(rows.len() as i32)
+        .bind(casts::len_i32(rows.len()))
         .execute(&mut *tx)
         .await?;
         recount(&mut tx, entity_id).await?;

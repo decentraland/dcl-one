@@ -475,7 +475,7 @@ async fn refresh_queued_worlds(pool: &PgPool, content_public_url: &str) -> sqlx:
              ORDER BY queued_at, world_name LIMIT $1 FOR UPDATE SKIP LOCKED
          ) RETURNING world_name",
     )
-    .bind(WORLD_UPDATE_BATCH as i64)
+    .bind(crate::casts::len_i64(WORLD_UPDATE_BATCH))
     .fetch_all(&mut *tx)
     .await?;
     if !worlds.is_empty() {
@@ -625,7 +625,7 @@ async fn run_once_with_storage(
             .bind(scope == DeriveScope::Local)
             .fetch_all(pool)
             .await?;
-        let fetched = rows.len() as i64;
+        let fetched = crate::casts::len_i64(rows.len());
         let mut candidates = Vec::with_capacity(rows.len());
         for row in &rows {
             last_id = row.try_get("id")?;
@@ -718,11 +718,13 @@ async fn run_once_with_storage(
         .rows_affected();
     let mut tx = pool.begin().await?;
     lock_world_projection(&mut tx).await?;
-    derived += sqlx::query(UPSERT_LOCAL_WORLDS)
-        .bind(content_public_url)
-        .execute(&mut *tx)
-        .await?
-        .rows_affected() as usize;
+    derived += crate::casts::to_usize(
+        sqlx::query(UPSERT_LOCAL_WORLDS)
+            .bind(content_public_url)
+            .execute(&mut *tx)
+            .await?
+            .rows_affected(),
+    );
     sqlx::query(DISPLACE_MIRRORED_WORLDS)
         .bind(None::<Vec<String>>)
         .execute(&mut *tx)

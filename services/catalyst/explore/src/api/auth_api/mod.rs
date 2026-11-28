@@ -23,6 +23,7 @@ use uuid::Uuid;
 use crate::api::Shared as AppState;
 use crate::api::internal_error;
 use crate::auth::AuthChain;
+use crate::casts;
 use crate::shared::client_ip::{
     client_ip, is_internal, is_trusted_proxy, normalize_ip, single_real_ip, source_key,
 };
@@ -697,7 +698,7 @@ async fn request_capacity_refusal(
     source: Option<&str>,
     now: DateTime<Utc>,
 ) -> sqlx::Result<Option<Response>> {
-    let max = MAX_PENDING_REQUESTS as i64;
+    let max = casts::len_i64(MAX_PENDING_REQUESTS);
     let mut counts = request_counts(conn, source, now).await?;
     if counts.0 >= max {
         sweep_expired_requests(conn, now).await?;
@@ -731,7 +732,7 @@ async fn request_capacity_refusal(
         ));
     }
     Ok(
-        (source.is_some() && from_source >= MAX_REQUESTS_PER_SOURCE as i64)
+        (source.is_some() && from_source >= casts::len_i64(MAX_REQUESTS_PER_SOURCE))
             .then(too_many_from_network),
     )
 }
@@ -881,7 +882,7 @@ async fn network_at_cap(
         .bind(naive(now))
         .fetch_one(&state.pool)
         .await?;
-    Ok(from_source >= table.cap() as i64)
+    Ok(from_source >= casts::len_i64(table.cap()))
 }
 
 /// The caps checked and the request stored in one transaction under the
@@ -1834,7 +1835,7 @@ mod tests {
             "the signed-fetch chain is charged too"
         );
         assert_eq!(
-            wallet.calls() as u32,
+            u32::try_from(wallet.calls()).unwrap(),
             contract_checks::PER_SOURCE,
             "each call is charged"
         );
@@ -2563,7 +2564,7 @@ mod tests {
                     $3 - make_interval(secs => $1 - i), $2, $4, 's' || i \
              FROM generate_series(0, $1 - 1) AS i",
         )
-        .bind(n as i32)
+        .bind(i32::try_from(n).unwrap())
         .bind(naive(expiration))
         .bind(naive(now))
         .bind(status.as_str())
@@ -2680,7 +2681,7 @@ mod tests {
         .fetch_one(&state.pool)
         .await
         .unwrap();
-        assert_eq!(held, MAX_REQUESTS_PER_SOURCE as i64);
+        assert_eq!(held, casts::len_i64(MAX_REQUESTS_PER_SOURCE));
         db.teardown().await;
     }
 

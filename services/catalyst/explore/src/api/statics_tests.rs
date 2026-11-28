@@ -956,7 +956,7 @@ async fn poster_read_through_validates_avif_brands_and_persists_detected_headers
             stored,
             (
                 (*expected_type).into(),
-                bytes.len() as i64,
+                i64::try_from(bytes.len()).unwrap(),
                 "upstream".into()
             )
         );
