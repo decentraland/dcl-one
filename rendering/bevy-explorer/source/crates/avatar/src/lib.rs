@@ -1895,7 +1895,7 @@ fn process_avatar(
             let mut transitions = AnimationTransitions::default();
             // play default idle anim to avoid t-posing
             if let Some(clip) = emote_loader
-                .get_representation(EmoteUrn::new("Idle_Male").unwrap(), &def.body_shape)
+                .get_representation(&animate::URN_IDLE, &def.body_shape)
                 .ok()
                 .and_then(|rep| rep.avatar_animation(&gltfs).ok())
                 .flatten()
