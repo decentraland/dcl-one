@@ -32,6 +32,7 @@ use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 #[cfg(not(feature = "inspect"))]
 pub struct InspectorServer;
 
+mod array_buffers;
 mod blob_slice;
 mod clock;
 mod errors;
@@ -227,8 +228,24 @@ fn scene_ops(super_user: bool) -> (Vec<OpDecl>, HashMap<&'static str, OpDecl>) {
 /// Per-isolate V8 heap cap. Every scene runs in its own isolate on its own thread, so a cap here
 /// bounds ONE scene's memory and stops a single runaway/hostile scene from OOM-killing the shared
 /// sidecar (and every co-tenant scene with it). The near-limit callback in
-/// [`create_runtime_with_heap_cap`] terminates just that isolate instead of aborting the process.
+/// [`create_runtime_with_limits`] terminates just that isolate instead of aborting the process.
 const MAX_SCENE_HEAP_BYTES: usize = 512 * 1024 * 1024;
+
+/// Per-scene ArrayBuffer budget. Their memory is outside the V8 heap, so the heap cap does not
+/// bound it; a scene past this budget is terminated like one past its heap cap.
+const MAX_SCENE_ARRAY_BUFFER_BYTES: usize = 512 * 1024 * 1024;
+
+/// What one scene's isolate may hold.
+#[derive(Clone, Copy)]
+struct SceneLimits {
+    heap: usize,
+    array_buffers: usize,
+}
+
+const SCENE_LIMITS: SceneLimits = SceneLimits {
+    heap: MAX_SCENE_HEAP_BYTES,
+    array_buffers: MAX_SCENE_ARRAY_BUFFER_BYTES,
+};
 
 pub fn create_runtime(
     inspect: bool,
@@ -236,22 +253,17 @@ pub fn create_runtime(
     storage_root: &str,
     kill_flag: KillFlag,
 ) -> (JsRuntime, Option<InspectorServer>) {
-    create_runtime_with_heap_cap(
-        inspect,
-        super_user,
-        storage_root,
-        kill_flag,
-        MAX_SCENE_HEAP_BYTES,
-    )
+    create_runtime_with_limits(inspect, super_user, storage_root, kill_flag, SCENE_LIMITS)
 }
 
-fn create_runtime_with_heap_cap(
+fn create_runtime_with_limits(
     inspect: bool,
     super_user: bool,
     storage_root: &str,
     kill_flag: KillFlag,
-    max_heap: usize,
+    limits: SceneLimits,
 ) -> (JsRuntime, Option<InspectorServer>) {
+    let max_heap = limits.heap;
     #[cfg(test)]
     crate::test_platform();
 
@@ -290,12 +302,18 @@ fn create_runtime_with_heap_cap(
     // granted on each near-limit trip while the scene is being terminated
     const HEAP_LIMIT_MARGIN: usize = 128 * 1024 * 1024;
 
+    let array_buffers = array_buffers::ArrayBufferBudget::new(limits.array_buffers);
+
     // create runtime
     #[allow(unused_mut)]
     let mut runtime = JsRuntime::new(RuntimeOptions {
         extensions: vec![webidl, web, fetch_ext, ext],
         inspector: inspect,
-        create_params: Some(deno_core::v8::CreateParams::default().heap_limits(0, max_heap)),
+        create_params: Some(
+            deno_core::v8::CreateParams::default()
+                .heap_limits(0, max_heap)
+                .array_buffer_allocator(array_buffers::allocator(&array_buffers)),
+        ),
         ..Default::default()
     });
 
@@ -303,6 +321,24 @@ fn create_runtime_with_heap_cap(
         .op_state()
         .borrow_mut()
         .put(local_storage::LocalStorageDir(storage_folder));
+    runtime.op_state().borrow_mut().put(array_buffers.clone());
+
+    // Past its ArrayBuffer budget the scene ends the same way as past its heap cap.
+    {
+        let terminate_handle = runtime.v8_isolate().thread_safe_handle();
+        let kill_flag = kill_flag.clone();
+        let logged = std::sync::atomic::AtomicBool::new(false);
+        let limit = limits.array_buffers;
+        array_buffers.on_over(move || {
+            if !logged.swap(true, std::sync::atomic::Ordering::SeqCst) {
+                bevy::prelude::error!(
+                    "scene exceeded its {limit}-byte ArrayBuffer budget; terminating the scene isolate"
+                );
+            }
+            kill_flag.kill();
+            terminate_handle.terminate_execution();
+        });
+    }
 
     // On approaching the cap, terminate this isolate's execution so its JS unwinds and the
     // scene ends cleanly; raise the reported limit so V8 has headroom to run the
@@ -558,12 +594,16 @@ pub(crate) fn scene_thread(
                     components += component.0.len() as u64;
                 }
             }
+            let array_buffer_bytes = guard
+                .try_borrow::<std::sync::Arc<array_buffers::ArrayBufferBudget>>()
+                .map_or(0, |budget| budget.used() as u64);
             let outstanding = fetch::outstanding_calls(&guard);
             let open = websocket::open_sockets(&guard);
             let counters = guard.borrow_mut::<SceneResourceCounters>();
             counters.heap_used = heap.used_heap_size() as u64;
             counters.heap_limit = heap.heap_size_limit() as u64;
             counters.external_memory = heap.external_memory() as u64;
+            counters.array_buffers = array_buffer_bytes;
             counters.crdt_store_bytes = store_bytes;
             counters.crdt_entities = entities.len() as u64;
             counters.crdt_components = components;
@@ -880,22 +920,22 @@ mod tests {
 
     /// [`run_scene`], optionally as the super-user scene.
     fn run_scene_as(is_server: bool, super_user: bool, scene_js: &str) -> Result<(), String> {
-        run_scene_with(is_server, super_user, super::MAX_SCENE_HEAP_BYTES, scene_js)
+        run_scene_with(is_server, super_user, super::SCENE_LIMITS, scene_js)
     }
 
-    /// [`run_scene_as`] under a heap cap of `max_heap` bytes.
+    /// [`run_scene_as`] under `limits`.
     fn run_scene_with(
         is_server: bool,
         super_user: bool,
-        max_heap: usize,
+        limits: super::SceneLimits,
         scene_js: &str,
     ) -> Result<(), String> {
-        let (mut runtime, _) = super::create_runtime_with_heap_cap(
+        let (mut runtime, _) = super::create_runtime_with_limits(
             false,
             super_user,
             "test-scene-realm",
             Default::default(),
-            max_heap,
+            limits,
         );
         let (host, _inbox) = tokio::sync::mpsc::unbounded_channel();
         {

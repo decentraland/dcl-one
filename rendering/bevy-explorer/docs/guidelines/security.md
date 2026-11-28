@@ -81,6 +81,12 @@ asked each time. Fetch and WebSocket go through that path on native, where `dcl_
 `crates/dcl_deno/src/js/websocket.rs`); on web they are deliberately ungated, because scene code
 there can always reach the page's raw `fetch`, so a check on them would be bypassable.
 
+**On native, a scene's memory ends the scene, not the sidecar.** Each isolate has a heap cap
+and an ArrayBuffer budget (`crates/dcl_deno/src/js/mod.rs`, `array_buffers.rs`); going past
+either terminates that scene. Never make a limit refuse an allocation V8 makes for the host:
+V8 aborts the process when one fails. Buffers V8 adopts from Rust memory, resizable buffers,
+`SharedArrayBuffer` and WebAssembly memory are not counted yet.
+
 ## Network capabilities
 
 Use the existing engine-assigned scene identity and the transport's Rust address policy when
