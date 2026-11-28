@@ -10,8 +10,8 @@ export const PRESET_NAMES = ['Low', 'Medium', 'High']
 const DEFAULT = Symbol('engine default')
 
 // A string names an enum variant (resolved against the setting's namedVariants), a number is a raw
-// slider value. A setting the engine does not publish (platform-dependent) is skipped. Load
-// distance, avatars, videos and props are left to the player.
+// slider value. A setting the engine does not publish (platform-dependent) is skipped. Avatars,
+// videos and props are left to the player.
 type PresetValue = number | string | typeof DEFAULT
 const PRESET_VALUES: Record<string, [PresetValue, PresetValue, PresetValue]> = {
   'Target Frame Rate': ['30 fps', DEFAULT, '144 fps'],
@@ -30,7 +30,14 @@ const PRESET_VALUES: Record<string, [PresetValue, PresetValue, PresetValue]> = {
   'Depth of Field': ['High', DEFAULT, 'High'],
   SSAO: ['Off', DEFAULT, 'Off'],
   Fog: ['On', DEFAULT, 'On'],
-  'Sky Reflections': ['High', DEFAULT, 'High']
+  'Sky Reflections': ['High', DEFAULT, 'High'],
+  // scene loading: one profile per preset; the Performance tab's Scene Loading rings tune it
+  // further. 150 is the Imposter Ring's last value, no limit
+  'Distant Scene Rendering': ['Normal', DEFAULT, 'Ultra'],
+  'Live Scene Ring': [1, DEFAULT, 2],
+  'Near LOD Ring': [2, DEFAULT, 4],
+  'Far LOD Ring': [12, DEFAULT, 30],
+  'Imposter Ring': [50, DEFAULT, 150]
 }
 
 function resolveValue(setting: Setting, value: PresetValue): number | undefined {

@@ -264,17 +264,17 @@ fn a_wider_live_ring_goes_live_and_keeps_one_ring_further() {
 #[test]
 fn an_out_of_range_live_ring_is_clamped() {
     let mut world = lifecycle_world();
-    // past the setting's 0 to 3 range, as a hand-edited config could hold
+    // past the setting's 0 to 5 range, as a hand-edited config could hold
     zero_load_distance(&mut world, u16::MAX);
     let neighbour = spawn_live_neighbour(&mut world);
 
-    // parcel (-3,0): ring 4, the keep ring of ring 3
-    move_player(&mut world, -40.0);
+    // parcel (-5,0): ring 6, the keep ring of ring 5
+    move_player(&mut world, -72.0);
     world.run_system_once(process_scene_lifecycle).unwrap();
     assert!(world.get_entity(neighbour).is_ok());
 
-    // parcel (-4,0): ring 5
-    move_player(&mut world, -56.0);
+    // parcel (-6,0): ring 7
+    move_player(&mut world, -88.0);
     world.run_system_once(process_scene_lifecycle).unwrap();
     assert!(world.get_entity(neighbour).is_err());
 }

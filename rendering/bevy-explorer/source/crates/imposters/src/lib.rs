@@ -73,15 +73,8 @@ fn set_impost_distance(
             .flat_map(Result::ok)
             .collect::<Vec<_>>();
         input.reply_ok(format!("imposter distances set to {distances:?}"));
-        scene_distance.load_imposter = distances
-            .last()
-            .map(|last| {
-                // actual distance we need is last + diagonal of the largest mip size
-                let mip_size = (1 << (distances.len() - 1)) as f32 * 16.0;
-                last + (2.0 * mip_size * mip_size).sqrt()
-            })
-            .unwrap_or(0.0);
         config.scene_imposter_distances = distances;
+        scene_distance.load_imposter = config.imposter_range();
     }
 }
 

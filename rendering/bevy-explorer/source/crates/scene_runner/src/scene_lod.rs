@@ -12,12 +12,12 @@
 //!   colliders block as soon as the model is processed, whether or not anything is drawn, and the
 //!   glTF goes then, leaving the collider shapes in main-world memory. A colliders part is never
 //!   interrupted: it goes with its scene.
-//! - Visuals, for the scenes in view under "Max Near LODs" (`GltfPart::Visuals`): the same asset
+//! - Visuals, for the scenes in view under the near LOD count (`AppConfig::near_lods_cap`, `GltfPart::Visuals`): the same asset
 //!   the live scene loads, drawn once every model is processed. When the cap is full, one behind
 //!   the camera makes way for one in view; dropping it frees its textures and meshes once nothing
 //!   else holds the glTF, and coming back reloads from the disk cache the colliders part filled.
 //!
-//! A far LOD has visuals only, under "Max Far LODs" by the same rule, and no colliders. It goes
+//! A far LOD has visuals only, under the far LOD count (`AppConfig::far_lods_cap`) by the same rule, and no colliders. It goes
 //! when the near one shows; any stand-in goes, all its parts with it, in the frame the live
 //! scene's content is first on screen. The live scene's containers made before then name the
 //! same files and share the loaded glTFs.
@@ -232,7 +232,7 @@ impl Plugin for SceneLodPlugin {
                         "Near LODs not drawn (behind, out of range or over the limit)",
                         "near.waiting",
                     ),
-                    ("Max Near LODs (setting)", "near.max"),
+                    ("Near LOD count (from the ring)", "near.max"),
                     ("Scenes without a near LOD", "near.none"),
                     ("Far LODs shown", "far.shown"),
                     ("Far LODs loading", "far.loading"),
@@ -240,7 +240,7 @@ impl Plugin for SceneLodPlugin {
                         "Far LODs not drawn (behind, out of range or over the limit)",
                         "far.waiting",
                     ),
-                    ("Max Far LODs (setting)", "far.max"),
+                    ("Far LOD count (from the ring)", "far.max"),
                     ("Scenes without a far LOD", "far.none"),
                     ("Far LODs the server has none for", "far.missing"),
                     ("Far LOD requests failed in a row", "far.failures"),
@@ -384,10 +384,10 @@ fn lod_state(
         }
     }
     let mut near = level_counts(counts[0]);
-    near["max"] = json!(config.max_near_lods);
+    near["max"] = json!(config.near_lods_cap());
     near["colliders"] = json!(counts[0][4]);
     let mut far = level_counts(counts[1]);
-    far["max"] = json!(config.max_far_lods);
+    far["max"] = json!(config.far_lods_cap());
     let health = ipfs.far_lod_status();
     far["missing"] = json!(health.missing);
     far["failures"] = json!(health.failures);
@@ -482,7 +482,7 @@ pub enum Visuals {
 }
 
 impl Visuals {
-    /// Takes a place under "Max Near LODs".
+    /// Takes a place under the near LOD count.
     fn started(&self) -> bool {
         matches!(self, Visuals::Loading | Visuals::Shown)
     }
@@ -711,8 +711,9 @@ fn update_scene_lods(
         in_range.read(center, rings.scan(), preview.is_preview, &pointers, &tiling);
     }
     let scenes = &in_range.scenes;
-    // no far LOD can be offered this session: none is kept or spawned
-    let far_off = ipfs.far_lods_off();
+    // no far LOD can be offered this session, or none may show (Distant Scene Rendering off or
+    // a far LOD count of 0): none is kept or spawned
+    let far_off = ipfs.far_lods_off() || config.far_lods_cap() == 0;
 
     let shown = |hash: &str| {
         live_scenes
@@ -904,8 +905,8 @@ fn visual_changes(
     (start, stop)
 }
 
-/// The visuals to start and to stop this frame: near LODs under "Max Near LODs", then far LODs
-/// under "Max Far LODs", at most `far_max_starts` of them starting. A scene in the near band whose near
+/// The visuals to start and to stop this frame: near LODs under the near LOD count, then far LODs
+/// under the far LOD count, at most `far_max_starts` of them starting. A scene in the near band whose near
 /// LOD is not drawn this frame (no free place, stopped, or nothing to show) may draw its far LOD
 /// instead; while its near LOD is shown, the scene's far visuals stop and none start.
 fn lod_visual_changes(
@@ -918,7 +919,7 @@ fn lod_visual_changes(
     let (mut start, mut stop) = visual_changes(
         lods,
         LodLevel::Near,
-        config.max_near_lods,
+        config.near_lods_cap(),
         &none,
         &rings,
         usize::MAX,
@@ -960,7 +961,7 @@ fn lod_visual_changes(
     let (far_start, mut far_stop) = visual_changes(
         lods,
         LodLevel::Far,
-        config.max_far_lods,
+        config.far_lods_cap(),
         &near_waiting,
         &rings,
         far_max_starts,
@@ -1668,7 +1669,7 @@ mod tests {
     fn rings_are_clamped_to_their_settings() {
         assert_eq!(
             from_settings(u16::MAX, 0, u16::MAX),
-            rings_of(3, 4, 1, 2, 5, 40)
+            rings_of(5, 6, 1, 2, 7, 40)
         );
         assert_eq!(from_settings(0, u16::MAX, 0), rings_of(0, 1, 8, 9, 10, 5));
     }
@@ -1690,8 +1691,8 @@ mod tests {
         rows.push(far(&mut world, "first"));
         rows.push(far(&mut world, "second"));
         let config = AppConfig {
-            max_near_lods: 1,
-            max_far_lods: 5,
+            near_lods_budget: Some(1),
+            far_lods_budget: Some(5),
             ..Default::default()
         };
         assert_eq!(
@@ -1708,8 +1709,8 @@ mod tests {
         lod.level = LodLevel::Far;
         let rows = [(world.spawn_empty().id(), lod, at_ring(8, false))];
         let config = AppConfig {
-            max_near_lods: 1,
-            max_far_lods: 5,
+            near_lods_budget: Some(1),
+            far_lods_budget: Some(5),
             ..Default::default()
         };
         assert_eq!(
@@ -1741,8 +1742,8 @@ mod tests {
             (world.spawn_empty().id(), lod, at_ring(ring, false))
         };
         let config = AppConfig {
-            max_near_lods: 1,
-            max_far_lods: 5,
+            near_lods_budget: Some(1),
+            far_lods_budget: Some(5),
             ..Default::default()
         };
         // a near LOD that never started (after a teleport) or whose visuals are off
@@ -1784,8 +1785,8 @@ mod tests {
             far(Visuals::Off, 7, false),
         ];
         let config = AppConfig {
-            max_near_lods: 1,
-            max_far_lods: 2,
+            near_lods_budget: Some(1),
+            far_lods_budget: Some(2),
             ..Default::default()
         };
         assert_eq!(
@@ -1816,8 +1817,8 @@ mod tests {
             far(&mut world, Visuals::Shown),
         ];
         let config = AppConfig {
-            max_near_lods: 1,
-            max_far_lods: 5,
+            near_lods_budget: Some(1),
+            far_lods_budget: Some(5),
             ..Default::default()
         };
         assert_eq!(
@@ -1881,7 +1882,7 @@ mod tests {
         );
     }
 
-    /// Lowering "Max Near LODs" stops the farthest over it, those behind the camera first.
+    /// Lowering the near LOD count stops the farthest over it, those behind the camera first.
     #[test]
     fn lowering_the_cap_stops_behind_then_in_view() {
         let mut world = World::new();

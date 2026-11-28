@@ -216,14 +216,12 @@ pub fn spawn_imposters(
     mut manager: ImposterSpecManager,
     mut tiling: ResMut<ImposterTiling>,
 ) {
-    if config.scene_imposter_distances.is_empty() {
-        tiling.set_if_neq(ImposterTiling::Off);
-    }
     if current_realm.is_changed() || config.scene_imposter_distances.is_empty() {
-        if !config.scene_imposter_distances.is_empty() {
-            // no far LOD fits until the layout around the new realm's focus is published
-            tiling.set_if_neq(ImposterTiling::Pending);
-        }
+        // no far LOD fits until the layout around the new realm's focus is published. Without
+        // imposter distances there are no far LODs either (`AppConfig::far_lods_cap`), and the
+        // layout stays unpublished, so turning them back on starts none before it is known,
+        // whichever of this system and the stand-ins' runs first
+        tiling.set_if_neq(ImposterTiling::Pending);
         for (entity, _) in &current_imposters {
             if let Ok(mut commands) = commands.get_entity(entity) {
                 commands.despawn();

@@ -99,7 +99,7 @@ const SECTIONS: Record<string, { title: string; match?: RegExp }[]> = {
     { title: 'General', match: /graphics quality|preset/i },
     { title: 'Display', match: /resolution|fullscreen|window|v[ -]?sync|fps|frame[ -]?rate|monitor/i },
     { title: 'Post Processing', match: /msaa|anti[ -]?alias|\baa\b|hdr|bloom|outline|ssao|occlusion|depth of field|\bdof\b|fog|cel shad/i },
-    { title: 'Landscape and Foliage', match: /grass|foliage|landscape|scene (load )?distance|lod|environment/i },
+    { title: 'Landscape and Foliage', match: /grass|foliage|landscape|distant scene|environment/i },
     { title: 'Sun', match: /\bsun\b|\bsky\b/i },
     { title: 'Scene Lighting', match: /light|ambient/i },
     { title: 'Shadows', match: /shadow|^quality$|texture/i },
@@ -107,7 +107,11 @@ const SECTIONS: Record<string, { title: string; match?: RegExp }[]> = {
     { title: 'Physics', match: /jiggle|physics|bones/i }
   ],
   audio: [{ title: 'Volume' }, { title: 'Voice Chat & Streams', match: /microphone|\bmic\b|device|mute|^voice[ _]chat$/i }],
-  performance: [{ title: 'Avatars', match: /avatars/i }, { title: 'General' }],
+  performance: [
+    { title: 'General' },
+    { title: 'Avatars', match: /avatars/i },
+    { title: 'Scene Loading', match: /\bring\b/i }
+  ],
   controls: [{ title: 'Mouse' }, { title: 'Point At', match: /point|marker/i }]
 }
 function sections(category: string, items: Setting[]): { title: string | null; items: Setting[] }[] {

@@ -672,11 +672,27 @@ pub fn home_account(address: &Address) -> String {
 }
 
 /// The values the "Live Scene Ring" setting takes, in parcel rings.
-pub const LIVE_SCENE_RINGS: RangeInclusive<u16> = 0..=3;
+pub const LIVE_SCENE_RINGS: RangeInclusive<u16> = 0..=5;
 /// The values the "Near LOD Ring" setting takes, in parcel rings.
 pub const NEAR_LOD_RINGS: RangeInclusive<u16> = 1..=8;
 /// The values the "Far LOD Ring" setting takes, in parcel rings.
 pub const FAR_LOD_RINGS: RangeInclusive<u16> = 5..=40;
+/// The values the "Imposter Ring" setting takes, in parcel rings. The last one is no limit.
+pub const IMPOSTER_RINGS: RangeInclusive<u16> = 20..=150;
+
+/// One of the four scene loading bands, nearest first: each has one ring setting.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub enum SceneRing {
+    Live,
+    Near,
+    Far,
+    Imposter,
+}
+
+/// The imposter tile distances of Distant Scene Rendering's Normal and Ultra, before the
+/// Imposter Ring ends them.
+pub const IMPOSTER_DISTANCES_NORMAL: [f32; 6] = [100.0, 200.0, 400.0, 800.0, 1600.0, 99999.0];
+pub const IMPOSTER_DISTANCES_ULTRA: [f32; 5] = [200.0, 400.0, 800.0, 1600.0, 99999.0];
 
 // app configuration
 #[derive(Serialize, Deserialize, Resource, Clone)]
@@ -707,15 +723,16 @@ pub struct AppConfig {
     pub audio: AudioSettings,
     pub cache_bytes: u64,
     pub scene_threads: usize,
+    /// Scenes within this many metres go live, with those of the live ring. No setting changes
+    /// it: preview mode, the server and `/scene_distance` set their own.
     pub scene_load_distance: f32,
     pub scene_unload_extra_distance: f32,
-    /// How many loading scenes may draw a near LOD (their own models) at once, in view and
-    /// behind the camera together: the nearest in view start first, and with none free one
-    /// behind the camera makes way for one in view. A near LOD's colliders take no place.
-    pub max_near_lods: usize,
-    /// How many scenes may load or show a far LOD (the asset pipeline's simplified mesh) at once,
-    /// in view and behind the camera together, as `max_near_lods` counts near LODs.
-    pub max_far_lods: usize,
+    /// A near LOD count to use in place of the one the near ring gives
+    /// ([`Self::near_lods_cap`]). No setting writes it: it is set by hand in the config file to
+    /// measure memory and frame time at a fixed count, whatever the ring.
+    pub near_lods_budget: Option<usize>,
+    /// The same for the far LOD count ([`Self::far_lods_cap`]).
+    pub far_lods_budget: Option<usize>,
     /// Scenes within this Chebyshev parcel ring of the player's parcel go live whatever the load
     /// distance, and are kept one ring further. Within [`LIVE_SCENE_RINGS`].
     pub live_scene_ring: u16,
@@ -725,6 +742,10 @@ pub struct AppConfig {
     /// The outer bound of far LODs; the imposter tiles may end them sooner. Within
     /// [`FAR_LOD_RINGS`].
     pub far_lod_ring: u16,
+    /// The ring the imposter tiles end at; the last of [`IMPOSTER_RINGS`] is no limit. The
+    /// "Imposter Ring" and "Distant Scene Rendering" settings write `scene_imposter_distances`
+    /// from it ([`Self::set_imposters`]).
+    pub imposter_ring: u16,
     pub scene_imposter_distances: Vec<f32>,
     pub scene_imposter_multisample: bool,
     pub scene_imposter_multisample_amount: f32,
@@ -782,7 +803,7 @@ pub struct AppConfig {
 
 /// bump to run one-time migrations of the preset-managed settings in existing configs
 /// (see [`AppConfig::reset_outdated_settings`])
-pub const SETTINGS_GENERATION: u32 = 6;
+pub const SETTINGS_GENERATION: u32 = 7;
 
 /// bump to run one-time migrations of saved input binding tables
 /// (see [`AppConfig::migrate_inputs`])
@@ -807,12 +828,13 @@ impl Default for AppConfig {
             scene_threads: 4,
             scene_load_distance: 10.0,
             scene_unload_extra_distance: 10.0,
-            max_near_lods: 12,
-            max_far_lods: 200,
+            near_lods_budget: None,
+            far_lods_budget: None,
             live_scene_ring: 1,
             near_lod_ring: 3,
             far_lod_ring: 20,
-            scene_imposter_distances: vec![100.0, 200.0, 400.0, 800.0, 1600.0, 99999.0],
+            imposter_ring: *IMPOSTER_RINGS.end(),
+            scene_imposter_distances: IMPOSTER_DISTANCES_NORMAL.to_vec(),
             scene_imposter_multisample: false,
             scene_imposter_multisample_amount: 0.0,
             scene_imposter_bake: SceneImposterBake::Off,
@@ -848,6 +870,128 @@ impl Default for AppConfig {
 }
 
 impl AppConfig {
+    /// True while Distant Scene Rendering is off: no imposter distances, and so no far LODs.
+    pub fn distant_scenes_off(&self) -> bool {
+        self.scene_imposter_distances.is_empty()
+    }
+
+    /// How many loading scenes may draw a near LOD (their own models) at once, in view and
+    /// behind the camera together: the nearest in view start first, and with none free one
+    /// behind the camera makes way for one in view. A near LOD's colliders take no place. The
+    /// near ring gives it, so a wider ring draws more: 6, 12 and 20 at rings 2, 3 and 4, and
+    /// never more than 40.
+    pub fn near_lods_cap(&self) -> usize {
+        let ring = self
+            .near_lod_ring
+            .clamp(*NEAR_LOD_RINGS.start(), *NEAR_LOD_RINGS.end()) as usize;
+        self.near_lods_budget.unwrap_or((ring * (ring + 1)).min(40))
+    }
+
+    /// How many scenes may load or show a far LOD (the asset pipeline's simplified mesh) at once,
+    /// in view and behind the camera together, as [`Self::near_lods_cap`] counts near LODs: none
+    /// while Distant Scene Rendering is off. The far ring gives it: 100, 200 and 400 at rings
+    /// 12, 20 and 30, and 600 at the widest.
+    pub fn far_lods_cap(&self) -> usize {
+        if self.distant_scenes_off() {
+            return 0;
+        }
+        let ring = self
+            .far_lod_ring
+            .clamp(*FAR_LOD_RINGS.start(), *FAR_LOD_RINGS.end()) as usize;
+        self.far_lods_budget.unwrap_or(if ring <= 20 {
+            (25 * ring - 100) / 2
+        } else {
+            200 + 20 * (ring - 20)
+        })
+    }
+
+    /// Set one band's ring, within its range, and move the others along where they would cross
+    /// it, so the bands stay in order: near LODs reach past the live ring, far LODs at least two
+    /// rings past the near ring, and imposters at least as far as far LODs. A ring further out
+    /// than the one set is pushed out, one further in is pulled in.
+    pub fn set_scene_ring(&mut self, ring: SceneRing, value: u16) {
+        let clamp =
+            |value: u16, range: RangeInclusive<u16>| value.clamp(*range.start(), *range.end());
+        let imposter_was = self.imposter_ring;
+        match ring {
+            SceneRing::Live => self.live_scene_ring = value,
+            SceneRing::Near => self.near_lod_ring = value,
+            SceneRing::Far => self.far_lod_ring = value,
+            SceneRing::Imposter => self.imposter_ring = value,
+        }
+        self.live_scene_ring = clamp(self.live_scene_ring, LIVE_SCENE_RINGS);
+        self.near_lod_ring = clamp(self.near_lod_ring, NEAR_LOD_RINGS);
+        self.far_lod_ring = clamp(self.far_lod_ring, FAR_LOD_RINGS);
+        self.imposter_ring = clamp(self.imposter_ring, IMPOSTER_RINGS);
+
+        // inwards from the ring set: every range reaches low enough for the one outside it
+        if ring >= SceneRing::Imposter {
+            self.far_lod_ring = self.far_lod_ring.min(self.imposter_ring);
+        }
+        if ring >= SceneRing::Far {
+            self.near_lod_ring = self.near_lod_ring.min(self.far_lod_ring - 2);
+        }
+        if ring >= SceneRing::Near {
+            self.live_scene_ring = self.live_scene_ring.min(self.near_lod_ring - 1);
+        }
+        // outwards: every range reaches high enough for the one inside it
+        if ring <= SceneRing::Live {
+            self.near_lod_ring = self.near_lod_ring.max(self.live_scene_ring + 1);
+        }
+        if ring <= SceneRing::Near {
+            self.far_lod_ring = self.far_lod_ring.max(self.near_lod_ring + 2);
+        }
+        if ring <= SceneRing::Far {
+            self.imposter_ring = self.imposter_ring.max(self.far_lod_ring);
+        }
+
+        if self.imposter_ring != imposter_was {
+            self.set_imposters(self.imposter_level());
+        }
+    }
+
+    /// The imposter distances of Distant Scene Rendering's level, or none while it is off.
+    pub fn imposter_level(&self) -> &'static [f32] {
+        match self.scene_imposter_distances.first() {
+            None => &[],
+            Some(200.0) => &IMPOSTER_DISTANCES_ULTRA,
+            _ => &IMPOSTER_DISTANCES_NORMAL,
+        }
+    }
+
+    /// Write the imposter tile distances: `base` (one of the Distant Scene Rendering levels, or
+    /// none for off), ended at the imposter ring. The first distance is kept whatever the ring,
+    /// since it tells Normal from Ultra.
+    pub fn set_imposters(&mut self, base: &[f32]) {
+        let ring = self
+            .imposter_ring
+            .clamp(*IMPOSTER_RINGS.start(), *IMPOSTER_RINGS.end());
+        self.scene_imposter_distances = if ring == *IMPOSTER_RINGS.end() {
+            base.to_vec()
+        } else {
+            let edge = f32::from(ring) * 16.0;
+            let mut distances: Vec<f32> = base
+                .iter()
+                .enumerate()
+                .filter(|(ix, distance)| *ix == 0 || **distance < edge)
+                .map(|(_, distance)| *distance)
+                .collect();
+            if distances.last().is_some_and(|last| *last < edge) {
+                distances.push(edge);
+            }
+            distances
+        };
+    }
+
+    /// How far imposters are needed, in metres: the last tile distance and the diagonal of the
+    /// largest tile, or 0 with no imposters.
+    pub fn imposter_range(&self) -> f32 {
+        self.scene_imposter_distances.last().map_or(0.0, |last| {
+            let tile = (1 << (self.scene_imposter_distances.len() - 1)) as f32 * 16.0;
+            last + (2.0 * tile * tile).sqrt()
+        })
+    }
+
     pub fn terms_accepted(&self) -> bool {
         self.accepted_terms.is_some_and(|v| v >= TERMS_VERSION)
     }
@@ -940,6 +1084,8 @@ impl AppConfig {
     /// nearest step.
     /// gen 6: new defaults for the player speeds and jump heights, which now measure a jump
     /// released at once. A value still on its old default moves to the new default.
+    /// gen 7: the load and unload distance settings are gone; a raised load distance becomes
+    /// the live ring that covers it, and both distances go back to their defaults.
     pub fn reset_outdated_settings(&mut self) {
         if self.settings_generation >= SETTINGS_GENERATION {
             return;
@@ -972,6 +1118,20 @@ impl AppConfig {
                 }
             }
         }
+        if self.settings_generation < 7 {
+            // the load distance settings are gone: a raised one becomes the live ring that
+            // covers it
+            let covering = (self.scene_load_distance / 16.0).ceil() as u16;
+            let mut ring = self.live_scene_ring;
+            if self.scene_load_distance > default.scene_load_distance {
+                ring = ring.max(covering);
+            }
+            // set even when unchanged: a saved config with its rings out of order is put in
+            // order here, the rings past the live ring pushed out
+            self.set_scene_ring(SceneRing::Live, ring);
+            self.scene_load_distance = default.scene_load_distance;
+            self.scene_unload_extra_distance = default.scene_unload_extra_distance;
+        }
         self.settings_generation = SETTINGS_GENERATION;
     }
 
@@ -992,8 +1152,6 @@ impl AppConfig {
         self.graphics.spring_bones = default.graphics.spring_bones;
         self.scene_load_distance = default.scene_load_distance;
         self.scene_unload_extra_distance = default.scene_unload_extra_distance;
-        self.max_near_lods = default.max_near_lods;
-        self.max_far_lods = default.max_far_lods;
         self.scene_imposter_distances = default.scene_imposter_distances.clone();
         self.scene_imposter_multisample = default.scene_imposter_multisample;
         self.scene_imposter_multisample_amount = default.scene_imposter_multisample_amount;
@@ -3331,6 +3489,177 @@ mod tests {
     }
 
     #[test]
+    fn distant_scene_rendering_off_turns_far_lods_off() {
+        let mut config = AppConfig::default();
+        assert_eq!(config.far_lods_cap(), 200);
+        config.scene_imposter_distances.clear();
+        assert_eq!(config.far_lods_cap(), 0);
+        config.far_lods_budget = Some(50);
+        assert_eq!(config.far_lods_cap(), 0);
+    }
+
+    #[test]
+    fn the_rings_give_the_lod_counts() {
+        let caps = |near_lod_ring, far_lod_ring| {
+            let config = AppConfig {
+                near_lod_ring,
+                far_lod_ring,
+                ..Default::default()
+            };
+            (config.near_lods_cap(), config.far_lods_cap())
+        };
+        // the Low, Medium and High presets
+        assert_eq!(caps(2, 12), (6, 100));
+        assert_eq!(caps(3, 20), (12, 200));
+        assert_eq!(caps(4, 30), (20, 400));
+        // the ends of both ranges, and values past them
+        assert_eq!(caps(1, 5), (2, 12));
+        assert_eq!(caps(8, 40), (40, 600));
+        assert_eq!(caps(0, 0), (2, 12));
+        assert_eq!(caps(u16::MAX, u16::MAX), (40, 600));
+        // a wider ring never draws fewer
+        for ring in 1..40 {
+            let ((near, far), (wider_near, wider_far)) =
+                (caps(ring, ring), caps(ring + 1, ring + 1));
+            assert!(wider_near >= near && wider_far >= far);
+        }
+
+        let config = AppConfig {
+            near_lods_budget: Some(1),
+            far_lods_budget: Some(5),
+            ..Default::default()
+        };
+        assert_eq!((config.near_lods_cap(), config.far_lods_cap()), (1, 5));
+    }
+
+    #[test]
+    fn the_imposter_ring_ends_the_tile_distances() {
+        let mut config = AppConfig::default();
+        config.set_imposters(&IMPOSTER_DISTANCES_NORMAL);
+        assert_eq!(config.scene_imposter_distances, IMPOSTER_DISTANCES_NORMAL);
+
+        config.imposter_ring = 50;
+        config.set_imposters(&IMPOSTER_DISTANCES_NORMAL);
+        assert_eq!(
+            config.scene_imposter_distances,
+            [100.0, 200.0, 400.0, 800.0]
+        );
+        config.set_imposters(&IMPOSTER_DISTANCES_ULTRA);
+        assert_eq!(config.scene_imposter_distances, [200.0, 400.0, 800.0]);
+
+        // the narrowest ring, and one below it: the first distance stays
+        config.imposter_ring = 0;
+        config.set_imposters(&IMPOSTER_DISTANCES_ULTRA);
+        assert_eq!(config.scene_imposter_distances, [200.0, 320.0]);
+        config.set_imposters(&IMPOSTER_DISTANCES_NORMAL);
+        assert_eq!(config.scene_imposter_distances, [100.0, 200.0, 320.0]);
+
+        config.set_imposters(&[]);
+        assert!(config.distant_scenes_off());
+        assert_eq!(config.imposter_range(), 0.0);
+    }
+
+    #[test]
+    fn a_ring_moves_the_others_along_to_keep_the_bands_in_order() {
+        let rings = |config: &AppConfig| {
+            (
+                config.live_scene_ring,
+                config.near_lod_ring,
+                config.far_lod_ring,
+                config.imposter_ring,
+            )
+        };
+        let mut config = AppConfig::default();
+        assert_eq!(rings(&config), (1, 3, 20, 150));
+
+        // nothing crosses: only the ring set moves
+        config.set_scene_ring(SceneRing::Far, 12);
+        assert_eq!(rings(&config), (1, 3, 12, 150));
+        assert_eq!(config.scene_imposter_distances, IMPOSTER_DISTANCES_NORMAL);
+
+        // pulled in: imposters drag the far ring, the far ring drags near and live
+        config.set_scene_ring(SceneRing::Imposter, 20);
+        config.set_scene_ring(SceneRing::Far, 40);
+        assert_eq!(rings(&config), (1, 3, 40, 40));
+        assert_eq!(config.scene_imposter_distances.last(), Some(&640.0));
+        config.set_scene_ring(SceneRing::Imposter, 25);
+        assert_eq!(rings(&config), (1, 3, 25, 25));
+        config.set_scene_ring(SceneRing::Near, 8);
+        config.set_scene_ring(SceneRing::Live, 5);
+        config.set_scene_ring(SceneRing::Far, 5);
+        assert_eq!(rings(&config), (2, 3, 5, 25));
+        config.set_scene_ring(SceneRing::Near, 1);
+        assert_eq!(rings(&config), (0, 1, 5, 25));
+
+        // pushed out: live drags near, near drags far, far drags imposters
+        config.set_scene_ring(SceneRing::Live, 5);
+        assert_eq!(rings(&config), (5, 6, 8, 25));
+        config.set_scene_ring(SceneRing::Near, 8);
+        assert_eq!(rings(&config), (5, 8, 10, 25));
+        config.set_scene_ring(SceneRing::Far, 30);
+        assert_eq!(rings(&config), (5, 8, 30, 30));
+
+        // values past a range are clamped first, and while Distant Scene Rendering is off the
+        // imposter ring moves without bringing tiles back
+        config.set_imposters(&[]);
+        config.set_scene_ring(SceneRing::Far, u16::MAX);
+        assert_eq!(rings(&config), (5, 8, 40, 40));
+        assert!(config.distant_scenes_off());
+
+        // every preset is in order, so applying one ring at a time lands on it
+        for preset in [(1, 2, 12, 50), (1, 3, 20, 150), (2, 4, 30, 150)] {
+            config.set_scene_ring(SceneRing::Live, preset.0);
+            config.set_scene_ring(SceneRing::Near, preset.1);
+            config.set_scene_ring(SceneRing::Far, preset.2);
+            config.set_scene_ring(SceneRing::Imposter, preset.3);
+            assert_eq!(rings(&config), preset);
+        }
+    }
+
+    #[test]
+    fn generation_7_turns_a_raised_load_distance_into_the_live_ring() {
+        let migrated = |scene_load_distance: f32, live_scene_ring: u16| {
+            let mut config = AppConfig {
+                settings_generation: 6,
+                scene_load_distance,
+                scene_unload_extra_distance: 40.0,
+                live_scene_ring,
+                ..Default::default()
+            };
+            config.reset_outdated_settings();
+            assert_eq!(config.settings_generation, SETTINGS_GENERATION);
+            assert_eq!(config.scene_unload_extra_distance, 10.0);
+            (config.scene_load_distance, config.live_scene_ring)
+        };
+        // the default distance, and one below it, keep the ring
+        assert_eq!(migrated(10.0, 1), (10.0, 1));
+        assert_eq!(migrated(0.0, 0), (10.0, 0));
+        // 64 m is 4 parcels; 150 m is past the widest ring
+        assert_eq!(migrated(64.0, 1), (10.0, 4));
+        assert_eq!(migrated(150.0, 1), (10.0, 5));
+        // a ring already wider stays
+        assert_eq!(migrated(20.0, 3), (10.0, 3));
+
+        // rings saved out of order are put in order, pushed out from the live ring
+        let mut config = AppConfig {
+            settings_generation: 6,
+            live_scene_ring: 3,
+            near_lod_ring: 2,
+            far_lod_ring: 5,
+            ..Default::default()
+        };
+        config.reset_outdated_settings();
+        assert_eq!(
+            (
+                config.live_scene_ring,
+                config.near_lod_ring,
+                config.far_lod_ring
+            ),
+            (3, 4, 6)
+        );
+    }
+
+    #[test]
     fn generation_4_lands_on_medium_and_keeps_the_rest() {
         let mut config = AppConfig {
             settings_generation: 3,
@@ -3352,9 +3681,14 @@ mod tests {
             serde_json::to_value(&config.graphics).unwrap(),
             serde_json::to_value(&medium).unwrap()
         );
+        // generation 7 takes the load distance into the live ring
         assert_eq!(
-            (config.scene_load_distance, config.max_avatars),
-            (100.0, 50)
+            (
+                config.scene_load_distance,
+                config.live_scene_ring,
+                config.max_avatars
+            ),
+            (10.0, 5, 50)
         );
         assert_eq!(config.settings_generation, SETTINGS_GENERATION);
     }

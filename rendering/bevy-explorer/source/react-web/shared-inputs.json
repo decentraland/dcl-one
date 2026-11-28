@@ -10134,7 +10134,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/graphicsPresets.ts",
-      "sha256": "5b968d8035bdbcda826db18e1773105b0bf25d3912b4fc9f9832957951c74034"
+      "sha256": "f78a5f576df8c0df5b55e3d6ab23ca244d36b607ad2fea42c7a86394b6fe496f"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/itemPurchase.ts",
@@ -10490,7 +10490,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/bridgeSettings.test.ts",
-      "sha256": "52fb1ecea238351094d405eea69a39b6772fa319cd8ff4cbe30a1211e641a5ed"
+      "sha256": "776cf27d5be91cacfc0339406cd1548722b4480d76b7f1f315a7dd745065eb3a"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/bridgeSettingsStream.test.ts",
@@ -14220,7 +14220,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/settings/SettingsPanel.tsx",
-      "sha256": "5ea03b84115f8488a8bf84b79022b73849032baf623d1e018692e92c21e8734b"
+      "sha256": "6a08065134027b6b867f895a6b074323928d51be2e495d928cd375f423e86894"
     },
     {
       "path": "library/ui/apps/hud/features/settings/askBeforeLeaving.ts",
@@ -14964,7 +14964,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/hosted/settings.clicks.test.tsx",
-      "sha256": "47c802de5a22d781004eeafc2fd824931865f1a39012ff26e64e4a694a136645"
+      "sha256": "2332889dbe881e1f47d8c809cf323c6cb35710ea3464d6b84320a3a02488b1d9"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/settings.test.tsx",

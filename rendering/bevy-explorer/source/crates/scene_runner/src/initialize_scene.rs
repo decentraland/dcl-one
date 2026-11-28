@@ -54,7 +54,7 @@ use crate::{
         SCENE_JS_SPAWN_TICK,
     },
     ring_parcels,
-    scene_lod::Rings,
+    scene_lod::{ImposterTiling, Rings},
     scene_partition::camera_facing,
     update_world::{visibility::VisibilityComponent, ComponentTracker},
     vec3_to_parcel, ContainerEntity, DeletedSceneEntities, MobileUiEmulation, OutOfWorld,
@@ -1466,6 +1466,8 @@ fn load_active_entities(
     current_realm: Res<CurrentRealm>,
     player: Query<(Entity, &GlobalTransform), With<PrimaryUser>>,
     range: Res<SceneLoadDistance>,
+    config: Res<AppConfig>,
+    stand_ins: Option<Res<ImposterTiling>>,
     mut pointers: ResMut<ScenePointers>,
     mut pointer_request: Local<Option<(HashSet<IVec2>, HashMap<String, String>, ActiveEntityTask)>>,
     ipfas: IpfsAssetServer,
@@ -1722,10 +1724,27 @@ fn load_active_entities(
             .as_ivec2();
 
         if focus_parcel != stored_parcels.0 {
+            // the rings the live scenes and the stand-ins read, whatever the imposters reach:
+            // to the corner of the outermost parcel of the widest ring in use. An app that
+            // never loads by player position reads none, and one without stand-ins (the
+            // resource `SceneLodPlugin` registers) reads the live ring alone
+            let rings = Rings::from_config(&config);
+            let ring = if range.load < 0.0 {
+                None
+            } else if stand_ins.is_none() {
+                Some(rings.live_keep)
+            } else if config.far_lods_cap() == 0 {
+                Some(rings.live_keep.max(rings.near_keep))
+            } else {
+                Some(rings.live_keep.max(rings.scan()))
+            };
+            let ring_range = ring.map_or(0.0, |ring| {
+                (f32::from(ring) + 1.0) * 16.0 * std::f32::consts::SQRT_2
+            });
             let radius = if awaiting_scene_list {
                 0.0
             } else {
-                range.load.max(range.load_imposter)
+                range.load.max(range.load_imposter).max(ring_range)
             };
             let mut required_parcels: Vec<_> =
                 parcels_in_range(focus, radius, pointers.min(), pointers.max())
