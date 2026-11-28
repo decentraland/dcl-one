@@ -1,8 +1,23 @@
 import { describe, expect, it } from "vitest";
 
-import { itemsFilterDefaults, itemsGrid } from "./itemsGrid";
+import { itemsFilterDefaults, itemsGrid, itemsQuery } from "./itemsGrid";
+import { readUrlFilters } from "./urlFilters";
 
 describe("itemsGrid", () => {
+  it("restores a search from a shared URL with empty list entries and an unknown sort", () => {
+    const params = new URLSearchParams("q=+Hat+&rarities=rare,,epic,&smart=1&sort=unknown&from=shared");
+    const { rawQuery, q } = itemsQuery(params);
+    expect(rawQuery).toBe("Hat");
+    const defaults = itemsFilterDefaults(q, false);
+    const filters = readUrlFilters(params, defaults);
+    expect(filters.rarities).toEqual(["rare", "epic"]);
+    expect(filters).not.toHaveProperty("from");
+    expect(itemsGrid(filters, q, false).key).toEqual(["catalog-items", expect.objectContaining({
+      search: "hat", rarities: ["rare", "epic"], isWearableSmart: undefined, sortBy: "relevance",
+    })]);
+    expect(defaults.rarities).toEqual([]);
+  });
+
   it("keeps the price range on every status that has prices, not only on the on-sale grid", () => {
     for (const status of ["on_sale", "all"]) {
       const { key } = itemsGrid({ ...itemsFilterDefaults("", false), status, priceMin: "5", priceMax: "20" }, "", false);
