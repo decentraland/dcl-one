@@ -926,15 +926,27 @@ impl Policy {
             // memo serves one: while the publication it was read under
             // stands (a newer one may have come while it was in flight). A
             // joined failure is read again rather than spread, as the shop's
-            // joined reads are: the leader's fault or timeout (bounded by
-            // the leader's deadline, which runs the re-read) does not deny a
-            // joiner that has time of its own left.
+            // joined reads are: the leader's fault or timeout does not deny a
+            // joiner that has time of its own left. A source that fails fast
+            // is then read once per joiner too, each read bounded and its
+            // fault filed for the callers after; a lookup is never aborted,
+            // so those reads outlive callers that gave up on them.
+            //
+            // The re-read runs under its leader's deadline, which cancels it
+            // before it files anything when the leader runs out of time. Its
+            // own budget is the source's full ADMISSION_OWNER_TIMEOUT, never
+            // the leader's time left: a timeout it files is the source's, as
+            // a fill's is, and never one caller's short budget, which would
+            // refuse the world to every caller for ADMISSION_OWNER_MEMO.
             self.admission_refreshes
                 .run_accepting(
                     (key.clone(), observed),
                     || async {
-                        let (fresh, not_current) =
-                            timed_owner_lookup(self.name_owner_lookup(world), left()).await;
+                        let (fresh, not_current) = timed_owner_lookup(
+                            self.name_owner_lookup(world),
+                            ADMISSION_OWNER_TIMEOUT,
+                        )
+                        .await;
                         if !not_current {
                             self.admission_owners.insert(key.clone(), fresh.clone());
                         }
@@ -2837,6 +2849,9 @@ mod tests {
         /// While set, an owner read fails once past its pause (a source
         /// going down mid-read).
         fail_after_pause: std::sync::atomic::AtomicBool,
+        /// How long an owner read and a validation take, in milliseconds.
+        read_ms: std::sync::atomic::AtomicU64,
+        check_ms: std::sync::atomic::AtomicU64,
     }
 
     impl Indexed {
@@ -2923,6 +2938,8 @@ mod tests {
                 value: self.holder(label)?,
                 observation: Some(observation),
             };
+            let took = self.read_ms.load(std::sync::atomic::Ordering::SeqCst);
+            tokio::time::sleep(std::time::Duration::from_millis(took)).await;
             let pause = self.pause.lock().unwrap().clone();
             if let Some(pause) = pause {
                 self.entered.notify_one();
@@ -2961,6 +2978,8 @@ mod tests {
             if self.stall.load(SeqCst) {
                 std::future::pending::<()>().await;
             }
+            let took = self.check_ms.load(SeqCst);
+            tokio::time::sleep(std::time::Duration::from_millis(took)).await;
             let pause = self.check_pause.lock().unwrap().clone();
             if let Some(pause) = pause {
                 self.check_entered.notify_one();
@@ -3127,9 +3146,7 @@ mod tests {
             let (p, world) = (p.clone(), world.clone());
             async move { p.world_owner(&world).await }
         });
-        p.admission_refreshes
-            .until_within(std::time::Duration::from_secs(10), |c| c.joins() >= 1)
-            .await;
+        p.admission_refreshes.until(|c| c.joins() >= 1).await;
         *indexed.pause.lock().unwrap() = None;
         pause.notify_waiters();
         assert!(leader.await.unwrap().is_err(), "the re-read's own caller");
@@ -3161,14 +3178,13 @@ mod tests {
             })
             .collect();
         indexed.entered.notified().await;
-        p.admission_refreshes
-            .until_within(std::time::Duration::from_secs(10), |c| c.joins() >= 7)
-            .await;
+        p.admission_refreshes.until(|c| c.joins() >= 7).await;
         *indexed.pause.lock().unwrap() = None;
         pause.notify_waiters();
         for admission in admissions {
             assert_eq!(admission.await.unwrap().unwrap(), Some(b.clone()));
         }
+        assert_eq!(p.admission_refreshes.joins(), 7);
         assert_eq!(asked() - before, 1, "one re-read for every admission");
         assert_eq!(p.world_owner(&world).await.unwrap(), Some(b));
         assert_eq!(asked() - before, 1, "the memo serves the re-read");
@@ -3201,9 +3217,7 @@ mod tests {
             let (p, world) = (p.clone(), world.clone());
             async move { p.world_owner(&world).await }
         });
-        p.admission_refreshes
-            .until_within(std::time::Duration::from_secs(10), |c| c.joins() >= 1)
-            .await;
+        p.admission_refreshes.until(|c| c.joins() >= 1).await;
         *indexed.pause.lock().unwrap() = None;
         pause.notify_waiters();
         assert_eq!(leader.await.unwrap().unwrap(), Some(b));
@@ -3232,14 +3246,13 @@ mod tests {
             })
             .collect();
         indexed.check_entered.notified().await;
-        p.admission_checks
-            .until_within(std::time::Duration::from_secs(10), |c| c.joins() >= 7)
-            .await;
+        p.admission_checks.until(|c| c.joins() >= 7).await;
         *indexed.check_pause.lock().unwrap() = None;
         pause.notify_waiters();
         for hit in hits {
             assert_eq!(hit.await.unwrap().unwrap(), Some(a.clone()));
         }
+        assert_eq!(p.admission_checks.joins(), 7);
         assert_eq!(indexed.checks.load(SeqCst) - checks, 1);
         assert_eq!(p.world_owner(&world).await.unwrap(), Some(a));
         assert_eq!(
@@ -3265,6 +3278,32 @@ mod tests {
         let started = tokio::time::Instant::now();
         assert!(p.world_owner(&world).await.is_err());
         assert!(started.elapsed() <= ADMISSION_OWNER_TIMEOUT);
+    }
+
+    /// A re-read whose caller runs out of time files nothing: the validation
+    /// takes all but 100 ms of the admission deadline, the source answers
+    /// the re-read in 200 ms, and that caller is refused. Its timeout is not
+    /// filed over the world's entry, so the next admission reads again and
+    /// is answered the new holder at once rather than refused for
+    /// [`ADMISSION_OWNER_MEMO`].
+    #[tokio::test(start_paused = true)]
+    async fn a_short_caller_does_not_file_its_timeout() {
+        use crate::comms::interfaces::AccessPolicy;
+        use std::sync::atomic::Ordering::SeqCst;
+        let (p, indexed) = indexed_policy();
+        let (world, a, b) = (world_name(), wallet(), wallet());
+        let label = world.owner_label().unwrap().to_string();
+        indexed.publish(&label, Some(&a));
+        assert_eq!(p.world_owner(&world).await.unwrap(), Some(a));
+        indexed.publish(&label, Some(&b));
+        let validation = ADMISSION_OWNER_TIMEOUT - std::time::Duration::from_millis(100);
+        let validation = u64::try_from(validation.as_millis()).unwrap();
+        indexed.check_ms.store(validation, SeqCst);
+        indexed.read_ms.store(200, SeqCst);
+        assert!(p.world_owner(&world).await.is_err(), "out of time");
+        indexed.check_ms.store(0, SeqCst);
+        indexed.read_ms.store(0, SeqCst);
+        assert_eq!(p.world_owner(&world).await.unwrap(), Some(b));
     }
 
     /// The reconcile revokes on a confirmed absence only: a label with two

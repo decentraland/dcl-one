@@ -512,10 +512,10 @@ where
 
     /// The output of `key`'s flight, joined or read here with `read`, for a
     /// caller that may be answered from any read in flight. The one
-    /// exception to validating a joined output: the joiner takes the answer
-    /// of a read that began before it arrived, so it is behind its own read
-    /// by at most that one read in flight. Use [`Coalesce::run_accepting`]
-    /// when that is not acceptable.
+    /// exception to validating a joined output: a joiner's answer may
+    /// predate its arrival by the one read already in flight, and a joined
+    /// failure is passed through as it is. Use [`Coalesce::run_accepting`]
+    /// when either is not acceptable.
     pub async fn run<F, Fut>(&self, key: K, read: F) -> O
     where
         F: FnOnce() -> Fut,
@@ -608,23 +608,20 @@ where
     }
 
     /// Resolves once `done` holds; tests wait on a join with it rather than
-    /// sleeping.
+    /// sleeping. A state that never comes fails the test at
+    /// [`HANG_GUARD`](crate::test_wait::HANG_GUARD) instead of hanging it.
     #[cfg(any(test, feature = "test-support"))]
     pub async fn until(&self, done: impl Fn(&Self) -> bool) {
-        loop {
-            let changed = self.changed.notified();
-            if done(self) {
-                return;
+        let reached = async {
+            loop {
+                let changed = self.changed.notified();
+                if done(self) {
+                    return;
+                }
+                changed.await;
             }
-            changed.await;
-        }
-    }
-
-    /// [`Coalesce::until`] bounded by `within`: a test that waits on a join
-    /// that never comes fails instead of hanging.
-    #[cfg(any(test, feature = "test-support"))]
-    pub async fn until_within(&self, within: Duration, done: impl Fn(&Self) -> bool) {
-        tokio::time::timeout(within, self.until(done))
+        };
+        tokio::time::timeout(crate::test_wait::HANG_GUARD, reached)
             .await
             .expect("the coalescer did not reach the awaited state in time");
     }
@@ -721,9 +718,8 @@ mod tests {
                 })
             })
             .collect();
-        coalesce
-            .until_within(Duration::from_secs(10), |c| c.joins() == 7)
-            .await;
+        coalesce.until(|c| c.joins() >= 7).await;
+        assert_eq!(coalesce.joins(), 7);
         assert_eq!(gate.reads(), 1, "one read in flight");
         gate.open();
         for caller in callers {
@@ -747,9 +743,7 @@ mod tests {
             let coalesce = coalesce.clone();
             tokio::spawn(async move { coalesce.run("k", std::future::pending::<u32>).await })
         };
-        coalesce
-            .until_within(Duration::from_secs(10), |c| c.reads_started() >= 1)
-            .await;
+        coalesce.until(|c| c.reads_started() >= 1).await;
         let joiner = {
             let (coalesce, gate) = (coalesce.clone(), gate.clone());
             tokio::spawn(async move {
@@ -761,9 +755,7 @@ mod tests {
                     .await
             })
         };
-        coalesce
-            .until_within(Duration::from_secs(10), |c| c.joins() >= 1)
-            .await;
+        coalesce.until(|c| c.joins() >= 1).await;
         assert_eq!(gate.reads(), 0, "the joiner waits on the leader's read");
         leader.abort();
         let _ = leader.await;
@@ -790,9 +782,7 @@ mod tests {
                     .await
             })
         };
-        coalesce
-            .until_within(Duration::from_secs(10), |c| c.reads_started() >= 1)
-            .await;
+        coalesce.until(|c| c.reads_started() >= 1).await;
         let joiner = {
             let coalesce = coalesce.clone();
             tokio::spawn(async move {
@@ -801,9 +791,7 @@ mod tests {
                     .await
             })
         };
-        coalesce
-            .until_within(Duration::from_secs(10), |c| c.joins() >= 1)
-            .await;
+        coalesce.until(|c| c.joins() >= 1).await;
         gate.open();
         assert_eq!(leader.await.unwrap(), 1);
         assert_eq!(joiner.await.unwrap(), 2, "the refused 1 was read again");
@@ -868,13 +856,9 @@ mod tests {
             })
         };
         let first = call(vec![1, 2, 2]);
-        coalesce
-            .until_within(Duration::from_secs(10), |c| c.reads_started() >= 1)
-            .await;
+        coalesce.until(|c| c.reads_started() >= 1).await;
         let second = call(vec![2, 3]);
-        coalesce
-            .until_within(Duration::from_secs(10), |c| c.joins() >= 1)
-            .await;
+        coalesce.until(|c| c.joins() >= 1).await;
         gate.open();
         let first = first.await.unwrap();
         assert_eq!(first.own, Some(vec![1, 2]));
@@ -902,16 +886,12 @@ mod tests {
                     .await
             })
         };
-        coalesce
-            .until_within(Duration::from_secs(10), |c| c.reads_started() >= 1)
-            .await;
+        coalesce.until(|c| c.reads_started() >= 1).await;
         let joiner = {
             let coalesce = coalesce.clone();
             tokio::spawn(async move { coalesce.run_many(&[2, 3], |led| async move { led }).await })
         };
-        coalesce
-            .until_within(Duration::from_secs(10), |c| c.joins() >= 1)
-            .await;
+        coalesce.until(|c| c.joins() >= 1).await;
         leader.abort();
         let _ = leader.await;
         let joiner = joiner.await.unwrap();

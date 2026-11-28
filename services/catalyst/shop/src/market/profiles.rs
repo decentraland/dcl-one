@@ -1434,10 +1434,7 @@ mod tests {
             })
             .collect();
         // Every other request joins the read before the content answers it.
-        state
-            .profile_flights
-            .until_within(std::time::Duration::from_secs(10), |c| c.joins() == 7)
-            .await;
+        state.profile_flights.until(|c| c.joins() >= 7).await;
         gate.add_permits(tokio::sync::Semaphore::MAX_PERMITS);
         for request in requests {
             assert_eq!(request.await.unwrap(), Ok(None));
@@ -1478,11 +1475,7 @@ mod tests {
                 })
             })
             .collect();
-        state
-            .lambdas
-            .outfit_flights
-            .until_within(std::time::Duration::from_secs(10), |c| c.joins() == 7)
-            .await;
+        state.lambdas.outfit_flights.until(|c| c.joins() >= 7).await;
         gate.add_permits(tokio::sync::Semaphore::MAX_PERMITS);
         for request in requests {
             assert_eq!(request.await.unwrap(), StatusCode::NOT_FOUND);

@@ -3159,11 +3159,7 @@ async fn a_joined_outfits_read_is_not_served_past_its_freshness() {
         async move { get(&state, &uri).await }
     });
     // The follower joins the read in flight before it answers.
-    state
-        .lambdas
-        .outfit_flights
-        .until_within(std::time::Duration::from_secs(10), |c| c.joins() >= 1)
-        .await;
+    state.lambdas.outfit_flights.until(|c| c.joins() >= 1).await;
     assert_eq!(state.lambdas.outfit_flights.reads_started(), 1);
     state.test_release();
     let (status, body) = leader.await.unwrap();
@@ -3239,15 +3235,8 @@ async fn a_joined_read_under_another_publication_is_read_again() {
         let state = state.clone();
         async move { get(&state, &format!("/lambdas/profiles/{OWNER}")).await }
     });
-    state
-        .lambdas
-        .outfit_flights
-        .until_within(std::time::Duration::from_secs(10), |c| c.joins() >= 1)
-        .await;
-    state
-        .profile_flights
-        .until_within(std::time::Duration::from_secs(10), |c| c.joins() >= 1)
-        .await;
+    state.lambdas.outfit_flights.until(|c| c.joins() >= 1).await;
+    state.profile_flights.until(|c| c.joins() >= 1).await;
     assert_eq!(state.lambdas.outfit_flights.reads_started(), 1);
     assert_eq!(state.profile_flights.reads_started(), 1);
     state.test_release();
@@ -3305,10 +3294,7 @@ async fn a_narrow_profile_request_survives_a_wider_failing_read() {
         let state = state.clone();
         async move { post_profiles(&state, &["default1"]).await }
     });
-    state
-        .profile_flights
-        .until_within(std::time::Duration::from_secs(10), |c| c.joins() >= 1)
-        .await;
+    state.profile_flights.until(|c| c.joins() >= 1).await;
     assert_eq!(
         state.profile_flights.reads_started(),
         1,
