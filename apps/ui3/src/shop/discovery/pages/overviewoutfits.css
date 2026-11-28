@@ -1,14 +1,18 @@
 /* from: shop@3a322cf9:app/src/components/OutfitsRow/OutfitsRow.styles.ts, app/src/components/OutfitCard/OutfitCard.styles.ts.
    Desktop card as the design system's outfits-web (portrait): a card of 230x356 with 7.6% head room over its
    background, the brand pattern screened over the gradient, 48px between cards (32px between stages that carry
-   ~8px of ring room on each side), a 4px ruby ring 8px out on hover, and the secondary md Button. */
+   ~8px of ring room on each side), a 4px cerise ring 8px out on hover, and the secondary md Button.
+   The column count follows the row's own width: it steps up only once every card is at least 214px wide, which
+   leaves the CTA room for its longer label ("Added to cart", 185px with the Button's padding) and for wider fonts.
+   The thresholds are that minimum plus the gaps, plus 18px because the track bleeds 18px left and pads 18px. */
 .shop-chrome .shop-outfits-row__viewport {
   --rail-arrow-top: 55%;
+  container-type: inline-size;
 }
 .shop-chrome .shop-outfits-row__track {
   display: grid;
   grid-auto-flow: column;
-  grid-auto-columns: calc((100% - 5 * 48px) / 6);
+  grid-auto-columns: calc((100% - 48px) / 2);
   gap: 48px;
   overflow-x: auto;
   overflow-y: hidden;
@@ -25,11 +29,17 @@
   scroll-snap-align: start;
   min-width: 0;
 }
-@media (max-width: 1200px) {
+@container (min-width: 756px) {
+  .shop-chrome .shop-outfits-row__track { grid-auto-columns: calc((100% - 2 * 48px) / 3); }
+}
+@container (min-width: 1018px) {
   .shop-chrome .shop-outfits-row__track { grid-auto-columns: calc((100% - 3 * 48px) / 4); }
 }
-@media (max-width: 900px) {
-  .shop-chrome .shop-outfits-row__track { grid-auto-columns: calc((100% - 2 * 48px) / 3); }
+@container (min-width: 1280px) {
+  .shop-chrome .shop-outfits-row__track { grid-auto-columns: calc((100% - 4 * 48px) / 5); }
+}
+@container (min-width: 1542px) {
+  .shop-chrome .shop-outfits-row__track { grid-auto-columns: calc((100% - 5 * 48px) / 6); }
 }
 @media (max-width: 768px) {
   .shop-chrome .shop-outfits-row__track {
@@ -64,12 +74,18 @@
   opacity: 0.65;
   pointer-events: none;
 }
+/* The ring: the cerise gradient, cut to a 4px band by masking out its content box. */
 .shop-chrome .shop-outfit-card__frame::after {
   content: "";
   position: absolute;
   inset: -8px;
-  border: 4px solid #ff2d55;
+  padding: 4px;
   border-radius: 23px;
+  background: var(--dcl-gradient-cerise);
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  mask-composite: exclude;
   opacity: 0;
   transition: opacity 0.2s ease;
   pointer-events: none;
