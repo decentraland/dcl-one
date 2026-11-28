@@ -323,6 +323,10 @@ impl Lab {
 
     async fn with_lane(max_attempts: i32, lane: Lane) -> Option<Self> {
         let pool = crate::db::scratch::pool(4).await?;
+        Some(Self::with_pool(max_attempts, lane, pool).await)
+    }
+
+    async fn with_pool(max_attempts: i32, lane: Lane, pool: PgPool) -> Self {
         let (storage, dir) = temp_storage().await;
         let upstream = FakeUpstream::start("/content").await;
         let forwarder = forwarder(
@@ -332,7 +336,7 @@ impl Lab {
             &upstream.base,
             max_attempts,
         );
-        Some(Self {
+        Self {
             pool,
             storage,
             dir,
@@ -340,7 +344,7 @@ impl Lab {
             forwarder,
             prefix: uuid::Uuid::new_v4().simple().to_string(),
             entities: parking_lot::Mutex::new(Vec::new()),
-        })
+        }
     }
 
     fn pointer(&self, name: &str) -> String {
@@ -1246,6 +1250,145 @@ async fn an_entity_past_the_upstreams_window_is_never_sent_nor_requeued() {
 }
 
 #[tokio::test]
+async fn open_queue_age_is_sampled_while_a_send_is_stalled() {
+    let Some(lab) = Lab::new(5).await else { return };
+    let entity = lab
+        .scene(
+            "17,18",
+            chrono::Utc::now().timestamp_millis(),
+            &[b"metrics"],
+        )
+        .await;
+    entity
+        .deploy(&lab.pool, &lab.storage, Some(&lab.forwarder))
+        .await
+        .unwrap();
+    lab.upstream.stall(true);
+
+    let recorder = dcl_metrics::PrometheusBuilder::new().build_recorder();
+    let _metrics = dcl_metrics::set_default_local_recorder(&recorder);
+    let scrape = recorder.handle();
+    let age = || queue_gauge(&scrape.render(), "oldest_open_age_seconds");
+    let jobs = crate::jobs::Jobs::new();
+    lab.forwarder.spawn(&jobs);
+    tokio::time::timeout(crate::shared::test_wait::HANG_GUARD, lab.upstream.posted(1))
+        .await
+        .expect("the send never arrived");
+
+    let sampled = tokio::time::timeout(TICK * 3, async {
+        loop {
+            if age().is_some_and(|age| age >= TICK.as_secs_f64()) {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+    })
+    .await;
+    assert_eq!(lab.row(&entity.entity_id).await.unwrap().0, "sending");
+    let sending_scrape = scrape.render();
+
+    jobs.shutdown(Duration::from_secs(5)).await;
+    let row = lab.row(&entity.entity_id).await.unwrap();
+    lab.cleanup().await;
+
+    assert!(
+        sampled.is_ok(),
+        "queue age did not advance during the stalled send"
+    );
+    assert_eq!(queue_gauge(&sending_scrape, "open_rows"), Some(1.0));
+    assert!(
+        queue_gauge(&sending_scrape, "open_sample_timestamp_seconds")
+            .is_some_and(|sample| sample > 0.0)
+    );
+    assert_eq!(row.0, "queued", "shutdown must release the claim");
+    assert_eq!(row.1, 0, "a cancelled send does not spend an attempt");
+    assert_eq!(age(), Some(0.0));
+    assert_eq!(queue_gauge(&scrape.render(), "open_rows"), Some(0.0));
+    assert_eq!(
+        queue_gauge(&scrape.render(), "open_sample_timestamp_seconds"),
+        Some(0.0)
+    );
+}
+
+fn queue_gauge(scrape: &str, name: &str) -> Option<f64> {
+    let prefix = format!("upstream_forward_{name}{{lane=\"content-forward\"}} ");
+    scrape.lines().find_map(|line| {
+        line.strip_prefix(&prefix)
+            .and_then(|value| value.parse().ok())
+    })
+}
+
+#[test]
+fn open_gauge_scope_clears_queue_metrics_on_unwind() {
+    let recorder = dcl_metrics::PrometheusBuilder::new().build_recorder();
+    let _metrics = dcl_metrics::set_default_local_recorder(&recorder);
+    let lane = [CONTENT_LANE.job];
+    let result = std::panic::catch_unwind(|| {
+        let _scope = OpenGaugeScope(CONTENT_LANE.job);
+        FORWARD_OPEN_ROWS.handle(lane).set(1.0);
+        FORWARD_OLDEST_OPEN_AGE.handle(lane).set(180.0);
+        FORWARD_OPEN_SAMPLE_TIMESTAMP.handle(lane).set(123.0);
+        panic!("worker unwound");
+    });
+    assert!(result.is_err());
+    let scrape = recorder.handle().render();
+    for gauge in [
+        "open_rows",
+        "oldest_open_age_seconds",
+        "open_sample_timestamp_seconds",
+    ] {
+        assert_eq!(queue_gauge(&scrape, gauge), Some(0.0));
+    }
+}
+
+#[tokio::test]
+async fn a_blocked_queue_sample_times_out_in_postgres_and_loses_freshness() {
+    let Some(pool) = crate::db::scratch::isolated_pool(3).await else {
+        return;
+    };
+    let (storage, directory) = temp_storage().await;
+    let worker = forwarder(
+        pool.clone(),
+        storage,
+        CONTENT_LANE,
+        "https://upstream.example",
+        1,
+    );
+    let recorder = dcl_metrics::PrometheusBuilder::new().build_recorder();
+    let _metrics = dcl_metrics::set_default_local_recorder(&recorder);
+    let scrape = recorder.handle();
+    let sample = || queue_gauge(&scrape.render(), "open_sample_timestamp_seconds");
+
+    worker.observe_open().await;
+    assert!(sample().is_some_and(|value| value > 0.0));
+
+    let mut blocker = pool.begin().await.unwrap();
+    sqlx::query("LOCK TABLE content.forward_outbox IN ACCESS EXCLUSIVE MODE")
+        .execute(&mut *blocker)
+        .await
+        .unwrap();
+    let error = tokio::time::timeout(TICK, worker.read_open())
+        .await
+        .expect("PostgreSQL bounds the statement")
+        .expect_err("the lock prevents sampling");
+    assert_eq!(
+        error
+            .as_database_error()
+            .and_then(|error| error.code())
+            .as_deref(),
+        Some("57014")
+    );
+    worker.observe_open().await;
+    assert_eq!(sample(), Some(0.0));
+    blocker.rollback().await.unwrap();
+
+    worker.observe_open().await;
+    assert!(sample().is_some_and(|value| value > 0.0));
+    drop(worker);
+    tokio::fs::remove_dir_all(directory).await.unwrap();
+}
+
+#[tokio::test]
 async fn a_shutdown_mid_send_gives_the_claim_back_due_now() {
     let Some(lab) = Lab::new(5).await else { return };
     let signed = lab
@@ -1310,7 +1453,7 @@ async fn a_late_finish_never_overwrites_a_newer_claim() {
         status: 400,
         body: "late".into(),
     };
-    lab.forwarder.finish(&first, &late).await.unwrap();
+    assert_eq!(lab.forwarder.finish(&first, &late).await.unwrap(), None);
     lab.forwarder.release(&first).await.unwrap();
     let (status, attempts, error, upstream, _) = lab.row(&signed.entity_id).await.unwrap();
     assert_eq!(
@@ -1332,7 +1475,12 @@ async fn a_late_finish_never_overwrites_a_newer_claim() {
 
 #[tokio::test]
 async fn rows_of_another_upstream_close_once_no_upstream_takes_them() {
-    let Some(lab) = Lab::new(5).await else { return };
+    // The sweep visits other targets, so target-unique fixtures alone cannot
+    // prevent a concurrent test worker from closing this row first.
+    let Some(pool) = crate::db::scratch::isolated_pool(4).await else {
+        return;
+    };
+    let lab = Lab::with_pool(5, CONTENT_LANE, pool).await;
     let ids: Vec<String> = ["old", "recent", "leased"]
         .iter()
         .map(|name| format!("{}-foreign-{name}", lab.prefix))
@@ -1357,11 +1505,25 @@ async fn rows_of_another_upstream_close_once_no_upstream_takes_them() {
         .await
         .unwrap();
     }
-    // (Another test's job may close the first row before this call does.)
-    lab.forwarder
+    let recorder = dcl_metrics::PrometheusBuilder::new().build_recorder();
+    let _metrics = dcl_metrics::set_default_local_recorder(&recorder);
+    let closed = lab
+        .forwarder
         .close_foreign(&CancellationToken::new())
         .await
         .unwrap();
+    let scrape = recorder.handle().render();
+    assert_eq!(closed, 1);
+    let count = scrape
+        .lines()
+        .find(|line| {
+            line.starts_with("upstream_forward_sends_total{")
+                && line.contains("lane=\"content-forward\"")
+                && line.contains("outcome=\"abandoned\"")
+        })
+        .and_then(|line| line.rsplit_once(' ')?.1.parse::<u64>().ok());
+    assert_eq!(count, Some(closed));
+    assert!(!scrape.contains("outcome=\"failed\""));
     let mut states = Vec::new();
     for id in &ids {
         let (status, _, error, _, target) = lab.row(id).await.unwrap();

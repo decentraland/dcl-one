@@ -32,7 +32,37 @@ pub(crate) const SYNC_HEARTBEAT: GaugeFamily<0> = GaugeFamily::new(
     &[],
 );
 
+pub(crate) const FORWARD_SENDS: CounterFamily<2> = CounterFamily::new(
+    "upstream_forward_sends_total",
+    "Upstream forwarding sends by lane and outcome.",
+    None,
+    &["lane", "outcome"],
+);
+pub(crate) const FORWARD_OPEN_ROWS: GaugeFamily<1> = GaugeFamily::new(
+    "upstream_forward_open_rows",
+    "Forwarding rows still queued or sending for the current upstream, by lane.",
+    None,
+    &["lane"],
+);
+pub(crate) const FORWARD_OLDEST_OPEN_AGE: GaugeFamily<1> = GaugeFamily::new(
+    "upstream_forward_oldest_open_age_seconds",
+    "Age of the oldest queued or sending forwarding row for the current upstream, by lane; 0 when none.",
+    Some(Unit::Seconds),
+    &["lane"],
+);
+
+pub(crate) const FORWARD_OPEN_SAMPLE_TIMESTAMP: GaugeFamily<1> = GaugeFamily::new(
+    "upstream_forward_open_sample_timestamp_seconds",
+    "Unix timestamp of the queue sample by lane; 0 when sampling failed or stopped.",
+    Some(Unit::Seconds),
+    &["lane"],
+);
+
 pub const FAMILIES: &[Descriptor] = &[
+    FORWARD_SENDS.descriptor,
+    FORWARD_OPEN_ROWS.descriptor,
+    FORWARD_OLDEST_OPEN_AGE.descriptor,
+    FORWARD_OPEN_SAMPLE_TIMESTAMP.descriptor,
     SPOOL_FAILURES.descriptor,
     SYNC_HEARTBEAT.descriptor,
     OVERSIZED_POINTER_CHANGES.descriptor,

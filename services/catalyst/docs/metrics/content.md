@@ -6,11 +6,10 @@ the names, types, label names, label values and histogram buckets of the content
 `src/metrics.ts` at `decentraland/catalyst@6c56f8a3eaff631cb7be0dc01ef92a24333bbc93`,
 except where a family serve already declares measures the same thing ("replaced by" below).
 
-The families are declared in `content/src/series.rs` (`catalyst_content::series::FAMILIES`)
-and `storage/src/gc.rs` (in `catalyst_storage::FAMILIES`), and both lists are composed into
-the serve registry in `src/serve_lifecycle.rs`, which applies the declared buckets. A
-histogram declared without buckets uses the Prometheus client's default buckets (0.005 to
-10 s). A family is absent from the scrape until its first observation.
+The families are declared in `content/src/series.rs`, `content/src/metrics.rs` and
+`storage/src/gc.rs`. The serve registry in `src/serve_lifecycle.rs` composes their lists
+and applies the declared buckets. Histograms without declared buckets use the Prometheus
+client's defaults (0.005 to 10 s). A family appears with its first observation.
 
 Every label value comes from a closed set. An entity type a client or a peer names is one
 of `scene`, `profile`, `wearable`, `store`, `emote`, `outfits`, else `unknown`.
@@ -98,6 +97,22 @@ command outside `serve` and exports nothing.
 | `dcl_content_server_snapshot_generation_time` | histogram `result` = `success`, `error`, `interval_size` = `day`, `week`, `month`, `year`, `unknown`, `reason` = `cover_time_range`, `replace_multiple_snapshots`, `snapshots_not_stored`, `inactive_entities`, `is_outdated`, `unknown`; default buckets | emitted | `content/src/snapshot_gen.rs` `SnapshotGenerator::pass`, `Why::reason` | Each window written or failed; a generation stopped for shutdown is not recorded. The reason is the first that holds, in upstream's order: `cover_time_range`, the saved windows inside it leave part of it uncovered; `replace_multiple_snapshots`, more than one saved window covers it; `snapshots_not_stored`, its saved file is missing, or could not be verified or re-keyed; `inactive_entities`; `is_outdated`. `unknown`: a requested rebuild. |
 | `dcl_content_server_snapshot_entities` | gauge `type` | not applicable | | Declared but never set by the content server, so no dashboard reads a value from it. |
 | `dcl_deployed_entities_bloom_filter_checks_total` | counter `hit` = `true`, `false` | emitted | `content/src/batch_deployer.rs` `schedule_entity_deployment`, `retain_undeployed` | Already-deployed probes of synced entities: `true` when the entity is deployed, `false` for a filter miss and for a false positive the database refuted. |
+
+## Upstream forwarding
+
+No legacy series counted these; they are declared in `content/src/metrics.rs` and observed by the
+forwarding engine of both lanes (`lane` = `content-forward`, `worlds-forward`).
+
+| Series | Type and labels | Status | Observed at | Notes |
+|---|---|---|---|---|
+| `upstream_forward_sends_total` | counter `lane`, `outcome` = `accepted`, `rejected`, `retried`, `failed`, `superseded`, `abandoned` | emitted | `content/src/forward.rs` `Forwarder::run_pass`, `Forwarder::close_foreign` | One per recorded outcome. `retried` is a send queued again. `failed` includes exhausted attempts and entities now too old for the current upstream. `abandoned` counts committed closures of rows for a different upstream. Alert on `rejected` or `failed` increasing. |
+| `upstream_forward_open_rows` | gauge `lane` | emitted | `content/src/forward.rs` `Forwarder::observe_open` | Queued or sending rows for the current upstream. The holder samples every 5 s, including during a send or sweep. Each sample has a 1.5 s database statement limit and a 2 s overall timeout. |
+| `upstream_forward_oldest_open_age_seconds` | gauge `lane` | emitted | `content/src/forward.rs` `Forwarder::observe_open` | Seconds since `created_at` of the oldest open row; 0 when none. Alert below the upstream's five-minute (worlds) or twenty-minute (content) window to allow for time between signing and queueing. |
+| `upstream_forward_open_sample_timestamp_seconds` | gauge `lane` | emitted | `content/src/forward.rs` `Forwarder::observe_open` | Unix seconds after a successful queue read; 0 before the first read and after a failed read, lease loss or unwind. Filter count and age to replicas with a positive timestamp no older than 30 s before taking a per-lane maximum. A stale sample cannot establish an empty queue. |
+
+Scrape more frequently than the freshness window (the Worlds collector waits 15 s between scrapes).
+When the lane is expected to run, alert independently if no replica has a fresh queue sample.
+Monitor scraper and publisher health separately so a monitoring outage also raises an alert.
 
 ## Not applicable
 
