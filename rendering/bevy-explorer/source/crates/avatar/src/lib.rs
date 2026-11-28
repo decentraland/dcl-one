@@ -744,6 +744,9 @@ pub struct RetryRenderAvatar;
 pub struct AvatarLoadFailures {
     bodies: HashSet<WearableUrn>,
     wearables: HashSet<WearableUrn>,
+    /// the wearables, defaults too, whose fetch failed in the last pass over the avatar. A build
+    /// passes over them and the next change of the avatar asks again, so no fallback reads it
+    fetches: HashSet<WearableUrn>,
 }
 
 /// Whether a mesh of `model` glows while its avatar is hovered: a wearable opts out with
@@ -768,6 +771,16 @@ impl AvatarLoadFailures {
 
     fn wearable_failed(failures: Option<&Self>, urn: &WearableUrn) -> bool {
         failures.is_some_and(|failures| failures.wearables.contains(urn))
+    }
+
+    /// The bodies whose model failed, the wearables whose model failed and the wearables whose
+    /// fetch failed, each in order.
+    pub fn sorted(&self) -> [Vec<String>; 3] {
+        [&self.bodies, &self.wearables, &self.fetches].map(|urns| {
+            let mut urns: Vec<_> = urns.iter().map(ToString::to_string).collect();
+            urns.sort_unstable();
+            urns
+        })
     }
 }
 
@@ -807,6 +820,30 @@ fn record_avatar_failures(
             failures.bodies.extend(body);
             failures.wearables.extend(wearables);
             entity.insert((failures, RetryRenderAvatar));
+        });
+}
+
+/// Keeps, on the avatar on `avatar`, the wearables whose fetch failed in this pass. No rebuild
+/// follows: the build passes over them, and the next change of the avatar asks again.
+fn note_failed_fetches(
+    commands: &mut Commands,
+    avatar: Entity,
+    current: Option<&AvatarLoadFailures>,
+    fetches: HashSet<WearableUrn>,
+) {
+    let unchanged = match current {
+        Some(current) => current.fetches == fetches,
+        None => fetches.is_empty(),
+    };
+    if unchanged {
+        return;
+    }
+    commands
+        .entity(avatar)
+        .queue_silenced(move |mut entity: EntityWorldMut| {
+            let mut failures = entity.take::<AvatarLoadFailures>().unwrap_or_default();
+            failures.fetches = fetches;
+            entity.insert(failures);
         });
 }
 
@@ -950,6 +987,7 @@ fn update_render_avatar(
 
         // get wearables
         let mut all_loaded = true;
+        let mut failed_fetches = HashSet::new();
         let specified_wearables: Vec<_> = selection
             .shape
             .0
@@ -968,6 +1006,10 @@ fn update_render_avatar(
                     }
                     Err(other) => {
                         debug!("skipping failed wearable {wearable:?}: {other:?}");
+                        // absent or unfit for the body is the server's answer, not a failure
+                        if matches!(other, CollectibleError::Failed) {
+                            failed_fetches.insert(wearable);
+                        }
                         None
                     }
                 }
@@ -997,11 +1039,15 @@ fn update_render_avatar(
                     // instead of a retry every frame
                     Err(other) => {
                         warn!("skipping failed default wearable {default:?}: {other:?}");
+                        if matches!(other, CollectibleError::Failed) {
+                            failed_fetches.insert(default.base().to_owned());
+                        }
                         None
                     }
                 }
             })
             .collect();
+        note_failed_fetches(&mut commands, entity, maybe_failures, failed_fetches);
 
         if !all_loaded {
             commands.entity(entity).try_insert(RetryRenderAvatar);
@@ -1254,17 +1300,41 @@ fn update_render_avatar(
     }
 }
 
-/// Whether a face wearable's texture or mask is still loading. A failed one does not hold the
-/// build: that face is drawn without it.
-fn face_images_loading<'a>(
+/// What the load states of the face textures and masks say.
+#[derive(Default, Debug, PartialEq)]
+struct FaceImages {
+    /// one is still loading: the build waits for it
+    loading: bool,
+    /// the paths of the ones that failed. A failed one does not hold the build: that face is
+    /// drawn without it
+    failed: Vec<String>,
+}
+
+fn face_images<'a>(
     wearables: impl IntoIterator<Item = &'a Wearable>,
     load_state: impl Fn(&Handle<Image>) -> Option<bevy::asset::LoadState>,
-) -> bool {
-    wearables
+) -> FaceImages {
+    let mut face = FaceImages::default();
+    for image in wearables
         .into_iter()
         .flat_map(|wearable| wearable.texture.iter().chain(&wearable.mask))
-        .any(|image| matches!(load_state(image), Some(bevy::asset::LoadState::Loading)))
+    {
+        match load_state(image) {
+            Some(bevy::asset::LoadState::Loading) => face.loading = true,
+            Some(bevy::asset::LoadState::Failed(_)) => face.failed.push(match image.path() {
+                Some(path) => path.to_string(),
+                None => format!("{:?}", image.id()),
+            }),
+            _ => (),
+        }
+    }
+    face
 }
+
+/// On a build that is drawn without face textures or masks, because they failed to load: their
+/// paths. A capture reads it to tell a complete avatar.
+#[derive(Component, Debug)]
+pub struct AvatarFailedFaceImages(pub Vec<String>);
 
 #[derive(Component)]
 pub struct AvatarLoaded {
@@ -1398,12 +1468,12 @@ fn spawn_scenes(
 
         // the face's textures and masks too: the avatar on show stays until this one can draw its
         // eyes, eyebrows and mouth, instead of showing a bare face while they load
-        let face_loading = face_images_loading(
+        let face = face_images(
             def.wearables.iter().map(|(_, wearable)| wearable),
             |image| asset_server.get_load_state(image),
         );
 
-        if any_loading || face_loading {
+        if any_loading || face.loading {
             continue;
         }
 
@@ -1537,6 +1607,11 @@ fn spawn_scenes(
             });
 
         debug!("avatar files loaded");
+        if !face.failed.is_empty() {
+            commands
+                .entity(ent)
+                .try_insert(AvatarFailedFaceImages(face.failed));
+        }
         commands.entity(ent).try_insert((
             AvatarLoaded {
                 body_instance,

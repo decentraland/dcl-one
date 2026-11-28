@@ -14,8 +14,18 @@
 //! background. The realm defaults to `DCL_PEER_BASE`, else `baseUrl` without its
 //! `/content`; the content server (where wearables resolve) defaults to that same
 //! root, not the realm's advertised public URL, so a node renders from itself even
-//! behind a proxy. Exits 0 once every file is written, 1 when the avatars never
-//! finish loading within `--max-frames`, 2 on bad arguments.
+//! behind a proxy. A picture is taken only of a complete avatar. The engine builds
+//! an avatar without what failed to load: the default body takes the place of a
+//! body whose model failed, a wearable whose fetch or model failed is left out,
+//! and a face is drawn without a texture or a mask that failed. Each of these is
+//! a failure here, for a wearable of the profile and for a default wearable
+//! alike. It is one also when a second run would pass, and when another wearable
+//! would hide the failed one or take its category: a fetch that failed does not
+//! give the category. A wearable that the content server does not hold, or that
+//! has no model for the body, is left out and is not a failure. Exits 0 once
+//! every file is written; 1, writing none, on a failure (stderr names the entity
+//! and what failed) or when the avatars are not built within `--max-frames`; 2
+//! on bad arguments.
 
 use common::sync::MutexExt;
 use std::{
@@ -25,7 +35,7 @@ use std::{
 
 use avatar::{
     avatar_texture::{BoothInstance, PhotoBooth},
-    AvatarProcessed, AvatarShape,
+    AvatarDefinition, AvatarFailedFaceImages, AvatarLoadFailures, AvatarProcessed, AvatarShape,
 };
 use bevy::{
     app::HierarchyPropagatePlugin,
@@ -97,7 +107,8 @@ struct Jobs {
 
 #[derive(Resource)]
 struct Booths {
-    _live: Vec<BoothInstance>,
+    /// one for each job, in the order of the jobs
+    live: Vec<BoothInstance>,
 }
 
 #[derive(Resource, Default)]
@@ -287,15 +298,24 @@ fn setup(mut booth: PhotoBooth, jobs: Res<Jobs>, mut commands: Commands) {
             ));
         }
     }
-    commands.insert_resource(Booths { _live: booths });
+    commands.insert_resource(Booths { live: booths });
 }
 
 fn drive_capture(
     mut commands: Commands,
     mut state: ResMut<RenderState>,
     jobs: Res<Jobs>,
+    booths: Res<Booths>,
     frame: Res<FrameCount>,
-    processed: Query<(), With<AvatarProcessed>>,
+    builds: Query<
+        (
+            &ChildOf,
+            Has<AvatarProcessed>,
+            Option<&AvatarFailedFaceImages>,
+        ),
+        With<AvatarDefinition>,
+    >,
+    failures: Query<&AvatarLoadFailures>,
     mut exit: EventWriter<AppExit>,
 ) {
     let expected = jobs.jobs.len() * 2;
@@ -322,6 +342,43 @@ fn drive_capture(
         return;
     }
 
+    // The engine builds an avatar without what failed to load, so such an avatar is not
+    // complete. The node serves any two pictures of a plausible size, whatever the exit code: a
+    // failure exits here, before a screenshot is requested.
+    let mut complete = 0;
+    for (job, booth) in jobs.jobs.iter().zip(&booths.live) {
+        let avatar = *booth.avatar;
+        let built = builds
+            .iter()
+            .any(|(parent, processed, _)| parent.parent() == avatar && processed);
+        // the body and the wearables whose model failed, and the wearables whose fetch failed
+        let files = failures.get(avatar).ok().map(AvatarLoadFailures::sorted);
+        // the face textures and masks that failed: a build says so when it starts
+        let images = builds
+            .iter()
+            .filter(|(parent, ..)| parent.parent() == avatar)
+            .flat_map(|(_, _, images)| images);
+        let failed: Vec<&str> = files
+            .iter()
+            .flatten()
+            .flatten()
+            .map(String::as_str)
+            .chain(images.flat_map(|images| &images.0).map(String::as_str))
+            .collect();
+        if !failed.is_empty() {
+            eprintln!(
+                "avatar_render: {}: {} failed to load",
+                job.entity,
+                failed.join(", ")
+            );
+            exit.write(AppExit::from_code(1));
+            return;
+        }
+        if built {
+            complete += 1;
+        }
+    }
+
     if frame.0 >= jobs.max_frames {
         let entities: Vec<&str> = jobs.jobs.iter().map(|j| j.entity.as_str()).collect();
         eprintln!(
@@ -332,7 +389,7 @@ fn drive_capture(
         return;
     }
 
-    if processed.iter().count() < jobs.jobs.len() {
+    if complete < jobs.jobs.len() {
         state.ready_at = None;
         return;
     }
