@@ -57,7 +57,7 @@ class AssetsPageObject {
     await page.waitForSelector(`.Assets .assets-catalog-asset[data-test-label="${term}"]`);
   }
 
-  /** Gap between the name tooltip's bottom and the tile, and its clearance below the panel header. */
+  /** Gap between the name tooltip and the tile, on whichever side it opens, and its clearance below the panel header. */
   async getNameTooltipPlacement(asset: string) {
     const tile = page.locator(`.Assets .assets-catalog-asset[data-test-label="${asset}"]`).first();
     await tile.hover();
@@ -69,11 +69,23 @@ class AssetsPageObject {
       tooltip.boundingBox(),
       header.boundingBox(),
     ]);
-    await page.mouse.move(0, 0);
-    return {
-      gapAbove: tileBox!.y - (tooltipBox!.y + tooltipBox!.height),
+    const tip = tooltipBox!;
+    const tileEdge = tileBox!;
+    const side = await tooltip.evaluate(el =>
+      ['top', 'bottom', 'left', 'right'].find(name => el.classList.contains(`tt__tip--${name}`)),
+    );
+    const gaps: Record<string, number> = {
+      top: tileEdge.y - (tip.y + tip.height),
+      bottom: tip.y - (tileEdge.y + tileEdge.height),
+      left: tileEdge.x - (tip.x + tip.width),
+      right: tip.x - (tileEdge.x + tileEdge.width),
+    };
+    const placement = {
+      gap: gaps[side ?? 'top'],
       clearsHeaderBy: tooltipBox!.y - (headerBox!.y + headerBox!.height),
     };
+    await page.mouse.move(0, 0);
+    return placement;
   }
 
   async openFolder(path: string) {

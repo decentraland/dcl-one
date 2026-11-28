@@ -11,6 +11,8 @@ import { isRoot, useEntityComponent } from '../../../hooks/sdk/useEntityComponen
 import { CAMERA, PLAYER, ROOT } from '../../../lib/sdk/tree';
 import { type SdkContextEvents, type SdkContextValue } from '../../../lib/sdk/context';
 import { getAssetByModel } from '../../../lib/logic/catalog';
+import { CoreComponents } from '../../../lib/sdk/components';
+import { getInitialValue } from '../../../lib/sdk/operations/add-component';
 import { analytics, Event } from '../../../lib/logic/analytics';
 import { useAppSelector } from '../../../redux/hooks';
 import { selectCustomAssets } from '../../../redux/app';
@@ -207,7 +209,7 @@ export default React.memo(
           },
           {},
           // Default modifier is Hide Avatars (AvatarModifierType.AMT_HIDE_AVATARS = 0)
-          { modifiers: [0], excludeIds: [] },
+          getInitialValue(CoreComponents.AVATAR_MODIFIER_AREA),
         ),
         createOption(
           sdk.components.CameraModeArea,
@@ -219,7 +221,7 @@ export default React.memo(
           },
           {},
           // Default mode is First Person (CameraType.CT_FIRST_PERSON = 0)
-          { mode: 0 },
+          getInitialValue(CoreComponents.CAMERA_MODE_AREA),
         ),
         createOption(sdk.components.MeshCollider, 'Mesh Collider', {
           description:
@@ -293,7 +295,7 @@ export default React.memo(
             conflictsWith: [sdk.components.NftShape.componentId],
           },
           // Default font should be Sans Serif (Font.F_SANS_SERIF = 0)
-          { font: 0, text: '' },
+          getInitialValue(CoreComponents.TEXT_SHAPE),
         ),
         createOption(sdk.components.PointerEvents, 'Pointer Events', {
           description:

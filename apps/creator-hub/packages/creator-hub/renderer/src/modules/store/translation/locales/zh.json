@@ -284,7 +284,7 @@
     },
     "results": "{count}结果",
     "parcel_count": "{parcels} 个{parcels, plural, one {地块} other {地块}}",
-    "saving": "保存...",
+    "generating_thumbnail": "正在生成缩略图...",
     "badges": {
       "published": "已发布"
     }

@@ -28,6 +28,11 @@
 }
 
 .assets-catalog .empty-search .empty-search-cta {
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: inherit;
+  font: inherit;
   font-weight: 700;
   text-decoration-line: underline;
   cursor: pointer;

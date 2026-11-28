@@ -8,15 +8,18 @@ import AssetContainer from './AssetContainer';
 vi.mock('../../ui', () => ({
   InfoTooltip: ({
     trigger,
+    position,
     onOpen,
     onClose,
   }: {
     trigger: ReactNode;
+    position: string;
     onOpen: () => void;
     onClose: () => void;
   }) => (
     <div
       data-testid="asset-tile"
+      data-position={position}
       onMouseEnter={onOpen}
       onMouseLeave={onClose}
     >
@@ -52,6 +55,25 @@ const smartItem = (author: string): AssetType =>
     },
   }) as unknown as AssetType;
 
+const boxAt = (top: number, height = 80) => ({ top, bottom: top + height }) as DOMRect;
+
+const hoverTileInList = (tileTop: number) => {
+  render(
+    <div className="assets-catalog">
+      <div className="assets-catalog-header" />
+      <AssetContainer
+        value={{ ...smartItem('someone'), composite: undefined } as unknown as AssetType}
+      />
+    </div>,
+  );
+  const tile = screen.getByText('Door');
+  const header = tile.closest('.assets-catalog')!.querySelector('.assets-catalog-header')!;
+  vi.spyOn(header, 'getBoundingClientRect').mockReturnValue(boxAt(40, 60));
+  vi.spyOn(tile, 'getBoundingClientRect').mockReturnValue(boxAt(tileTop));
+  fireEvent.mouseEnter(screen.getByTestId('asset-tile'));
+  return screen.getByTestId('asset-tile').dataset.position;
+};
+
 const hoverPastTheDelay = () => {
   fireEvent.mouseEnter(screen.getByTestId('asset-tile'));
   act(() => {
@@ -67,6 +89,28 @@ describe('AssetContainer', () => {
   afterEach(() => {
     vi.useRealTimers();
     vi.restoreAllMocks();
+  });
+
+  describe('when a tile with room above it under the catalog header is hovered', () => {
+    it('should show the name above the tile', () => {
+      expect(hoverTileInList(160)).toBe('top center');
+    });
+  });
+
+  describe('when a tile scrolled up against the catalog header is hovered', () => {
+    it('should show the name below the tile, clear of the asset pack path', () => {
+      expect(hoverTileInList(104)).toBe('bottom center');
+    });
+
+    describe('and the tile also sits at the bottom of the window', () => {
+      beforeEach(() => {
+        vi.spyOn(window, 'innerHeight', 'get').mockReturnValue(200);
+      });
+
+      it('should show the name to the left of the tile', () => {
+        expect(hoverTileInList(104)).toBe('left center');
+      });
+    });
   });
 
   describe('when a smart item made by the Decentraland Foundation is hovered', () => {

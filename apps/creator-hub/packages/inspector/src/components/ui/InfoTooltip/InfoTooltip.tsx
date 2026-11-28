@@ -18,6 +18,7 @@ const getSide = (position: Position): Side => position.split(' ')[0] as Side;
 
 const InfoTooltip: React.FC<Props> = ({
   className,
+  arrow = false,
   text,
   link,
   trigger,
@@ -106,6 +107,7 @@ const InfoTooltip: React.FC<Props> = ({
         maxWidth={MAX_WIDTH}
         gap={GAP}
         keepInViewport
+        arrow={arrow}
       />
     </>
   );

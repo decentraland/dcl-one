@@ -56,6 +56,22 @@ describe('InfoTooltip', () => {
     });
   });
 
+  describe('when the tooltip has an arrow', () => {
+    it('should draw a pointer at the trigger', () => {
+      render(
+        <InfoTooltip
+          text="Sets the size."
+          trigger={<button>Size</button>}
+          arrow
+        />,
+      );
+
+      pointerEnters(screen.getByRole('button', { name: 'Size' }).parentElement!);
+
+      expect(screen.getByRole('tooltip').classList.contains('tt__tip--arrow')).toBe(true);
+    });
+  });
+
   describe('when the pointer enters the trigger', () => {
     it('should show the text and tell the caller', () => {
       const onOpen = vi.fn();

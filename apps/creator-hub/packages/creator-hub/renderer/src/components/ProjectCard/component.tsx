@@ -118,7 +118,7 @@ function Overlay({
         size={40}
         color="primary"
       />
-      {t('scene_list.saving')}
+      {t('scene_list.generating_thumbnail')}
     </div>
   );
 }

@@ -38,6 +38,24 @@ const EMPTY_AUTHOR_DATA: AuthorData = {
 };
 
 const SMART_TOOLTIP_DELAY = 500;
+// Room the name tooltip and its gap take above or below a tile.
+const NAME_TOOLTIP_HEADROOM = 40;
+
+type NamePosition = 'top center' | 'bottom center' | 'left center';
+
+// A tile scrolled to the top of the list has no room above it under the catalog header: a tip
+// there would cover the asset pack path. It opens below the tile, or, with no room there either,
+// to its left (the smart item preview takes the right).
+const getNameTooltipPosition = (tile: HTMLElement | null): NamePosition => {
+  const header = tile?.closest('.assets-catalog')?.querySelector('.assets-catalog-header');
+  if (!tile || !header) return 'top center';
+  const box = tile.getBoundingClientRect();
+  if (box.top - header.getBoundingClientRect().bottom >= NAME_TOOLTIP_HEADROOM) {
+    return 'top center';
+  }
+  if (window.innerHeight - box.bottom >= NAME_TOOLTIP_HEADROOM) return 'bottom center';
+  return 'left center';
+};
 
 const createAuthorData = (name: string | null, avatar: string | null): AuthorData => ({
   name,
@@ -214,10 +232,12 @@ const AssetContainer: React.FC<AssetContainerProps> = ({ value, onAddToFilesyste
   // The name tooltip is portaled to the body, so once the grid scrolls it follows the tile out of
   // the panel and over the viewport. Hide it on any scroll until the pointer re-enters the tile.
   const [hiddenByScroll, setHiddenByScroll] = useState(false);
+  const [namePosition, setNamePosition] = useState<NamePosition>('top center');
   const assetRef = useRef<HTMLDivElement>(null);
   const timeoutRef = useRef<NodeJS.Timeout>();
 
   const handleInfoTooltipOpen = useCallback(() => {
+    setNamePosition(getNameTooltipPosition(assetRef.current));
     setIsHovered(true);
     setHiddenByScroll(false);
     if (isSmartItem) {
@@ -285,8 +305,10 @@ const AssetContainer: React.FC<AssetContainerProps> = ({ value, onAddToFilesyste
         trigger={assetElement}
         open={isHovered && !hiddenByScroll}
         hideOnScroll={false}
-        position="top center"
+        position={namePosition}
         hoverable={false}
+        className="AssetNameTooltip"
+        arrow
       />
       {isSmartItem && (
         <SmartItemTooltip

@@ -1,10 +1,31 @@
 .assets-catalog-header {
   display: flex;
   flex: none;
+  flex-direction: column;
   width: 100%;
 }
 
 .assets-catalog-header .Assets-toolbar {
-  flex: 1;
   padding: 0;
+}
+
+/* The path sits under the search field, as in Local Assets; the catalog already pads the sides. */
+.assets-catalog-header .Assets-crumbs {
+  padding: 4px 0 0;
+}
+
+/* The category filter sits beside the search field and sizes to its longest option. */
+.assets-catalog-header .Dropdown.Field {
+  flex: none;
+  width: 170px;
+}
+
+.assets-catalog-header .Dropdown.Field .DropdownContainer {
+  height: 28px;
+  border-radius: 8px;
+}
+
+/* The menu is portaled and takes the field's width; the counts make some labels longer than that. */
+.OptionList.assets-catalog-header-category {
+  min-width: max-content;
 }

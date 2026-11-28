@@ -2,9 +2,9 @@ import React, { useCallback, useMemo, useState } from 'react';
 import { IoIosArrowDown, IoIosArrowForward } from 'react-icons/io';
 import { FiAlertTriangle as WarningIcon } from 'react-icons/fi';
 import { VscTrash as RemoveIcon } from 'react-icons/vsc';
-import { MdContentCopy as CopyIcon, MdContentPaste as PasteIcon } from 'react-icons/md';
 import { cx } from '../../lib/utils/cx';
 import { Button } from '../Button';
+import { CopyIcon, PasteIcon, ResetIcon } from '../Icons/ComponentValues';
 import { InfoTooltip } from '../ui/InfoTooltip';
 import MoreOptionsMenu from '../EntityInspector/MoreOptionsMenu';
 import { useComponentClipboard } from '../../hooks/sdk/useComponentClipboard';
@@ -84,7 +84,9 @@ const Container: React.FC<React.PropsWithChildren<Props>> = props => {
   const {
     onCopyValues,
     onPasteValues,
+    onResetValues,
     enabled: clipboardEnabled,
+    canReset,
   } = useComponentClipboard(props.entity, props.component);
 
   const hasMenu = !!props.onRemoveContainer || clipboardEnabled;
@@ -117,6 +119,15 @@ const Container: React.FC<React.PropsWithChildren<Props>> = props => {
                 <PasteIcon /> Paste values
               </Button>
             ) : null}
+            {canReset ? (
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={onResetValues}
+              >
+                <ResetIcon /> Reset values
+              </Button>
+            ) : null}
             {props.onRemoveContainer ? (
               <Button
                 variant="secondary"
@@ -137,6 +148,8 @@ const Container: React.FC<React.PropsWithChildren<Props>> = props => {
     clipboardEnabled,
     onCopyValues,
     onPasteValues,
+    canReset,
+    onResetValues,
     props.onRemoveContainer,
   ]);
 

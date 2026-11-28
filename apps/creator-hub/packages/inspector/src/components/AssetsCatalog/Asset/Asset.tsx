@@ -57,7 +57,10 @@ const Asset = React.forwardRef<HTMLDivElement, AssetProps>(({ value, onAddToFile
   };
 
   return (
-    <div ref={ref}>
+    <div
+      ref={ref}
+      className="assets-catalog-asset-tile"
+    >
       {previewImg && (
         <DragPreviewImage
           connect={preview}
@@ -92,6 +95,7 @@ const Asset = React.forwardRef<HTMLDivElement, AssetProps>(({ value, onAddToFile
         {isGroundItem && <div className="ground-badge item-badge"></div>}
         {builtInEmote && <div className="built-in-badge">Built-in</div>}
       </div>
+      <span className="assets-catalog-asset-name">{value.name}</span>
     </div>
   );
 });

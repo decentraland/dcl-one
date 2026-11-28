@@ -1,7 +1,25 @@
 import type { Entity, IEngine, Vector3Type } from '@dcl/ecs';
 import { COMPONENTS_WITH_ID, getNextId } from '@dcl/asset-packs';
 import { isLastWriteWinComponent } from '../../../hooks/sdk/useComponentValue';
+import { CoreComponents } from '../components/types';
 import { getEntityScale, isAreaComponent } from './area-size';
+
+/**
+ * What the Add Component menu seeds a component with where the schema defaults alone
+ * leave it unusable. "Reset values" returns a component to this same starting point.
+ */
+export function getInitialValue(componentName: string): Record<string, unknown> | undefined {
+  switch (componentName) {
+    case CoreComponents.AVATAR_MODIFIER_AREA:
+      return { modifiers: [0], excludeIds: [] };
+    case CoreComponents.CAMERA_MODE_AREA:
+      return { mode: 0 };
+    case CoreComponents.TEXT_SHAPE:
+      return { font: 0, text: '' };
+    default:
+      return undefined;
+  }
+}
 
 export function addComponent(engine: IEngine) {
   return function addComponent(entity: Entity, componentId: number, value?: any) {
